@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -61,6 +62,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
         if (strFunc.isNullConstant()
                 || startFunc.isConstant() && startFunc.getInt(null) == Numbers.INT_NULL
                 || lenFunc.isConstant() && lenFunc.getInt(null) == Numbers.INT_NULL) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return StrConstant.NULL;
         }
         if (lenFunc.isConstant()) {
@@ -68,6 +70,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
             if (len < 0) {
                 throw SqlException.$(position, "negative substring length is not allowed");
             } else if (len == 0) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return StrConstant.EMPTY;
             }
         }

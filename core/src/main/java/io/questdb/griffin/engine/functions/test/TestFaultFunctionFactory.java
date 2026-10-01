@@ -69,12 +69,22 @@ public class TestFaultFunctionFactory implements FunctionFactory {
     // and throws on call N+1, then disarms itself.
     private static final AtomicInteger INIT_COUNTDOWN = new AtomicInteger(-1);
     private static final AtomicInteger INIT_PROBE_EPOCH = new AtomicInteger();
+    private static volatile int closeFailureSkip;
     private static volatile boolean isCloseFailureArmed;
     private static final AtomicReference<Throwable> LAST_COMPILE_FAILURE = new AtomicReference<>();
     private static final AtomicInteger OFFER_COUNT = new AtomicInteger();
     private static final AtomicInteger TRIGGERED = new AtomicInteger();
 
     public static void armCloseFailures() {
+        armCloseFailures(0);
+    }
+
+    /**
+     * Arms close failures for every instance except the first {@code skippedCreations}, which
+     * close normally but still count as created.
+     */
+    public static void armCloseFailures(int skippedCreations) {
+        closeFailureSkip = skippedCreations;
         CLOSE_CALLS.set(0);
         synchronized (CLOSE_FAILURES) {
             CLOSE_FAILURES.clear();
@@ -107,7 +117,13 @@ public class TestFaultFunctionFactory implements FunctionFactory {
 
     public static int closeFailureCount() {
         synchronized (CLOSE_FAILURES) {
-            return CLOSE_FAILURES.size();
+            int count = 0;
+            for (int i = 0, n = CLOSE_FAILURES.size(); i < n; i++) {
+                if (CLOSE_FAILURES.getQuick(i) != null) {
+                    count++;
+                }
+            }
+            return count;
         }
     }
 
@@ -165,7 +181,7 @@ public class TestFaultFunctionFactory implements FunctionFactory {
         }
         final int creationIndex = CREATED.getAndIncrement();
         final RuntimeException closeFailure;
-        if (isCloseFailureArmed) {
+        if (isCloseFailureArmed && creationIndex >= closeFailureSkip) {
             closeFailure = new RuntimeException("test_fault: injected close failure " + creationIndex);
             synchronized (CLOSE_FAILURES) {
                 CLOSE_FAILURES.extendAndSet(creationIndex, closeFailure);

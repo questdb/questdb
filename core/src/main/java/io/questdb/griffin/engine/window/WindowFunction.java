@@ -50,6 +50,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
@@ -639,6 +640,32 @@ public interface WindowFunction extends Function {
             IntList orderIndices,
             ObjList<ExpressionNode> orderBy,
             IntList orderByDirections
+    ) throws SqlException {
+        final int count = orderBy.size();
+        final IntList positions = new IntList(count);
+        final ObjList<CharSequence> names = new ObjList<>(count);
+        for (int i = 0; i < count; i++) {
+            final ExpressionNode column = orderBy.getQuick(i);
+            positions.add(column.position);
+            names.add(Chars.toString(column.token));
+        }
+        initRecordComparator(sqlGenerator, metadata, chainTypes,
+                orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirections),
+                positions, names, orderByDirections);
+    }
+
+    /**
+     * Order indexes are signed and one-based. Indexes, positions and directions are borrowed;
+     * names and their list are independent of compiler storage and may be retained for EXPLAIN.
+     */
+    default void initRecordComparator(
+            SqlCodeGenerator sqlGenerator,
+            RecordMetadata metadata,
+            ArrayColumnTypes chainTypes,
+            IntList orderIndices,
+            IntList orderPositions,
+            ObjList<CharSequence> orderNames,
+            IntList orderDirections
     ) throws SqlException {
     }
 

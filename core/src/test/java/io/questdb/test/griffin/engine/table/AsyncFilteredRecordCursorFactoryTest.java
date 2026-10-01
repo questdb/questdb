@@ -60,7 +60,6 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContext;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.RingQueue;
@@ -150,7 +149,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     new IntHashSet(),
                     () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
                     workerFilters,
-                    ExpressionNode.FACTORY.newInstance(),
                     null,
                     0,
                     3,

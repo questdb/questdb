@@ -116,7 +116,9 @@ public class UserFunctionsTest extends AbstractCairoTest {
                             Assert.assertFalse(cursor.hasNext());
                         }
                     }
-                    assertIdentityReadCounts(securityContext, "parallel group by", 1, 2);
+                    // Legacy recomputes session_user() in the projection over the grouped key; the logical
+                    // path reads the key column instead, so it holds one fewer instance to resolve.
+                    assertIdentityReadCounts(securityContext, "parallel group by", 1, 1);
                 },
                 configuration,
                 LOG

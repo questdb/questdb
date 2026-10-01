@@ -211,6 +211,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new AvgOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

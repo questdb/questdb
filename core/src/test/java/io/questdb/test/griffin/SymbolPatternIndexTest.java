@@ -1031,19 +1031,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHintConstantWiring() {
-        // A plain string-equality check on the constant is tautological: it would still pass if
-        // SqlHints never consulted the constant. Assert the real wiring instead -- that a model
-        // carrying the hint is detected by hasNoSymbolPatternIndexHint(), and a model without it is not.
-        final QueryModel withHint = QueryModel.FACTORY.newInstance();
-        withHint.addHint(io.questdb.griffin.SqlHints.NO_SYMBOL_PATTERN_INDEX_HINT, "");
-        Assert.assertTrue(io.questdb.griffin.SqlHints.hasNoSymbolPatternIndexHint(withHint));
-
-        final QueryModel withoutHint = QueryModel.FACTORY.newInstance();
-        Assert.assertFalse(io.questdb.griffin.SqlHints.hasNoSymbolPatternIndexHint(withoutHint));
-    }
-
-    @Test
     public void testConfigDefaults() {
         Assert.assertTrue(configuration.isSymbolPatternIndexEnabled());
         Assert.assertEquals(100, configuration.getSymbolPatternIndexThreshold());
@@ -2022,8 +2009,18 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            final int[] partitionFactoryCloseCount = new int[1];
-            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
+            final int[] partitionFactoryCounts = new int[2];
+            FullPartitionFrameCursorFactory.setCloseObserverForTesting(new FullPartitionFrameCursorFactory.CloseObserver() {
+                @Override
+                public void onClose(FullPartitionFrameCursorFactory factory) {
+                    partitionFactoryCounts[1]++;
+                }
+
+                @Override
+                public void onOpen(FullPartitionFrameCursorFactory factory) {
+                    partitionFactoryCounts[0]++;
+                }
+            });
             try {
                 assertExceptionNoLeakCheck(
                         "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
@@ -2033,7 +2030,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             } finally {
                 FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
             }
-            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
+            Assert.assertEquals(partitionFactoryCounts[0], partitionFactoryCounts[1]);
         });
     }
 

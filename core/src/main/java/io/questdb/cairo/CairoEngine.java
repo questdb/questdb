@@ -1380,7 +1380,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         // compile the SELECT to validate and get metadata. The live-view-compile flag
-        // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
+        // suppresses indexed-symbol key extraction so the planner
         // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path can handle.
         GenericRecordMetadata metadata;
@@ -1401,7 +1401,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final BoolList outputSymbolCacheFlags = new BoolList();
         try (SqlCompiler compiler = getSqlCompiler()) {
             // Arm the shared non-determinism guard for the LV body, mirroring the
-            // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
+            // mat-view compile (SqlCompilerImpl.compileMatViewQuery). With it armed,
             // FunctionParser rejects now()/sysdate()/systimestamp()/rnd_*/etc. anywhere
             // in the SELECT - projection, WHERE filter, and window-function arguments -
             // so the view can never produce non-reproducible results that diverge on a
@@ -3875,7 +3875,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         final PageFrameRecordCursorFactory pfrcf = plan.getPageFrameFactory();
         if (pfrcf.hasFilter() || pfrcf.usesIndex()) {
-            // Defensive: WhereClauseParser is supposed to have suppressed indexed-symbol key
+            // Defensive: the planner is supposed to have suppressed indexed-symbol key
             // extraction for live view compiles, so the planner shouldn't produce an indexed
             // row cursor factory here. If it ever does, the intrinsic predicate lives in the
             // row cursor, invisible to the incremental refresh path (which applies only the

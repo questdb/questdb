@@ -151,7 +151,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         sink.child(base);
     }
 
-    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
+    public static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.INT -> IntConstant.NULL;
             case ColumnType.IPv4 -> IPv4Constant.NULL;

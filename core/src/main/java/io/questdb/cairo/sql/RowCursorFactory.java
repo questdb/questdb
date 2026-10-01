@@ -77,7 +77,7 @@ public interface RowCursorFactory extends Plannable, QuietCloseable {
      * Returns true only when every value this row cursor evaluates to select frame rows is itself
      * stable within a single query execution (same {@code SqlExecutionContext}). Composed into
      * {@code PageFrameRecordCursorFactory#isStableWithinExecution()} which gates scalar sub-query
-     * timestamp interval pruning in {@code WhereClauseParser}.
+     * timestamp interval pruning in {@code IntervalExtractor}.
      * <p>
      * Fail-safe like {@link RecordCursorFactory#isStableWithinExecution()}: the default reports
      * {@code false} so an unrecognised row-cursor shape never enables pruning. A plain entity scan

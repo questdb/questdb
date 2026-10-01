@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
@@ -233,6 +234,7 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new MaxLongWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

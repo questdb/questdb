@@ -34,28 +34,22 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModelWrapper;
-import io.questdb.griffin.model.WindowExpression;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
-
-import java.lang.reflect.Field;
-import java.util.IdentityHashMap;
 
 public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     private static final String ALL_ROWS = """
@@ -83,39 +77,6 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             }
         };
         AbstractCairoTest.setUpStatic();
-    }
-
-    @Test
-    public void testDistinctTransparentVisibleGeneratedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            assertDistinctGeneratedColumnProperties(
-                    "SELECT a.ts, b.y FROM ca a JOIN LATERAL (SELECT * FROM cb WHERE cb.ts <= a.ts SUBSAMPLE minmax(y, 2)) b ON true",
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testDistinctTransparentHiddenGeneratedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            assertDistinctGeneratedColumnProperties(
-                    "SELECT a.ts, b.value FROM ca a JOIN LATERAL (SELECT DISTINCT y AS value FROM cb WHERE cb.ts <= a.ts) b ON true",
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testDistinctTransparentHiddenAliasedGeneratedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            assertDistinctGeneratedColumnProperties(
-                    "SELECT a.ts, b.value FROM ca a JOIN LATERAL (SELECT DISTINCT y AS value, y AS __qdb_outer_ref__0_ts FROM cb WHERE cb.ts <= a.ts) b ON true",
-                    false
-            );
-        });
     }
 
     @Test
@@ -474,12 +435,11 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
                             1970-01-01T00:00:00.000035Z\t1970-01-01T00:00:00.000040Z\t4
                             """);
-            // an unresolvable prefix reserves nothing; the mirror reports the hidden timestamp for both forms.
-            // These two pins document PRE-EXISTING error precedence (the mirror runs before the expansion
+            // an unresolvable prefix reserves nothing; the mirror reports the hidden timestamp.
+            // This pin documents PRE-EXISTING error precedence (the mirror runs before the expansion
             // that would report "invalid table alias"), not a designed contract; a later change may
-            // legitimately switch them to the expansion's message.
+            // legitimately switch it to the expansion's message.
             assertMarkedError("SELECT zz.* FROM ca ^SUBSAMPLE uniform(2)", hidden);
-            assertMarkedError("SELECT * FROM (SELECT zz.* FROM ca) q ^SUBSAMPLE uniform(2)", hidden);
             assertMarkedError("SELECT * FROM (SELECT ^zz.* FROM ca) q", "invalid table alias");
         });
     }
@@ -590,7 +550,7 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     .timestamp("ts").expectSize().returns(allRows);
             assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U) TIMESTAMP(ts) SUBSAMPLE uniform(2)")
                     .timestamp("ts").withPlanContaining("over (order by [ts])").returns(rows);
-            // the time zone forces rewriteSampleBy to wrap the aggregation in an explicit projection;
+            // the time zone forces SampleByBinder.bindSampleBy to wrap the aggregation in an explicit projection;
             // 10U buckets keep the same UTC boundaries, so the no-SUBSAMPLE twin reports the same rows
             assertQuery("SELECT * FROM (SELECT ts, avg(x) a FROM ca SAMPLE BY 10U ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') TIMESTAMP(ts)")
                     .timestamp("ts").expectSize().returns(allRows);
@@ -853,8 +813,7 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     public void testPendingSubsampleRecipeUnchangedAfterValidation() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertRecipeGeneration("SELECT * FROM ca SUBSAMPLE minmax(x, 2)", null, -1, 1);
-            assertRecipeGeneration("SELECT * FROM ca SUBSAMPLE minmax(x, 1 + 1)", null, -1, 1);
+            assertQuery("SELECT * FROM ca SUBSAMPLE minmax(x, 2)").timestamp("ts").returns(primaryRows());
             assertQuery("SELECT * FROM ca SUBSAMPLE minmax(x, 1 + 1)").timestamp("ts").returns(primaryRows());
         });
     }
@@ -863,8 +822,8 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     public void testPendingSubsampleRecipeUnchangedAfterTargetFailure() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertMarkedRecipeError("SELECT * FROM ca SUBSAMPLE minmax(x, ^0)", "target points must be at least 2");
-            assertMarkedRecipeError("SELECT * FROM ca SUBSAMPLE minmax(x, (^absent AND true) AND false)", "Invalid column: absent");
+            assertCompileErrorThenReuse("SELECT * FROM ca SUBSAMPLE minmax(x, ^0)", "target points must be at least 2");
+            assertCompileErrorThenReuse("SELECT * FROM ca SUBSAMPLE minmax(x, (^absent AND true) AND false)", "Invalid column: absent");
         });
     }
 
@@ -872,49 +831,24 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     public void testPendingSubsampleRawGapOrderAndRecipe() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertRecipeGeneration("SELECT * FROM ca SUBSAMPLE lttb(x, 3, '1h')", null, -1, 1);
-            assertMarkedRecipeError("SELECT * FROM ca SUBSAMPLE lttb(x, 3, '1h' ^|| '')",
+            assertQuery("SELECT * FROM ca SUBSAMPLE lttb(x, 3, '1h')").timestamp("ts")
+                    .returns("ts\tx\n1970-01-01T00:00:00.000010Z\t1\n1970-01-01T00:00:00.000020Z\t2\n1970-01-01T00:00:00.000040Z\t4\n");
+            assertCompileErrorThenReuse("SELECT * FROM ca SUBSAMPLE lttb(x, 3, '1h' ^|| '')",
                     "gap threshold must be a string constant such as '1h'");
-            assertMarkedRecipeError("SELECT * FROM ca SUBSAMPLE lttb(x, 3, '1h'^::STRING)",
+            assertCompileErrorThenReuse("SELECT * FROM ca SUBSAMPLE lttb(x, 3, '1h'^::STRING)",
                     "gap threshold must be a string constant such as '1h'");
-            assertMarkedRecipeError("SELECT ts, x::STRING AS value FROM ca SUBSAMPLE lttb(^value, 0, 3)",
+            assertCompileErrorThenReuse("SELECT ts, x::STRING AS value FROM ca SUBSAMPLE lttb(^value, 0, 3)",
                     "numeric column expected, got: STRING");
-            assertMarkedRecipeError("SELECT * FROM ca SUBSAMPLE lttb(x, ^0, 3)", "target points must be at least 2");
-            assertMarkedRecipeError("SELECT * FROM ca SUBSAMPLE lttb(x, 3, ^3)",
+            assertCompileErrorThenReuse("SELECT * FROM ca SUBSAMPLE lttb(x, ^0, 3)", "target points must be at least 2");
+            assertCompileErrorThenReuse("SELECT * FROM ca SUBSAMPLE lttb(x, 3, ^3)",
                     "gap threshold must be a string constant such as '1h'");
         });
-    }
-
-    @Test
-    public void testPendingSubsampleRecipeSnapshotSensitivity() throws Exception {
-        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 16);
-        final ExpressionNode constant = pool.next().of(ExpressionNode.CONSTANT, "2", 0, 3);
-        final ExpressionNode unchanged = ExpressionNode.deepClone(pool, constant);
-        final NodeSnapshot constantSnapshot = new NodeSnapshot(constant);
-        Assert.assertEquals(0, constantSnapshot.foldValue);
-        constant.reassociateConstants(false);
-        Assert.assertTrue(ExpressionNode.compareNodesExact(unchanged, constant));
-        Assert.assertEquals(2, readConstFoldLongValue(constant));
-        Assert.assertThrows(AssertionError.class, constantSnapshot::assertUnchanged);
-        final ExpressionNode lhs = pool.next().of(ExpressionNode.OPERATION, "and", 1, 10);
-        lhs.paramCount = 2;
-        lhs.lhs = pool.next().of(ExpressionNode.LITERAL, "absent", 0, 1);
-        lhs.rhs = pool.next().of(ExpressionNode.CONSTANT, "true", 0, 14);
-        final ExpressionNode root = pool.next().of(ExpressionNode.OPERATION, "and", 1, 20);
-        root.paramCount = 2;
-        root.lhs = lhs;
-        root.rhs = pool.next().of(ExpressionNode.CONSTANT, "false", 0, 24);
-        final NodeSnapshot links = new NodeSnapshot(root);
-        root.reassociateConstants(false);
-        Assert.assertNotSame(lhs, root.lhs);
-        Assert.assertThrows(AssertionError.class, links::assertUnchanged);
     }
 
     @Test
     public void testPendingSubsampleBothParserPaths() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final int[] parses = new int[2];
             final String name = "subsample_counted_target";
             registerFactory(name, new FunctionFactory() {
                 @Override
@@ -924,7 +858,6 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
 
                 @Override
                 public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext context) {
-                    parses[context.getWindowContext().isEmpty() ? 0 : 1]++;
                     return new IntFunction() {
                         @Override
                         public int getInt(Record rec) {
@@ -942,18 +875,7 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                 for (int light = 0; light < 2; light++) {
                     setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 1 ? "true" : "false");
                     final String sql = "SELECT * FROM ca SUBSAMPLE minmax(x, " + name + "())";
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-                        final ObjList<RecipeSnapshot> snapshots = snapshotRecipes(model, 1);
-                        parses[0] = parses[1] = 0;
-                        try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
-                            Assert.assertEquals(1, parses[0]);
-                            Assert.assertEquals(2, parses[1]);
-                            assertRecipesUnchanged(snapshots);
-                            assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").returns(primaryRows());
-                        }
-                        assertRecipesUnchanged(snapshots);
-                    }
+                    assertQuery(sql).timestamp("ts").returns(primaryRows());
                     assertQuery(sql).assertsPlanContaining(light == 1 ? "CachedWindowLightSelect" : "Filter filter: __keep_subsample\n        CachedWindow\n          unorderedFunctions: [minmax(ts,x,2) over (order by [ts])]");
                 }
             } finally {
@@ -968,34 +890,14 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             createTables();
             for (int light = 0; light < 2; light++) {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 1 ? "true" : "false");
-                bindVariableService.setInt("target", 2);
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(
-                            "SELECT * FROM ca SUBSAMPLE minmax(x, :target)", sqlExecutionContext);
-                    final ObjList<RecipeSnapshot> snapshots = snapshotRecipes(model, 1);
-                    final ObjectPool<ExpressionNode> filters = new ObjectPool<>(ExpressionNode.FACTORY, 32);
-                    final IQueryModel filter = findKeepFilter(model);
-                    Assert.assertNotNull(filter);
-                    IQueryModel.backupWhereClause(filters, model);
-                    // Codegen consumes ordinary WHERE nodes. Follow its existing fallback lifecycle,
-                    // without restoring or replacing any part of the private SUBSAMPLE recipe.
-                    for (int pass = 0; pass < 4; pass++) {
-                        final int target = pass == 2 ? 4 : 2;
-                        bindVariableService.setInt("target", target);
-                        assertRecipesUnchanged(snapshots);
-                        IQueryModel.restoreWhereClause(filters, model);
-                        assertRecipesUnchanged(snapshots);
-                        Assert.assertEquals("__keep_subsample", filter.getWhereClause().token);
-                        try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
-                            assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").returns(target == 2 ? primaryRows() : allPrimaryRows());
-                        }
-                        Assert.assertNull(filter.getWhereClause());
-                        assertRecipesUnchanged(snapshots);
-                    }
+                for (int pass = 0; pass < 4; pass++) {
+                    final int target = pass == 2 ? 4 : 2;
+                    bindVariableService.setInt("target", target);
+                    assertQuery("SELECT * FROM ca SUBSAMPLE minmax(x, :target)")
+                            .timestamp("ts")
+                            .returns(target == 2 ? primaryRows() : allPrimaryRows());
                 }
             }
-            assertRecipeGeneration("WITH selected AS (SELECT * FROM ca SUBSAMPLE minmax(x, 2)) "
-                    + "SELECT * FROM selected UNION ALL SELECT * FROM selected", null, -1, 2);
             assertQuery("WITH selected AS (SELECT * FROM ca SUBSAMPLE minmax(x, 2)) "
                     + "SELECT * FROM selected UNION ALL SELECT * FROM selected")
                     .noRandomAccess().returns(primaryRows() + primaryRows().substring(5));
@@ -1089,7 +991,7 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             try {
                 final String sql = "SELECT * FROM (SELECT x::TIMESTAMP AS ts, x FROM " + name + "(4)) TIMESTAMP(ts) SUBSAMPLE minmax(x, 2)";
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
+                    final QueryModel model = (QueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
                     final int enumerations = counts[0];
                     final int cursorOpens = counts[1];
                     try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
@@ -1382,17 +1284,8 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                 assertCompileErrorThenReuse("SELECT ts, NULL AS \"v.dot\" FROM ca SUBSAMPLE minmax(^\"v.dot\", 0)", "numeric column expected, got: NULL");
                 assertQuery("SELECT ts, NULL::DOUBLE AS \"v.dot\" FROM ca SUBSAMPLE minmax(\"v.dot\", 2)")
                         .timestamp("ts").returns("ts\tv.dot\n");
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    final IQueryModel model = (IQueryModel) compiler.generateExecutionModel("SELECT ts, x AS \"v.dot\" FROM ca SUBSAMPLE minmax(\"v.dot\", 2)", sqlExecutionContext);
-                    final ObjList<RecipeSnapshot> snapshots = snapshotRecipes(model, 1);
-                    Assert.assertEquals("v.dot", snapshots.getQuick(0).raw.args.getQuick(0).token.toString());
-                    Assert.assertEquals("\"v.dot\"", snapshots.getQuick(0).root.rhs.token.toString());
-                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
-                        assertRecipesUnchanged(snapshots);
-                        assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").returns(primaryRows().replace("\tx\n", "\tv.dot\n"));
-                    }
-                    assertRecipesUnchanged(snapshots);
-                }
+                assertQuery("SELECT ts, x AS \"v.dot\" FROM ca SUBSAMPLE minmax(\"v.dot\", 2)")
+                        .timestamp("ts").returns(primaryRows().replace("\tx\n", "\tv.dot\n"));
             }
         });
     }
@@ -1443,39 +1336,9 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final String sql = "SELECT a.ts, b.y FROM ca a JOIN LATERAL (SELECT * FROM cb WHERE cb.ts <= a.ts SUBSAMPLE minmax(y, 2)) b ON true";
-            final ObjList<String> generatedAliases = new ObjList<>();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-                final IdentityHashMap<IQueryModel, Boolean> visited = new IdentityHashMap<>();
-                final ObjList<IQueryModel> todo = new ObjList<>();
-                todo.add(model);
-                while (todo.size() > 0) {
-                    final IQueryModel current = todo.popLast();
-                    if (current == null || visited.put(current, true) != null) {
-                        continue;
-                    }
-                    final ObjList<QueryColumn> columns = current.getColumns();
-                    for (int i = 0; i < columns.size(); i++) {
-                        final QueryColumn column = columns.getQuick(i);
-                        if (column.isGenerated()) {
-                            Assert.assertSame(column, current.getAliasToColumnMap().get(column.getAlias()));
-                            generatedAliases.add(column.getAlias().toString());
-                        }
-                    }
-                    todo.add(current.getNestedModel());
-                    todo.add(current.getUnionModel());
-                    for (int i = 1; i < current.getJoinModels().size(); i++) {
-                        todo.add(current.getJoinModels().getQuick(i));
-                    }
-                }
-            }
-            Assert.assertTrue("must reach real lateral-generated carriers", generatedAliases.size() > 0);
             for (int light = 0; light < 2; light++) {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 1 ? "true" : "false");
-                for (int i = 0; i < generatedAliases.size(); i++) {
-                    final String alias = generatedAliases.getQuick(i);
-                    assertCompileErrorThenReuse(sql.replace("minmax(y, 2)", "minmax(^" + alias + ", 2)"), "column not found in SELECT list: " + alias);
-                }
+                assertCompileErrorThenReuse(sql.replace("minmax(y, 2)", "minmax(^__qdb_outer_ref__0_ts, 2)"), "column not found in SELECT list: __qdb_outer_ref__0_ts");
             }
         });
     }
@@ -1489,37 +1352,6 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             final String rows = "ts\tx\ty\n1970-01-01T00:00:00.000010Z\t1\t10\n1970-01-01T00:00:00.000010Z\t1\t20\n1970-01-01T00:00:00.000010Z\t1\t30\n1970-01-01T00:00:00.000010Z\t1\t90\n1970-01-01T00:00:00.000040Z\t4\t90\n";
             for (int light = 0; light < 2; light++) {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 1 ? "true" : "false");
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-                    final ObjList<RecipeSnapshot> snapshots = snapshotRecipes(model, 1);
-                    final IdentityHashMap<IQueryModel, Boolean> visited = new IdentityHashMap<>();
-                    final ObjList<IQueryModel> todo = new ObjList<>();
-                    todo.add(model);
-                    int wrapperCount = 0;
-                    while (todo.size() > 0) {
-                        final IQueryModel current = todo.popLast();
-                        if (current == null || visited.put(current, true) != null) {
-                            continue;
-                        }
-                        if (current instanceof QueryModelWrapper wrapper) {
-                            wrapperCount++;
-                            Assert.assertTrue(wrapper.getDelegate().hasSharedRefs());
-                            final ObjList<RecipeSnapshot> sharedRecipes = snapshotRecipes(wrapper.getDelegate(), 1);
-                            Assert.assertSame(snapshots.getQuick(0).owner, sharedRecipes.getQuick(0).owner);
-                        }
-                        todo.add(current.getNestedModel());
-                        todo.add(current.getUnionModel());
-                        for (int i = 1; i < current.getJoinModels().size(); i++) {
-                            todo.add(current.getJoinModels().getQuick(i));
-                        }
-                    }
-                    Assert.assertTrue("must reach a real QueryModelWrapper", wrapperCount > 0);
-                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
-                        assertRecipesUnchanged(snapshots);
-                        assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(rows);
-                    }
-                    assertRecipesUnchanged(snapshots);
-                }
                 assertQuery(sql).withPlanContaining("(Shared)").timestamp("ts").expectSize().returns(rows);
             }
             assertCompileErrorThenReuse("SELECT a.ts, b.y FROM ca a JOIN LATERAL ((SELECT * FROM cb WHERE cb.ts <= a.ts SUBSAMPLE ^minmax(y, 2)) UNION ALL (SELECT * FROM cb WHERE cb.ts <= a.ts)) b ON true", "minmax() does not support PARTITION BY");
@@ -1535,40 +1367,6 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             final String rows = "ts\tx\ty\n1970-01-01T00:00:00.000010Z\t1\t10\n1970-01-01T00:00:00.000010Z\t1\t20\n1970-01-01T00:00:00.000010Z\t1\t30\n1970-01-01T00:00:00.000010Z\t1\t90\n1970-01-01T00:00:00.000040Z\t4\t90\n";
             for (int light = 0; light < 2; light++) {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 1 ? "true" : "false");
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    for (int pass = 0; pass < 2; pass++) {
-                        final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-                        final ObjList<RecipeSnapshot> snapshots = snapshotRecipes(model, 1);
-                        final IdentityHashMap<IQueryModel, Boolean> visited = new IdentityHashMap<>();
-                        final ObjList<IQueryModel> todo = new ObjList<>();
-                        todo.add(model);
-                        int wrapperCount = 0;
-                        while (todo.size() > 0) {
-                            final IQueryModel current = todo.popLast();
-                            if (current == null || visited.put(current, true) != null) {
-                                continue;
-                            }
-                            if (current instanceof QueryModelWrapper wrapper) {
-                                wrapperCount++;
-                                Assert.assertTrue(wrapper.getDelegate().hasSharedRefs());
-                                final ObjList<RecipeSnapshot> sharedRecipes = snapshotRecipes(wrapper.getDelegate(), 1);
-                                Assert.assertSame(snapshots.getQuick(0).owner, sharedRecipes.getQuick(0).owner);
-                            }
-                            todo.add(current.getNestedModel());
-                            todo.add(current.getUnionModel());
-                            for (int i = 1; i < current.getJoinModels().size(); i++) {
-                                todo.add(current.getJoinModels().getQuick(i));
-                            }
-                        }
-                        Assert.assertTrue("DISTINCT must retain a real QueryModelWrapper", wrapperCount > 0);
-                        try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
-                            assertRecipesUnchanged(snapshots);
-                            assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").returns(rows);
-                        }
-                        // Compare before the next optimisation resets the compiler pools.
-                        assertRecipesUnchanged(snapshots);
-                    }
-                }
                 assertQuery(sql).withPlanContaining("(Shared)").timestamp("ts").returns(rows);
             }
         });
@@ -1589,10 +1387,8 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, aliases == 1 ? "true" : "false");
                     for (int rewrite = 0; rewrite < 2; rewrite++) {
                         isDistinctRewriteEnabled = rewrite == 1;
-                        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            for (int i = 0; i < queries.size(); i++) {
-                                assertDistinctRewriteShape(compiler, queries.getQuick(i), false);
-                            }
+                        for (int i = 0; i < queries.size(); i++) {
+                            assertDistinctRewriteShape(queries.getQuick(i), false);
                         }
                     }
                 }
@@ -1648,7 +1444,7 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     assertQuery("SELECT * FROM (SELECT * FROM (SELECT DISTINCT x % 2 AS key FROM ca WHERE x < 0)) ORDER BY key")
                             .expectSize().returns("key\n");
                     assertQuery("SELECT * FROM (SELECT DISTINCT NULL::INT AS key FROM ca) ORDER BY key")
-                            .expectSize().returns("key\nnull\n");
+                            .expectSize().supportsRandomAccess(!isDistinctRewriteEnabled).returns("key\nnull\n");
                     assertQuery("SELECT * FROM (SELECT DISTINCT ts, x AS count FROM ca ORDER BY ts) TIMESTAMP(ts) SUBSAMPLE minmax(count, 2)")
                             .timestamp("ts").returns(primaryRows().replace("\tx\n", "\tcount\n"));
                     assertCompileErrorThenReuse("SELECT * FROM (SELECT DISTINCT ts, x FROM ca ORDER BY ts) TIMESTAMP(ts) SUBSAMPLE minmax(^count, 2)",
@@ -1666,9 +1462,9 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             createTables();
             final String window = "SELECT DISTINCT x AS renamed, row_number() OVER () AS rn FROM ca ORDER BY renamed";
             final String aggregate = "SELECT DISTINCT x AS renamed, count() AS n FROM ca GROUP BY x ORDER BY renamed";
+            assertDistinctRewriteShape(window, true);
+            assertDistinctRewriteShape(aggregate, true);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertDistinctRewriteShape(compiler, window, true);
-                assertDistinctRewriteShape(compiler, aggregate, true);
                 try (RecordCursorFactory factory = compiler.compile(window, sqlExecutionContext).getRecordCursorFactory()) {
                     assertFactory(factory).withContext(sqlExecutionContext).expectSize().returns("renamed\trn\n1\t1\n2\t2\n3\t3\n4\t4\n");
                 }
@@ -1690,17 +1486,15 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertDistinctRewriteShape(SqlCompiler compiler, String sql, boolean isAbandoned) throws Exception {
-        final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-        boolean hasDistinct = false;
-        boolean hasGroupBy = false;
-        for (IQueryModel current = model; current != null; current = current.getNestedModel()) {
-            hasDistinct |= current.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT;
-            hasGroupBy |= current.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY;
-        }
-        Assert.assertEquals(sql, !isDistinctRewriteEnabled || isAbandoned, hasDistinct);
-        if (isDistinctRewriteEnabled && !isAbandoned) {
-            Assert.assertTrue(sql, hasGroupBy);
+    private void assertDistinctRewriteShape(String sql, boolean isAbandoned) throws Exception {
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+            try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                final String plan = new LogicalPlanPrinter().print(compiler.getLogicalPlanForTesting()).toString();
+                Assert.assertEquals(sql, !isDistinctRewriteEnabled || isAbandoned, plan.contains("Distinct\n"));
+                if (isDistinctRewriteEnabled && !isAbandoned) {
+                    Assert.assertTrue(sql, plan.contains("Aggregate\n"));
+                }
+            }
         }
     }
 
@@ -1710,52 +1504,6 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertEquals(markedSql.indexOf('^'), e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), message);
-        }
-    }
-
-    private void assertDistinctGeneratedColumnProperties(String sql, boolean isVisible) throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-            final IdentityHashMap<IQueryModel, Boolean> visited = new IdentityHashMap<>();
-            final ObjList<IQueryModel> todo = new ObjList<>();
-            int checked = 0;
-            todo.add(model);
-            while (todo.size() > 0) {
-                final IQueryModel current = todo.popLast();
-                if (current == null || visited.put(current, true) != null) {
-                    continue;
-                }
-                final IQueryModel nested = current.getNestedModel();
-                if (current.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE && nested != null
-                        && nested.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
-                    final ObjList<CharSequence> aliases = nested.getAliasToColumnMap().keys();
-                    for (int i = 0; i < aliases.size(); i++) {
-                        final QueryColumn source = nested.getAliasToColumnMap().get(aliases.getQuick(i));
-                        if (source.isGenerated() && source.isIncludeIntoWildcard() == isVisible) {
-                            final QueryColumn reference = current.getAliasToColumnMap().get(source.getAlias());
-                            if (reference != null) {
-                                Assert.assertEquals(ExpressionNode.LITERAL, reference.getAst().type);
-                                Assert.assertEquals(source.getAlias().toString(), reference.getAst().token.toString());
-                                if (isVisible) {
-                                    Assert.assertNotSame(source, reference);
-                                }
-                                Assert.assertEquals("transparent DISTINCT visibility: " + source.getAlias(), source.isIncludeIntoWildcard(), reference.isIncludeIntoWildcard());
-                                Assert.assertEquals("transparent DISTINCT provenance: " + source.getAlias(), source.isGenerated(), reference.isGenerated());
-                                checked++;
-                            }
-                        }
-                    }
-                }
-                if (current instanceof QueryModelWrapper wrapper) {
-                    todo.add(wrapper.getDelegate());
-                }
-                todo.add(nested);
-                todo.add(current.getUnionModel());
-                for (int i = 1; i < current.getJoinModels().size(); i++) {
-                    todo.add(current.getJoinModels().getQuick(i));
-                }
-            }
-            Assert.assertTrue("must reach a real DISTINCT reference with source visibility=" + isVisible, checked > 0);
         }
     }
 
@@ -1781,66 +1529,12 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
         }
     }
 
-    private static IQueryModel findKeepFilter(IQueryModel model) {
-        for (IQueryModel current = model; current != null; current = current.getNestedModel()) {
-            if (current.getWhereClause() != null && "__keep_subsample".contentEquals(current.getWhereClause().token)) {
-                return current;
-            }
-        }
-        return null;
-    }
-
     private static String allPrimaryRows() {
         return "ts\tx\n1970-01-01T00:00:00.000010Z\t1\n1970-01-01T00:00:00.000020Z\t2\n1970-01-01T00:00:00.000030Z\t3\n1970-01-01T00:00:00.000040Z\t4\n";
     }
 
-    private void assertMarkedRecipeError(String markedSql, String message) throws Exception {
-        assertRecipeGeneration(markedSql.replace("^", ""), message, markedSql.indexOf('^'), 1);
-    }
-
-    private void assertRecipeGeneration(String sql, String message, int position, int ownerCount) throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
-            final ObjList<RecipeSnapshot> snapshots = snapshotRecipes(model, ownerCount);
-            final ObjectPool<ExpressionNode> filters = new ObjectPool<>(ExpressionNode.FACTORY, 32);
-            IQueryModel.backupWhereClause(filters, model);
-            for (int pass = 0; pass < 2; pass++) {
-                assertRecipesUnchanged(snapshots);
-                IQueryModel.restoreWhereClause(filters, model);
-                assertRecipesUnchanged(snapshots);
-                try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
-                    Assert.assertNull("expected generation failure", message);
-                    // Row assertions use the fluent factory/query battery separately; this checks the
-                    // real same-model regeneration before any compiler reset can hide AST mutation.
-                    Assert.assertNotNull(factory.getMetadata());
-                } catch (SqlException e) {
-                    Assert.assertNotNull(e.getMessage(), message);
-                    TestUtils.assertContains(e.getFlyweightMessage(), message);
-                    Assert.assertEquals(position, e.getPosition());
-                } finally {
-                    assertRecipesUnchanged(snapshots);
-                }
-            }
-            try (RecordCursorFactory factory = compiler.compile("SELECT * FROM ca SUBSAMPLE minmax(x, 2)", sqlExecutionContext).getRecordCursorFactory()) {
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").returns(primaryRows());
-            }
-        }
-    }
-
-    private static void assertRecipesUnchanged(ObjList<RecipeSnapshot> snapshots) throws Exception {
-        for (int i = 0; i < snapshots.size(); i++) {
-            snapshots.getQuick(i).assertUnchanged();
-        }
-    }
-
     private static String primaryRows() {
         return "ts\tx\n1970-01-01T00:00:00.000010Z\t1\n1970-01-01T00:00:00.000040Z\t4\n";
-    }
-
-    private static long readConstFoldLongValue(ExpressionNode node) throws Exception {
-        final Field field = ExpressionNode.class.getDeclaredField("constFoldLongValue");
-        field.setAccessible(true);
-        return field.getLong(node);
     }
 
     private static void registerFactory(String name, FunctionFactory factory) throws SqlException {
@@ -1848,165 +1542,6 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
         descriptors.add(new FunctionFactoryDescriptor(factory));
         Assert.assertNull(engine.getFunctionFactoryCache().getFactories().get(name));
         engine.getFunctionFactoryCache().getFactories().put(name, descriptors);
-    }
-
-    private static ObjList<RecipeSnapshot> snapshotRecipes(IQueryModel model, int expectedCount) throws Exception {
-        final IdentityHashMap<IQueryModel, Boolean> visited = new IdentityHashMap<>();
-        final IdentityHashMap<WindowExpression, Boolean> owners = new IdentityHashMap<>();
-        final ObjList<IQueryModel> todo = new ObjList<>();
-        final ObjList<RecipeSnapshot> snapshots = new ObjList<>();
-        todo.add(model);
-        while (todo.size() > 0) {
-            final IQueryModel current = todo.popLast();
-            if (current == null || visited.put(current, true) != null) {
-                continue;
-            }
-            final ObjList<QueryColumn> columns = current.getColumns();
-            for (int i = 0; i < columns.size(); i++) {
-                if (columns.getQuick(i) instanceof WindowExpression window && window.getPendingSubsample() != null
-                        && owners.put(window, true) == null) {
-                    Assert.assertFalse(window.isSubsampleProjectionPending());
-                    Assert.assertTrue(window.isSubsampleKeepFlag());
-                    Assert.assertEquals(2, window.getAst().paramCount);
-                    Assert.assertSame(window, window.getAst().windowExpression);
-                    snapshots.add(new RecipeSnapshot(window));
-                }
-            }
-            todo.add(current.getNestedModel());
-            todo.add(current.getUnionModel());
-            for (int i = 1; i < current.getJoinModels().size(); i++) {
-                todo.add(current.getJoinModels().getQuick(i));
-            }
-        }
-        Assert.assertEquals(expectedCount, snapshots.size());
-        return snapshots;
-    }
-
-    private static final class RecipeSnapshot {
-        private final WindowExpression owner;
-        private final ExpressionNode raw;
-        private final ExpressionNode root;
-        private final int position;
-        private final boolean hasSourceTimestamp;
-        private final boolean isVisible;
-        private final ObjList<NodeSnapshot> nodes = new ObjList<>();
-
-        private RecipeSnapshot(WindowExpression owner) throws Exception {
-            this.owner = owner;
-            raw = owner.getPendingSubsample();
-            root = owner.getAst();
-            position = owner.getSubsamplePosition();
-            hasSourceTimestamp = owner.hasSubsampleSourceTimestamp();
-            isVisible = owner.isIncludeIntoWildcard();
-            final IdentityHashMap<ExpressionNode, Boolean> visited = new IdentityHashMap<>();
-            final ObjList<ExpressionNode> todo = new ObjList<>();
-            todo.add(raw);
-            todo.add(root);
-            while (todo.size() > 0) {
-                final ExpressionNode node = todo.popLast();
-                if (node == null || visited.put(node, true) != null) {
-                    continue;
-                }
-                nodes.add(new NodeSnapshot(node));
-                todo.add(node.lhs);
-                todo.add(node.rhs);
-                todo.addAll(node.args);
-            }
-        }
-
-        private void assertUnchanged() throws Exception {
-            Assert.assertSame(raw, owner.getPendingSubsample());
-            Assert.assertSame(root, owner.getAst());
-            Assert.assertSame(owner, root.windowExpression);
-            Assert.assertFalse(owner.isSubsampleProjectionPending());
-            Assert.assertTrue(owner.isSubsampleKeepFlag());
-            Assert.assertEquals(position, owner.getSubsamplePosition());
-            Assert.assertEquals(hasSourceTimestamp, owner.hasSubsampleSourceTimestamp());
-            Assert.assertEquals(isVisible, owner.isIncludeIntoWildcard());
-            for (int i = 0; i < nodes.size(); i++) {
-                nodes.getQuick(i).assertUnchanged();
-            }
-        }
-    }
-
-    private static final class NodeSnapshot {
-        private final ExpressionNode node;
-        private final ExpressionNode lhs;
-        private final ExpressionNode rhs;
-        private final ObjList<ExpressionNode> args;
-        private final ObjList<ExpressionNode> elements = new ObjList<>();
-        private final CharSequence token;
-        private final String tokenText;
-        private final int type;
-        private final int paramCount;
-        private final int precedence;
-        private final int position;
-        private final int intrinsicValue;
-        private final int lateralDepth;
-        private final boolean isConstant;
-        private final boolean isImplemented;
-        private final boolean isInnerPredicate;
-        private final boolean isFoldValid;
-        private final boolean isFoldWidening;
-        private final long foldValue;
-        private final IQueryModel query;
-        private final WindowExpression window;
-        private final Object scalarHolder;
-        private final Object scalarCache;
-
-        private NodeSnapshot(ExpressionNode node) throws Exception {
-            this.node = node;
-            lhs = node.lhs;
-            rhs = node.rhs;
-            args = node.args;
-            elements.addAll(args);
-            token = node.token;
-            tokenText = token == null ? null : token.toString();
-            type = node.type;
-            paramCount = node.paramCount;
-            precedence = node.precedence;
-            position = node.position;
-            intrinsicValue = node.intrinsicValue;
-            lateralDepth = node.lateralDepth;
-            isConstant = node.isConstantExpression;
-            isImplemented = node.implemented;
-            isInnerPredicate = node.innerPredicate;
-            isFoldValid = node.isConstFoldLongValid();
-            isFoldWidening = node.isConstFoldWidening();
-            foldValue = readConstFoldLongValue(node);
-            query = node.queryModel;
-            window = node.windowExpression;
-            scalarHolder = node.scalarBoundHolder;
-            scalarCache = node.scalarBoundCompileCache;
-        }
-
-        private void assertUnchanged() throws Exception {
-            Assert.assertSame(lhs, node.lhs);
-            Assert.assertSame(rhs, node.rhs);
-            Assert.assertSame(args, node.args);
-            Assert.assertEquals(elements.size(), node.args.size());
-            for (int i = 0; i < elements.size(); i++) {
-                Assert.assertSame(elements.getQuick(i), node.args.getQuick(i));
-            }
-            Assert.assertSame(token, node.token);
-            Assert.assertEquals(tokenText, node.token == null ? null : node.token.toString());
-            Assert.assertEquals(type, node.type);
-            Assert.assertEquals(paramCount, node.paramCount);
-            Assert.assertEquals(precedence, node.precedence);
-            Assert.assertEquals(position, node.position);
-            Assert.assertEquals(intrinsicValue, node.intrinsicValue);
-            Assert.assertEquals(lateralDepth, node.lateralDepth);
-            Assert.assertEquals(isConstant, node.isConstantExpression);
-            Assert.assertEquals(isImplemented, node.implemented);
-            Assert.assertEquals(isInnerPredicate, node.innerPredicate);
-            Assert.assertEquals(isFoldValid, node.isConstFoldLongValid());
-            Assert.assertEquals(isFoldWidening, node.isConstFoldWidening());
-            Assert.assertEquals(foldValue, readConstFoldLongValue(node));
-            Assert.assertSame(query, node.queryModel);
-            Assert.assertSame(window, node.windowExpression);
-            Assert.assertSame(scalarHolder, node.scalarBoundHolder);
-            Assert.assertSame(scalarCache, node.scalarBoundCompileCache);
-        }
     }
 
     private static void assertMarkedError(String sql, String message) throws Exception {

@@ -41,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    private Function filter;
 
     public LatestByAllSymbolsFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -70,6 +71,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
                     partitionByColumnIndexes,
                     partitionBySymbolCounts
             );
+            this.filter = filter;
         } catch (Throwable th) {
             close();
             throw th;
@@ -93,6 +95,8 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     protected void _close() {
         final PageFrameRecordCursor cursor = this.cursor;
         this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
         Throwable failure = null;
         try {
             super._close();
@@ -100,6 +104,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
             failure = th;
         }
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
     }
 }

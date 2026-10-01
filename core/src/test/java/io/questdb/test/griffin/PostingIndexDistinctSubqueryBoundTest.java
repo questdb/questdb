@@ -29,11 +29,11 @@ import org.junit.Test;
 
 /**
  * Regression coverage for the posting-index DISTINCT fast path in
- * {@code SqlCodeGenerator.generateSelectGroupBy()} when the base table's WHERE clause
+ * {@code AggregateFactoryGenerator.tryPostingIndex()} when the base table's WHERE clause
  * carries a scalar-subquery designated-timestamp bound (a plain {@code ts >= (SELECT ...)}
  * or a nested {@code LATEST ON ...} subquery).
  *
- * <p>That branch re-enters {@code WhereClauseParser.extract()} on the base table's WHERE clause
+ * <p>That branch runs {@code IntervalExtractor.extract()} on the base table's WHERE clause
  * to decide whether the predicate reduces to interval-only intrinsics. When the scalar-subquery
  * timestamp bound resolves to a pure runtime interval (no residual filter, no key predicate), the
  * generator dispatches to {@code PostingIndexDistinctRecordCursorFactory} over an

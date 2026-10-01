@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.regex;
 
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -157,6 +158,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                         Pattern.compile(p, flags).matcher("")
                 );
             }
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return BooleanConstant.FALSE;
         }
 

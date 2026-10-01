@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntHashSet;
@@ -170,7 +169,6 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
             ObjList<Function> bindVarFunctions,
             ObjList<Function> perWorkerFilters
     ) {
-        final ExpressionNode filterExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "true", 0, 0);
         final PageFrameReduceTaskFactory reduceTaskFactory =
                 () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
         if (isJit) {
@@ -186,7 +184,6 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
                     new IntHashSet(),
                     reduceTaskFactory,
                     perWorkerFilters,
-                    filterExpr,
                     null,
                     0,
                     1,
@@ -207,7 +204,6 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
                 new IntHashSet(),
                 reduceTaskFactory,
                 perWorkerFilters,
-                filterExpr,
                 null,
                 0,
                 1,

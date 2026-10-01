@@ -46,7 +46,7 @@ import io.questdb.std.Numbers;
  * acquire-load (an {@code ldar} on ARM64, non-hoistable by the JIT) once per filtered row when the
  * value is frozen for the whole execution.
  *
- * @see io.questdb.griffin.WhereClauseParser
+ * @see io.questdb.griffin.IntervalExtractor
  * @see io.questdb.griffin.FunctionParser
  */
 public final class ScalarSubQueryBoundRefFunction extends TimestampFunction {
@@ -93,7 +93,7 @@ public final class ScalarSubQueryBoundRefFunction extends TimestampFunction {
     // ADD INDEX on the sub-query's table flips the hint under a live view, failing its refresh
     // recompile and invalidating it cluster-wide. Genuinely non-deterministic bounds never reach
     // this reader: they are rejected while the sub-query body is generated (FunctionParser guard)
-    // and they fail isStableWithinExecution(), so no holder is installed (WhereClauseParser). See
+    // and they fail isStableWithinExecution(), so no holder is installed (IntervalExtractor). See
     // CursorFunction for the same polarity note on the direct path.
 
     @Override

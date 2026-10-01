@@ -106,8 +106,8 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
         // expressible. It is not: Long.MIN_VALUE doubles as the timestamp NULL sentinel, so the
         // exact MIN epoch literal is rejected at parse time and every functional route hits the
         // NULL check before the adjustment. These are reachability sentinels: if literal
-        // parsing ever starts accepting the MIN epoch value, analyzeTimestampLess needs the
-        // same wrap guard as analyzeTimestampGreater, and this test will flag it.
+        // parsing ever starts accepting the MIN epoch value, IntervalExtractor needs the
+        // same wrap guard as IntervalExtractor, and this test will flag it.
         assertMemoryLeak(() -> {
             execute("create table x as (" +
                     "select timestamp_sequence(0, 2500000) ts from long_sequence(2)" +

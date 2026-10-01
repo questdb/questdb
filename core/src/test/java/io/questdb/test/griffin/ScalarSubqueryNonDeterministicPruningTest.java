@@ -34,7 +34,7 @@ import org.junit.Test;
  * (its projection evaluates {@code rnd_*} / {@code systimestamp()}), the two independent cursor opens
  * can yield different bounds and the pruning inverter can drop rows the residual filter would keep.
  *
- * <p>{@link io.questdb.griffin.WhereClauseParser#analyzeMonotonicTimestamp} therefore skips interval
+ * <p>{@code IntervalExtractor#intersectMonotonicRange} therefore skips interval
  * pruning (residual-only) for a non-deterministic {@code ScalarSubQueryTimestampFunction} bound while
  * still pruning for deterministic sub-query bounds and for runtime-constant bounds (bind variables,
  * {@code now()}). Detection uses {@code RecordCursorFactory.isStableWithinExecution()}.

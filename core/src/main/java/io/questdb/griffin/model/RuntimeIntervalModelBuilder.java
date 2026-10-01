@@ -37,7 +37,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -134,7 +133,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
-     * Rolls back an unfinished BETWEEN extraction. WhereClauseParser calls this after every
+     * Rolls back an unfinished BETWEEN extraction. IntervalExtractor calls this after every
      * BETWEEN analysis; when the second endpoint failed to become an intrinsic, the first dynamic
      * endpoint is still pending in betweenBoundaryFunc, and this method owns closing it. An
      * endpoint already adopted into dynamicRangeList stays open - the list (or the model built
@@ -305,46 +304,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         } catch (Throwable th) {
             CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
         }
-    }
-
-    public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        if (isEmptySet()) {
-            return;
-        }
-
-        final int intersectDividerIndex = staticIntervals.size();
-        long timestamp;
-        try {
-            timestamp = timestampDriver.parseFloor(seq, lo, lim);
-        } catch (NumericException e) {
-            try {
-                timestamp = Numbers.parseLong(seq);
-            } catch (NumericException e2) {
-                for (int i = lo; i < lim; i++) {
-                    if (seq.charAt(i) == ';') {
-                        throw SqlException.$(position, "not a timestamp, use IN keyword with intervals");
-                    }
-                }
-                throw SqlException.$(position, "invalid timestamp");
-            }
-        }
-        if (dynamicRangeList.size() == 0) {
-            staticIntervals.checkCapacity(staticIntervals.size() + IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL);
-        } else {
-            reserveEncodedIntervals(1, 0);
-        }
-        IntervalUtils.encodeInterval(timestamp, timestamp, IntervalOperation.INTERSECT, staticIntervals);
-
-        if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
-            if (intervalApplied) {
-                IntervalUtils.intersectInPlace(staticIntervals, intersectDividerIndex);
-            }
-        } else {
-            // else - nothing to do, interval already encoded in staticIntervals as 4 longs
-            addDynamicFunction(null, 0, false);
-        }
-        intervalApplied = true;
     }
 
     /**
@@ -1031,8 +990,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * The source predicate may extract multiple disjoint intervals (e.g. {@code tt != <lit>} -> two
      * ranges). The offset shift must map to the UNION of the shifted ranges, then intersect that union
      * with this builder's own intervals once - not the per-interval intersection, which collapses to
-     * empty for 2+ disjoint ranges. The caller consumes the and_offset predicate (sets
-     * {@code node.intrinsicValue = TRUE}) only when this method reports success, so a case that cannot
+     * empty for 2+ disjoint ranges. The caller consumes the and_offset predicate only when this
+     * method reports success, so a case that cannot
      * be represented here - a runtime/dynamic source bound, or a boundary whose shift wraps out of
      * the timestamp range - returns {@code false} and stays a residual filter rather than a wrong
      * (empty or unconstrained) interval scan.
@@ -1050,7 +1009,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * @return true if the offset predicate was fully represented (the caller may consume it); false if
      * it must be left as a residual filter
      */
-    boolean mergeWithAddMethod(
+    public boolean mergeWithAddMethod(
             RuntimeIntervalModelBuilder other,
             TimestampDriver.TimestampAddMethod addMethod,
             int offset,
@@ -1060,16 +1019,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
             // A source predicate the analysis consumed without applying an interval constrains nothing,
             // so the caller may consume the and_offset predicate too. The one shape that reaches here is
-            // a tautology (self-comparison in analyzeEquals0), which every row satisfies. A source
+            // a tautology (a timestamp self-comparison), which every row satisfies. A source
             // contradiction also applies no interval, but it must NOT be consumed unconstrained - it is
-            // intercepted a level up, in IntrinsicModel.mergeIntervalModelWithAddMethod, which can see
-            // the FALSE intrinsicValue this builder cannot.
+            // intercepted a level up, in IntervalExtractor, which can see the contradiction this
+            // builder cannot.
             //
             // Nothing merges into this builder, and the caller only clears other on the residual path,
             // so free whatever other still owns rather than leaving it until the pool slot is reused.
-            // A hand-written and_offset bypasses SqlOptimiser's isStaticTimestampPredicate() gate
-            // entirely - intrinsicOps dispatches on the token alone - so a dynamic bound does reach
-            // here. See testHandWrittenAndOffsetEmptyModelFreesBound, which leaks 1 KiB without this.
+            // A hand-written and_offset reaches here with a dynamic bound. See
+            // testHandWrittenAndOffsetEmptyModelFreesBound, which leaks 1 KiB without this.
             if (other != null) {
                 other.freeAndClear();
             }
@@ -1094,11 +1052,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // predicate as a residual filter instead of consuming it and returning unconstrained
             // results.
             //
-            // SqlOptimiser's isStaticTimestampPredicate() gate keeps every OPTIMISER-built wrapper
-            // purely static, but it is not the only door: and_offset is registered in intrinsicOps by
-            // token, so a hand-written one reaches analyzeAndOffset ungated and can carry a bind
-            // variable, a runtime-constant function or a '$'-prefixed date-variable string (which
-            // compiles through intersectCompiledTickExpr into dynamicRangeList). Dropping this guard
+            // A hand-written and_offset can carry a bind variable, a runtime-constant function or a
+            // '$'-prefixed date-variable string (which compiles through intersectCompiledTickExpr
+            // into dynamicRangeList). Dropping this guard
             // returns every row instead of the matching ones - see
             // testHandWrittenAndOffsetDynamicBoundStaysResidual.
             return false;

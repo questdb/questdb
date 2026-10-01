@@ -92,13 +92,13 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
     @Test
     public void testWrapCoveringWithFilterLeakOnPartialWorkerFilterCompile() throws Exception {
         // A SELECT over a covering index with a residual filter routes through
-        // wrapCoveringWithFilter, which builds an AsyncFilteredRecordCursorFactory
+        // FilterFactoryGenerator.generateCovering, which builds an AsyncFilteredRecordCursorFactory
         // over the covering factory and compiles per-worker filter copies. The test
         // filter throws on the Nth construction so that, after the covering factory
         // and the original residual filter are already built, a per-worker compile
         // fails inside the wrapper.
         //
-        // Call 1 builds the residual filter handed to wrapCoveringWithFilter.
+        // Call 1 builds the residual filter handed to FilterFactoryGenerator.generateCovering.
         // Calls 2..N build per-worker copies. throwOnCall=3 lets call 2 succeed (one
         // worker filter held in the local list) and call 3 throw. The wrapper must
         // free the residual filter, the covering factory (which owns its index frame

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -41,6 +42,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -61,6 +63,7 @@ public class InStrFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final int n = args.size();
         if (n == 1) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return BooleanConstant.FALSE;
         }
 

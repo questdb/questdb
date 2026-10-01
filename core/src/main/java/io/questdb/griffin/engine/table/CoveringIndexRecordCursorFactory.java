@@ -180,12 +180,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
-        // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
-        // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
+        // Defensive copy. The caller passes a POOLED ObjList owned by the compiler.
         // SqlCompilers are pooled and shared across threads/connections, so when another
-        // thread borrows the same compiler and recompiles, models.next() -> IntrinsicModel.clear()
-        // -> keyValueFuncs.clear() nulls the backing array (Arrays.fill BEFORE pos=0). A concurrent
-        // getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
+        // thread borrows the same compiler and recompiles, clearing that list nulls the backing
+        // array (Arrays.fill BEFORE pos=0). A concurrent getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
         // slot in Function.init(...), producing the intermittent NPE in issue #7294. We keep our own
         // list of the same Function instances -- which this factory owns and frees in close() (the
         // pooled model only clears references, never frees) -- to decouple from the model's lifecycle.

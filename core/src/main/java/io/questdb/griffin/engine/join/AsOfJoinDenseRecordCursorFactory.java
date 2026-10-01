@@ -40,8 +40,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -62,7 +62,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             RecordSink slaveKeyCopier,
             int columnSplit,
             @Transient ColumnTypes keyTypes,
-            JoinContext joinContext,
+            Plannable joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
@@ -70,12 +70,12 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
         this.masterKeyCopier = masterKeyCopier;
         this.slaveKeyCopier = slaveKeyCopier;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
-                : null;
         Map fwdScanKeyToRowId = null;
         Map bwdScanKeyToRowId = null;
         try {
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                    ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                    : null;
             long maxSinkTargetHeapSize = (long)
                     configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
             fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE, false, false);
@@ -95,9 +95,9 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                             SingleRecordSink.CONFIG_KEYS_ASOF_JOIN)
             );
         } catch (Throwable th) {
-            Misc.free(bwdScanKeyToRowId);
-            Misc.free(fwdScanKeyToRowId);
-            close();
+            Misc.free(bwdScanKeyToRowId, th);
+            Misc.free(fwdScanKeyToRowId, th);
+            Misc.free(this, th);
             throw th;
         }
     }

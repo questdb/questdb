@@ -38,12 +38,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -110,12 +112,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
                     )
             );
 
-            // determine common return type
             returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
         }
 
-        // another loop to create cast functions and replace current value function
-        // start with 2 to avoid offsetting each function position
         for (int i = 2; i < n; i += 2) {
             args.setQuick(
                     i,
@@ -129,7 +128,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
             );
         }
 
-        // don't forget to cast the else branch function
         if (elseBranch != null) {
             elseBranch = CaseCommon.getCastFunction(
                     elseBranch,
@@ -234,11 +232,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final CharSequenceObjHashMap<Function> map = new CharSequenceObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
         Function nullFunc = null;
+        int nullValueIndex = -1;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final CharSequence key = SwitchFunctionFactory.getString(fun, null);
             if (key == null) {
-                nullFunc = args.getQuick(i + 1);
+                if (nullValueIndex >= 0) {
+                    args.setQuick(nullValueIndex, null);
+                    Misc.free(nullFunc);
+                }
+                nullValueIndex = i + 1;
+                nullFunc = args.getQuick(nullValueIndex);
             } else {
                 final int index = map.keyIndex(key);
                 if (index < 0) {
@@ -371,7 +375,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final CaseFunctionPicker picker;
         final ObjList<Function> argsToPoke;
         if (n == 3) {
-            // only one conditional branch
             boolean value = args.getQuick(1).getBool(null);
             final Function branch = args.getQuick(2);
 
@@ -408,6 +411,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
             argsToPoke.add(keyFunction);
             argsToPoke.add(branchA);
             argsToPoke.add(branchB);
+            if (elseBranch != null) {
+                args.setQuick(args.size() - 1, null);
+                Misc.free(elseBranch);
+            }
         } else {
             throw SqlException.$(argPositions.getQuick(5), "too many branches");
         }
@@ -503,11 +510,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final ObjList<Function> keyBranches = new ObjList<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
         Function nullFunc = null;
+        int nullValueIndex = -1;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final CharSequence key = getString(fun, null);
             if (key == null) {
-                nullFunc = args.getQuick(i + 1);
+                if (nullValueIndex >= 0) {
+                    args.setQuick(nullValueIndex, null);
+                    Misc.free(nullFunc);
+                }
+                nullValueIndex = i + 1;
+                nullFunc = args.getQuick(nullValueIndex);
             } else {
                 for (int j = 0, m = strKeys.size(); j < m; j++) {
                     if (Chars.equals(strKeys.getQuick(j), key)) {
@@ -523,9 +536,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final Function elseB = getElseFunction(valueType, elseBranch);
         final int branchCount = strKeys.size();
 
-        // When there's a single WHEN branch, no NULL branch, INT return type, and
-        // both THEN/ELSE are constants, compile into a direct int comparison.
-        // Example: CASE sym WHEN 'buy' THEN 1 ELSE -1 END
         if (branchCount == 1
                 && nullFunc == null
                 && ColumnType.tagOf(valueType) == ColumnType.INT
@@ -662,16 +672,8 @@ public class SwitchFunctionFactory implements FunctionFactory {
      * a valid resolved key (>= 0) or VALUE_NOT_FOUND (-2), so NULL naturally maps
      * to the else value without an explicit check.
      */
-    private static class SymbolSwitchConstIntFunction extends IntFunction {
-        // The wide getters serve the same two constants, so widen them once here rather than
-        // per row. A no-ELSE branch yields elseValue == INT_NULL, and Numbers.intToLong /
-        // intToDouble / intToFloat map that onto the matching wide NULL exactly as the base
-        // IntFunction getters do; a raw ternary over the int constants would instead widen
-        // INT_NULL to -2147483648 / -2.147e9 and corrupt a wide-type CAST reading these getters.
-        // getTimestamp() keeps the base IntFunction implementation, which spells it
-        // Numbers.intToLong(getInt()) and so already returns what longThenValue / longElseValue
-        // hold; getDate() and getLong() override it only to read the pre-widened constant instead
-        // of calling Numbers.intToLong per row.
+    private static class SymbolSwitchConstIntFunction extends IntFunction implements UnaryFunction {
+        // Raw int widening would turn INT_NULL into a value instead of a wider NULL.
         private final double doubleElseValue;
         private final double doubleThenValue;
         private final int elseValue;
@@ -703,6 +705,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return keyFunction;
+        }
+
+        @Override
         public long getDate(Record rec) {
             return keyFunction.getInt(rec) == resolvedKey ? longThenValue : longElseValue;
         }
@@ -728,21 +735,16 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isEquivalentTo(Function other) {
+            return this == other;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             keyFunction.init(symbolTableSource, executionContext);
             final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
             assert symbolTable != null;
             resolvedKey = symbolTable.keyOf(strKey);
-        }
-
-        @Override
-        public boolean supportsParallelism() {
-            return keyFunction.supportsParallelism();
-        }
-
-        @Override
-        public boolean supportsRandomAccess() {
-            return keyFunction.supportsRandomAccess();
         }
 
         @Override

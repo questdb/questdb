@@ -213,8 +213,8 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
         // SqlParser.rewriteConcat folds a nested concat() into the parent '||' node's argument
         // list. A concat() call with fewer than three arguments carries them in rhs/lhs rather
         // than in args, and the single-argument form leaves lhs null. Folding that null into the
-        // parent's args used to survive parsing and only blow up much later, as a bare NPE out of
-        // SqlOptimiser.emitLiterals.
+        // parent's args used to survive parsing and only blow up much later, as a bare NPE during
+        // optimisation.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a VARCHAR)");
             execute("INSERT INTO t VALUES ('x')");

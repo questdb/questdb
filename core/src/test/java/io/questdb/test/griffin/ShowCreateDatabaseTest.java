@@ -42,8 +42,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -246,22 +244,6 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             Assert.assertTrue(dump, dump.contains("CREATE MATERIALIZED VIEW 'm_mv'"));
             Assert.assertTrue(dump, dump.contains("CREATE TABLE 'a_base'"));
         });
-    }
-
-    @Test
-    public void testQueryModelWrapperShowCreateDatabaseInclude() {
-        // the wrapper getter delegates; the setter is unsupported (a SHOW CREATE DATABASE model is never wrapped)
-        final QueryModel delegate = QueryModel.FACTORY.newInstance();
-        delegate.setShowCreateDatabaseInclude(ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA);
-        final QueryModelWrapper wrapper = new QueryModelWrapper();
-        wrapper.setDelegate(delegate);
-        Assert.assertEquals(ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA, wrapper.getShowCreateDatabaseInclude());
-        try {
-            wrapper.setShowCreateDatabaseInclude(ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL);
-            Assert.fail("expected UnsupportedOperationException");
-        } catch (UnsupportedOperationException expected) {
-            // the wrapper forbids mutating the shared delegate
-        }
     }
 
     @Test

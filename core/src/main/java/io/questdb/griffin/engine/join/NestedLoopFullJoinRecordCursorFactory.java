@@ -71,8 +71,8 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY, false, false);
             this.cursor = new NestedLoopFullRecordCursor(columnSplit, filter, matchIdsMap, masterNullRecord, slaveNullRecord);
         } catch (Throwable e) {
-            Misc.free(matchIdsMap);
-            close();
+            Misc.free(matchIdsMap, e);
+            Misc.free(this, e);
             throw e;
         }
     }

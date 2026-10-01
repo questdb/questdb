@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -60,6 +61,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
                     return new FuncNegConst(arg, -scaleValue);
                 }
             }
+            Misc.free(arg);
             return DoubleConstant.NULL;
         }
         return new Func(arg, args.getQuick(1));

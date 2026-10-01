@@ -41,12 +41,16 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
     private final Utf8String value;
 
     public VarcharConstant(Utf8Sequence value) {
+        this(value, true);
+    }
+
+    private VarcharConstant(Utf8Sequence value, boolean isSqlLiteral) {
         if (value == null) {
             this.value = null;
             this.utf16Value = null;
             this.length = TableUtils.NULL_LEN;
         } else {
-            if (Utf8s.startsWithAscii(value, "'")) {
+            if (isSqlLiteral && Utf8s.startsWithAscii(value, "'")) {
                 this.utf16Value = Utf8s.toString(value, 1, value.size() - 1, value.byteAt(0));
                 this.value = new Utf8String(utf16Value);
             } else {
@@ -76,6 +80,11 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
 
     public static VarcharConstant newInstance(CharSequence value) {
         return value != null ? new VarcharConstant(value) : NULL;
+    }
+
+    /** Creates a constant from decoded bytes without SQL unquoting. */
+    public static VarcharConstant fromValue(Utf8Sequence value) {
+        return value != null ? new VarcharConstant(value, false) : NULL;
     }
 
     public static VarcharConstant newInstance(Utf8Sequence value) {

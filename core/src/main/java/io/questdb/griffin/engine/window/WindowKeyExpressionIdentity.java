@@ -24,12 +24,21 @@
 
 package io.questdb.griffin.engine.window;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.Chars;
+import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -114,6 +123,12 @@ public final class WindowKeyExpressionIdentity {
             return false;
         }
         return renderNode(term, metadata, sink, 0);
+    }
+
+    /** Renders the bound description against the final input layout, without parser state. */
+    public static boolean render(BoundExpression term, Function compiled, OutputSchema input, CharSink<?> sink) {
+        return compiled != null && !compiled.isNonDeterministic() && !compiled.isRandom()
+                && renderNode(term, input, sink, 0);
     }
 
     /**
@@ -223,4 +238,70 @@ public final class WindowKeyExpressionIdentity {
             default -> false;
         };
     }
+    private static boolean renderNode(BoundExpression node, OutputSchema input, CharSink<?> sink, int depth) {
+        if (depth > MAX_DEPTH) {
+            return false;
+        }
+        if (node instanceof ColumnExpression column) {
+            final int index = input.getColumnIndexById(column.getColumnId());
+            if (index < 0) {
+                return false;
+            }
+            renderColumn(index, column.getDataType(), sink);
+            return true;
+        }
+        if (node instanceof ConstantExpression constant) {
+            sink.putAscii('=').put(constant.getDataType()).putAscii(':');
+            switch (ColumnType.tagOf(constant.getDataType())) {
+                case ColumnType.STRING, ColumnType.SYMBOL -> {
+                    final String value = constant.getStrValue();
+                    sink.put(value == null ? -1 : value.length()).putAscii(':').put(value);
+                }
+                case ColumnType.VARCHAR -> {
+                    final Utf8Sequence value = constant.getVarcharValue();
+                    sink.put(value == null ? -1 : value.size()).putAscii(':');
+                    if (value != null) {
+                        for (int i = 0; i < value.size(); i++) {
+                            sink.put(value.byteAt(i)).putAscii(',');
+                        }
+                    }
+                }
+                case ColumnType.UUID -> sink.put(constant.getLong128Lo()).putAscii(',').put(constant.getLong128Hi());
+                case ColumnType.LONG256 -> {
+                    final Long256 value = constant.getLong256Value();
+                    sink.put(value.getLong0()).putAscii(',').put(value.getLong1()).putAscii(',')
+                            .put(value.getLong2()).putAscii(',').put(value.getLong3());
+                }
+                case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> sink.put(constant.getDecimalHh()).putAscii(',')
+                        .put(constant.getDecimalHl()).putAscii(',').put(constant.getDecimalLh()).putAscii(',')
+                        .put(constant.getLongValue());
+                case ColumnType.INTERVAL -> sink.put(constant.getLongValue()).putAscii(',').put(constant.getIntervalHi());
+                default -> sink.put(constant.getLongValue());
+            }
+            return true;
+        }
+        if (node instanceof TypeExpression) {
+            sink.putAscii('T').put(node.getDataType());
+            return true;
+        }
+        if (node instanceof FunctionExpression call) {
+            final String name = call.getName();
+            final String signature = call.getSignature();
+            sink.putAscii('!').put(name.length()).putAscii(':').put(name)
+                    .putAscii('/').put(signature.length()).putAscii(':').put(signature)
+                    .putAscii('/').put(call.getArgumentCount()).putAscii('(');
+            for (int i = 0; i < call.getArgumentCount(); i++) {
+                if (i > 0) {
+                    sink.putAscii(',');
+                }
+                if (!renderNode(call.argumentAt(i), input, sink, depth + 1)) {
+                    return false;
+                }
+            }
+            sink.putAscii(')');
+            return true;
+        }
+        return false;
+    }
+
 }

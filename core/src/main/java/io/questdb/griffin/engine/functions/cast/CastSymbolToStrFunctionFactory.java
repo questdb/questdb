@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -44,7 +43,7 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
-            return new StrConstant(Chars.toString(func.getSymbol(null)));
+            return StrConstant.fromValue(func.getSymbol(null));
         }
         return new Func(args.getQuick(0));
     }

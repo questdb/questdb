@@ -42,7 +42,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -147,7 +146,7 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         private long count;          // running row counter during pass1; becomes totalRows
         private boolean keepAll;
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         private long target;         // resolved in init() from targetArg for the current execution
         // pass1 (count) and pass2 (pass2Ordinal/selIdx) are two separate traversals of the same
         // partition. CachedWindowRecordCursorFactory must replay the SAME WindowSortBuffer order
@@ -268,7 +267,8 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
                 RecordMetadata metadata,
                 ArrayColumnTypes chainTypes,
                 IntList orderIndices,
-                ObjList<ExpressionNode> orderBy,
+                IntList orderPositions,
+                ObjList<CharSequence> orderBy,
                 IntList orderByDirection
         ) throws SqlException {
             this.orderBy = orderBy;

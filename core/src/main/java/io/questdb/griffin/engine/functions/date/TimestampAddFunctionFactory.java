@@ -49,7 +49,7 @@ import io.questdb.std.datetime.CommonUtils;
  * Factory for the dateadd function: dateadd(char period, int stride, timestamp).
  *
  * <p><b>IMPORTANT - Optimizer Integration:</b></p>
- * <p>The SqlOptimiser intrinsically understands this function and pushes timestamp predicates
+ * <p>The planner intrinsically understands this function and pushes timestamp predicates
  * through it when the timestamp column is wrapped in dateadd. For example:</p>
  * <pre>
  *   SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts FROM t) WHERE ts > '2022-01-01'
@@ -60,14 +60,9 @@ import io.questdb.std.datetime.CommonUtils;
  * <p><b>If this function's signature changes, the optimizer must be updated accordingly.</b></p>
  * <p>Specifically, the following components depend on this function's signature:</p>
  * <ul>
- *   <li>{@code SqlOptimiser.detectTimestampOffset()} - extracts offset info from dateadd</li>
- *   <li>{@code SqlOptimiser.isDateaddTimestampExpression()} - pattern matching</li>
- *   <li>{@code QueryModel.timestampOffsetValue} - stores the stride as int</li>
- *   <li>{@code WhereClauseParser.analyzeAndOffset()} - applies offset during interval extraction</li>
+ *   <li>{@code FilterPushdownPass} - pushes predicates through projected dateadd offsets</li>
+ *   <li>{@code IntervalExtractor} - applies the offset during interval extraction</li>
  * </ul>
- *
- * @see io.questdb.griffin.SqlOptimiser
- * @see io.questdb.griffin.model.QueryModel
  */
 public class TimestampAddFunctionFactory implements FunctionFactory {
 

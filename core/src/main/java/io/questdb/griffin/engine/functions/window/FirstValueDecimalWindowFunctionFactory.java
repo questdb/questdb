@@ -234,6 +234,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal128FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
@@ -369,6 +370,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal128FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
@@ -506,6 +508,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal16FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
@@ -642,6 +645,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal16FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
@@ -780,6 +784,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal256FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
@@ -915,6 +920,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal256FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
@@ -1052,6 +1058,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal32FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
@@ -1188,6 +1195,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal32FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
@@ -1326,6 +1334,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal64FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
@@ -1462,6 +1471,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal64FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
@@ -1600,6 +1610,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal8FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
@@ -1736,6 +1747,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal8FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);

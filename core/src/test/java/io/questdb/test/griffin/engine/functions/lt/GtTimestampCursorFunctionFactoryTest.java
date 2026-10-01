@@ -414,7 +414,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyIntervalShortCircuitWithCursorBound() throws Exception {
-        // WhereClauseParser traverses AND predicates right-to-left: `ts = NULL::TIMESTAMP` empties
+        // IntervalExtractor traverses AND predicates right-to-left: `ts = NULL::TIMESTAMP` empties
         // the interval model before the scalar sub-query predicate on the left is parsed. The
         // builder must consume (close) the already-constructed cursor function on that no-op path
         // and the query must return an empty result.

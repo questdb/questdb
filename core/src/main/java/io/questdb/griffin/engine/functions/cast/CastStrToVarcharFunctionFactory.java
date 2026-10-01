@@ -52,7 +52,7 @@ public class CastStrToVarcharFunctionFactory implements FunctionFactory {
     ) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            return VarcharConstant.newInstance(arg.getStrA(null));
+            return VarcharConstant.fromValue(arg.getVarcharA(null));
         }
         return new Func(arg);
     }

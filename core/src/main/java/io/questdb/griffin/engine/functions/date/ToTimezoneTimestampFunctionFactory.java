@@ -69,7 +69,16 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
 
         if (timezoneFunc.isConstant()) {
-            return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
+            final Function function = toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
+            args.setQuick(0, null);
+            args.setQuick(1, null);
+            try {
+                Misc.free(timezoneFunc);
+                return function;
+            } catch (Throwable th) {
+                Misc.free(function, th);
+                throw th;
+            }
         } else if (timezoneFunc.isRuntimeConstant()) {
             return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, timestampType);
         } else {
@@ -99,7 +108,6 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
                             timestampType
                     );
                 } catch (NumericException e) {
-                    Misc.free(timestampFunc);
                     throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
                 }
             } else {

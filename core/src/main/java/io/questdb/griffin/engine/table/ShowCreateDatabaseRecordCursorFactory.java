@@ -52,7 +52,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Interval;
@@ -383,7 +383,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             // from that same model. The two walks below need different artifacts but share one
             // parse+optimise instead of paying for it twice.
             final ExecutionModel model = compiler.generateExecutionModel(definition.getMatViewSql(), executionContext);
-            final IQueryModel queryModel = model.getQueryModel();
+            final QueryModel queryModel = model.getQueryModel();
             if (queryModel != null) {
                 // a view referenced by the mat view is inlined during compilation, so the plan walk
                 // below only sees the view's physical base tables, never the view itself. Collect the

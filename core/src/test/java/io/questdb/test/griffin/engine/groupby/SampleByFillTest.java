@@ -54,21 +54,22 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
-                              stride: '1h'
-                              fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
+                                  stride: '1h'
+                                  fill: null
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: x
-                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                          values: [sum(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: x
+                                                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
                             """);
         });
     }
@@ -1507,7 +1508,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillRejectInvalidOffsetAtRuntime() throws Exception {
         // Bind-variable OFFSET with an unparseable runtime value on a
-        // keyed FILL(PREV) shape. The rewriteSampleBy path threads the
+        // keyed FILL(PREV) shape. The SampleByBinder.bindSampleBy path threads the
         // offset through timestamp_floor_utc as an AGB key function; the
         // function's init() validates the offset and surfaces SqlException
         // before SampleByFillCursor.of() gets to evaluate its own offset
@@ -1556,7 +1557,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testFillRejectInvalidTimezoneAtRuntime() throws Exception {
         // Bind-variable TIME ZONE with an unparseable runtime value on a
         // keyed FILL(PREV) 1d shape. As with testFillRejectInvalidOffsetAtRuntime,
-        // the rewriteSampleBy path threads the timezone through
+        // the SampleByBinder.bindSampleBy path threads the timezone through
         // timestamp_floor_utc as an AGB key function; that function's
         // init() validates the zone and throws before SampleByFillCursor.of()
         // gets to its own tz-resolution branch. Diversifies
@@ -1951,19 +1952,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: mixed
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: mixed
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(a),first(b),first(c)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [first(a),first(b),first(c)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """)
                     .returns("""
                             first\tfirst1\tfirst2\tts
@@ -2036,8 +2038,7 @@ public class SampleByFillTest extends AbstractCairoTest {
         // would have produced "fill value of type INT cannot fill column of
         // type DOUBLE[]". Both messages reject the same query; the flag-based
         // one is the active rejection point on the array_agg branch because
-        // rewriteSelectClause0 now re-exposes the rewritten FILL list onto
-        // groupByModel.sampleByFill for validation.
+        // SampleByBinder validates the FILL list against each aggregate.
         assertQuery("SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)")
                 .ddl("CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(52, "support for VALUE fill is not yet implemented [function=first(a), class=io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction]");
@@ -2096,7 +2097,7 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueWithSumMinusConstantOverFill() throws Exception {
-        // SqlOptimiser.rewriteAggregate would normally split sum(c - K) into sum(c) -
+        // AggregateRewritePass would normally split sum(c - K) into sum(c) -
         // count(*) * K when K is an integer constant. Under SAMPLE BY FILL the rewrite
         // is unsafe: the per-aggregate FILL value would land on both inner aggregates
         // and the outer arithmetic would yield v - v * K instead of the user-visible
@@ -2114,19 +2115,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c-1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_minus
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c-1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_minus
                             """)
                     .returns("""
                             s\tts
@@ -2151,19 +2153,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c+1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_plus
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c+1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_plus
                             """)
                     .returns("""
                             s\tts
@@ -2190,19 +2193,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c*1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_mul
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c*1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_mul
                             """)
                     .returns("""
                             s\tts
@@ -2322,8 +2326,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testRoutingFillLinearStaysOnInterpolatePath() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(LINEAR) needs forward-looking interpolation that the streaming
-            // fast path cannot provide; SqlOptimiser.hasLinearFill disables the
-            // rewrite. The plan must show "Sample By" without the "Fill" suffix.
+            // fast path cannot provide, so SampleByFactoryGenerator keeps it off
+            // that path. The plan must show "Sample By" without the "Fill" suffix.
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR")
                     .noLeakCheck()
@@ -2341,7 +2345,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testRoutingFromBindVariableStaysOnLegacyPath() throws Exception {
         assertMemoryLeak(() -> {
-            // A bind variable as the FROM lower bound disables the rewriteSampleBy
+            // A bind variable as the FROM lower bound disables the SampleByBinder.bindSampleBy
             // gate in SqlOptimiser (sampleByFrom.type == BIND_VARIABLE). The query
             // must execute on the legacy cursor path and produce correct rows.
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

@@ -38,7 +38,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -182,7 +182,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
             return;
         }
         for (int i = 0, n = orderByDirections.size(); i < n; i++) {
-            if (orderByDirections.getQuick(i) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+            if (orderByDirections.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                 throw SqlException.$(position, name).put("() requires ascending ORDER BY");
             }
         }

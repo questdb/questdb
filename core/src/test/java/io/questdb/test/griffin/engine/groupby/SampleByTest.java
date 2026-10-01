@@ -41,19 +41,19 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -178,7 +178,7 @@ public class SampleByTest extends AbstractCairoTest {
         // to_utc(FROM, tz), which validates the timezone BEFORE the code
         // generator's catch(NumericException) block at SqlCodeGenerator:6813.
         //
-        // The catch(NumericException) in SqlCodeGenerator.generateSampleBy()
+        // The catch(NumericException) in SampleByFactoryGenerator.generateSampleBy()
         // is dead code because timestampDriver.getTimezoneRules() wraps
         // NumericException in CairoException. If it were the only validation,
         // this test would get CairoException (position=0) instead of
@@ -4021,7 +4021,7 @@ public class SampleByTest extends AbstractCairoTest {
         // CTE form of the same cross-boundary regression. The CTE inliner in the parser
         // does not always set nestedModelIsSubQuery=true on the reference, so a walker
         // relying on that flag would silently descend past the CTE boundary. Fix routes
-        // fill state explicitly through rewriteSelectClause0, eliminating the walker.
+        // fill state explicitly through SampleByBinder, eliminating the walker.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tabA (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -4049,7 +4049,7 @@ public class SampleByTest extends AbstractCairoTest {
         // recovered the inner FILL(0) list, and falsely rejected the outer aggregate
         // whose getSampleByFlags() omits SAMPLE_BY_FILL_VALUE - e.g. last(D[]),
         // first(D[]), array_agg. Replaced by explicit fill-list propagation in
-        // SqlOptimiser.rewriteSelectClause0.
+        // SampleByBinder.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tabA (ts TIMESTAMP, grp SYMBOL, val INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tabB (grp SYMBOL, arr DOUBLE[])");
@@ -4082,8 +4082,8 @@ public class SampleByTest extends AbstractCairoTest {
         // was unreliable across optimizer-inserted intermediate wrappers, so the walker
         // descended past the inner SAMPLE BY ... FILL(0) and falsely validated the
         // outer array_agg against the inner FILL. Replaced by explicit fill-list
-        // propagation in SqlOptimiser.rewriteSelectClause0; the outer GROUP BY model
-        // now picks up fill state only when its own baseModel carries it.
+        // propagation in SampleByBinder; the outer GROUP BY picks up fill state only
+        // when its own source carries it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tabA (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -4403,15 +4403,16 @@ public class SampleByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('17m',ts,null,'00:00','Europe/Berlin')]
-                                  values: [min(i),max(i)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: x
-                                          intervals: [("2021-03-27T23:00:00.000000Z","2021-03-28T01:42:59.999999Z")]
+                                SelectedRecord
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('17m',ts,null,'00:00','Europe/Berlin')]
+                                      values: [min(i),max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: x
+                                              intervals: [("2021-03-27T23:00:00.000000Z","2021-03-28T01:42:59.999999Z")]
                             """);
 
             // 17m
@@ -5756,15 +5757,14 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
-                                Filter filter: s='B'
-                                    Sample By
-                                      fill: prev
-                                      keys: [s,ts]
-                                      values: [first(v)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                            Filter filter: s='B'
+                                Sample By
+                                  fill: prev
+                                  keys: [ts,s]
+                                  values: [first(v)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                             """);
 
             assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ")
@@ -6421,6 +6421,49 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFirstLastLayoutSurvivesCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('A',10,'2024-01-01T00:00:00.000000Z'),
+                    ('A',20,'2024-01-01T00:10:00.000000Z'),
+                    ('A',30,'2024-01-01T01:00:00.000000Z')
+                    """);
+            RecordCursorFactory retained = null;
+            try {
+                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                    retained = compiler.compile("SELECT ts,sym,first(val) fv,last(val) lv FROM t "
+                            + "WHERE sym='A' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory sample = retained;
+                    while (sample != null && !(sample instanceof SampleByFirstLastRecordCursorFactory)) {
+                        sample = sample.getBaseFactory();
+                    }
+                    Assert.assertNotNull(sample);
+                    compiler.clear();
+                    try (RecordCursorFactory ignored = compiler.compile("SELECT last(val) lv,first(val) fv,sym,ts FROM t "
+                            + "WHERE sym='A' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION", sqlExecutionContext).getRecordCursorFactory()) {
+                        Assert.assertNotNull(ignored);
+                    }
+                }
+                assertFactory(retained).withContext(sqlExecutionContext).timestamp("ts").noRandomAccess().returns("""
+                        ts\tsym\tfv\tlv
+                        2024-01-01T00:00:00.000000Z\tA\t10\t20
+                        2024-01-01T01:00:00.000000Z\tA\t30\t30
+                        """);
+            } finally {
+                Misc.free(retained);
+            }
+            assertQuery("SELECT ts,min(val),last(val) FROM t WHERE sym='A' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .timestamp("ts").noRandomAccess().withPlanContaining("Sample By").returns("""
+                            ts\tmin\tlast
+                            2024-01-01T00:00:00.000000Z\t10\t20
+                            2024-01-01T01:00:00.000000Z\t30\t30
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
@@ -6429,18 +6472,21 @@ public class SampleByTest extends AbstractCairoTest {
             GenericRecordMetadata meta = new GenericRecordMetadata();
             meta.add(new TableColumnMetadata("col1", ColumnType.LONG, IndexType.NONE, 0, false, null));
 
-            ObjList<QueryColumn> columns = new ObjList<>();
-            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
-            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
-            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
-            columns.add(col);
+            IntList inputIndexes = new IntList();
+            inputIndexes.add(0);
+            IntList kinds = new IntList();
+            kinds.add(SampleByFirstLastRecordCursorFactory.FIRST);
+            IntList positions = new IntList();
+            positions.add(0);
 
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
                     new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
-                    columns,
+                    inputIndexes,
+                    kinds,
+                    positions,
                     meta,
                     null,
                     0,
@@ -6461,7 +6507,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
+    public void testSampleByFirstLastRecordCursorFactoryInvalidKind() throws Exception {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
             TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, IndexType.NONE, 0, false, null);
@@ -6470,18 +6516,21 @@ public class SampleByTest extends AbstractCairoTest {
             GenericRecordMetadata meta = new GenericRecordMetadata();
             meta.add(column);
 
-            ObjList<QueryColumn> columns = new ObjList<>();
-            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "min", 0, 0);
-            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
-            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
-            columns.add(col);
+            IntList inputIndexes = new IntList();
+            inputIndexes.add(0);
+            IntList kinds = new IntList();
+            kinds.add(2);
+            IntList positions = new IntList();
+            positions.add(0);
 
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
                     new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
-                    columns,
+                    inputIndexes,
+                    kinds,
+                    positions,
                     meta,
                     null,
                     0,
@@ -6496,8 +6545,8 @@ public class SampleByTest extends AbstractCairoTest {
                     0
             ).close();
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
+        } catch (IllegalArgumentException e) {
+            TestUtils.assertContains(e.getMessage(), "invalid first/last column kind: 2");
         }
     }
 
@@ -6584,6 +6633,17 @@ public class SampleByTest extends AbstractCairoTest {
                         A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0
                         A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0
                         """);
+    }
+
+    @Test
+    public void testSampleByFromColumnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT count() FROM x SAMPLE BY 1h FROM i")
+                    .fails(0, "argument type mismatch for function `timestamp_floor_utc` at #3 expected: TIMESTAMP, actual: INT at #5 expected: STRING, actual: NULL");
+            assertQuery("SELECT count() FROM x SAMPLE BY 1h FROM ts")
+                    .fails(0, "argument type mismatch for function `timestamp_floor_utc` at #3 expected: TIMESTAMP constant, actual: TIMESTAMP at #5 expected: STRING, actual: NULL");
+        });
     }
 
     @Test
@@ -7043,7 +7103,7 @@ public class SampleByTest extends AbstractCairoTest {
                     GROUP BY ts
                     ORDER BY ts""")
                     .timestamp("ts")
-                    .noRandomAccess()
+                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             ts\trows\tkeys
@@ -7056,6 +7116,36 @@ public class SampleByTest extends AbstractCairoTest {
                             2018-01-19T00:00:00.000000Z\t479\t479
                             2018-01-24T00:00:00.000000Z\t479\t479
                             2018-01-29T00:00:00.000000Z\t479\t479
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToOuterGroupByKeepsFilteredBucketOut() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(FROM_TO_DDL);
+            assertQuery("""
+                    SELECT ts, count(*) rows FROM (
+                        SELECT ts, avg(x), x FROM fromto
+                        WHERE s != '5'
+                        SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42)
+                    )
+                    WHERE ts != '2017-12-25'
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\trows
+                            2017-12-20T00:00:00.000000Z\t479
+                            2017-12-30T00:00:00.000000Z\t479
+                            2018-01-04T00:00:00.000000Z\t479
+                            2018-01-09T00:00:00.000000Z\t479
+                            2018-01-14T00:00:00.000000Z\t479
+                            2018-01-19T00:00:00.000000Z\t479
+                            2018-01-24T00:00:00.000000Z\t479
+                            2018-01-29T00:00:00.000000Z\t479
                             """);
         });
     }
@@ -8572,17 +8662,15 @@ public class SampleByTest extends AbstractCairoTest {
                             Encode sort light
                               keys: [ts]
                                 VirtualRecord
-                                  functions: [ts,datediff('h',ts2,ts)/count,diff2]
-                                    VirtualRecord
-                                      functions: [ts,count,ts2,datediff('M',ts2,1262307600000000)/count]
-                                        Async Group By workers: 1
-                                          keys: [ts,ts2]
-                                          keyFunctions: [timestamp_floor_utc('12h',ts)]
-                                          values: [count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                  functions: [ts,datediff('h',ts2,ts)/count,datediff('M',ts2,1262307600000000)/count]
+                                    Async Group By workers: 1
+                                      keys: [ts,ts2]
+                                      keyFunctions: [timestamp_floor_utc('12h',ts)]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -16536,19 +16624,20 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              stride: '30m'
-                              fill: value
-                                Encode sort light
-                                  keys: [k]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '30m'
+                                  fill: value
+                                    Encode sort light
                                       keys: [k]
-                                      keyFunctions: [timestamp_floor_utc('30m',k,null,'00:00','Europe/Berlin')]
-                                      values: [sum(a)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async Group By workers: 1
+                                          keys: [k]
+                                          keyFunctions: [timestamp_floor_utc('30m',k,null,'00:00','Europe/Berlin')]
+                                          values: [sum(a)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """);
         });
     }
@@ -16659,19 +16748,20 @@ public class SampleByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [s,k,to_timezone(k)]
-                                Sample By Fill
-                                  stride: '30m'
-                                  fill: value
-                                    Encode sort light
-                                      keys: [k]
-                                        Async Group By workers: 1
+                                SelectedRecord
+                                    Sample By Fill
+                                      stride: '30m'
+                                      fill: value
+                                        Encode sort light
                                           keys: [k]
-                                          keyFunctions: [timestamp_floor_utc('30m',k,null,'00:40','Europe/Riga')]
-                                          values: [count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                            Async Group By workers: 1
+                                              keys: [k]
+                                              keyFunctions: [timestamp_floor_utc('30m',k,null,'00:40','Europe/Riga')]
+                                              values: [count(*)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
                             """);
         });
     }
@@ -16697,19 +16787,20 @@ public class SampleByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [s,k,to_timezone(k)]
-                                Sample By Fill
-                                  stride: '30m'
-                                  fill: value
-                                    Encode sort light
-                                      keys: [k]
-                                        Async Group By workers: 1
+                                SelectedRecord
+                                    Sample By Fill
+                                      stride: '30m'
+                                      fill: value
+                                        Encode sort light
                                           keys: [k]
-                                          keyFunctions: [timestamp_floor_utc('30m',k,null,'00:40','Asia/Kathmandu')]
-                                          values: [count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                            Async Group By workers: 1
+                                              keys: [k]
+                                              keyFunctions: [timestamp_floor_utc('30m',k,null,'00:40','Asia/Kathmandu')]
+                                              values: [count(*)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
                             """);
             assertQuery(query)
                     .timestamp("k")
@@ -17087,7 +17178,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSumMinusConstantStillRewritesWithoutFill() throws Exception {
-        // Sanity check: the FILL guard added in rewriteSelectClause0 only kicks in when FILL is
+        // Sanity check: the FILL guard in SampleByBinder only kicks in when FILL is
         // present. Without FILL, sum(x - K) -> sum(x) - count(*) * K rewrite must still apply.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_fv_no_fill (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -17736,10 +17827,9 @@ public class SampleByTest extends AbstractCairoTest {
                 (isNoneFill ? "" : "      fill: " + fill + "\n") +
                 "      keys: [tstmp,sym]\n" +
                 "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                "        SelectedRecord\n" +
-                "            PageFrame\n" +
-                "                Row forward scan\n" +
-                "                Frame forward scan on: #TABLE#\n";
+                "        PageFrame\n" +
+                "            Row forward scan\n" +
+                "            Frame forward scan on: #TABLE#\n";
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {

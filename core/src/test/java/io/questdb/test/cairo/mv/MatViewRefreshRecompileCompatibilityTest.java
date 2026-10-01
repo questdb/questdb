@@ -373,7 +373,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
 
     @Test
     public void testRefreshRecompileSucceedsForLateralPositiveLimitRowBody() throws Exception {
-        // compensateLimit rewrites LIMIT into a per-outer-row row_number() filter; the rewritten
+        // LateralBinder.bindCorrelatedLimit rewrites LIMIT into a per-outer-row row_number() filter; the rewritten
         // shape must survive the refresh recompile.
         assertLateralRefreshRecompiles(
                 "SELECT base.ts, sum(l.x) AS s FROM base "

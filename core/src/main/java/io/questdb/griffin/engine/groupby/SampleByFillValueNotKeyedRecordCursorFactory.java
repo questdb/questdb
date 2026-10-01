@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -34,9 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -47,16 +44,16 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     private SimpleMapValue value;
     private SimpleMapValue valueB;
 
+    /** Placeholders contain resource-free constants or functions owned through recordFunctions. */
     public SampleByFillValueNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
-            @Transient @NotNull ObjList<ExpressionNode> fillValues,
+            @NotNull ObjList<Function> placeholderFunctions,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            @Transient IntList recordFunctionPositions,
             int valueCount,
             int timestampIndex,
             int timestampType,
@@ -71,14 +68,6 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
-            final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(
-                    ColumnType.getTimestampDriver(timestampType),
-                    groupByFunctions,
-                    recordFunctions,
-                    recordFunctionPositions,
-                    fillValues,
-                    true
-            );
             this.value = new SimpleMapValue(valueCount);
             this.valueB = new SimpleMapValue(valueCount);
             final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(value, valueB);

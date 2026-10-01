@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -37,6 +38,7 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -65,6 +67,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 long fromFnTimestamp = fromFn.getTimestamp(null);
                 long toFnTimestamp = toFn.getTimestamp(null);
                 if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                     return BooleanConstant.FALSE;
                 }
                 return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
@@ -79,6 +82,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             long fromFnTimestamp = driver.from(fromFn.getTimestamp(null), fromType);
             long toFnTimestamp = driver.from(toFn.getTimestamp(null), toType);
             if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return BooleanConstant.FALSE;
             }
             return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);

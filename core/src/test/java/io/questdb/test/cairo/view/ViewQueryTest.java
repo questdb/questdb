@@ -1095,6 +1095,33 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testDeclaredAndSchemaQualifiedViewReferences() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "SELECT k, v FROM " + TABLE1 + " WHERE v > 6", TABLE1);
+            final String expected = """
+                    k	v
+                    k7	7
+                    k8	8
+                    """;
+            for (String query : new String[]{
+                    "SELECT * FROM public." + VIEW1,
+                    "SELECT * FROM \"public\".\"" + VIEW1 + "\"",
+                    "DECLARE @src := " + VIEW1 + " SELECT * FROM @src",
+                    "DECLARE @src := public." + VIEW1 + " SELECT * FROM @src"
+            }) {
+                assertQuery(query).noLeakCheck().returns(expected);
+            }
+            for (String query : new String[]{
+                    "SELECT b.k, b.v FROM " + TABLE1 + " a JOIN public." + VIEW1 + " b ON a.v = b.v",
+                    "DECLARE @src := " + VIEW1 + " SELECT b.k, b.v FROM " + TABLE1 + " a JOIN @src b ON a.v = b.v"
+            }) {
+                assertQuery(query).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testJoinWithViewAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (" +

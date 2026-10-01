@@ -61,6 +61,9 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
         this.baseOrder = order;
         this.closeObserver = TEST_CLOSE_OBSERVER.get();
+        if (closeObserver != null) {
+            closeObserver.onOpen(this);
+        }
     }
 
     @TestOnly
@@ -266,5 +269,8 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     @TestOnly
     public interface CloseObserver {
         void onClose(FullPartitionFrameCursorFactory factory);
+
+        default void onOpen(FullPartitionFrameCursorFactory factory) {
+        }
     }
 }

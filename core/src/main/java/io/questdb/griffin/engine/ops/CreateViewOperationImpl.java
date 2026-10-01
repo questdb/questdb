@@ -33,19 +33,17 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
-import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -217,34 +215,42 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     }
 
     @Override
-    public void validateAndUpdateMetadataFromModel(
-            SqlExecutionContext sqlExecutionContext,
-            FunctionFactoryCache functionFactoryCache,
-            IQueryModel queryModel
-    ) throws SqlException {
-        // Create view columns based on query.
-        final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
-        assert columns.size() > 0;
-
-        // We do not know types of columns at this stage.
-        // Compiler must put table together using query metadata.
+    public void validateAndUpdateMetadataFromColumns(@Transient OutputSchema metadata, @Transient IntList positions) throws SqlException {
+        final int columnCount = metadata.getColumnCount();
+        assert columnCount > 0;
+        assert positions.size() == columnCount;
         createColumnModelMap.clear();
         final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap =
                 createTableOperation.getAugmentedColumnMetadata();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            final CharSequence columnName = qc.getName();
-            final CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
-            model.setColumnNamePos(qc.getAst().position);
-            model.setColumnType(ColumnType.UNDEFINED);
-            // Copy index() definitions from create table op, so that we don't lose them.
-            TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
-            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
-                model.setIndexType(augColumnMetadata.getIndexType(), qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
-            }
-            createColumnModelMap.put(columnName, model);
+        for (int i = 0; i < columnCount; i++) {
+            addColumnModel(Chars.toString(metadata.getColumnName(i)), positions.getQuick(i), augColumnMetadataMap);
         }
+        initColumnMetadata();
+    }
 
+    @Override
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException {
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
+    }
+
+    private void addColumnModel(
+            CharSequence columnName,
+            int position,
+            LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap
+    ) {
+        final CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
+        model.setColumnNamePos(position);
+        // Preserve the staged validation: final types come from the generated SELECT metadata.
+        model.setColumnType(ColumnType.UNDEFINED);
+        // Copy index() definitions from create table op, so that we don't lose them.
+        final TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
+        if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
+            model.setIndexType(augColumnMetadata.getIndexType(), position, augColumnMetadata.getIndexValueBlockCapacity());
+        }
+        createColumnModelMap.put(columnName, model);
+    }
+
+    private void initColumnMetadata() throws SqlException {
         final String timestamp = createTableOperation.getTimestampColumnName();
         final int timestampPos = createTableOperation.getTimestampColumnNamePosition();
         if (timestamp != null) {
@@ -266,10 +272,5 @@ public class CreateViewOperationImpl implements CreateViewOperation {
 
         // Don't forget to reset augmented columns in create table op with what we have scraped.
         createTableOperation.initColumnMetadata(createColumnModelMap);
-    }
-
-    @Override
-    public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException {
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
     }
 }

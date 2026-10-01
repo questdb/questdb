@@ -57,12 +57,12 @@ import org.jetbrains.annotations.Nullable;
  * factory remains the fallback for unsupported keys.
  */
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final Function hiFunction;
-    private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
     private RecordCursorFactory base;
     private EncodedSortLimitedLightRecordCursor cursor;
+    private Function hiFunction;
+    private Function loFunction;
 
     public EncodedSortLimitedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -218,8 +218,16 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.base = null;
         final EncodedSortLimitedLightRecordCursor cursor = this.cursor;
         this.cursor = null;
+        final Function loFunction = this.loFunction;
+        this.loFunction = null;
+        final Function hiFunction = this.hiFunction;
+        this.hiFunction = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, loFunction);
+        if (hiFunction != loFunction) {
+            failure = Misc.freeBestEffort(failure, hiFunction);
+        }
         CairoException.rethrowCleanupFailure(failure);
     }
 }

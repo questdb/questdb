@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -37,6 +38,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -76,7 +78,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
                     lo = Uuid.parseLo(uuidStr);
                     hi = Uuid.parseHi(uuidStr);
                 } catch (NumericException e) {
-                    // ok, so the constant string is not a UUID format -> it cannot be equal to any UUID
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                     return BooleanConstant.FALSE;
                 }
             }

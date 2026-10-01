@@ -3719,6 +3719,33 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateWithWindowOrAggregateUnsupported() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE up (x INT, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (walEnabled ? " WAL" : ""));
+            assertQuery("UPDATE up SET x = row_number() OVER ()")
+                    .fails(18, "window function called in non-window context, make sure to add OVER clause");
+            assertQuery("UPDATE up SET y = 1, x = row_number() OVER ()")
+                    .fails(25, "window function called in non-window context, make sure to add OVER clause");
+            assertQuery("UPDATE up SET x = sum(y) OVER ()")
+                    .fails(18, "Window function is not allowed in context of aggregation. Use sub-query.");
+            assertQuery("UPDATE up SET x = abs(row_number() OVER ()), y = count()")
+                    .fails(22, "Window function is not allowed in context of aggregation. Use sub-query.");
+            assertQuery("UPDATE up SET y = count(), x = row_number() OVER ()")
+                    .fails(31, "Window function is not allowed in context of aggregation. Use sub-query.");
+            assertQuery("UPDATE up SET x = sum(row_number() OVER ())")
+                    .fails(18, "Unsupported function in SET clause");
+            assertQuery("UPDATE up SET x = row_number() OVER () + 1")
+                    .fails(7, "Unsupported SQL complexity for the UPDATE statement");
+            assertQuery("UPDATE up SET x = abs(sum(y) OVER ())")
+                    .fails(7, "Unsupported SQL complexity for the UPDATE statement");
+            assertQuery("UPDATE up SET x = abs(sum(y))")
+                    .fails(7, "Unsupported SQL complexity for the UPDATE statement");
+            assertQuery("UPDATE up SET x = count() + 1")
+                    .fails(7, "Unsupported SQL complexity for the UPDATE statement");
+        });
+    }
+
+    @Test
     public void testVarcharToIpv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table up as" +

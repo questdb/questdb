@@ -4358,15 +4358,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
-                                Filter filter: s='B'
-                                    Sample By
-                                      fill: prev
-                                      keys: [s,ts]
-                                      values: [first(v)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                            Filter filter: s='B'
+                                Sample By
+                                  fill: prev
+                                  keys: [ts,s]
+                                  values: [first(v)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                             """);
 
             assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ")
@@ -4790,7 +4789,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     ORDER BY ts""")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
+                    .expectSize()
                     .returns("""
                             ts\trows\tkeys
                             2017-12-20T00:00:00.000000000Z\t479\t479
@@ -15136,10 +15135,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 (isNoneFill ? "" : "      fill: " + fill + "\n") +
                 "      keys: [tstmp,sym]\n" +
                 "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                "        SelectedRecord\n" +
-                "            PageFrame\n" +
-                "                Row forward scan\n" +
-                "                Frame forward scan on: #TABLE#\n";
+                "        PageFrame\n" +
+                "            Row forward scan\n" +
+                "            Frame forward scan on: #TABLE#\n";
     }
 
     private void testSampleByFirstLastIndexedConcurrent(String query) throws Exception {

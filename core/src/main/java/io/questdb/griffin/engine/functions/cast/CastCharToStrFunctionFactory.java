@@ -48,7 +48,7 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
             if (value == 0) {
                 return StrConstant.NULL;
             }
-            return new StrConstant(String.valueOf(value));
+            return StrConstant.fromValue(String.valueOf(value));
         }
         return new Func(func);
     }

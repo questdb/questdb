@@ -129,7 +129,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             this.lo = lo;
             this.workerCount = workerCount;
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }

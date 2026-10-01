@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -220,6 +222,9 @@ public final class WindowMapSpec {
         boolean hasExpressionKey = false;
         for (int i = 0; i < partitionCount; i++) {
             final Function term = partitionByFunctions.getQuick(i);
+            if (term == null) {
+                return null;
+            }
             final int columnIndex = WindowAccumulatorDescriptor.directColumnIndex(term, recordTypes);
             if (i > 0) {
                 identity.putAscii(WindowKeyExpressionIdentity.TERM_SEPARATOR);
@@ -283,6 +288,57 @@ public final class WindowMapSpec {
                 context.getTimestampIndex(),
                 context.getTimestampType()
         );
+    }
+
+    /** Snapshots a logical window using resolved order indexes and immutable bound keys. */
+    public static @Nullable WindowMapSpec of(
+            WindowContext context,
+            ObjList<BoundExpression> partitionBy,
+            IntList orderIndices,
+            IntList orderByDirections,
+            boolean isOrderDismissed,
+            WindowFunction function,
+            OutputSchema input,
+            ColumnTypes recordTypes
+    ) {
+        final VirtualRecord record = context.getPartitionByRecord();
+        final ColumnTypes types = context.getPartitionByKeyTypes();
+        if (context.isEmpty() || record == null || types == null || partitionBy.size() == 0) {
+            return null;
+        }
+        final ObjList<? extends Function> functions = record.getFunctions();
+        final IntList columns = new IntList(partitionBy.size());
+        final IntList keyTypes = new IntList(partitionBy.size());
+        final StringSink identity = new StringSink();
+        boolean hasExpressionKey = false;
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            final Function term = functions.getQuick(i);
+            if (term == null) {
+                return null;
+            }
+            final int column = WindowAccumulatorDescriptor.directColumnIndex(term, recordTypes);
+            if (i > 0) {
+                identity.putAscii(WindowKeyExpressionIdentity.TERM_SEPARATOR);
+            }
+            if (column >= 0) {
+                WindowKeyExpressionIdentity.renderColumn(column, term.getType(), identity);
+            } else {
+                if (!WindowKeyExpressionIdentity.render(partitionBy.getQuick(i), term, input, identity)) {
+                    return null;
+                }
+                hasExpressionKey = true;
+            }
+            columns.add(column);
+            keyTypes.add(types.getColumnType(i));
+        }
+        final IntList orderColumns = new IntList(orderIndices.size());
+        for (int i = 0, n = orderIndices.size(); i < n; i++) {
+            orderColumns.add(Math.abs(orderIndices.getQuick(i)) - 1);
+        }
+        return new WindowMapSpec(columns, identity.toString(), hasExpressionKey ? functions : null, keyTypes,
+                orderColumns, new IntList(orderByDirections), isOrderDismissed, context.getOrderByScanDirection(),
+                context.getFramingMode(), context.getRowsLo(), context.getRowsHi(), context.getExclusionKind(),
+                function.getPassCount(), function.getPass1ScanDirection(), context.getTimestampIndex(), context.getTimestampType());
     }
 
     public int getExclusionKind() {

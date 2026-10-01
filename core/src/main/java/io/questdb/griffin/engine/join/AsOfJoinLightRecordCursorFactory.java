@@ -41,10 +41,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
@@ -72,18 +72,18 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink slaveKeyCopier,
             @Nullable SymbolJoinKeyMapping symbolJoinKeyMapping,
             int columnSplit,
-            JoinContext joinContext,
+            Plannable joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
-                : null;
         Map joinKeyMap = null;
         try {
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                    ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                    : null;
             this.masterKeyCopier = masterKeyCopier;
             this.slaveKeyCopier = slaveKeyCopier;
             this.toleranceInterval = toleranceInterval;
@@ -99,8 +99,8 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable th) {
-            Misc.free(joinKeyMap);
-            close();
+            Misc.free(joinKeyMap, th);
+            Misc.free(this, th);
             throw th;
         }
     }

@@ -67,8 +67,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query2)
                     .noLeakCheck()
                     .assertsPlan("""
-                            VirtualRecord
-                              functions: [l,s]
+                            SelectedRecord
                                 Async Group By workers: 1
                                   keys: [l,s]
                                   filter: null
@@ -252,16 +251,14 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            VirtualRecord
-                              functions: [column,count]
-                                Async Group By workers: 1
-                                  keys: [column]
-                                  keyFunctions: [x+1]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
+                            Async Group By workers: 1
+                              keys: [column]
+                              keyFunctions: [x+1]
+                              values: [count(*)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
                             """);
 
             assertQuery(query)
@@ -636,8 +633,7 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [date_report1]
-                                VirtualRecord
-                                  functions: [date_report,date_report,count]
+                                SelectedRecord
                                     Async Group By workers: 1
                                       keys: [date_report]
                                       values: [count(*)]
@@ -681,7 +677,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 VirtualRecord
                                   functions: [date_report,dateadd,dateadd('d',1,date_report),concat(['1',date_report,'3']),count]
                                     Async Group By workers: 1
-                                      keys: [date_report,dateadd]
+                                      keys: [dateadd,date_report]
                                       keyFunctions: [dateadd('d',-1,date_report)]
                                       values: [count(*)]
                                       filter: null
@@ -775,17 +771,16 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [date_report,to_str(date_report),dateadd('d',1,date_report),min,count,minminusday]
                                     GroupBy vectorized: false
                                       keys: [date_report]
-                                      values: [min(x),count(*),min(dateadd('d',-1,date_report1))]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: details.x=ordr.x
+                                      values: [min(details.x),count(*),min(dateadd('d',-1,ordr.date_report))]
+                                        Hash Join Light
+                                          condition: details.x=ordr.x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: ord
+                                            Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: ord
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: det
+                                                    Frame forward scan on: det
                             """);
 
             assertQuery(query)
@@ -988,8 +983,8 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByCastOverColumnStaysKey() throws Exception {
-        // Regression: the recursive walk in isEffectivelyConstantExpression
-        // must reject cast over a real column. (x)::STRING contains a LITERAL
+        // Regression: AggregateBinder.isConstantGroupingExpression must reject
+        // a cast over a real column. (x)::STRING contains a LITERAL
         // child that fails the type check, so the cast is not lifted into the
         // outer projection and the column stays a real GROUP BY key.
         assertMemoryLeak(() -> {
@@ -1106,7 +1101,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testDistinctSymbolOptimizationOnQuoteProtectedAlias() throws Exception {
         // SELECT DISTINCT over an indexed SYMBOL takes the distinct-symbol optimization in
-        // generateSelectGroupBy, which builds the result metadata name via toColumnName. A
+        // AggregateFactoryGenerator, which builds the result metadata name via toColumnName. A
         // compiler-protected alias (dotted or operator token) must surface clean, not quoted.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SYMBOL INDEX)");
@@ -1226,10 +1221,9 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            VirtualRecord
-                              functions: [l,s,column]
+                            SelectedRecord
                                 Async Group By workers: 1
-                                  keys: [l,s,column,column1]
+                                  keys: [column,s,l,column1]
                                   keyFunctions: [l+1,l+2]
                                   filter: null
                                     PageFrame
@@ -1491,15 +1485,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByTrivialExpressionKeyReferencedByAlias() throws Exception {
-        // rewriteTrivialGroupByExpressions lifts a trivial key such as
-        // 859371 + (cnt * -237288) out of the inner GROUP BY when its base
-        // column (cnt) is also a key, recomputing the offset in an outer
-        // VIRTUAL and removing the lifted key column from the group-by model.
-        // It used to leave the alias reference behind in the model's GROUP BY
-        // list, and validateGroupByColumns then rejected the now-missing alias
-        // with "group by column does not match any key column". Expression keys
-        // hid the bug because validateGroupByColumns matches them against the
-        // surviving base column, but a bare alias reference has nothing to match.
+        // AggregateRewritePass drops a trivial key such as 859371 + (cnt * -237288)
+        // when its base column (cnt) is also a key, and computes it above the
+        // aggregate. A GROUP BY that names the dropped key by its alias must still bind.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE fuzz_t1 (c4 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO fuzz_t1 VALUES (1, 0), (2, 1000), (1, 2000)");
@@ -1521,6 +1509,64 @@ public class GroupByTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testGroupByTrivialExpressionKeyLiftedUnderOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (2, 0), (1, 1000), (2, 2000)");
+            assertQuery("SELECT a, a + 1, count()::LONG c FROM t ORDER BY a")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [a]
+                                VirtualRecord
+                                  functions: [a,a+1,count]
+                                    GroupBy vectorized: true workers: 1
+                                      keys: [a]
+                                      values: [count(*)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
+                    .returns("""
+                            a\tcolumn\tc
+                            1\t2\t1
+                            2\t3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupByTrivialExpressionKeyBesideUnaryKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 0), (2, 1000), (1, 2000)");
+            assertQuery("SELECT a, a + 1, -a, count() FROM t GROUP BY a, a + 1, -a ORDER BY a")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [a]
+                                VirtualRecord
+                                  functions: [a,a+1,column1,count]
+                                    Async Group By workers: 1
+                                      keys: [a,column1]
+                                      keyFunctions: [-a]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """)
+                    .returns("""
+                            a\tcolumn\tcolumn1\tcount
+                            1\t2\t-1\t2
+                            2\t3\t-2\t1
+                            """);
         });
     }
 
@@ -1635,17 +1681,16 @@ public class GroupByTest extends AbstractCairoTest {
                                       functions: [x,max,case([1<x,100*x,10*x1]),x1]
                                         GroupBy vectorized: false
                                           keys: [x,x1]
-                                          values: [max(y)]
-                                            SelectedRecord
-                                                Hash Join Light
-                                                  condition: t2.y=t1.y
+                                          values: [max(t2.y)]
+                                            Hash Join Light
+                                              condition: t2.y=t1.y
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
+                                                        Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -1676,21 +1721,19 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            VirtualRecord
-                              functions: [x,max,case]
+                            SelectedRecord
                                 GroupBy vectorized: false
-                                  keys: [x,case,x1]
-                                  values: [max(y)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: t2.y=t1.y
+                                  keys: [x,x1,case]
+                                  values: [max(t2.y)]
+                                    Hash Join Light
+                                      condition: t2.y=t1.y
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
+                                        Hash
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: t1
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
+                                                Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -1728,17 +1771,16 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [x,max,dateadd::long+x1]
                                     GroupBy vectorized: false
                                       keys: [x,x1,dateadd]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
+                                      values: [max(t2.y)]
+                                        Hash Join Light
+                                          condition: t2.y=t1.y
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t1
+                                            Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                                    Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -1775,18 +1817,17 @@ public class GroupByTest extends AbstractCairoTest {
                                 VirtualRecord
                                   functions: [x,max,dateadd('s',max::int,dateadd)]
                                     GroupBy vectorized: false
-                                      keys: [x,dateadd,x1]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
+                                      keys: [x,x1,dateadd]
+                                      values: [max(t2.y)]
+                                        Hash Join Light
+                                          condition: t2.y=t1.y
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t1
+                                            Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                                    Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -1872,21 +1913,18 @@ public class GroupByTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
-                                "        GroupBy vectorized: false\n" +
-                                "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
-                                "          values: [avg(radiation),avg(energy_power)]\n" +
-                                "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                                "    GroupBy vectorized: false\n" +
+                                "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
+                                "      values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
+                                "        Hash " + joinType + " Outer Join Light\n" +
+                                "          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: fact_table\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: dim_apTemperature\n");
 
                 // With no aliases in GROUP BY clause - 1
                 final String query2 = "SELECT\n" +
@@ -1912,21 +1950,19 @@ public class GroupByTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                                "    SelectedRecord\n" +
                                 "        GroupBy vectorized: false\n" +
                                 "          keys: [category,timestamp_floor]\n" +
-                                "          values: [avg(radiation),avg(energy_power)]\n" +
-                                "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                                "          values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
+                                "            Hash " + joinType + " Outer Join Light\n" +
+                                "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: fact_table\n" +
+                                "                Hash\n" +
                                 "                    PageFrame\n" +
                                 "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                                "                        Frame forward scan on: dim_apTemperature\n");
 
                 // With no aliases in GROUP BY clause - 2
                 final String query3 = "SELECT\n" +
@@ -1952,21 +1988,19 @@ public class GroupByTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                                "    SelectedRecord\n" +
                                 "        GroupBy vectorized: false\n" +
                                 "          keys: [category,timestamp_floor]\n" +
-                                "          values: [avg(radiation),avg(energy_power)]\n" +
-                                "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                                "          values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
+                                "            Hash " + joinType + " Outer Join Light\n" +
+                                "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: fact_table\n" +
+                                "                Hash\n" +
                                 "                    PageFrame\n" +
                                 "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                                "                        Frame forward scan on: dim_apTemperature\n");
 
                 // Without GROUP BY clause
                 final String query4 = "SELECT\n" +
@@ -1991,17 +2025,16 @@ public class GroupByTest extends AbstractCairoTest {
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    GroupBy vectorized: false\n" +
                                 "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
-                                "      values: [avg(radiation),avg(energy_power)]\n" +
-                                "        SelectedRecord\n" +
-                                "            Hash " + joinType + " Outer Join Light\n" +
-                                "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                                "      values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
+                                "        Hash " + joinType + " Outer Join Light\n" +
+                                "          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: fact_table\n" +
+                                "            Hash\n" +
                                 "                PageFrame\n" +
                                 "                    Row forward scan\n" +
-                                "                    Frame forward scan on: fact_table\n" +
-                                "                Hash\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: dim_apTemperature\n");
+                                "                    Frame forward scan on: dim_apTemperature\n");
             }
         });
     }
@@ -2270,8 +2303,7 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [i]
-                                VirtualRecord
-                                  functions: [ts,i,avg,sum,first_value]
+                                SelectedRecord
                                     GroupBy vectorized: false
                                       keys: [i]
                                       values: [max(ts),avg(j),sum(j::double),first(j::double)]
@@ -2342,15 +2374,16 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [i]
-                                GroupBy vectorized: false
-                                  keys: [i]
-                                  values: [last(ts),last(avg),last(sum),last(first_value)]
-                                    Limit value: -100 skip-rows: 999900 take-rows: 100
-                                        Window
-                                          functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
+                                SelectedRecord
+                                    GroupBy vectorized: false
+                                      keys: [i]
+                                      values: [last(ts),last(avg),last(sum),last(first_value)]
+                                        Limit value: -100 skip-rows: 999900 take-rows: 100
+                                            Window
+                                              functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
                             """);
         });
     }
@@ -2444,8 +2477,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            VirtualRecord
-                              functions: [a,b,c,views]
+                            SelectedRecord
                                 Async JIT Group By workers: 1
                                   keys: [a,b,c]
                                   values: [count(*)]
@@ -2625,15 +2657,13 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [y_utc_15m]
-                                GroupBy vectorized: false
+                                Async JIT Group By workers: 1
                                   keys: [y_utc_15m]
                                   values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]
-                                    SelectedRecord
-                                        Async JIT Filter workers: 1
-                                          filter: (seller='sf' or buyer='sf')
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
+                                  filter: (seller='sf' or buyer='sf')
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
                             """);
         });
     }
@@ -2659,15 +2689,13 @@ public class GroupByTest extends AbstractCairoTest {
                             SelectedRecord
                                 Encode sort light
                                   keys: [a, b, z]
-                                    VirtualRecord
-                                      functions: [a,sum,z,views,b]
-                                        Async JIT Group By workers: 1
-                                          keys: [a,z,b]
-                                          values: [sum(b),count(*)]
-                                          filter: a=1
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                                    Async JIT Group By workers: 1
+                                      keys: [a,b,z]
+                                      values: [sum(b),count(*)]
+                                      filter: a=1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
             assertQuery(query)
                     .expectSize()
@@ -2710,17 +2738,15 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
-                                VirtualRecord
-                                  functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
-                                    Async JIT Group By workers: 1
-                                      keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
-                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
-                                      values: [count(*)]
-                                      filter: (CounterID=62 and IsRefresh=0)
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: hits
-                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                Async JIT Group By workers: 1
+                                  keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
+                                  keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
+                                  values: [count(*)]
+                                  filter: (CounterID=62 and IsRefresh=0)
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: hits
+                                          intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
                             """);
             String query2 =
                     """
@@ -2735,17 +2761,15 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
-                                VirtualRecord
-                                  functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]
-                                    Async JIT Group By workers: 1
-                                      keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]
-                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
-                                      values: [count(*)]
-                                      filter: (CounterID=62 and IsRefresh=0)
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: hits
-                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                Async JIT Group By workers: 1
+                                  keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]
+                                  keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
+                                  values: [count(*)]
+                                  filter: (CounterID=62 and IsRefresh=0)
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: hits
+                                          intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
                             """);
             String query3 = """
                     SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews, concat(lpad(cast(TraficSourceId as string), 10, '0'), lpad(cast(Referer as string), 32, '0')) as cat
@@ -2759,8 +2783,7 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
-                                VirtualRecord
-                                  functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews,cat]
+                                SelectedRecord
                                     Async JIT Group By workers: 1
                                       keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,cat]
                                       keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,'']),concat([lpad(TraficSourceID::string,10,'0'),lpad(Referer,32,'0')])]
@@ -2795,10 +2818,9 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [k1, key2]
-                                VirtualRecord
-                                  functions: [k1,key2,key2,count]
+                                SelectedRecord
                                     Async Group By workers: 1
-                                      keys: [k1,key2]
+                                      keys: [key2,k1]
                                       values: [count(*)]
                                       filter: null
                                         PageFrame
@@ -2861,18 +2883,17 @@ public class GroupByTest extends AbstractCairoTest {
                                 VirtualRecord
                                   functions: [x,max,dateadd('s',max::int,dateadd)]
                                     GroupBy vectorized: false
-                                      keys: [x,dateadd,x1]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
+                                      keys: [x,x1,dateadd]
+                                      values: [max(t2.y)]
+                                        Hash Join Light
+                                          condition: t2.y=t1.y
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t1
+                                            Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                                    Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -3068,7 +3089,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedAggOverArithmeticBind() throws Exception {
         // OPERATION (+) over a BIND_VARIABLE leaf is effectively-constant via
-        // the recursive walk in isEffectivelyConstantExpression, so it lifts
+        // AggregateBinder.isConstantGroupingExpression, so it lifts
         // to the outer projection in a non-keyed aggregate.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT)");
@@ -3118,9 +3139,9 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedAggOverConstantCastProjection() throws Exception {
         // Regression: a SELECT projection like 'X'::CHAR or :b0::CHAR is
-        // semantically constant per query, but isEffectivelyConstantExpression
-        // rejected FUNCTION nodes whose factory wasn't registered as runtime-
-        // constant. The optimiser then routed the projection through the
+        // semantically constant per query, but the constant check (now
+        // AggregateBinder.isConstantGroupingExpression) rejected FUNCTION nodes whose factory
+        // wasn't registered as runtime-constant. The planner then routed the projection through the
         // keyed GROUP BY path, so a WHERE that filtered out every row produced
         // an empty result instead of the single default-aggregate row a
         // non-keyed aggregate is supposed to emit. Casts over constants and
@@ -3551,8 +3572,7 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [ref0]
-                                VirtualRecord
-                                  functions: [created]
+                                SelectedRecord
                                     Async JIT Group By workers: 1
                                       keys: [created]
                                       filter: null!=created
@@ -3682,10 +3702,9 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [hour, sym]
-                                VirtualRecord
-                                  functions: [sym,hour,avgBid]
+                                SelectedRecord
                                     Async Group By workers: 1
-                                      keys: [sym,hour]
+                                      keys: [hour,sym]
                                       keyFunctions: [hour(ts)]
                                       values: [avg(bid)]
                                       filter: null
@@ -3745,8 +3764,7 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [category]
-                                VirtualRecord
-                                  functions: [sum,sum1,category]
+                                SelectedRecord
                                     GroupBy vectorized: true workers: 1
                                       keys: [category]
                                       values: [sum(sum),sum(count)]

@@ -85,6 +85,9 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
+            if (array.isNull()) {
+                return array;
+            }
             if (array.isVanilla()) {
                 derivedView.of(array);
                 derivedView.flatten();

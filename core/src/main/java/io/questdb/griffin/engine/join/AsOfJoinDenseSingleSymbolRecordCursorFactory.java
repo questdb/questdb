@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.Misc;
 
 public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
@@ -50,7 +50,7 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping joinKeyMapping,
-            JoinContext joinContext,
+            Plannable joinContext,
             long toleranceInterval
     ) {
         super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
@@ -72,9 +72,9 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                     slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable th) {
-            Misc.free(bwdScanKeyToRowId);
-            Misc.free(fwdScanKeyToRowId);
-            close();
+            Misc.free(bwdScanKeyToRowId, th);
+            Misc.free(fwdScanKeyToRowId, th);
+            Misc.free(this, th);
             throw th;
         }
     }

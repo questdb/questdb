@@ -1677,19 +1677,20 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             assertQuery("SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: prev
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: prev
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
+                                          values: [sum(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """);
         });
     }
@@ -1790,7 +1791,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             // Two distinct keys, with a data gap between 00:00 and 04:00 so
             // the intermediate buckets must carry forward key + a+b via
             // FILL(PREV). The outer expression `a + b` over the inner
-            // SAMPLE BY triggers propagateTopDownColumns0 in SqlOptimiser,
+            // SAMPLE BY triggers ColumnPruningPass in SqlOptimiser,
             // reordering the inner model's columns. Pre-fix: the bare
             // FILL(PREV) branch called isKeyColumn(factoryIdx, bottomUpCols,
             // timestampIndex) with a factory-indexed `i` against a
@@ -1912,7 +1913,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     public void testFillPrevRejectNoArg() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(PREV()) -- zero-argument function call. The PREV grammar
-            // rule in SqlCodeGenerator.generateFill rejects this at codegen
+            // rule in SampleByFactoryGenerator.generateFill rejects this at codegen
             // time with "PREV argument must be a single column name" thrown
             // at the PREV token's position (43 = sql.indexOf("PREV(")). This
             // pins both the exact wording and the token position so a future

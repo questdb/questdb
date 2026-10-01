@@ -338,7 +338,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
     @Test
     public void testPersistedLateralNegativeLimitViewFailsClosedAndCascades() throws Exception {
         // Upgrade-break regression (intended break): older binaries accepted a negative LIMIT in a
-        // correlated lateral body and silently produced wrong rows -- compensateLimit rewrites the
+        // correlated lateral body and silently produced wrong rows -- LateralBinder.bindCorrelatedLimit rewrites the
         // LIMIT into `__lateral_rn <= limit`, which is unsatisfiable for a negative bound. This
         // binary rejects the shape, so a stored definition carrying it must fail visibly.
         assertPersistedLateralViewFailsClosed(

@@ -63,32 +63,37 @@ public class FunctionFactoryCache {
                     if (factory.isBoolean()) {
                         switch (name) {
                             case "=":
-                                addFactoryToList(factories, createNegatingFactory("!=", factory));
-                                addFactoryToList(factories, createNegatingFactory("<>", factory));
+                                addFactoryToList(factories, createNegatingFactory("!=", factory), descriptor);
+                                addFactoryToList(factories, createNegatingFactory("<>", factory), descriptor);
                                 if (descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)) {
                                     FunctionFactory swappingFactory = createSwappingFactory("=", factory);
-                                    addFactoryToList(factories, swappingFactory);
-                                    addFactoryToList(factories, createNegatingFactory("!=", swappingFactory));
-                                    addFactoryToList(factories, createNegatingFactory("<>", swappingFactory));
+                                    FunctionFactoryDescriptor swapped = new FunctionFactoryDescriptor(swappingFactory, descriptor.isRelocatableScalar());
+                                    descriptor.setCommutedEquality(swapped);
+                                    swapped.setCommutedEquality(descriptor);
+                                    addFactoryToList(factories, swapped);
+                                    addFactoryToList(factories, createNegatingFactory("!=", swappingFactory), descriptor);
+                                    addFactoryToList(factories, createNegatingFactory("<>", swappingFactory), descriptor);
+                                } else {
+                                    descriptor.setCommutedEquality(descriptor);
                                 }
                                 break;
                             case "<":
                                 // `a < b` == `a >= b`
-                                addFactoryToList(factories, createNegatingFactory(">=", factory));
+                                addFactoryToList(factories, createNegatingFactory(">=", factory), descriptor);
                                 FunctionFactory greaterThan = createSwappingFactory(">", factory);
                                 // `a < b` == `b > a`
-                                addFactoryToList(factories, greaterThan);
+                                addFactoryToList(factories, greaterThan, descriptor);
                                 // `b > a` == !(`b <= a`)
-                                addFactoryToList(factories, createNegatingFactory("<=", greaterThan));
+                                addFactoryToList(factories, createNegatingFactory("<=", greaterThan), descriptor);
                                 break;
                             case ">":
                                 // `a > b` == `a <= b`
-                                addFactoryToList(factories, createNegatingFactory("<=", factory));
+                                addFactoryToList(factories, createNegatingFactory("<=", factory), descriptor);
                                 FunctionFactory lessThan = createSwappingFactory("<", factory);
                                 // `a > b` == `b < a`
-                                addFactoryToList(factories, lessThan);
+                                addFactoryToList(factories, lessThan, descriptor);
                                 // `b < a` == !(`b >= a`)
-                                addFactoryToList(factories, createNegatingFactory(">=", lessThan));
+                                addFactoryToList(factories, createNegatingFactory(">=", lessThan), descriptor);
                                 break;
                         }
                     } else if (factory.isGroupBy()) {
@@ -103,7 +108,7 @@ public class FunctionFactoryCache {
                             descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)
                     ) {
                         FunctionFactory swappingFactory = createSwappingFactory(name, factory);
-                        addFactoryToList(factories, swappingFactory);
+                        addFactoryToList(factories, swappingFactory, descriptor);
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e)
@@ -169,8 +174,12 @@ public class FunctionFactoryCache {
         return name != null && windowFunctionNames.contains(name);
     }
 
-    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
-        addFactoryToList(list, new FunctionFactoryDescriptor(factory));
+    private void addFactoryToList(
+            LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list,
+            FunctionFactory factory,
+            FunctionFactoryDescriptor source
+    ) throws SqlException {
+        addFactoryToList(list, new FunctionFactoryDescriptor(factory, source.isRelocatableScalar()));
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {

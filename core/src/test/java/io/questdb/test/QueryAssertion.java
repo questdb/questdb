@@ -15,10 +15,13 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -200,6 +203,25 @@ public class QueryAssertion {
         } else {
             runDdl();
             assertExactPlan(expectedPlan);
+        }
+    }
+
+    /**
+     * Terminal: assert ONLY the query's bound, optimised logical plan, rendered by
+     * {@link LogicalPlanPrinter}, matches {@code expectedPlan} exactly. Supports only {@link #ddl},
+     * {@link #noLeakCheck}, {@link #withContext} and {@link #withEngine}.
+     */
+    public void assertsLogicalPlan(CharSequence expectedPlan) throws Exception {
+        requirePlanOnlyCompatible();
+        runPrepareHook();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertLogicalPlan(expectedPlan);
+            });
+        } else {
+            runDdl();
+            assertLogicalPlan(expectedPlan);
         }
     }
 
@@ -1414,6 +1436,17 @@ public class QueryAssertion {
             Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
         }
         assertFactoryMemoryUsage();
+    }
+
+    private void assertLogicalPlan(CharSequence expectedPlan) throws SqlException {
+        try (SqlCompilerImpl planCompiler = new SqlCompilerImpl(engine)) {
+            final CompiledQuery cq = planCompiler.compile(query, context);
+            try (RecordCursorFactory ignore = cq.getRecordCursorFactory()) {
+                TestUtils.assertEquals(expectedPlan, new LogicalPlanPrinter().print(planCompiler.getLogicalPlanForTesting()));
+            } finally {
+                cq.closeAllButSelect();
+            }
+        }
     }
 
     private void assertExactPlan(CharSequence expectedPlan) throws SqlException {

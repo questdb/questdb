@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.regex;
 
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -42,6 +43,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
@@ -135,6 +137,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                             Pattern.compile(p, flags).matcher("")
                     );
                 }
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return BooleanConstant.FALSE;
             }
 

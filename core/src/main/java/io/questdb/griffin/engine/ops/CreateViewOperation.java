@@ -27,10 +27,10 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.std.IntList;
+import io.questdb.std.Transient;
 
 public interface CreateViewOperation extends TableStructure, Operation {
 
@@ -44,7 +44,8 @@ public interface CreateViewOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) throws SqlException;
+    /** Uses complete output names and corresponding SQL positions without retaining either input. */
+    void validateAndUpdateMetadataFromColumns(@Transient OutputSchema metadata, @Transient IntList positions) throws SqlException;
 
     void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException;
 }

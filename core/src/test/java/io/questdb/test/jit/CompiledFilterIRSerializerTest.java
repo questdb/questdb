@@ -2227,8 +2227,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestampLiteral() throws Exception {
-        serialize("atimestamp = '2023-02-11T11:12:22.116234987Z'");
-        assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
+        try {
+            serialize("atimestamp = '2023-02-11T11:12:22.116234987Z'");
+            Assert.fail("mixed timestamp precision must use scalar comparison");
+        } catch (SqlException e) {
+            Assert.assertEquals(13, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported mixed-precision timestamp constant");
+        }
+        serialize("atimestampns = '2023-02-11T11:12:22.116234987Z'");
+        assertIR("(i64 1676113942116234987L)(i64 atimestampns)(=)(ret)");
         serialize("atimestamp = '2023-02-11T11:12:22.116234Z'");
         assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
         serialize("atimestamp >= '2023-02-11T11:12:22'");
@@ -4187,9 +4194,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             // reading it at i64 answer alike - there was nothing for the frontend to choose, which
             // is what separates this pairing from the narrow IMMEDIATE the assert exists to report.
             //
-            // No SQL reaches it: SqlOptimiser#optimiseBooleanNot pushes a NOT through AND and OR
-            // unconditionally (SqlOptimiser.java:6361-6373) on every model's WHERE clause before
-            // code generation, so EXPLAIN of the same filter reads "(anint<along and (anint!=7 or
+            // No SQL reaches it: SqlBinder pushes a NOT through AND and OR unconditionally
+            // (SqlUtil#optimiseBooleanNot) on every WHERE clause before code generation, so EXPLAIN of the same filter reads "(anint<along and (anint!=7 or
             // along!=8))" - two single-width predicates. serialize() below is the entry point that
             // skips that rewrite, which is what made the assert reachable from this harness and
             // only from it.

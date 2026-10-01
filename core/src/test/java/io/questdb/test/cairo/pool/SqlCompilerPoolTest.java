@@ -24,13 +24,48 @@
 
 package io.questdb.test.cairo.pool;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.pool.SqlCompilerPool;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.LogCapture;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.ArrayList;
+
 public class SqlCompilerPoolTest extends AbstractCairoTest {
+    private static final String CLOSE_FAILURE = "injected in-flight close failure";
+    private static int closeCount;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            protected Iterable<FunctionFactory> getFunctionFactories() {
+                final ArrayList<FunctionFactory> factories = new ArrayList<>();
+                super.getFunctionFactories().forEach(factories::add);
+                factories.add(new CloseFailingCursorFunctionFactory());
+                return factories;
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testDoesNotSupportRefreshAt() throws Exception {
@@ -48,5 +83,67 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testReturnToPoolLogsInFlightCloseFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                closeCount = 0;
+                final SqlCompiler delegate;
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    delegate = ((SqlCompilerPool.C) compiler).getDelegate();
+                    // Model compilation binds the FROM table function but never generates a
+                    // cursor, so its prepared CursorFunction stays in flight until the pool
+                    // reclaims the compiler.
+                    compiler.generateExecutionModel("SELECT * FROM close_failing_cursor()", sqlExecutionContext);
+                    Assert.assertEquals(0, closeCount);
+                }
+                Assert.assertEquals(1, closeCount);
+                capture.drain();
+                capture.assertLoggedRE("could not free in-flight compilation resources \\[error=.*" + CLOSE_FAILURE);
+
+                try (
+                        RecordCursorFactory factory = delegate.compile("SELECT 1 x", sqlExecutionContext).getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1, cursor.getRecord().getInt(0));
+                    Assert.assertFalse(cursor.hasNext());
+                }
+                Assert.assertEquals(1, closeCount);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    private static class CloseFailingCursorFunctionFactory implements FunctionFactory {
+        @Override
+        public String getSignature() {
+            return "close_failing_cursor()";
+        }
+
+        @Override
+        public boolean isCursor() {
+            return true;
+        }
+
+        @Override
+        public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            Misc.freeObjList(args);
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.INT));
+            return new CursorFunction(new EmptyTableRecordCursorFactory(metadata)) {
+                @Override
+                public void close() {
+                    closeCount++;
+                    super.close();
+                    throw new IllegalStateException(CLOSE_FAILURE);
+                }
+            };
+        }
     }
 }

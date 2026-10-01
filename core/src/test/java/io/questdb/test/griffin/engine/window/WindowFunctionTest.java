@@ -10711,7 +10711,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(20, "Window function is not allowed in context of aggregation. Use sub-query.");
 
-            // ORDER BY: moveOrderByFunctionsIntoOuterSelect lifts the expression into the
+            // ORDER BY: OrderBinder lifts the expression into the
             // bottom-up column list, so the SELECT-list guard catches it with a precise position.
             assertQuery("SELECT category, avg(x) FROM t GROUP BY category ORDER BY avg(x) - avg(x) OVER ()")
                     .noLeakCheck()
@@ -10722,7 +10722,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(39, "Window function is not allowed in context of aggregation. Use sub-query.");
 
-            // GROUP BY ordinal resolving to a column with a window: validateGroupByExpression
+            // GROUP BY ordinal resolving to a column with a window: AggregateBinder
             // catches this earlier than the SELECT-list guard.
             assertQuery("SELECT x - avg(x) OVER () FROM t GROUP BY 1")
                     .noLeakCheck()
@@ -10784,19 +10784,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNestedWindowFunctionWithTwoAliasesForSameColumn() throws Exception {
-        // Test nested window function where two output aliases reference the same column.
-        // SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x
-        // The table only has column x. Aliases 'a' and 'b' are output aliases for x.
-        // The inner sum(a) and sum(b) should fail to resolve because a and b are not table columns.
-        // The validation triggers for alias 'b' first because when there are multiple aliases
-        // for the same column (x as a, x as b), the second alias 'b' references the first alias 'a'
-        // in innerVirtualModel, and 'a' is not a table column.
-        assertQuery("SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x")
+        assertQuery("SELECT x AS a, x AS b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x")
                 .ddl("CREATE TABLE x AS (" +
                         "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(3)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-                .fails(48, "Invalid column: b");
+                .expectSize()
+                .returns("""
+                        a\tb\tsum
+                        1\t1\t36.0
+                        2\t2\t36.0
+                        3\t3\t36.0
+                        """);
     }
 
     @Test
@@ -10848,7 +10847,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNestedWindowFunctionsWithOrderByColumnReference() throws Exception {
         // Test nested window functions where the outer window function's ORDER BY
         // references a column that must be propagated through multiple inner window models.
-        // This tests that collectReferencedAliases properly traverses WindowExpression's orderBy.
+        // This tests that WindowBinder properly traverses WindowExpression's orderBy.
         //
         // Query: SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t
         // - row_number() OVER () creates first inner window model
@@ -10878,7 +10877,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNestedWindowFunctionsWithPartitionByColumnReference() throws Exception {
         // Test nested window functions where the outer window function's PARTITION BY
         // references a column that must be propagated through multiple inner window models.
-        // This tests that collectReferencedAliases properly traverses WindowExpression's partitionBy.
+        // This tests that WindowBinder properly traverses WindowExpression's partitionBy.
         //
         // Query: SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (PARTITION BY x) FROM t
         // - row_number() OVER () creates first inner window model
@@ -17324,7 +17323,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """ +
                             (this.isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
                             """
-                                          orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),dense_rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])]]
+                                          orderedFunctions: [[j] => [rank() over (partition by [i]),dense_rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])],[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)]]
                                           unorderedFunctions: [row_number() over (partition by [i])]
                                             PageFrame
                                                 Row forward scan
@@ -17438,7 +17437,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testProtectedOutputAliasSurfacesClean() throws Exception {
-        // Regression: generateSelectWindow builds the window column's metadata name through
+        // Regression: WindowFactoryGenerator.generateWindow builds the window column's metadata name through
         // SqlUtil.toColumnName, so a quote-protected window output alias (a dotted name or an operator
         // token) must surface clean, with no leaked double quotes. Exercises the row_number / rank
         // window paths (rank also drives RankFunctionFactory.initRecordComparator).
@@ -20481,7 +20480,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
 
             // lead/lag with respect nulls (default) deduplicated with lead/lag without specifier
-            // Double SelectedRecord: one from ORDER BY sym, one from window function deduplication
             assertQuery("select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym IN ('X', 'Y') order by sym")
                     .noLeakCheck()
                     .timestamp(null)
@@ -20489,18 +20487,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
-                                SelectedRecord
                             """ +
-                            (isCacheLightWindowEnabled ? "        CachedWindowLight\n" : "        CachedWindow\n") +
+                            (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
                             """
-                                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                                FilterOnValues symbolOrder: asc
-                                                    Cursor-order scan
-                                                        Index forward scan on: sym deferred: true
-                                                          filter: sym='X'
-                                                        Index forward scan on: sym deferred: true
-                                                          filter: sym='Y'
-                                                    Frame forward scan on: tab
+                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                            FilterOnValues symbolOrder: asc
+                                                Cursor-order scan
+                                                    Index forward scan on: sym deferred: true
+                                                      filter: sym='X'
+                                                    Index forward scan on: sym deferred: true
+                                                      filter: sym='Y'
+                                                Frame forward scan on: tab
                                     """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
         });
@@ -21102,50 +21099,48 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionFailsInNonWindowContext() throws Exception {
         assertMemoryLeak(() -> {
-            Class<?>[] factories = new Class<?>[]{
-                    RankFunctionFactory.class,
-                    DenseRankFunctionFactory.class,
-                    RowNumberFunctionFactory.class,
-                    NtileFunctionFactory.class,
-                    CumeDistFunctionFactory.class,
-                    NthValueDoubleWindowFunctionFactory.class,
-                    AvgDoubleWindowFunctionFactory.class,
-                    SumDoubleWindowFunctionFactory.class,
-                    StdDevPopDoubleWindowFunctionFactory.class,
-                    StdDevSampDoubleWindowFunctionFactory.class,
-                    StdDevDoubleWindowFunctionFactory.class,
-                    VarPopDoubleWindowFunctionFactory.class,
-                    VarSampDoubleWindowFunctionFactory.class,
-                    VarDoubleWindowFunctionFactory.class,
-                    CovarPopDoubleWindowFunctionFactory.class,
-                    CovarSampDoubleWindowFunctionFactory.class,
-                    CorrDoubleWindowFunctionFactory.class,
-                    KSumDoubleWindowFunctionFactory.class,
-                    CountConstWindowFunctionFactory.class,
-                    CountDoubleWindowFunctionFactory.class,
-                    CountSymbolWindowFunctionFactory.class,
-                    CountVarcharWindowFunctionFactory.class,
-                    MaxDoubleWindowFunctionFactory.class,
-                    MinDoubleWindowFunctionFactory.class,
-                    FirstValueDoubleWindowFunctionFactory.class,
-                    LastValueDoubleWindowFunctionFactory.class,
-                    LagDoubleFunctionFactory.class,
-                    LeadDoubleFunctionFactory.class,
-                    LagLongFunctionFactory.class,
-                    LeadLongFunctionFactory.class,
-                    LagTimestampFunctionFactory.class,
-                    LeadTimestampFunctionFactory.class,
-                    LagDateFunctionFactory.class,
-                    LeadDateFunctionFactory.class
+            FunctionFactory[] factories = new FunctionFactory[]{
+                    new RankFunctionFactory(),
+                    new DenseRankFunctionFactory(),
+                    new RowNumberFunctionFactory(),
+                    new NtileFunctionFactory(),
+                    new CumeDistFunctionFactory(),
+                    new NthValueDoubleWindowFunctionFactory(),
+                    new AvgDoubleWindowFunctionFactory(),
+                    new SumDoubleWindowFunctionFactory(),
+                    new StdDevPopDoubleWindowFunctionFactory(),
+                    new StdDevSampDoubleWindowFunctionFactory(),
+                    new StdDevDoubleWindowFunctionFactory(),
+                    new VarPopDoubleWindowFunctionFactory(),
+                    new VarSampDoubleWindowFunctionFactory(),
+                    new VarDoubleWindowFunctionFactory(),
+                    new CovarPopDoubleWindowFunctionFactory(),
+                    new CovarSampDoubleWindowFunctionFactory(),
+                    new CorrDoubleWindowFunctionFactory(),
+                    new KSumDoubleWindowFunctionFactory(),
+                    new CountConstWindowFunctionFactory(),
+                    new CountDoubleWindowFunctionFactory(),
+                    new CountSymbolWindowFunctionFactory(),
+                    new CountVarcharWindowFunctionFactory(),
+                    new MaxDoubleWindowFunctionFactory(),
+                    new MinDoubleWindowFunctionFactory(),
+                    new FirstValueDoubleWindowFunctionFactory(),
+                    new LastValueDoubleWindowFunctionFactory(),
+                    new LagDoubleFunctionFactory(),
+                    new LeadDoubleFunctionFactory(),
+                    new LagLongFunctionFactory(),
+                    new LeadLongFunctionFactory(),
+                    new LagTimestampFunctionFactory(),
+                    new LeadTimestampFunctionFactory(),
+                    new LagDateFunctionFactory(),
+                    new LeadDateFunctionFactory()
             };
 
             int position = -1;
             ObjList<Function> args = new ObjList<>();
             IntList argPositions = new IntList();
 
-            for (Class<?> _class : factories) {
-                FunctionFactory factory = (FunctionFactory) _class.getDeclaredConstructor().newInstance();
-
+            for (FunctionFactory factory : factories) {
                 try {
                     factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
                     Assert.fail();

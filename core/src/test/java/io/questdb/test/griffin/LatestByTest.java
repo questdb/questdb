@@ -767,6 +767,94 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByWithinOutsideIndexedScan() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE pos (
+                              id INT,
+                              s SYMBOL INDEX,
+                              p SYMBOL INDEX TYPE POSTING,
+                              g GEOHASH(4c),
+                              ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO pos VALUES
+                      (1, 'a', 'a', #dr5r, '2021-09-02T00:00:00.000000Z'),
+                      (2, 'b', 'b', #dr5x, '2021-09-02T00:00:01.000000Z'),
+                      (3, 'a', 'a', #u33d, '2021-09-02T00:00:02.000000Z')""");
+
+            // The indexed scan applies the prefixes to the latest row of each key.
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("""
+                            id
+                            2
+                            """);
+            // Every other LATEST BY factory filters the rows before picking the latest row of each key.
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) AND id > 0 LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: (g in [\"011001011100101\"] and 0<id)")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) AND s = 'a' LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            """);
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) AND s IN ('a', 'b') LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            assertQuery("SELECT /*+ no_index */ id FROM pos WHERE g within(#dr5) LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) LATEST ON ts PARTITION BY s, s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) LATEST ON ts PARTITION BY p")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+        });
+        engine.getSqlCompilerPool().releaseAll();
+    }
+
+    @Test
     public void testLatestByConstantFalseWhere() throws Exception {
         // A LATEST ON whose WHERE the optimiser folds to a compile-time constant-false
         // predicate (a col<col / col>col / ts>ts self-comparison, or an AND of them)
@@ -823,7 +911,7 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setBoolean("b0", false);
             // a boolean bind variable is a runtime constant; it does not fold, so it takes
-            // the generateLatestByTableQuery path (which already clears latestBy on a
+            // the ScanFactoryGenerator.generateLatestBy path (which already clears latestBy on a
             // constant-false runtime filter). It must agree with the folded literal form.
             assertQuery("SELECT * FROM t WHERE :b0 LATEST ON ts PARTITION BY c3")
                     .noLeakCheck()
@@ -865,7 +953,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByIndexedSymbolFilterNotDropped() throws Exception {
         // A WHERE predicate over an INDEXED SYMBOL combined with LATEST ON ... PARTITION BY
-        // a non-symbol key used to be silently dropped. WhereClauseParser extracted the
+        // a non-symbol key used to be silently dropped. SymbolKeyExtractor extracted the
         // indexed-symbol predicate into a key-column intrinsic (expecting an index scan to
         // serve it), but the LatestByAllFiltered path - chosen because the partition key is
         // not a symbol - ignores that intrinsic and applies only the residual filter, which

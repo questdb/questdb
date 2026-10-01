@@ -27,13 +27,10 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNonePreservesDuplicateAggregateDedup() throws Exception {
-        // After rewriteSampleBy clears sampleBy, rewriteSelectClause0 re-exposes
-        // the rewritten fill list on groupByModel.sampleByFill so per-aggregate
-        // fill validation can run. The re-expose is skipped for FILL(NONE)
-        // because every aggregate's getSampleByFlags() includes
-        // SAMPLE_BY_FILL_NONE -- validation is a strict no-op -- and an
-        // unconditional re-expose would defeat detectDuplicateAggregates on the
-        // calendar-align path. This test pins the dedup: count(x) appears once
+        // FILL(NONE) keeps duplicate-aggregate deduplication: every aggregate's
+        // getSampleByFlags() includes SAMPLE_BY_FILL_NONE, so per-aggregate fill
+        // validation is a strict no-op and nothing needs one column per aggregate
+        // on the calendar-align path. This test pins the dedup: count(x) appears once
         // in the inner Async Group By, not twice.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
@@ -43,8 +40,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [ts]
-                                VirtualRecord
-                                  functions: [count,count,ts]
+                                SelectedRecord
                                     Async Group By workers: 1
                                       keys: [ts]
                                       keyFunctions: [timestamp_floor_utc('1h',ts)]
@@ -60,8 +56,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     @Test
     public void testFillNullDisablesDuplicateAggregateDedup() throws Exception {
         // Counter-test to testFillNonePreservesDuplicateAggregateDedup. With FILL(NULL)
-        // the fill-list propagation in rewriteSelectClause0 re-exposes the fill on
-        // groupByModel.sampleByFill, which gates off detectDuplicateAggregates. This is
+        // SampleByBinder keeps one column per aggregate, so duplicates are not deduplicated. This is
         // deliberate: per-column FILL(NULL) values must reach their own column, so
         // collapsing count(x), count(x) into one inner aggregate would silently drop the
         // second column's fill in cases like FILL(NULL, 0). The cost is that duplicate
@@ -75,19 +70,20 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             assertQuery("SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [count(x),count(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [count(x),count(x)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
                             """);
         });
     }
@@ -1288,8 +1284,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // Guard against factoryColToUserFillIdx mis-mapping when two SELECT columns
         // share an alias: groupByMetadata.getColumnIndexQuiet() returns the first
         // match, so a non-rejection here would silently route one aggregate onto
-        // the wrong fill slot. The SqlOptimiser rejects duplicate aliases up front
-        // (SqlOptimiser#Duplicate column), and this test locks that rejection in
+        // the wrong fill slot. SqlBinder rejects duplicate aliases up front
+        // ("Duplicate column"), and this test locks that rejection in
         // place for FILL-bearing SAMPLE BY queries.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1441,21 +1437,22 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              range: ('2024-01-01',)
-                              stride: '1h'
-                              fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  range: ('2024-01-01',)
+                                  stride: '1h'
+                                  fill: null
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                      values: [first(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: x
-                                              intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                          values: [first(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: x
+                                                  intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
                             """);
         });
     }
@@ -1781,7 +1778,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // the same compiled factory with a different bind value must rebind
         // TimezoneFloorTimestampSampler's tz rules so the cursor's grid follows
         // the current bind. The pre-fix code resolved tz once in
-        // SqlCodeGenerator.generateFill and baked the resulting TimeZoneRules
+        // SampleByFactoryGenerator.generateFill and baked the resulting TimeZoneRules
         // into a final field, silently reusing the first-execute rules on
         // every subsequent execution. This test pins the contract: each
         // execute lands its own buckets.
@@ -1957,8 +1954,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueAppliesAfterAggregateArithmetic() throws Exception {
-        // FILL(v) over sum(col*K) must show v in empty buckets, not v*K. Earlier
-        // SqlOptimiser.rewriteAggregate split sum(x*10) into sum(x)*10, so the fill
+        // FILL(v) over sum(col*K) must show v in empty buckets, not v*K. Sum normalisation
+        // (now AggregateRewritePass) used to split sum(x*10) into sum(x)*10, so the fill
         // landed on sum(x) and empty buckets returned 420. Coverage: ALIGN TO CALENDAR
         // and ALIGN TO FIRST OBSERVATION, each in non-keyed and keyed form.
         assertMemoryLeak(() -> {
@@ -2116,7 +2113,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     public void testFillValuePerColumnPreservedAcrossDuplicates() throws Exception {
         // FILL(0, 42) over duplicate aggregates must apply 0 to the first column and
         // 42 to the second. Before fill-list propagation reached groupByModel.sampleByFill
-        // on the calendar-align path, SqlOptimiser.detectDuplicateAggregates collapsed
+        // on the calendar-align path, duplicate-aggregate detection collapsed
         // sum(x) AS a and sum(x) AS b into a single inner aggregate and codegen mapped
         // the FILL list against the collapsed count, silently dropping the 42.
         // Coverage: ALIGN TO CALENDAR and ALIGN TO FIRST OBSERVATION, each in non-keyed
@@ -2176,19 +2173,20 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FILL(0.0) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [first(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """);
         });
     }

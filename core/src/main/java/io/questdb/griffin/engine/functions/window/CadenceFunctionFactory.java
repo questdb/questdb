@@ -42,7 +42,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -213,7 +212,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         private long offset;
         private boolean keepAll;
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         // pass1 (count) and pass2 (pass2Ordinal/selIdx) are two separate traversals of the same
         // partition. CachedWindowRecordCursorFactory must replay the SAME WindowSortBuffer order
         // for both passes, or these counters (and the ordinals stashed in `selected`) desync and
@@ -363,7 +362,8 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
                 RecordMetadata metadata,
                 ArrayColumnTypes chainTypes,
                 IntList orderIndices,
-                ObjList<ExpressionNode> orderBy,
+                IntList orderPositions,
+                ObjList<CharSequence> orderBy,
                 IntList orderByDirection
         ) throws SqlException {
             this.orderBy = orderBy;

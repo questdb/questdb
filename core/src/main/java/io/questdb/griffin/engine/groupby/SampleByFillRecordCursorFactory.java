@@ -119,7 +119,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final int timestampType;
     private Function toFunc;
     // Non-null only for day-or-larger SAMPLE BY + non-trivial FILL + TIME ZONE
-    // (set by SqlOptimiser.rewriteSampleBy). Cursor re-evaluates per of() so a
+    // (set by SAMPLE BY binding). Cursor re-evaluates per of() so a
     // bind-variable TZ picks up its current value. Null means no TZ wrap.
     private Function tzFunc;
 
@@ -1052,7 +1052,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // (named zone or offset literal): only setLocalAnchor /
             // localAnchorAsUtc can fold tzOffset into the anchor for
             // super-day strides. tzFunc != null already implies the wrap
-            // is required (SqlOptimiser only sets it for day-or-larger
+            // is required (binding only sets it for day-or-larger
             // SAMPLE BY + non-trivial FILL). getTimezoneRules unifies
             // offset literals (FixedTimeZoneRule) and DST zones uniformly.
             if (tzFunc != null) {

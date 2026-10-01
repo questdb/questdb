@@ -57,7 +57,6 @@ import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -70,8 +69,8 @@ import org.junit.Test;
 /**
  * The SAMPLE BY factories run fallible work after their superclass constructor adopted the
  * record functions, the base factory, the map (keyed variants), and the temporal parameter
- * functions: record-sink and group-by updater bytecode generation, placeholder-function
- * assembly, and cursor construction. Java cannot run close() on the unreturned partial object,
+ * functions: record-sink and group-by updater bytecode generation and cursor construction.
+ * Java cannot run close() on the unreturned partial object,
  * and the generator has already transferred ownership, so the constructors themselves must free
  * every adopted resource exactly once when that post-super work throws. Every fill variant
  * (none/null/prev/value), keyed and not-keyed, plus the interpolation and index-backed
@@ -322,13 +321,12 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         fixture.base(),
                         fixture.sampler(),
                         fixture.listColumnFilter,
-                        new ObjList<>(),
+                        new ObjList<>(fixture.recordFunctions),
                         fixture.keyTypes,
                         fixture.valueTypes,
                         fixture.groupByMetadata,
                         new ObjList<>(),
                         fixture.recordFunctions,
-                        fixture.recordFunctionPositions,
                         1,
                         ColumnType.TIMESTAMP,
                         fixture.timezoneNameFunc,
@@ -351,11 +349,10 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         configuration,
                         fixture.base(),
                         fixture.sampler(),
-                        new ObjList<>(),
+                        new ObjList<>(fixture.recordFunctions),
                         fixture.groupByMetadata,
                         new ObjList<>(),
                         fixture.recordFunctions,
-                        fixture.recordFunctionPositions,
                         1,
                         1,
                         ColumnType.TIMESTAMP,
@@ -381,7 +378,9 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         fixture.base(),
                         fixture.sampler(),
                         fixture.groupByMetadata,
-                        new ObjList<>(),
+                        new IntList(),
+                        new IntList(),
+                        new IntList(),
                         fixture.baseMetadata,
                         fixture.timezoneNameFunc,
                         0,
@@ -423,7 +422,9 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                             base,
                             fixture.sampler(),
                             fixture.groupByMetadata,
-                            new ObjList<>(),
+                            new IntList(),
+                            new IntList(),
+                            new IntList(),
                             fixture.baseMetadata,
                             throwingTimezoneFunc,
                             0,
@@ -484,7 +485,6 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new ObjList<>(),
                     fixture.recordFunctions,
                     fixture.sampler(),
-                    QueryModel.FACTORY.newInstance(),
                     fixture.listColumnFilter,
                     fixture.keyTypes,
                     fixture.valueTypes,
@@ -522,7 +522,6 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new ObjList<>(),
                     aliasedFixture.recordFunctions,
                     aliasedFixture.sampler(),
-                    QueryModel.FACTORY.newInstance(),
                     aliasedFixture.listColumnFilter,
                     aliasedFixture.keyTypes,
                     aliasedFixture.valueTypes,
@@ -555,7 +554,6 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         new ObjList<>(),
                         fixture.recordFunctions,
                         fixture.sampler(),
-                        QueryModel.FACTORY.newInstance(),
                         fixture.listColumnFilter,
                         new ArrayColumnTypes(),
                         new ArrayColumnTypes(),

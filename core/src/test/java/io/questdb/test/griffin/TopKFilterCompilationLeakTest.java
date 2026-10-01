@@ -44,7 +44,7 @@ public class TopKFilterCompilationLeakTest extends AbstractCairoTest {
 
     @Test
     public void testPerWorkerFilterLeakOnPartialCompileFailure() throws Exception {
-        // Forces buildAsyncTopKOverStolenFilter to call compileWorkerFiltersConditionally
+        // Forces SortFactoryGenerator to call FilterFactoryGenerator.compileWorkers
         // with sharedQueryWorkerCount > 1. The test filter throws on the Nth construction
         // call; prior calls allocate native memory tracked by assertMemoryLeak.
         //

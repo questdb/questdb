@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -63,6 +64,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         int n = args.size();
         if (n == 1) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return BooleanConstant.FALSE;
         }
 

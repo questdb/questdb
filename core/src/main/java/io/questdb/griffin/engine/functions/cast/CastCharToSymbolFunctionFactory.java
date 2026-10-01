@@ -49,7 +49,7 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             if (value == 0) {
                 return SymbolConstant.NULL;
             }
-            return SymbolConstant.newInstance(Chars.toString(value));
+            return SymbolConstant.fromValue(Chars.toString(value));
         }
         return new Func(arg);
     }

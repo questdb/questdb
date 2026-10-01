@@ -1321,7 +1321,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testDynamicWindowCoalesceBound() throws Exception {
         // Tests that coalesce (paramCount >= 3) works as a dynamic bound,
-        // exercising the args-based tree walking in resolveWindowJoinBoundColumns.
+        // exercising the args-based tree walking in TemporalJoinBinder.
         // The master table prefix inside a nested expression within coalesce
         // must be stripped for the bound function to compile correctly.
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -1449,7 +1449,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testDynamicWindowExpressionBound() throws Exception {
         // Tests that computed expressions (not bare columns) work as dynamic
         // bounds, exercising the expression tree walking in
-        // resolveWindowJoinBoundColumns for both lo and hi.
+        // TemporalJoinBinder for both lo and hi.
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
@@ -1586,7 +1586,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testDynamicWindowFailsOnSlaveColumnInCoalesceBound() throws Exception {
         // Tests that a slave column reference nested inside coalesce (paramCount >= 3)
-        // is properly rejected by resolveWindowJoinBoundColumns.
+        // is properly rejected by TemporalJoinBinder.
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
@@ -4399,6 +4399,30 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinAggregateAliasShadowsMasterColumn() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, 1_000_000), ('b', 2, 2_000_000), ('a', 3, 3_000_000)");
+            execute("CREATE TABLE q (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO q VALUES ('a', 10, 1_000_000), ('b', 20, 2_000_000), ('a', 30, 2_500_000)");
+            assertQuery("""
+                    SELECT t.s, t.v, sum(px) s, count() v
+                    FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s1\tv1\ts\tv
+                            a\t1\t10.0\t1
+                            b\t2\t20.0\t1
+                            a\t3\t40.0\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowJoinBinarySearch() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -4972,7 +4996,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         // WindowContextImpl.toTimestampUnits already refused this for a plain RANGE frame; the
         // four WINDOW JOIN conversion sites now share that one guard rather than carrying a
         // fourth copy of the arithmetic. The interval-pruning site is the worse of the two: its
-        // converted bounds feed intrinsicModel.mergeIntervalModel, so a wrapped bound narrows
+        // converted bounds feed IntervalExtractor.merge, so a wrapped bound narrows
         // the slave scan interval and drops rows before evaluation.
         //
         // 300_000 days is in range for microseconds (ceiling 106_751_991 days), so pin the
@@ -4997,7 +5021,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // Without a WHERE there is no pushed interval model, so the interval-pruning
             // conversion never runs and only the join site is covered. This variant pushes one,
-            // which is the site whose bounds feed mergeIntervalModel and so narrow the slave
+            // which is the site whose bounds feed IntervalExtractor.merge and so narrow the slave
             // scan. It throws first, before the join site.
             assertQuery("""
                     SELECT m.ts, sum(s.val) AS agg
@@ -5025,6 +5049,21 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "order by t.ts, t.sym;")
                     .noLeakCheck()
                     .fails(195, "Invalid column: p.price");
+        });
+    }
+
+    @Test
+    public void testWindowJoinFailsOnWildcard() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertQuery("SELECT * FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING")
+                    .noLeakCheck()
+                    .fails(7, "WINDOW join cannot reference right table non-aggregate column: p.ts");
+            assertQuery("SELECT p.*, sum(p.price) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING")
+                    .noLeakCheck()
+                    .fails(7, "WINDOW join cannot reference right table non-aggregate column: p.ts");
         });
     }
 
@@ -7091,8 +7130,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [ts, sym]
-                                VirtualRecord
-                                  functions: [ts,sym,price,agg0,agg1,agg2,agg1]
+                                SelectedRecord
                                     Async Window Join workers: 1
                                       vectorized: true
                             """ +
@@ -7120,8 +7158,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [ts, sym]
-                                VirtualRecord
-                                  functions: [ts,sym,price,agg0,agg1,agg2,agg1]
+                                SelectedRecord
                                     Async Window Join workers: 1
                                       vectorized: true
                             """ +

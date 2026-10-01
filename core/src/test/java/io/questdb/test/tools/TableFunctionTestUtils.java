@@ -49,7 +49,7 @@ import org.junit.Assert;
  * <p>
  * This is the fixture for the cursor-factory OWNERSHIP tests: the optimiser instantiates a table
  * function while parsing the FROM clause and holds it in flight until code generation takes it over
- * ({@code SqlCodeGenerator#generateFunctionQuery}), so every compile path that throws in between has to
+ * ({@code TableFunctionSources#takeFactory}), so every compile path that throws in between has to
  * close it exactly once -- a miss leaks, a double close is a use-after-free. The counter deliberately
  * counts every {@code close()} call rather than every effective release, because the guard in
  * {@code AbstractRecordCursorFactory} swallows repeated closes and would hide the double close these

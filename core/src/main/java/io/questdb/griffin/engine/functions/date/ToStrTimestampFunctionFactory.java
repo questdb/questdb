@@ -80,7 +80,7 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             StringSink sink = tlSink.get();
             sink.clear();
             timestampFormat.format(value, configuration.getDefaultDateLocale(), "Z", sink);
-            return new StrConstant(sink);
+            return StrConstant.fromValue(sink);
         }
 
         return new ToCharDateFFunc(args.getQuick(0), timestampFormat, configuration.getDefaultDateLocale());

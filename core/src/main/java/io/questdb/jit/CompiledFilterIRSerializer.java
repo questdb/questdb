@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlException;
@@ -4519,6 +4520,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         if (Chars.isQuoted(token)) {
             if (ColumnType.isTimestamp(predicateContext.columnType)) {
+                // Scalar comparison preserves a nanosecond literal against a
+                // microsecond column. The current IR compares raw I8 values;
+                // parsing at column precision would silently truncate the bound.
+                if (FunctionParser.getAdaptiveTimestampType(token, predicateContext.columnType) != predicateContext.columnType) {
+                    throw SqlException.position(position).put("unsupported mixed-precision timestamp constant: ").put(token);
+                }
                 try {
                     putOperand(
                             offset,
@@ -5518,7 +5525,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // Unknown symbol constant case. Create a fake bind variable function to handle it.
-        final SymbolConstant function = SymbolConstant.newInstance(symbol);
+        final SymbolConstant function = SymbolConstant.fromValue(symbol);
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 

@@ -50,30 +50,30 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.BitmapIndexUtilsNative;
 import io.questdb.std.Decimals;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFactory {
+    public static final int FIRST = 0;
+    public static final int KEY = -1;
+    public static final int LAST = 1;
     private static final int FILTER_KEY_IS_NULL = 0;
-    private static final int FIRST_OUT_INDEX = 0;
+    private static final int FIRST_OUT_INDEX = FIRST;
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
-    private static final int LAST_OUT_INDEX = 1;
+    private static final int LAST_OUT_INDEX = LAST;
     private static final int TIMESTAMP_OUT_INDEX = 2;
     private final LongList crossFrameRow;
     private final int[] firstLastIndexByCol;
@@ -94,12 +94,15 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private Function sampleToFunc;
     private Function timezoneNameFunc;
 
+    /** Consumes the base and temporal functions; copies the borrowed column layout. */
     public SampleByFirstLastRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             RecordCursorFactory base,
             TimestampSampler timestampSampler,
             GenericRecordMetadata groupByMetadata,
-            ObjList<QueryColumn> columns,
+            @Transient IntList inputIndexes,
+            @Transient IntList kinds,
+            @Transient IntList positions,
             RecordMetadata metadata,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
@@ -123,13 +126,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             this.sampleFromFunc = sampleFromFunc;
             this.sampleToFunc = sampleToFunc;
             groupBySymbolColIndex = symbolFilter.getColumnIndex();
-            queryToFrameColumnMapping = new int[columns.size()];
-            firstLastIndexByCol = new int[columns.size()];
-            isKeyColumn = new boolean[columns.size()];
-            crossFrameRow = new LongList(columns.size());
-            crossFrameRow.setPos(columns.size());
+            queryToFrameColumnMapping = new int[inputIndexes.size()];
+            firstLastIndexByCol = new int[inputIndexes.size()];
+            isKeyColumn = new boolean[inputIndexes.size()];
+            crossFrameRow = new LongList(inputIndexes.size());
+            crossFrameRow.setPos(inputIndexes.size());
             this.timestampIndex = timestampIndex;
-            buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);
+            buildFirstLastIndex(inputIndexes, kinds, positions, metadata, timestampIndex);
             int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
             pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
             maxSamplePeriodSize = pageSize * 4;
@@ -258,44 +261,34 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     private void buildFirstLastIndex(
-            int[] firstLastIndex,
-            int[] queryToFrameColumnMapping,
+            IntList inputIndexes,
+            IntList kinds,
+            IntList positions,
             RecordMetadata metadata,
-            ObjList<QueryColumn> columns,
-            int timestampIndex,
-            boolean[] isKeyColumn
+            int timestampIndex
     ) throws SqlException {
-        for (int i = 0, n = firstLastIndex.length; i < n; i++) {
-            QueryColumn column = columns.getQuick(i);
-            ExpressionNode ast = column.getAst();
+        for (int i = 0, n = inputIndexes.size(); i < n; i++) {
+            final int kind = kinds.getQuick(i);
+            final int underlyingColIndex = inputIndexes.getQuick(i);
+            queryToFrameColumnMapping[i] = underlyingColIndex;
             int resultSetColumnType = getMetadata().getColumnType(i);
-            if (ast.rhs != null) {
-                if (SqlKeywords.isLastKeyword(ast.token)) {
-                    firstLastIndex[i] = LAST_OUT_INDEX;
-                } else if (SqlKeywords.isFirstKeyword(ast.token)) {
-                    firstLastIndex[i] = FIRST_OUT_INDEX;
-                } else {
-                    throw SqlException.$(ast.position, "expected first() or last() functions but got ").put(ast.token);
+            if (kind != KEY) {
+                if (kind != FIRST && kind != LAST) {
+                    throw new IllegalArgumentException("invalid first/last column kind: " + kind);
                 }
-                // Defensive uniformity, not reachable with a protected token: ast.rhs.token names a
-                // physical page-frame column here, which arrives unquoted, so getColumnIndex's
-                // protected-alias strip-retry never fires - no test drives it through this path.
-                int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
-                queryToFrameColumnMapping[i] = underlyingColIndex;
+                firstLastIndexByCol[i] = kind;
 
                 int underlyingType = metadata.getColumnType(underlyingColIndex);
                 int pow2 = ColumnType.pow2SizeOf(resultSetColumnType);
                 if (underlyingType != resultSetColumnType || pow2 < 0 || pow2 > 3) {
-                    throw SqlException.$(ast.position, "column \"")
+                    throw SqlException.$(positions.getQuick(i), "column \"")
                             .put(metadata.getColumnName(underlyingColIndex))
                             .put("\": first(), last() is not supported on data type ")
                             .put(ColumnType.nameOf(underlyingType))
                             .put(" ");
                 }
             } else {
-                int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.token);
                 isKeyColumn[i] = true;
-                queryToFrameColumnMapping[i] = underlyingColIndex;
                 if (underlyingColIndex == timestampIndex) {
                     groupByTimestampIndex = i;
                 }

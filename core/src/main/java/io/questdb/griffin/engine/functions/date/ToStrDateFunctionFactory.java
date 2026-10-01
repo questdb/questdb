@@ -79,7 +79,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             StringSink sink = tlSink.get();
             sink.clear();
             dateFormat.format(value, configuration.getDefaultDateLocale(), "Z", sink);
-            return new StrConstant(sink);
+            return StrConstant.fromValue(sink);
         }
 
         return new ToCharDateVCFFunc(args.getQuick(0), DateFormatFactory.INSTANCE.get(format), configuration.getDefaultDateLocale(), format);

@@ -69,7 +69,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
                 return SymbolConstant.NULL;
             }
             final String symbol = utf8ToString(value);
-            return symbol != null ? SymbolConstant.newInstance(symbol) : SymbolConstant.NULL;
+            return SymbolConstant.fromValue(symbol);
         }
         return new Func(arg);
     }
@@ -78,7 +78,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
         return Chars.toString(Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink()));
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
+    public static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final Utf8SequenceIntHashMap lookupMap = new Utf8SequenceIntHashMap();
         private final ObjList<CharSequence> symbols = new ObjList<>();

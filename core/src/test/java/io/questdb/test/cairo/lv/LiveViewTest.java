@@ -1901,7 +1901,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         // DeferredSingleSymbolFilterPageFrameRecordCursorFactory whose predicate lives in the
         // row cursor, invisible to the incremental refresh path (which applies only the residual
         // filter Function). Before the fix the view admitted every base row - including sym='b' -
-        // because the intended WhereClauseParser.useIndexedSymbolFilters guard was never read.
+        // because nothing suppressed indexed-symbol key extraction for a live view compile.
         // Suppressing indexed-symbol key extraction during live view compilation now leaves the
         // predicate as a residual filter the refresh applies, so only sym='a' rows survive and rn
         // advances only for survivors (identical to the non-indexed WHERE val > 5 case above).
@@ -1957,7 +1957,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         // testRefreshWithPatternFilterOnIndexedSymbolCachedWindowShape covers.
         //
         // The gate now skips the symbol-pattern index for a live view compile, exactly as
-        // WhereClauseParser suppresses indexed-symbol key extraction there, so the planner emits
+        // ScanFactoryGenerator suppresses indexed-symbol key extraction there, so the planner emits
         // the plain filter-over-full-scan shape the refresh path handles - the same shape the
         // unindexed twin testRefreshWithPatternFilterOnSymbol already gets.
         assertMemoryLeak(() -> {

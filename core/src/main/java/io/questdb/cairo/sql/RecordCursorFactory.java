@@ -251,18 +251,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns the original filter expression that can be stolen by parent factories.
-     * When {@link #supportsFilterStealing()} returns true, this method should return
-     * the original expression of the stolen filter.
-     *
-     * @return the original filter expression that can be stolen, or null if
-     * filter stealing is not supported
-     */
-    default ExpressionNode getStealFilterExpr() {
-        return null;
-    }
-
-    /**
      * If factory operates on table directly returns table's token, null otherwise.
      * When this method returns a table token, it also means that the factory doesn't
      * remap column names via aliases.
@@ -310,7 +298,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * determinism-dependent optimizations; it can never cause wrong results.
      * <p>
      * Compile-time consumers (for example scalar-subquery timestamp bounds in
-     * {@code WhereClauseParser}) use this to avoid pruning optimizations that would re-open the
+     * {@code IntervalExtractor}) use this to avoid pruning optimizations that would re-open the
      * cursor and observe a different value (for example {@code rnd_*} or {@code systimestamp()}).
      * Returning {@code false} for a factory whose value is genuinely unstable across opens leads
      * to silently dropped rows, which is why unknown shapes must report {@code true}.
@@ -344,7 +332,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * <p>
      * Fail-safe like {@link #isNonDeterministic()}: the default claims stability only for
      * provably deterministic factories, so unknown shapes never enable stability-dependent
-     * optimizations (for example scalar-subquery timestamp pruning in {@code WhereClauseParser}).
+     * optimizations (for example scalar-subquery timestamp pruning in {@code IntervalExtractor}).
      * Overriding factories must prove that every value source they evaluate is itself stable
      * within the execution.
      *
@@ -447,16 +435,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
-    }
-
-    /**
-     * Returns true if the factory stands for nothing more but a filter, so that
-     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
-     *
-     * @return true if filter stealing is supported
-     */
-    default boolean supportsFilterStealing() {
-        return false;
     }
 
     /**

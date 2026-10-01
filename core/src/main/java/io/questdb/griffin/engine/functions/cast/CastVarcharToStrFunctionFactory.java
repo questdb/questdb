@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -51,7 +50,7 @@ public class CastVarcharToStrFunctionFactory implements FunctionFactory {
     ) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            return new StrConstant(Chars.toString(arg.getStrB(null)));
+            return StrConstant.fromValue(arg.getStrB(null));
         }
         return new Func(arg);
     }

@@ -52,7 +52,7 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        // Force DistinctTimeSeriesRecordCursorFactory: otherwise rewriteDistinct turns
+        // Force DistinctTimeSeriesRecordCursorFactory: otherwise AggregateBinder.bindDistinct turns
         // SELECT DISTINCT into (Async) GROUP BY and this factory never runs. The flag has
         // no production property, so override it directly on the CairoConfiguration.
         configurationFactory = (root, telemetry, overrides) ->
