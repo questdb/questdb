@@ -102,6 +102,7 @@ stages:
                 # PR build: Azure builds an ephemeral merge commit, not the PR head.
                 # Fetch the real PR head commit from the GitHub API.
                 OSS_COMMIT=$(gh_pr_field "$OSS_PR_NUMBER" '.head.sha')
+                IS_PR_BUILD=true
                 echo "PR build for PR #$OSS_PR_NUMBER; head commit $OSS_COMMIT"
               elif [[ "$BUILD_SOURCEBRANCH" =~ ^refs/heads/gh-readonly-queue/.*/pr-([0-9]+)- ]]; then
                 # Merge-queue build: branch is refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>.
@@ -152,6 +153,48 @@ stages:
               }
               EOF
               )
+
+              # A new push supersedes enterprise runs testing strictly older ancestors of
+              # the current PR head. Preserve equal, newer, or divergent commits, including
+              # merge groups. List candidate runs before re-reading the PR head, and skip
+              # cancellation if the head changed. Cancellation is best-effort and never
+              # blocks triggering the new run.
+              if [ "$IS_PR_BUILD" = "true" ]; then
+                ENT_BUILDS_URL="https://dev.azure.com/questdb/questdb-enterprise/_apis/build/builds"
+                CANDIDATE_RUNS=$(set -o pipefail; curl -fsS --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused \
+                  -H "$AUTH_HEADER" \
+                  "$ENT_BUILDS_URL?definitions=23&statusFilter=inProgress,notStarted&api-version=7.0" \
+                  | jq -r --arg pr "$OSS_PR_NUMBER" \
+                    '.value[] | select(.templateParameters.ossPrNumber == $pr) | [.id, .templateParameters.ossCommit // ""] | @tsv') \
+                  || CANDIDATE_RUNS=""
+                CURRENT_OSS_COMMIT=$(set -o pipefail; gh_pr_field "$OSS_PR_NUMBER" '.head.sha') \
+                  || CURRENT_OSS_COMMIT=""
+                if [ "$CURRENT_OSS_COMMIT" = "$OSS_COMMIT" ]; then
+                  while IFS=$'\t' read -r STALE_RUN_ID TESTED_OSS_COMMIT; do
+                    if [[ ! "$STALE_RUN_ID" =~ ^[0-9]+$ || ! "$TESTED_OSS_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+                      continue
+                    fi
+                    # GitHub compares BASE...HEAD: behind means the tested commit is a
+                    # strictly older ancestor of the PR head. Keep divergent/unknown results.
+                    COMPARE_STATUS=$(set -o pipefail; curl -fsS --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused \
+                      -H "Authorization: token $GH_TOKEN" \
+                      "https://api.github.com/repos/questdb/questdb/compare/$CURRENT_OSS_COMMIT...$TESTED_OSS_COMMIT?per_page=1" \
+                      | jq -r '.status // empty') || COMPARE_STATUS=""
+                    [ "$COMPARE_STATUS" = behind ] || continue
+                    CANCEL_CODE=$(curl -sS --max-time 30 -o /dev/null -w "%{http_code}" -X PATCH \
+                      -H "$AUTH_HEADER" \
+                      -H "Content-Type: application/json" \
+                      "$ENT_BUILDS_URL/$STALE_RUN_ID?api-version=7.0" \
+                      -d '{"status":"cancelling"}' || true)
+                    echo "Cancelling superseded enterprise run $STALE_RUN_ID for PR #$OSS_PR_NUMBER: HTTP $CANCEL_CODE"
+                    if [[ "$CANCEL_CODE" != 2* ]]; then
+                      echo "##vso[task.logissue type=warning]Could not cancel superseded enterprise run $STALE_RUN_ID (HTTP $CANCEL_CODE)"
+                    fi
+                  done <<< "$CANDIDATE_RUNS"
+                else
+                  echo "Skipping enterprise cancellation: PR #$OSS_PR_NUMBER head changed or could not be resolved"
+                fi
+              fi
 
               echo "Triggering enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER)"
 
