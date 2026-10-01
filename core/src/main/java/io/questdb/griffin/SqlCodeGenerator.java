@@ -1728,18 +1728,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Checks that {@code ast} is {@code dateadd(unit, stride, ts)} where {@code ts} resolves to the designated
-     * timestamp of {@code baseMetadata}. The lookup is the one the function parser uses, so a projection alias
-     * can't shadow the base column.
+     * Checks that {@code ast} is {@code dateadd(unit, stride, ts)} where {@code unit} adds a fixed duration and
+     * {@code ts} resolves to the designated timestamp of {@code baseMetadata}. The lookup is the one the function
+     * parser uses, so a projection alias can't shadow the base column.
      */
     private static boolean isDateaddOverBaseTimestamp(ExpressionNode ast, RecordMetadata baseMetadata) {
         final int baseTimestampIndex = baseMetadata.getTimestampIndex();
         if (baseTimestampIndex < 0 || ast == null || ast.type != FUNCTION || ast.paramCount != 3 || !isDateaddKeyword(ast.token)) {
             return false;
         }
-        // args are reversed: args[0] is the timestamp
+        // args are reversed: args[0] is the timestamp, args[2] is the unit
         final ExpressionNode timestampArg = ast.args.getQuick(0);
-        return timestampArg.type == LITERAL && SqlUtil.getColumnIndexQuiet(baseMetadata, timestampArg.token) == baseTimestampIndex;
+        return isFixedDurationDateaddUnit(ast.args.getQuick(2))
+                && timestampArg.type == LITERAL
+                && SqlUtil.getColumnIndexQuiet(baseMetadata, timestampArg.token) == baseTimestampIndex;
+    }
+
+    /**
+     * Checks that {@code unitArg} is a quoted single-character constant that names a dateadd() unit adding the
+     * same duration to every timestamp, so the result follows the order of the timestamp argument. Months
+     * ({@code 'M'}) and years ({@code 'y'}) don't: they clamp the day of month and keep the time of day, so
+     * January 29, 30 and 31 plus one month all land on the last day of February. The unit is case-sensitive,
+     * {@code 'm'} is minutes.
+     * <p>
+     * The list holds every unit TimestampDriver#getAddMethod() accepts except those two. A unit missing from it
+     * costs the projection its designated timestamp, never the row order.
+     */
+    private static boolean isFixedDurationDateaddUnit(ExpressionNode unitArg) {
+        final CharSequence token = unitArg.token;
+        if (unitArg.type != CONSTANT || token == null || token.length() != 3 || token.charAt(0) != '\'' || token.charAt(2) != '\'') {
+            return false;
+        }
+        return switch (token.charAt(1)) {
+            case 'n', 'u', 'U', 'T', 's', 'm', 'h', 'H', 'd', 'w' -> true;
+            default -> false;
+        };
     }
 
     // Fixed-size scalars and wide types that MapValue can put/get directly.
@@ -10660,7 +10683,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // ORDER BY, join or rename in between can reorder the rows or rebind the name, and
         // optimiseOrderBy(), which runs later, can drop an ORDER BY that kept the rows in order. Keep
         // the timestamp only when the argument is the designated timestamp of the base factory, which
-        // reflects the actual row order.
+        // reflects the actual row order. The optimiser also tags dateadd() for any constant unit, and a
+        // month or year shift does not follow the order of its argument, so the unit must add a fixed
+        // duration as well.
         if (timestampOffsetAlias != null || modelTimestampIndex > -1) {
             final QueryColumn timestampOffsetColumn = timestampOffsetAlias != null
                     ? model.getAliasToColumnMap().get(timestampOffsetAlias)

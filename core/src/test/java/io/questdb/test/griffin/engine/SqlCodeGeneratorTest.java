@@ -28,7 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -9383,6 +9386,39 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 .returns(expectedRows[i]);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testVirtualColumnKeepsDateaddTimestampOnlyForFixedDurationUnits() throws Exception {
+        // Months and years clamp the day of month, so a dateadd() over the base timestamp follows the
+        // base row order only for the units that add a fixed duration. The loop takes the units from
+        // the timestamp drivers, so a unit added to getAddMethod() fails here until the code generator
+        // classifies it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE micros (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE nanos (ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            final TimestampDriver[] drivers = {MicrosTimestampDriver.INSTANCE, NanosTimestampDriver.INSTANCE};
+            final String[] tables = {"micros", "nanos"};
+            for (int i = 0; i < tables.length; i++) {
+                int unitCount = 0;
+                for (char unit = 0; unit < 128; unit++) {
+                    if (drivers[i].getAddMethod(unit) == null) {
+                        continue;
+                    }
+                    unitCount++;
+                    final boolean isCalendarUnit = unit == 'M' || unit == 'y';
+                    try (RecordCursorFactory factory = select("SELECT dateadd('" + unit + "', 1, ts) x FROM " + tables[i])) {
+                        Assert.assertEquals(
+                                "unit=" + unit + ", table=" + tables[i],
+                                isCalendarUnit ? -1 : 0,
+                                factory.getMetadata().getTimestampIndex()
+                        );
+                    }
+                }
+                // n, u, U, T, s, m, h, H, d, w, M, y
+                Assert.assertEquals(12, unitCount);
             }
         });
     }
