@@ -7602,6 +7602,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     EXPIRY_ROW_ONLY_FUNCTIONS.contains(node.token);
             default -> false;
         };
+        if (isNodeRowOnly
+                && (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.SET_OPERATION)
+                && SqlKeywords.isInKeyword(node.token)) {
+            return isExpiryRowOnlyInExpression(node, metadata);
+        }
         if (!isNodeRowOnly
                 || !isExpiryRowOnlyExpression(node.lhs, metadata)
                 || !isExpiryRowOnlyExpression(node.rhs, metadata)) {
@@ -7613,6 +7618,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return true;
+    }
+
+    // An IN over the designated timestamp parses a string value as an interval at runtime, and that parse
+    // expands date variables such as $today. A date variable can reach it through concat() or from a column,
+    // where the scan of string constants does not see it, so an IN counts as proven only when each of its
+    // values is a constant. Its left operand follows the general rule.
+    private static boolean isExpiryRowOnlyInExpression(ExpressionNode node, RecordMetadata metadata) {
+        final ObjList<ExpressionNode> args = node.args;
+        final int argCount = args.size();
+        if (argCount == 0) {
+            return node.rhs != null
+                    && node.rhs.type == ExpressionNode.CONSTANT
+                    && isExpiryRowOnlyExpression(node.lhs, metadata);
+        }
+        // Function args are stored reversed: the left operand comes last.
+        for (int i = 0; i < argCount - 1; i++) {
+            if (args.getQuick(i).type != ExpressionNode.CONSTANT) {
+                return false;
+            }
+        }
+        return isExpiryRowOnlyExpression(args.getQuick(argCount - 1), metadata);
     }
 
     /**

@@ -146,6 +146,10 @@ Everything else filters only, for example:
 - a session value (`current_user()`, `session_user()`), wherever it appears,
   including inside an `IN` list or a regex pattern;
 - any function not on the list, including pure ones such as `sqrt()`;
+- an `IN` whose values are not all constants, for example
+  `ts IN concat('$', 'today')` or `ts IN s`: an `IN` over the timestamp expands
+  date variables in its string values at runtime, so a computed or column value
+  can read the clock;
 - a non-monotonic threshold, for example `ts > now()`.
 
 The proof reads the AST because a function's `isNonDeterministic()`,
@@ -163,6 +167,7 @@ expose it.
   `MatViewExpireRowsHardeningTest.testDateVariablePredicateCleanupSkippedAndRowsSurvive`,
   `MatViewExpireRowsHardeningTest.testSessionDependentPredicateCleanupSkippedAndRowsSurvive`,
   `MatViewExpireRowsHardeningTest.testSessionValueInListOrPatternCleanupSkippedAndRowsSurvive`,
+  `MatViewExpireRowsHardeningTest.testComposedDateVariableCleanupSkippedAndRowsSurvive`,
   `MatViewExpireRowsTest.testReadFilterCorrectForNonMonotonicFuturePredicate`.
 
 ### Relative and window policies never reclaim disk

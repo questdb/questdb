@@ -288,6 +288,33 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testComposedDateVariableCleanupSkippedAndRowsSurvive() throws Exception {
+        // concat('$', 'yesterday') hides the date variable from the scan of string constants, but the IN
+        // still expands it, so the expired rows change every day. Deleting yesterday's rows would lose them
+        // for good once the day moves on and they are visible again.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_704_196_800_000_000L); // 2024-01-02T12:00:00Z
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    (1.0, '2024-01-01T01:00:00.000000Z'),
+                    (2.0, '2024-01-01T02:00:00.000000Z'),
+                    (3.0, '2024-01-02T01:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts IN concat('$', 'yesterday')");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT v FROM mv").noLeakCheck().returns("v\n3.0\n");
+
+            Assert.assertFalse("a policy that reads the clock must skip physical cleanup", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(3);
+
+            setCurrentMicros(1_704_283_200_000_000L); // 2024-01-03T12:00:00Z
+            assertQuery("SELECT v FROM mv").noLeakCheck().returns("v\n1.0\n2.0\n");
+        });
+    }
+
+    @Test
     public void testExpiryPolicyMarkSurvivesCommitFailureAfterMetaSwap() throws Exception {
         // rewriteAndSwapMetadata renames the new _meta into place, and every reader that opens the table's
         // metadata from then on sees the new policy. The _txn/_todo commit that follows can still fail (a
@@ -580,6 +607,14 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 assertExpiryClassification(compiler, metadata, "vc ~ current_user()", false, false, false);
                 assertExpiryClassification(compiler, metadata, "regexp_replace(s, current_user(), '') = ''", false, false, false);
                 assertExpiryClassification(compiler, metadata, "v < rnd_double()", false, false, false);
+                // An IN over the timestamp expands date variables in its string values at runtime, so only
+                // constant values are proven: a date variable assembled by concat() or read from a column
+                // has to fail the proof.
+                assertExpiryClassification(compiler, metadata, "owner IN ('a')", false, true, true);
+                assertExpiryClassification(compiler, metadata, "ts IN concat('$', 'today')", false, false, false);
+                assertExpiryClassification(compiler, metadata, "ts IN s", false, false, false);
+                assertExpiryClassification(compiler, metadata, "ts IN vc", false, false, false);
+                assertExpiryClassification(compiler, metadata, "owner IN (lower('A'), 'b')", false, false, false);
                 // A pure function that is not on the list is not proven either: the policy only filters.
                 assertExpiryClassification(compiler, metadata, "sqrt(v) > 2", false, false, false);
             }
