@@ -287,7 +287,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             }
 
             if (masterSymbolKeyColumnIndices != null) {
-                this.symbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
+                this.symbolTranslatingRecord = new SymbolTranslatingRecord(configuration, masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
             } else {
                 this.symbolTranslatingRecord = null;
             }
@@ -323,7 +323,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                     if (asOfJoinMap != null) {
                         asOfJoinMap.close();
                     }
-                    Misc.clear(symbolTranslatingRecord);
+                    Misc.free(symbolTranslatingRecord);
                     Misc.free(horizonIterator);
                 } catch (Throwable th) {
                     cleanupFailure = th;
@@ -470,6 +470,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
             // Initialize symbol translating record
             if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
 
