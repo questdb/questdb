@@ -179,6 +179,28 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         throw SqlException.$(timezonePos, "const or runtime const expected");
     }
 
+    // Returns the width of the floor's buckets when add() steps from one bucket boundary to the
+    // next one, zero otherwise. Calendar units yield zero. The bucket cache narrows the result
+    // further, see TimestampFloorUtcBucketCachingFunction.
+    static long computeFloorBucketWidth(
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char unit,
+            int stride,
+            long offset
+    ) {
+        if (!CommonUtils.isFixedAlignedUnit(unit)) {
+            return 0;
+        }
+        final long b0 = floorFunc.floor(offset, stride, offset);
+        // add()/dateadd use the lowercase microsecond unit while ceil/floor use the uppercase one
+        final long next = timestampDriver.add(b0, unit == 'U' ? 'u' : unit, stride);
+        if (next > b0 && floorFunc.floor(next, stride, offset) == next && floorFunc.floor(next - 1, stride, offset) == b0) {
+            return next - b0;
+        }
+        return 0;
+    }
+
     // A named zone is a constant shift where no transition falls in the bound's window, so the
     // return-local floor inverts exactly there, otherwise it stays SUPERSET.
     static int invertFloorNamedTz(
@@ -446,13 +468,9 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             int stride,
             long offset
     ) {
-        if (!CommonUtils.isFixedAlignedUnit(unit)) {
-            return false;
-        }
-        final char addUnit = unit == 'U' ? 'u' : unit;
-        final long b0 = floorFunc.floor(offset, stride, offset);
-        final long next = timestampDriver.add(b0, addUnit, stride);
-        return next > b0 && floorFunc.floor(next, stride, offset) == next && floorFunc.floor(next - 1, stride, offset) == b0;
+        // The helper returns next - b0 only when next > b0, so a non-zero width holds exactly
+        // when add() reproduces the floor's bucket boundaries.
+        return computeFloorBucketWidth(timestampDriver, floorFunc, unit, stride, offset) != 0;
     }
 
     private static boolean tryFloorNamedTzExact(

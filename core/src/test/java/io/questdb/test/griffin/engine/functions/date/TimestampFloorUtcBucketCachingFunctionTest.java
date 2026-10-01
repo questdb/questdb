@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -35,6 +36,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -45,19 +47,30 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 
 /**
  * timestamp_floor_utc() with a constant named time zone caches the bucket of the last floored
  * timestamp. The cache must never change a result, so these tests compare the function with
  * the uncached arithmetic for timestamps in ascending, descending and random order, which hits,
- * misses and thrashes the cache. timestamp_floor() runs through the same checks: it shares the
+ * misses and thrashes the cache. Runs that step back and forth over bucket boundaries then pin
+ * the bounds of the cached range. timestamp_floor() runs through the same checks: it shares the
  * function classes and must stay uncached.
  */
 public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTest {
+    private static final long MICROS_1962 = -252_460_800_000_000L;
     private static final long MICROS_2015 = 1_420_070_400_000_000L;
+    private static final long MICROS_2021 = 1_609_459_200_000_000L;
     private static final long MICROS_2026 = 1_767_225_600_000_000L;
     private static final long MICROS_DAY = 86_400_000_000L;
     private static final long MICROS_MINUTE = 60_000_000L;
@@ -88,8 +101,11 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
     private static final String[] STRIDES = {
             "250T", "1s", "5s", "1m", "15m", "17m", "1h", "7h", "1d", "3d",
             // never cached: a bucket too narrow to hold several timestamps, calendar units and
-            // a stride below the micro resolution
-            "1U", "1w", "1M", "1y", "500n",
+            // nanosecond strides on a micro column. The micro driver floors the latter in a
+            // nanosecond domain, where a non-zero offset moves the buckets of a whole-micro
+            // stride (7000n and 11_000n are 7 and 11 micros wide) off the grid that the cache's
+            // fixed-width arithmetic assumes.
+            "1U", "1w", "1M", "1y", "500n", "7000n", "11_000n",
     };
 
     @Test
@@ -103,22 +119,200 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
     }
 
     @Test
+    public void testDayBucketBounds() throws Exception {
+        // In summer, a day bucket of Europe/Berlin starts at 22:00 UTC. The first two timestamps
+        // make the function cache the bucket that ends there, so the cache must not serve the
+        // third one, the start of the next bucket. The third one makes the function cache that
+        // next bucket, so the cache must not serve the fourth one, the microsecond before it.
+        assertMemoryLeak(() -> {
+            final TimestampHolder holder = new TimestampHolder(ColumnType.TIMESTAMP_MICRO);
+            final Function func = newFloorFunction(new TimestampFloorFromOffsetUtcFunctionFactory(), holder, "1d", Numbers.LONG_NULL, "00:00", "Europe/Berlin");
+            try {
+                assertFloor("2021-06-14T22:00:00.000000Z", func, holder, "2021-06-15T20:00:00.000000Z");
+                assertFloor("2021-06-14T22:00:00.000000Z", func, holder, "2021-06-15T21:00:00.000000Z");
+                assertFloor("2021-06-15T22:00:00.000000Z", func, holder, "2021-06-15T22:00:00.000000Z");
+                assertFloor("2021-06-14T22:00:00.000000Z", func, holder, "2021-06-15T21:59:59.999999Z");
+            } finally {
+                Misc.free(func);
+            }
+        });
+    }
+
+    @Test
     public void testNullTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String[] zones = {null, "+05:30", "Europe/Berlin"};
+            // The named time zone builds one of two function classes: an origin that is not
+            // day-aligned, such as offset 00:15, selects the DST gap aware one.
+            final String[] offsets = {"00:00", "00:15"};
             final FunctionFactory[] factories = {new TimestampFloorFromOffsetUtcFunctionFactory(), new TimestampFloorFromOffsetFunctionFactory()};
             for (FunctionFactory factory : factories) {
                 for (String zone : zones) {
-                    final TimestampHolder holder = new TimestampHolder(ColumnType.TIMESTAMP_MICRO);
-                    final Function func = newFloorFunction(factory, holder, "1d", Numbers.LONG_NULL, "00:00", zone);
-                    holder.value = Numbers.LONG_NULL;
-                    Assert.assertEquals(Numbers.LONG_NULL, func.getTimestamp(null));
-                    // warm up the cache, then check that it does not serve NULL
-                    holder.value = MICROS_2015 + 12_345;
-                    Assert.assertNotEquals(Numbers.LONG_NULL, func.getTimestamp(null));
-                    holder.value = Numbers.LONG_NULL;
-                    Assert.assertEquals(Numbers.LONG_NULL, func.getTimestamp(null));
-                    Misc.free(func);
+                    for (String offset : offsets) {
+                        final TimestampHolder holder = new TimestampHolder(ColumnType.TIMESTAMP_MICRO);
+                        final Function func = newFloorFunction(factory, holder, "1d", Numbers.LONG_NULL, offset, zone);
+                        holder.value = Numbers.LONG_NULL;
+                        Assert.assertEquals(Numbers.LONG_NULL, func.getTimestamp(null));
+                        // A caching function stores a bucket on the second of two misses that are
+                        // close to each other. Check that the stored bucket does not serve NULL.
+                        holder.value = MICROS_2015 + 12_345;
+                        Assert.assertNotEquals(Numbers.LONG_NULL, func.getTimestamp(null));
+                        holder.value = MICROS_2015 + 12_346;
+                        Assert.assertNotEquals(Numbers.LONG_NULL, func.getTimestamp(null));
+                        holder.value = Numbers.LONG_NULL;
+                        Assert.assertEquals(Numbers.LONG_NULL, func.getTimestamp(null));
+                        Misc.free(func);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParallelSampleByWithNamedTimeZone() throws Exception {
+        // Workers must floor through their own clones of the caching function. A function shared
+        // by workers that scan different page frames serves one worker the bucket another worker
+        // cached, which moves rows to wrong buckets. The table is large and the page frames are
+        // small, so that several workers floor timestamps of different buckets at the same time.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        // one row per second, 1,000 hours starting at MICROS_2026
+                        engine.execute(
+                                """
+                                        CREATE TABLE x AS (
+                                            SELECT timestamp_sequence('2026-01-01', 1_000_000) ts
+                                            FROM long_sequence(3_600_000)
+                                        ) TIMESTAMP(ts) PARTITION BY DAY
+                                        """,
+                                sqlExecutionContext
+                        );
+
+                        final StringSink expected = new StringSink();
+                        expected.put("ts\tcount\n");
+                        for (int i = 0; i < 1_000; i++) {
+                            MicrosFormatUtils.appendDateTimeUSec(expected, MICROS_2026 + i * Micros.HOUR_MICROS);
+                            expected.put("\t3600\n");
+                        }
+
+                        assertQuery("SELECT ts, count() FROM x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .expectSize()
+                                .withPlan("""
+                                        Encode sort light
+                                          keys: [ts]
+                                            Async Group By workers: 4
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
+                                              values: [count(*)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                                        """)
+                                .returns(expected);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelSampleByWithNarrowStride() throws Exception {
+        // A bucket narrower than 8 units is not cached, so workers share a single function
+        // instance. That instance must not hold a bucket: a bucket stored by one worker would
+        // serve the other workers, which moves rows to wrong buckets. Many rows share each
+        // timestamp, the input most likely to make a function store such a narrow bucket.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        // 720 rows per microsecond, 5,000 microseconds starting at MICROS_2026
+                        engine.execute(
+                                """
+                                        CREATE TABLE x AS (
+                                            SELECT (1_767_225_600_000_000 + (x - 1) / 720)::TIMESTAMP ts
+                                            FROM long_sequence(3_600_000)
+                                        ) TIMESTAMP(ts) PARTITION BY DAY
+                                        """,
+                                sqlExecutionContext
+                        );
+
+                        // The first timestamp and the standard offset of the time zone are
+                        // multiples of 5 microseconds, so the buckets start at MICROS_2026.
+                        final StringSink expected = new StringSink();
+                        expected.put("ts\tcount\n");
+                        for (int i = 0; i < 1_000; i++) {
+                            MicrosFormatUtils.appendDateTimeUSec(expected, MICROS_2026 + i * 5);
+                            expected.put("\t3600\n");
+                        }
+
+                        assertQuery("SELECT ts, count() FROM x SAMPLE BY 5U ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .expectSize()
+                                .withPlan("""
+                                        Encode sort light
+                                          keys: [ts]
+                                            Async Group By workers: 4
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('5U',ts,null,'00:00','Europe/Berlin')]
+                                              values: [count(*)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                                        """)
+                                .returns(expected);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testThreadSafeFunctionKeepsNoState() throws Exception {
+        // Workers share a function that reports thread safety, so its calls must not change any
+        // of its fields. A function that caches buckets changes them and must report the
+        // opposite. The epoch and a repeated timestamp go first: these are the calls most
+        // likely to make a function store a bucket.
+        assertMemoryLeak(() -> {
+            final String[] strides = {"1U", "7U", "8U", "1n", "7n", "8n", "500n", "11_000n", "1s", "1h", "1d", "1w", "1M", "1y"};
+            final long[] timestamps = {0, 0, 1, MICROS_2015 + 12_345, MICROS_2015 + 12_346, Numbers.LONG_NULL};
+            final int[] timestampTypes = {ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO};
+            final FunctionFactory[] factories = {new TimestampFloorFromOffsetUtcFunctionFactory(), new TimestampFloorFromOffsetFunctionFactory()};
+            for (FunctionFactory factory : factories) {
+                for (int timestampType : timestampTypes) {
+                    for (String stride : strides) {
+                        final TimestampHolder holder = new TimestampHolder(timestampType);
+                        final Function func = newFloorFunction(factory, holder, stride, Numbers.LONG_NULL, "00:00", "Europe/Berlin");
+                        try {
+                            final String state = stateOf(func);
+                            for (long timestamp : timestamps) {
+                                holder.value = timestamp;
+                                func.getTimestamp(null);
+                            }
+                            Assert.assertEquals(
+                                    factory.getSignature() + ", " + ColumnType.nameOf(timestampType) + ", " + stride,
+                                    func.isThreadSafe(),
+                                    state.equals(stateOf(func))
+                            );
+                        } finally {
+                            Misc.free(func);
+                        }
+                    }
                 }
             }
         });
@@ -137,11 +331,25 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
             assertThreadSafety(false, utcFactory, ColumnType.TIMESTAMP_MICRO, "1d", "Europe/Berlin");
             assertThreadSafety(false, utcFactory, ColumnType.TIMESTAMP_NANO, "500n", "Europe/Berlin");
 
-            // calendar units and a stride below the micro resolution are not cached
+            // A function stores a bucket on the second of two misses that are closer to each
+            // other than 1/8 of the bucket width. A bucket narrower than 8 units of the timestamp
+            // resolution rounds that distance down to zero, so the function could never store it
+            // and stays uncached. A bucket of 8 units is the narrowest cached one.
+            assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "1U", "Europe/Berlin");
+            assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "7U", "Europe/Berlin");
+            assertThreadSafety(false, utcFactory, ColumnType.TIMESTAMP_MICRO, "8U", "Europe/Berlin");
+            assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_NANO, "1n", "Europe/Berlin");
+            assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_NANO, "7n", "Europe/Berlin");
+            assertThreadSafety(false, utcFactory, ColumnType.TIMESTAMP_NANO, "8n", "Europe/Berlin");
+
+            // calendar units and nanosecond strides on a micro column are not cached, whether the
+            // stride is below the micro resolution or a whole number of micros
             assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "1w", "Europe/Berlin");
             assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "1M", "Europe/Berlin");
             assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "1y", "Europe/Berlin");
             assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "500n", "Europe/Berlin");
+            assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "1000n", "Europe/Berlin");
+            assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "11_000n", "Europe/Berlin");
             // no time zone, UTC and fixed-offset time zones are not cached
             assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "1h", null);
             assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "1d", "UTC");
@@ -150,6 +358,13 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
             assertThreadSafety(true, localFactory, ColumnType.TIMESTAMP_MICRO, "1h", "Europe/Berlin");
             assertThreadSafety(true, localFactory, ColumnType.TIMESTAMP_MICRO, "1d", "Europe/Berlin");
         });
+    }
+
+    private static void assertFloor(String expected, Function func, TimestampHolder holder, String timestamp) throws NumericException {
+        holder.value = MicrosFormatUtils.parseUTCTimestamp(timestamp);
+        final StringSink actual = new StringSink();
+        MicrosFormatUtils.appendDateTimeUSec(actual, func.getTimestamp(null));
+        TestUtils.assertEquals("floor of " + timestamp, expected, actual);
     }
 
     private static void assertThreadSafety(boolean expected, FunctionFactory factory, int timestampType, String stride, String zone) throws SqlException {
@@ -163,6 +378,46 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
                 Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(zone, 0, zone.length())),
                 driver.getTZRuleResolution()
         );
+    }
+
+    // Runs of timestamps around bucket boundaries, to be floored in this order, which is not
+    // monotonic. The uncached arithmetic provides the boundaries as UTC instants: the start of
+    // the bucket a day past each window center and the two bucket starts before it, so that
+    // day buckets get boundaries on both sides of a transition. A function caches a bucket on
+    // the second of two misses that are closer to each other than 1/8 of the bucket width. So
+    // the first three timestamps of a run make a caching function store the bucket before the
+    // boundary and then the one that starts at it. The rest alternates between bucketStart - 1
+    // and bucketStart: each of the two arrives while the cache holds the other one's bucket
+    // and must miss, and arrives again while the cache holds its own bucket and must hit.
+    private static LongList newBoundaryRuns(
+            TimestampDriver driver,
+            LongList centers,
+            TimestampDriver.TimestampFloorWithOffsetMethod floor,
+            int stride,
+            char unit,
+            long effectiveOffset,
+            TimeZoneRules rules
+    ) {
+        final LongList list = new LongList();
+        for (int c = 0, n = centers.size(); c < n; c++) {
+            long bucketStart = uncachedFloor(floor, centers.getQuick(c) + driver.fromDays(1), stride, unit, effectiveOffset, rules, true);
+            for (int i = 0; i < 3; i++) {
+                // Timestamps below a non-epoch origin floor to the origin, which leaves no
+                // bucket before the boundary. The step is then the smallest one.
+                final long prevBucketStart = uncachedFloor(floor, bucketStart - 1, stride, unit, effectiveOffset, rules, true);
+                final long step = Math.max(1, (bucketStart - prevBucketStart) / 32);
+                list.add(bucketStart - 3 * step);
+                list.add(bucketStart - 2 * step);
+                list.add(bucketStart + step);
+                list.add(bucketStart - 1);
+                list.add(bucketStart - 1);
+                list.add(bucketStart);
+                list.add(bucketStart);
+                list.add(bucketStart - 1);
+                bucketStart = prevBucketStart;
+            }
+        }
+        return list;
     }
 
     private static Function newFloorFunction(
@@ -184,10 +439,10 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
         return factory.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
     }
 
-    // Timestamps around every tz transition in 2015-2026 plus a sparse sweep of 1880-2100, sorted.
+    // Timestamps around every window center plus a sparse sweep of 1880-2100, sorted.
     // A function caches a bucket only after two misses that are close to each other relative to
-    // the bucket width, so each transition also gets bursts dense enough for the narrow buckets.
-    private static long[] newTimestamps(TimestampDriver driver, TimeZoneRules rules) {
+    // the bucket width, so each center also gets bursts dense enough for the narrow buckets.
+    private static long[] newTimestamps(TimestampDriver driver, LongList centers) {
         final LongList list = new LongList();
         final long windowStep = driver.fromMinutes(23) + 17;
         final long window = driver.fromDays(2) + driver.fromHours(12);
@@ -196,21 +451,19 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
                 driver.from(100_001, ColumnType.TIMESTAMP_MICRO),
                 driver.from(20_001, ColumnType.TIMESTAMP_MICRO),
         };
-        final long hi = driver.from(MICROS_2026, ColumnType.TIMESTAMP_MICRO);
-        long transition = rules.getNextDST(driver.from(MICROS_2015, ColumnType.TIMESTAMP_MICRO));
-        while (transition < hi) {
-            // the instants right at the transition
-            list.add(transition - 1);
-            list.add(transition);
-            for (long ts = transition - window; ts < transition + window; ts += windowStep) {
+        for (int c = 0, n = centers.size(); c < n; c++) {
+            final long center = centers.getQuick(c);
+            // the instants right at the center
+            list.add(center - 1);
+            list.add(center);
+            for (long ts = center - window; ts < center + window; ts += windowStep) {
                 list.add(ts);
             }
             for (long burstStep : burstSteps) {
                 for (int i = -100; i < 100; i++) {
-                    list.add(transition + i * burstStep);
+                    list.add(center + i * burstStep);
                 }
             }
-            transition = rules.getNextDST(transition);
         }
         final long sweepStep = driver.fromDays(11) + driver.fromMinutes(137) + 31;
         final long sweepHi = driver.from(130 * 365 * MICROS_DAY, ColumnType.TIMESTAMP_MICRO);
@@ -225,6 +478,22 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
         return timestamps;
     }
 
+    // The centers of the dense timestamp windows: every tz transition in 2015-2026 plus two
+    // instants that do not depend on the time zone. The latter make the functions cache
+    // buckets before 1970 and in the zones that have no transition in 2015-2026.
+    private static LongList newWindowCenters(TimestampDriver driver, TimeZoneRules rules) {
+        final LongList centers = new LongList();
+        centers.add(driver.from(MICROS_1962, ColumnType.TIMESTAMP_MICRO));
+        centers.add(driver.from(MICROS_2021, ColumnType.TIMESTAMP_MICRO));
+        final long hi = driver.from(MICROS_2026, ColumnType.TIMESTAMP_MICRO);
+        long transition = rules.getNextDST(driver.from(MICROS_2015, ColumnType.TIMESTAMP_MICRO));
+        while (transition < hi) {
+            centers.add(transition);
+            transition = rules.getNextDST(transition);
+        }
+        return centers;
+    }
+
     private static long[] shuffle(long[] timestamps) {
         final long[] shuffled = timestamps.clone();
         final Rnd rnd = new Rnd();
@@ -235,6 +504,20 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
             shuffled[j] = tmp;
         }
         return shuffled;
+    }
+
+    // the values of the function's primitive instance fields, the inherited ones included
+    private static String stateOf(Function func) throws IllegalAccessException {
+        final StringSink sink = new StringSink();
+        for (Class<?> c = func.getClass(); c != Object.class; c = c.getSuperclass()) {
+            for (Field field : c.getDeclaredFields()) {
+                if (field.getType().isPrimitive() && !Modifier.isStatic(field.getModifiers())) {
+                    field.setAccessible(true);
+                    sink.put(field.getName()).put('=').put(String.valueOf(field.get(func))).put(';');
+                }
+            }
+        }
+        return sink.toString();
     }
 
     // the uncached arithmetic of the floor functions
@@ -265,7 +548,8 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
         for (String zone : NAMED_ZONES) {
             final TimeZoneRules rules = getZoneRules(driver, zone);
             Assert.assertFalse(zone, rules.hasFixedOffset());
-            assertCachedFloorMatchesUncached(driver, zone, rules, newTimestamps(driver, rules));
+            final LongList centers = newWindowCenters(driver, rules);
+            assertCachedFloorMatchesUncached(driver, zone, rules, centers, newTimestamps(driver, centers));
         }
     }
 
@@ -273,6 +557,7 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
             TimestampDriver driver,
             String zone,
             TimeZoneRules rules,
+            LongList centers,
             long[] timestamps
     ) throws SqlException {
         final long[] shuffled = shuffle(timestamps);
@@ -287,15 +572,17 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
                     final long fromMicros = (long) origin[2];
                     final long from = fromMicros != Numbers.LONG_NULL ? driver.from(fromMicros, ColumnType.TIMESTAMP_MICRO) : 0;
                     final long effectiveOffset = from + driver.fromMinutes((int) origin[1]);
+                    final LongList boundaryRuns = newBoundaryRuns(driver, centers, floor, strideMultiple, unit, effectiveOffset, rules);
                     final TimestampHolder holder = new TimestampHolder(driver.getTimestampType());
                     final Function func = newFloorFunction(factories[f], holder, stride, fromMicros, (String) origin[0], zone);
                     try {
-                        for (int pass = 0; pass < 3; pass++) {
-                            for (int i = 0, n = timestamps.length; i < n; i++) {
+                        for (int pass = 0; pass < 4; pass++) {
+                            for (int i = 0, n = pass < 3 ? timestamps.length : boundaryRuns.size(); i < n; i++) {
                                 final long timestamp = switch (pass) {
                                     case 0 -> timestamps[i];
                                     case 1 -> timestamps[n - i - 1];
-                                    default -> shuffled[i];
+                                    case 2 -> shuffled[i];
+                                    default -> boundaryRuns.getQuick(i);
                                 };
                                 holder.value = timestamp;
                                 final long expected = uncachedFloor(floor, timestamp, strideMultiple, unit, effectiveOffset, rules, returnUtc);

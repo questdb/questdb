@@ -53,7 +53,9 @@ import io.questdb.std.datetime.TimeZoneRules;
  * reusing this class for a producer that does not guarantee order.
  * <p>
  * Only buckets of a fixed width are cached, i.e. the units from nanoseconds to days. The other
- * units leave {@link #bucketWidth} at zero and the subclass floors them the uncached way.
+ * units leave {@link #bucketWidth} at zero and the subclass floors them the uncached way. So do
+ * buckets narrower than 8 units of the timestamp resolution, e.g. 1U on a microsecond column,
+ * which are too narrow to be worth caching.
  * <p>
  * The cache is mutable state, so a caching function is not thread-safe and parallel execution
  * clones it per worker.
@@ -78,13 +80,17 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
 
     TimestampFloorUtcBucketCachingFunction(int timestampType, char unit, int stride, long effectiveOffset, boolean isBucketCached) {
         super(timestampType);
+        long width = 0;
         if (isBucketCached) {
             final TimestampDriver.TimestampFloorWithOffsetMethod floor = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
-            this.bucketWidth = computeFixedBucketWidth(timestampDriver, floor, unit, stride, effectiveOffset);
-        } else {
-            this.bucketWidth = 0;
+            width = computeFixedBucketWidth(timestampDriver, floor, unit, stride, effectiveOffset);
         }
-        this.nearMissDistance = bucketWidth / 8;
+        this.nearMissDistance = width / 8;
+        // The near-miss distance of a bucket narrower than 8 units is zero, so no two misses
+        // count as near each other and the function has no bucket to store. Such a function
+        // stays uncached and thread-safe: a positive bucketWidth implies a positive
+        // nearMissDistance.
+        this.bucketWidth = nearMissDistance > 0 ? width : 0;
     }
 
     @Override
@@ -155,21 +161,12 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
             int stride,
             long offset
     ) {
-        if (!CommonUtils.isFixedAlignedUnit(unit)) {
-            return 0;
-        }
         // the micro driver floors nanosecond strides in a nanosecond domain, so its buckets
         // are not guaranteed to repeat at a fixed micro width
         if (unit == 'n' && !ColumnType.isTimestampNano(timestampDriver.getTimestampType())) {
             return 0;
         }
-        final long b0 = floor.floor(offset, stride, offset);
-        // add()/dateadd use the lowercase microsecond unit while ceil/floor use the uppercase one
-        final long next = timestampDriver.add(b0, unit == 'U' ? 'u' : unit, stride);
-        if (next > b0 && floor.floor(next, stride, offset) == next && floor.floor(next - 1, stride, offset) == b0) {
-            return next - b0;
-        }
-        return 0;
+        return AbstractTimestampFloorFromOffsetFunctionFactory.computeFloorBucketWidth(timestampDriver, floor, unit, stride, offset);
     }
 
     private void cacheBucket(boolean isNearLastMiss, long timestamp, long lo, long hi, long result) {
