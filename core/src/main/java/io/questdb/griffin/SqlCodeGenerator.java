@@ -2635,6 +2635,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata
     ) {
+        if (hasMixedSymbolIdKeyColumn(masterMetadata, slaveMetadata)) {
+            return null;
+        }
         IntList masterSymbolKeyCols = null;
         IntList slaveSymbolKeyCols = null;
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
@@ -13940,6 +13943,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && writeSymbolAsStringA.get(slaveColIndex);
     }
 
+    // A column shared by a key that compares symbol ids and a key that compares strings would
+    // need two encodings, so convertSymbolJoinKeysToInt() keeps every key a string.
+    private boolean hasMixedSymbolIdKeyColumn(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
+        for (int k = 1, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+            final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
+            final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
+            final boolean isIntConvertible = isSymbolJoinKeyIntConvertible(masterMetadata, masterColIndex, slaveMetadata, slaveColIndex);
+            for (int j = 0; j < k; j++) {
+                final int otherSlaveColIndex = listColumnFilterA.getColumnIndexFactored(j);
+                final int otherMasterColIndex = listColumnFilterB.getColumnIndexFactored(j);
+                if ((slaveColIndex == otherSlaveColIndex || masterColIndex == otherMasterColIndex)
+                        && isIntConvertible != isSymbolJoinKeyIntConvertible(masterMetadata, otherMasterColIndex, slaveMetadata, otherSlaveColIndex)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private void lookupColumnIndexes(
             ListColumnFilter filter,
             ObjList<ExpressionNode> columnNames,
@@ -14173,14 +14195,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int k = 1, m = listColumnFilterA.getColumnCount(); k < m; k++) {
             final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
             final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
-            final boolean isIntConvertible = isSymbolJoinKeyIntConvertible(masterMetadata, columnIndexB, slaveMetadata, columnIndexA);
             for (int j = 0; j < k; j++) {
-                final int otherColumnIndexA = listColumnFilterA.getColumnIndexFactored(j);
-                final int otherColumnIndexB = listColumnFilterB.getColumnIndexFactored(j);
-                final boolean isSharedA = columnIndexA == otherColumnIndexA;
-                if ((isSharedA || columnIndexB == otherColumnIndexB)
-                        && (keyTypes.getColumnType(j) != keyTypes.getColumnType(k)
-                        || isIntConvertible != isSymbolJoinKeyIntConvertible(masterMetadata, otherColumnIndexB, slaveMetadata, otherColumnIndexA))) {
+                final boolean isSharedA = columnIndexA == listColumnFilterA.getColumnIndexFactored(j);
+                if ((isSharedA || columnIndexB == listColumnFilterB.getColumnIndexFactored(j))
+                        && keyTypes.getColumnType(j) != keyTypes.getColumnType(k)) {
                     final ExpressionNode sharedNode = isSharedA ? jc.aNodes.getQuick(k) : jc.bNodes.getQuick(k);
                     throw SqlException.$(sharedNode.position, "join column is compared with columns of different types");
                 }

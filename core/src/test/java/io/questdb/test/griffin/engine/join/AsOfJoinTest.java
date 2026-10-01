@@ -1509,8 +1509,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinOnKeysSharingColumnMixedTypesFails() throws Exception {
-        // A column repeated across ON keys whose partners need different key encodings would
-        // be written with a single encoding and never match, so the join rejects the query.
+        // A column repeated across ON keys whose partners have different key types would be
+        // written with a single key type and never match, so the join rejects the query.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (id INT, sy SYMBOL, s STRING, v VARCHAR, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO m VALUES (1, 'A', 'A', 'A', 5::TIMESTAMP, 5_000::TIMESTAMP_NS, 10::TIMESTAMP)");
@@ -1524,10 +1524,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(48, "join column is compared with columns of different types");
             assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.sy = sl.sy AND m.v = sl.sy")
-                    .noLeakCheck()
-                    .fails(49, "join column is compared with columns of different types");
-            // Both keys compare as STRING, but only the SYMBOL-SYMBOL key switches to symbol ids.
-            assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.sy = sl.sy AND m.s = sl.sy")
                     .noLeakCheck()
                     .fails(49, "join column is compared with columns of different types");
         });
@@ -1690,6 +1686,66 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             BB\t1545253512\t1545253512
                             AA\t1573662097\t1573662097
                             AA\t339631474\t339631474
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnSlaveSymbolSharedBySymbolAndStringColumns() throws Exception {
+        // sl.sy pairs with the SYMBOL m.sy and with the STRING m.s. The SYMBOL-SYMBOL key could
+        // compare symbol ids, but sl.sy needs one encoding, so the join compares both keys as strings.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, sy SYMBOL, s STRING, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO m VALUES (1, 'A', 'A', 10::TIMESTAMP), (2, 'A', 'B', 20::TIMESTAMP), (3, 'C', 'C', 30::TIMESTAMP)");
+            execute("CREATE TABLE sl (id INT, sy SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO sl VALUES (10, 'A', 1::TIMESTAMP), (20, 'B', 2::TIMESTAMP)");
+
+            final String expected = """
+                    id\tid1
+                    1\t10
+                    2\tnull
+                    3\tnull
+                    """;
+            final String expectedMatched = """
+                    id\tid1
+                    1\t10
+                    """;
+            final String[] onClauses = {"m.sy = sl.sy AND m.s = sl.sy", "m.s = sl.sy AND m.sy = sl.sy"};
+            for (String join : new String[]{"ASOF", "LT"}) {
+                final String[] hints = join.equals("ASOF")
+                        ? new String[]{"", "/*+ asof_linear(m sl) */ ", "/*+ asof_dense(m sl) */ "}
+                        : new String[]{""};
+                for (String hint : hints) {
+                    for (String on : onClauses) {
+                        final String query = "SELECT " + hint + "m.id, sl.id FROM m " + join + " JOIN sl ON " + on;
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected);
+                        assertQuery(query + " WHERE sl.id IS NOT NULL")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .returns(expectedMatched);
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .fullFatJoins()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected);
+                    }
+                }
+            }
+            assertQuery("SELECT m.id, sl.id FROM m SPLICE JOIN sl ON m.sy = sl.sy AND m.s = sl.sy")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tid1
+                            null\t10
+                            null\t20
+                            1\t10
+                            2\tnull
+                            3\tnull
                             """);
         });
     }
