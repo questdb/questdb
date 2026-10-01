@@ -527,7 +527,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
     abstract boolean isReturnUtc();
 
     // both offset and time zone are consts
-    private static class AllConstDstGapAwareFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
+    private static class AllConstDstGapAwareFunc extends TimestampFloorUtcBucketCachingFunction {
         private final long effectiveOffset; // from + offset
         private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
@@ -553,7 +553,8 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
                 String tzStr,
                 int timestampType
         ) {
-            super(timestampType);
+            // the return-local mode re-floors timestamps that land in a DST gap, so it stays uncached
+            super(timestampType, unit, stride, from + offset, returnUtc);
             this.name = name;
             this.returnUtc = returnUtc;
             this.tsFunc = tsFunc;
@@ -575,8 +576,13 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         @Override
         public final long getTimestamp(Record rec) {
             final long timestamp = tsFunc.getTimestamp(rec);
+            if (timestamp >= cachedLo && timestamp < cachedHi) {
+                return cachedResult;
+            }
             if (timestamp != Numbers.LONG_NULL) {
-                return floorWithTz(timestamp, tzRules, floorFunc, stride, effectiveOffset, returnUtc, unit);
+                return bucketWidth > 0
+                        ? floorUtcAndCache(timestamp, tzRules, effectiveOffset, unit)
+                        : floorWithTz(timestamp, tzRules, floorFunc, stride, effectiveOffset, returnUtc, unit);
             }
             return Numbers.LONG_NULL;
         }
@@ -704,7 +710,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
     }
 
-    private static class AllConstTzFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
+    private static class AllConstTzFunc extends TimestampFloorUtcBucketCachingFunction {
         private final long effectiveOffset; // from + offset
         private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
@@ -730,7 +736,8 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
                 String tzStr,
                 int timestampType
         ) {
-            super(timestampType);
+            // the return-local mode re-floors timestamps that land in a DST gap, so it stays uncached
+            super(timestampType, unit, stride, from + offset, returnUtc);
             this.name = name;
             this.returnUtc = returnUtc;
             this.tsFunc = tsFunc;
@@ -752,8 +759,13 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         @Override
         public final long getTimestamp(Record rec) {
             final long timestamp = tsFunc.getTimestamp(rec);
+            if (timestamp >= cachedLo && timestamp < cachedHi) {
+                return cachedResult;
+            }
             if (timestamp != Numbers.LONG_NULL) {
-                return floorWithTz(timestamp, tzRules, floorFunc, stride, effectiveOffset, returnUtc, unit);
+                return bucketWidth > 0
+                        ? floorUtcAndCache(timestamp, tzRules, effectiveOffset, unit)
+                        : floorWithTz(timestamp, tzRules, floorFunc, stride, effectiveOffset, returnUtc, unit);
             }
             return Numbers.LONG_NULL;
         }
