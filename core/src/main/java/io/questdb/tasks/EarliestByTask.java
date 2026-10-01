@@ -24,9 +24,11 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.Misc;
@@ -34,10 +36,10 @@ import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
 public class EarliestByTask implements QuietCloseable, Mutable {
-    // We're using page frame memory only and do single scan, hence cache size of 1.
-    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
+    private final PageFrameMemoryPool frameMemoryPool;
     private long argsAddress;
-    private ExecutionCircuitBreaker circuitBreaker;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean completed;
     private CountDownLatchSPI doneLatch;
     private int frameIndex;
     private int hashColumnIndex;
@@ -48,10 +50,16 @@ public class EarliestByTask implements QuietCloseable, Mutable {
     private long prefixesCount;
     private long rowHi;
     private long rowLo;
+    private AsyncQueryErrorState scanError;
     private long unIndexedNullCount;
     private long valueBaseAddress;
     private int valueBlockCapacity;
     private long valuesMemorySize;
+
+    public EarliestByTask(CairoConfiguration configuration) {
+        // Single sequential scan; no LRU caching needed across frames.
+        this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
+    }
 
     @Override
     public void clear() {
@@ -61,6 +69,10 @@ public class EarliestByTask implements QuietCloseable, Mutable {
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
+    }
+
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
     }
 
     public void of(
@@ -80,7 +92,8 @@ public class EarliestByTask implements QuietCloseable, Mutable {
             long prefixesAddress,
             long prefixesCount,
             CountDownLatchSPI doneLatch,
-            ExecutionCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker,
+            AsyncQueryErrorState scanError
     ) {
         this.frameMemoryPool.of(addressCache);
         this.keyBaseAddress = keyBaseAddress;
@@ -99,11 +112,13 @@ public class EarliestByTask implements QuietCloseable, Mutable {
         this.prefixesCount = prefixesCount;
         this.doneLatch = doneLatch;
         this.circuitBreaker = circuitBreaker;
+        this.scanError = scanError;
+        this.completed = false;
     }
 
     public boolean run() {
         try {
-            if (!circuitBreaker.checkIfTripped()) {
+            if (!circuitBreaker.checkIfTrippedOrYield()) {
                 GeoHashNative.earliestByAndFilterPrefix(
                         frameMemoryPool,
                         keyBaseAddress,
@@ -123,9 +138,23 @@ public class EarliestByTask implements QuietCloseable, Mutable {
                 );
             }
             return true;
+        } catch (Throwable th) {
+            scanError.setError(th);
+            circuitBreaker.cancel();
+            throw th;
         } finally {
-            doneLatch.countDown();
-            frameMemoryPool.close();
+            complete();
+        }
+    }
+
+    private void complete() {
+        if (!completed) {
+            completed = true;
+            try {
+                frameMemoryPool.close();
+            } finally {
+                doneLatch.detachResourceMemoryAndCountDown();
+            }
         }
     }
 }

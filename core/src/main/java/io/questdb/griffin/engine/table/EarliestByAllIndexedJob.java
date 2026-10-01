@@ -35,10 +35,16 @@ public class EarliestByAllIndexedJob extends AbstractQueueConsumerJob<EarliestBy
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final EarliestByTask task = queue.get(cursor);
-        final boolean result = task.run();
-        subSeq.done(cursor);
-        return result;
+        try {
+            return task.run();
+        } finally {
+            try {
+                task.clear();
+            } finally {
+                subSeq.done(cursor);
+            }
+        }
     }
 }

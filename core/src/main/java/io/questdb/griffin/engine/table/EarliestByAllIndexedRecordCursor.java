@@ -25,15 +25,19 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -47,12 +51,16 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import io.questdb.tasks.EarliestByTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final DirectLongList prefixes;
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final DirectLongList rows;
+    private final AsyncQueryErrorState scanError = new AsyncQueryErrorState();
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private long aIndex;
     private long aLimit;
@@ -80,7 +88,16 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public void close() {
+        // The shared rows list is freed here, under the per-query tracker bound in of();
+        // prefixes is bounded and stays factory-owned (freed at factory close).
+        rows.close();
+        super.close();
+    }
+
+    @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isTreeMapBuilt) {
             buildTreeMap();
             isTreeMapBuilt = true;
@@ -106,12 +123,14 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
         sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
-        rows.clear();
+        rows.setMemoryTracker(executionContext.getMemoryTracker());
+        rows.reopen();
         keyCount = -1;
         argumentsAddress = 0;
         isFrameCacheBuilt = false;
         isTreeMapBuilt = false;
-        super.init();
+        // prepare for page frame iteration
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override
@@ -182,6 +201,7 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             }
 
             sharedCircuitBreaker.reset();
+            scanError.clear();
         } else {
             final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
@@ -203,6 +223,11 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final RingQueue<EarliestByTask> queue = bus.getEarliestByQueue();
         final Sequence pubSeq = bus.getEarliestByPubSeq();
         final Sequence subSeq = bus.getEarliestBySubSeq();
+        // EARLIEST ON tasks run on their own queue, consumed by EarliestByAllIndexedJob outside the
+        // query fiber dispatcher. Nothing would signal dispatcher progress for them, so bind the owner
+        // loop without a dispatcher: the owner never parks and instead helps drain its own queue, which
+        // is also what keeps a 1-worker configuration from deadlocking.
+        ownerLoop.of(null, circuitBreaker, progressState);
 
         int queuedCount = 0;
         long foundRowCount = 0;
@@ -219,7 +244,7 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int frameIndex = 0;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
-                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD);
+                final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;
 
@@ -233,80 +258,80 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 doneLatch.reset();
 
                 queuedCount = 0;
-                for (long i = 0; i < taskCount; i++) {
-                    final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                    final long found = LatestByArguments.getRowsSize(argsAddress);
-                    final long keyHi = LatestByArguments.getKeyHi(argsAddress);
-                    final long keyLo = LatestByArguments.getKeyLo(argsAddress);
+                ownerLoop.tryAcquirePublication();
+                try {
+                    for (long i = 0; i < taskCount; i++) {
+                        final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                        final long found = LatestByArguments.getRowsSize(argsAddress);
+                        final long keyHi = LatestByArguments.getKeyHi(argsAddress);
+                        final long keyLo = LatestByArguments.getKeyLo(argsAddress);
 
-                    // Skip range if all keys in this chunk have been matched in earlier frames.
-                    if (found >= keyHi - keyLo) {
-                        continue;
-                    }
+                        // Skip range if all keys in this chunk have been matched in earlier frames.
+                        if (found >= keyHi - keyLo) {
+                            continue;
+                        }
 
-                    final long seq = pubSeq.next();
-                    if (seq < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                        GeoHashNative.earliestByAndFilterPrefix(
-                                frameMemoryPool,
-                                keyBaseAddress,
-                                keysMemorySize,
-                                valueBaseAddress,
-                                valuesMemorySize,
-                                argsAddress,
-                                unIndexedNullCount,
-                                partitionHi,
-                                partitionLo,
-                                frameIndex,
-                                valueBlockCapacity,
-                                geoHashColumnIndex,
-                                geoHashColumnType,
-                                prefixesAddress,
-                                prefixesCount
-                        );
-                    } else {
-                        queue.get(seq).of(
-                                frameAddressCache,
-                                keyBaseAddress,
-                                keysMemorySize,
-                                valueBaseAddress,
-                                valuesMemorySize,
-                                argsAddress,
-                                unIndexedNullCount,
-                                partitionHi,
-                                partitionLo,
-                                frameIndex,
-                                valueBlockCapacity,
-                                geoHashColumnIndex,
-                                geoHashColumnType,
-                                prefixesAddress,
-                                prefixesCount,
-                                doneLatch,
-                                sharedCircuitBreaker
-                        );
-                        pubSeq.done(seq);
-                        queuedCount++;
+                        final long seq = ownerLoop.hasPublication() ? pubSeq.next() : -1;
+                        if (seq < 0) {
+                            ownerLoop.checkBeforeHelpingNoThrottle();
+                            GeoHashNative.earliestByAndFilterPrefix(
+                                    frameMemoryPool,
+                                    keyBaseAddress,
+                                    keysMemorySize,
+                                    valueBaseAddress,
+                                    valuesMemorySize,
+                                    argsAddress,
+                                    unIndexedNullCount,
+                                    partitionHi,
+                                    partitionLo,
+                                    frameIndex,
+                                    valueBlockCapacity,
+                                    geoHashColumnIndex,
+                                    geoHashColumnType,
+                                    prefixesAddress,
+                                    prefixesCount
+                            );
+                        } else {
+                            queue.get(seq).of(
+                                    frameAddressCache,
+                                    keyBaseAddress,
+                                    keysMemorySize,
+                                    valueBaseAddress,
+                                    valuesMemorySize,
+                                    argsAddress,
+                                    unIndexedNullCount,
+                                    partitionHi,
+                                    partitionLo,
+                                    frameIndex,
+                                    valueBlockCapacity,
+                                    geoHashColumnIndex,
+                                    geoHashColumnType,
+                                    prefixesAddress,
+                                    prefixesCount,
+                                    doneLatch,
+                                    sharedCircuitBreaker,
+                                    scanError
+                            );
+                            pubSeq.done(seq);
+                            queuedCount++;
+                        }
                     }
+                } finally {
+                    ownerLoop.releasePublication();
                 }
 
-                // Process our own queue while we wait; required so a 1-worker configuration
-                // does not deadlock.
-                while (!doneLatch.done(queuedCount)) {
-                    if (circuitBreaker.checkIfTripped()) {
-                        // Flip the shared breaker first so sibling workers abort their native
-                        // calls, then re-raise the SQL execution exception for this thread.
-                        sharedCircuitBreaker.cancel();
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                while (true) {
+                    ownerLoop.observeProgress();
+                    if (doneLatch.done(queuedCount)) {
+                        break;
                     }
-                    long seq = subSeq.next();
-                    if (seq > -1) {
-                        try {
-                            queue.get(seq).run();
-                        } finally {
-                            subSeq.done(seq);
+                    if (!ownerLoop.awaitProgress()) {
+                        long seq = subSeq.next();
+                        if (seq > -1) {
+                            runStolenTask(queue, subSeq, seq);
+                        } else {
+                            Os.pause();
                         }
-                    } else {
-                        Os.pause();
                     }
                 }
 
@@ -323,10 +348,21 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             throw th;
         } finally {
             processTasks(queuedCount);
-            if (sharedCircuitBreaker.checkIfTripped()) {
+            if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
                 LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
                 argumentsAddress = 0;
             }
+        }
+
+        if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
+            // A tripped shared breaker on the non-throw path means a worker scan failed, or the
+            // query was cancelled; either way the row set is incomplete, so the query must fail
+            // rather than return partial rows.
+            if (scanError.hasError()) {
+                scanError.throwError();
+            }
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+            throw CairoException.queryCancelled();
         }
 
         long rowCount = 0;
@@ -344,22 +380,47 @@ class EarliestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         Vect.sortULongAscInPlace(rows.getAddress(), aLimit);
     }
 
+    // A stolen task publishes its own failure to its owner's error state and breaker before
+    // rethrowing. Propagating a foreign task's exception here would fail this healthy query with
+    // another query's error, so only an own-task failure escapes.
+    private void runStolenTask(RingQueue<EarliestByTask> queue, Sequence subSeq, long seq) {
+        final EarliestByTask task = queue.get(seq);
+        final boolean isOwnTask = task.getCircuitBreaker() == sharedCircuitBreaker;
+        try {
+            task.run();
+        } catch (Throwable th) {
+            if (isOwnTask) {
+                throw th;
+            }
+        } finally {
+            try {
+                task.clear();
+            } finally {
+                // done(seq) releases the slot
+                subSeq.done(seq);
+            }
+        }
+    }
+
     private void processTasks(int queuedCount) {
         final RingQueue<EarliestByTask> queue = bus.getEarliestByQueue();
         final Sequence subSeq = bus.getEarliestBySubSeq();
-        while (!doneLatch.done(queuedCount)) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                if (circuitBreaker.checkIfTripped()) {
-                    sharedCircuitBreaker.cancel();
+        while (true) {
+            ownerLoop.observeProgress();
+            if (doneLatch.done(queuedCount)) {
+                break;
+            }
+            final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+            if (isOwnerTripped) {
+                sharedCircuitBreaker.cancel();
+            }
+            if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
+                long seq = subSeq.next();
+                if (seq > -1) {
+                    runStolenTask(queue, subSeq, seq);
+                } else {
+                    Os.pause();
                 }
-                try {
-                    queue.get(seq).run();
-                } finally {
-                    subSeq.done(seq);
-                }
-            } else {
-                Os.pause();
             }
         }
     }

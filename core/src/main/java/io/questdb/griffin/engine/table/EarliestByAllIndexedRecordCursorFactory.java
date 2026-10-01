@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
@@ -37,7 +38,7 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class EarliestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-    protected final DirectLongList prefixes;
+    protected DirectLongList prefixes;
 
     public EarliestByAllIndexedRecordCursorFactory(
             CairoEngine engine,
@@ -84,8 +85,18 @@ public class EarliestByAllIndexedRecordCursorFactory extends AbstractTreeSetReco
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(prefixes);
-        Misc.free(cursor);
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final DirectLongList prefixes = this.prefixes;
+        this.prefixes = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, prefixes);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

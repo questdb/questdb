@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -57,13 +58,13 @@ import org.jetbrains.annotations.Nullable;
  */
 public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final AbstractPageFrameRecordCursor cursor;
-    private final Function filter;
     private final Record.CharSequenceFunction func;
     private final boolean indexed;
-    private final RecordCursorFactory recordCursorFactory;
-    private final DirectLongList rows;
     private final IntHashSet symbolKeys;
+    private AbstractPageFrameRecordCursor cursor;
+    private Function filter;
+    private RecordCursorFactory recordCursorFactory;
+    private DirectLongList rows;
 
     public EarliestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -86,9 +87,13 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
             this.func = func;
             this.indexed = indexed;
             if (indexed) {
+                // keepClosed=true: the backing array is allocated lazily on the cursor's reopen(),
+                // under whatever per-query MemoryTracker is bound at that time, keeping malloc and
+                // free charged symmetrically on the per-query counter.
                 this.rows = new DirectLongList(
                         configuration.getSqlEarliestByRowCount(),
-                        MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST
+                        MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST,
+                        true
                 );
                 if (filter != null) {
                     this.cursor = new EarliestByValuesIndexedFilteredRecordCursor(
@@ -131,6 +136,16 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
         sink.child(partitionFrameCursorFactory);
     }
 
+    // Holds the EARLIEST ON key sub-query in a private field and does not expose it through
+    // getBaseFactory() - the base is the partition frame scan, not the sub-query - so the
+    // external-source property is propagated explicitly. Without this, a mat-view predicate
+    // sub-query of the shape "WHERE key IN (SELECT ... FROM read_parquet(...)) EARLIEST ON ..."
+    // is accepted and the view then refreshes against an untracked external file.
+    @Override
+    public boolean usesExternalDataSource() {
+        return recordCursorFactory != null && recordCursorFactory.usesExternalDataSource();
+    }
+
     @Override
     public boolean usesIndex() {
         return indexed;
@@ -138,11 +153,38 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(recordCursorFactory);
-        Misc.free(filter);
-        Misc.free(cursor);
-        Misc.free(rows);
+        final AbstractPageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
+        this.recordCursorFactory = null;
+        final DirectLongList rows = this.rows;
+        this.rows = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, recordCursorFactory);
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        if (rows != null) {
+            // Cursors free rows at their own close, under the bound tracker. This is a safety net for
+            // the never-opened case; unbind first so it never charges a recycled per-query tracker.
+            try {
+                rows.setMemoryTracker(null);
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else if (failure != th) {
+                    failure.addSuppressed(th);
+                }
+            }
+            failure = Misc.freeBestEffort(failure, rows);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -173,7 +215,13 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
             cursorKeys.clear();
             cursorKeys.addAll(symbolKeys);
         }
-        cursor.of(pageFrameCursor, executionContext);
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
         return cursor;
     }
 }

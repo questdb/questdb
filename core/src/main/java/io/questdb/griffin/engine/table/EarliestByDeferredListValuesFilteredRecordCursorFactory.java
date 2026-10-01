@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -50,10 +51,10 @@ import org.jetbrains.annotations.Nullable;
  */
 public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final EarliestByValueListRecordCursor cursor;
-    private final ObjList<Function> excludedSymbolFuncs;
-    private final Function filter;
-    private final ObjList<Function> includedSymbolFuncs;
+    private EarliestByValueListRecordCursor cursor;
+    private ObjList<Function> excludedSymbolFuncs;
+    private Function filter;
+    private ObjList<Function> includedSymbolFuncs;
 
     public EarliestByDeferredListValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -117,13 +118,25 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
 
     @Override
     protected void _close() {
-        super._close();
-        // This factory takes ownership of the cloned deferred symbol function lists;
-        // release any closeable resources they hold.
-        Misc.freeObjList(includedSymbolFuncs);
-        Misc.freeObjList(excludedSymbolFuncs);
-        Misc.free(filter);
-        Misc.free(cursor);
+        final EarliestByValueListRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<Function> excludedSymbolFuncs = this.excludedSymbolFuncs;
+        this.excludedSymbolFuncs = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final ObjList<Function> includedSymbolFuncs = this.includedSymbolFuncs;
+        this.includedSymbolFuncs = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, excludedSymbolFuncs);
+        failure = Misc.freeObjListBestEffort(failure, includedSymbolFuncs);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -132,7 +145,13 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
             SqlExecutionContext executionContext
     ) throws SqlException {
         lookupDeferredSymbols(pageFrameCursor, executionContext);
-        cursor.of(pageFrameCursor, executionContext);
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
         return cursor;
     }
 
@@ -145,7 +164,8 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
                 Function symbolFunc = includedSymbolFuncs.getQuick(i);
                 symbolFunc.init(pageFrameCursor, executionContext);
                 int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                if (key != SymbolTable.VALUE_NOT_FOUND
+                        && (key != SymbolTable.VALUE_IS_NULL || symbolMapReader.containsNullValue())) {
                     symbolKeys.add(key);
                 }
             }

@@ -160,7 +160,7 @@ public class ParallelLatestByTest extends AbstractTest {
                 }
 
                 @Override
-                public boolean useWithinLatestByOptimisation() {
+                public boolean useWithinByOptimisation() {
                     return true;
                 }
             };

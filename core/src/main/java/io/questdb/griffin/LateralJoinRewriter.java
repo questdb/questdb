@@ -2926,6 +2926,7 @@ class LateralJoinRewriter implements Mutable {
                     || m.getGroupBy().size() > 0
                     || m.getSampleBy() != null
                     || m.getLatestBy().size() > 0
+                    || m.getEarliestBy().size() > 0
                     || m.getUnionModel() != null
                     || m.isDistinct()) {
                 return false;
@@ -4484,7 +4485,8 @@ class LateralJoinRewriter implements Mutable {
             }
             if (current.getSampleBy() != null
                     || current.getFillStride() != null
-                    || current.getLatestBy().size() > 0) {
+                    || current.getLatestBy().size() > 0
+                    || current.getEarliestBy().size() > 0) {
                 return SCALAR_BODY_NONE;
             }
             // A GROUP BY on the aggregate's own layer partitions the counted input,
@@ -4513,7 +4515,8 @@ class LateralJoinRewriter implements Mutable {
                             || input.getGroupBy().size() > 0
                             || input.getSampleBy() != null
                             || input.getFillStride() != null
-                            || input.getLatestBy().size() > 0) {
+                            || input.getLatestBy().size() > 0
+                            || input.getEarliestBy().size() > 0) {
                         return SCALAR_BODY_NONE;
                     }
                     input = input.getNestedModel();

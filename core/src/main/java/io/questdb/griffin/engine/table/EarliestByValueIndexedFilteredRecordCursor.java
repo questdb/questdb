@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -55,6 +55,7 @@ class EarliestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueRe
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isFindPending) {
             findRecord();
             hasNext = isRecordFound;
@@ -77,7 +78,7 @@ class EarliestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueRe
         isRecordFound = false;
         isFindPending = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override
@@ -110,24 +111,26 @@ class EarliestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueRe
     private void findRecord() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD);
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD);
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
 
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
-            while (cursor.hasNext()) {
-                // cursor.next() already returns a frame-relative row index (BitmapIndex*Reader
-                // subtracts minValue == partitionLo). Subtracting partitionLo again positions the
-                // record partitionLo rows too early when the match falls in a page frame with
-                // partitionLo > 0, returning a neighbouring row (often a different symbol).
-                recordA.setRowIndex(cursor.next());
-                if (filter.getBool(recordA)) {
-                    isRecordFound = true;
-                    return;
+            try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+                while (cursor.hasNext()) {
+                    // Per the IndexReader.getCursor(key, minValue, maxValue) contract, returned rows are
+                    // already relative to minValue == partitionLo here, so cursor.next() is already
+                    // frame-relative. Subtracting partitionLo again here positioned the record partitionLo
+                    // rows too early whenever the match fell in a page frame with partitionLo > 0,
+                    // returning a neighbouring row (often a different symbol).
+                    recordA.setRowIndex(cursor.next());
+                    if (filter.getBool(recordA)) {
+                        isRecordFound = true;
+                        return;
+                    }
                 }
             }
         }

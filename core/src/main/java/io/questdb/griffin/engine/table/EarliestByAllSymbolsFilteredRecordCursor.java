@@ -89,10 +89,10 @@ class EarliestByAllSymbolsFilteredRecordCursor extends AbstractAscendingRecordLi
 
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        if (!isOpen) {
-            isOpen = true;
-            map.reopen();
-        }
+        // open before the first allocation so close() frees the map if a later alloc in of() breaches
+        isOpen = true;
+        map.setMemoryTracker(executionContext.getMemoryTracker());
+        map.reopen();
         super.of(pageFrameCursor, executionContext);
         filter.init(pageFrameCursor, executionContext);
         possibleCombinations = -1;
@@ -147,7 +147,7 @@ class EarliestByAllSymbolsFilteredRecordCursor extends AbstractAscendingRecordLi
             PageFrame frame;
             OUTER:
             while ((frame = frameCursor.next()) != null) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final int frameIndex = frameCount;
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;

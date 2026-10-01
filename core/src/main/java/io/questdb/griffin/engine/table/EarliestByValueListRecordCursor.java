@@ -83,13 +83,14 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             this.excludedSymbolKeys = new IntHashSet(shrinkToCapacity);
         }
         this.foundKeys = new IntHashSet(shrinkToCapacity);
-        this.rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
+        // keepClosed=true: rowIds is allocated lazily on the first reopen() under the bound tracker.
+        this.rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST, true);
     }
 
     @Override
     public void close() {
         super.close();
-        if (rowIds.getCapacity() > shrinkToCapacity) {
+        if (rowIds != null && rowIds.getCapacity() > shrinkToCapacity) {
             foundKeys = new IntHashSet(shrinkToCapacity);
         }
         Misc.free(rowIds);
@@ -97,6 +98,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!areRecordsFound) {
             findRecords();
             toTop();
@@ -114,6 +116,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
+        rowIds.setMemoryTracker(executionContext.getMemoryTracker());
         rowIds.reopen();
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
@@ -172,7 +175,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         }
         areRecordsFound = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override
@@ -199,7 +202,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter == null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -224,7 +227,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter != null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -251,7 +254,20 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
                 if (filter != null) {
                     findRestrictedWithFilter();
                 } else {
-                    findRestrictedNoFilter();
+                    final StaticSymbolTable symbolTable = frameCursor.getSymbolTable(columnIndex);
+                    final int symbolCount = symbolTable.getSymbolCount();
+                    final boolean hasNull = symbolTable.containsNullValue();
+                    final boolean hasIncludedNull = includedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL);
+                    // The factory resolves and deduplicates keys against this cursor's symbol table.
+                    // keyOf(NULL) can return a key even when the table has no NULL, so count it separately.
+                    final boolean hasAllKeys = excludedSymbolKeys.size() == 0
+                            && includedSymbolKeys.size() - (hasIncludedNull ? 1 : 0) == symbolCount
+                            && (!hasNull || hasIncludedNull);
+                    if (hasAllKeys) {
+                        findAllNoFilter(symbolCount + (hasNull ? 1 : 0));
+                    } else {
+                        findRestrictedNoFilter();
+                    }
                 }
             }
         } else if (restrictedByExcludedValues) {
@@ -277,7 +293,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter == null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -302,7 +318,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter != null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -328,7 +344,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         final int searchSize = includedSymbolKeys.size();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -354,7 +370,7 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         int searchSize = includedSymbolKeys.size();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;

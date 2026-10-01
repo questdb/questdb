@@ -273,7 +273,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestKeyPushdownFeasibilityWithoutWithinOptimisation() throws Exception {
         setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, "false");
         assertMemoryLeak(() -> {
-            Assert.assertFalse(configuration.useWithinLatestByOptimisation());
+            Assert.assertFalse(configuration.useWithinByOptimisation());
             assertLatestKeyFeasibility("indexed", " INDEX");
         });
     }
@@ -2902,7 +2902,7 @@ public class LatestByTest extends AbstractCairoTest {
     private void assertLatestKeyWithinFallback(boolean isWithinOptimised) throws Exception {
         setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, Boolean.toString(isWithinOptimised));
         assertMemoryLeak(() -> {
-            Assert.assertEquals(isWithinOptimised, configuration.useWithinLatestByOptimisation());
+            Assert.assertEquals(isWithinOptimised, configuration.useWithinByOptimisation());
             execute("CREATE TABLE geo (s SYMBOL INDEX, v DOUBLE, g GEOHASH(8c), ts "
                     + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
             execute("""

@@ -177,7 +177,7 @@ public class MessageBusImpl implements MessageBus {
 
             // EARLIEST BY shares the same capacity configuration as LATEST BY; the workloads are
             // symmetric (same per-frame task weight, same max concurrency).
-            this.earliestByQueue = new RingQueue<>(EarliestByTask::new, configuration.getLatestByQueueCapacity());
+            this.earliestByQueue = new RingQueue<>(() -> new EarliestByTask(configuration), configuration.getLatestByQueueCapacity());
             this.earliestByPubSeq = new MPSequence(earliestByQueue.getCycle());
             this.earliestBySubSeq = new MCSequence(earliestByQueue.getCycle());
             earliestByPubSeq.then(earliestBySubSeq).then(earliestByPubSeq);

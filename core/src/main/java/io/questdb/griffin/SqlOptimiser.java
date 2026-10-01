@@ -5994,6 +5994,7 @@ public class SqlOptimiser implements Mutable {
                 || model.getJoinModels().size() != 1 || model.getJoinType() != JOIN_NONE
                 || model.getUnionModel() != null || model.getTableNameFunction() != null
                 || model.isDistinct() || model.getSampleBy() != null || model.getGroupBy().size() > 0
+                || model.getEarliestBy().size() > 0
                 || model.getConstWhereClause() != null || model.getPostJoinWhereClause() != null
                 || model.getParsedWhere().size() > 0 || (!hasOuterFilter && model.getWhereClause() != null)
                 || (!hasOuterOrder && (model.getOrderBy().size() > 0 || model.getLimitLo() != null || model.getLimitHi() != null))) {
