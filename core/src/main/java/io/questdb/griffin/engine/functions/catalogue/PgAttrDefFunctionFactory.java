@@ -170,6 +170,17 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
             tableId = -1;
         }
 
+        // The scan reads the db root rather than the table registry, so it maps each directory
+        // back to its table to skip the ones the principal may not see. A directory that no
+        // registered table owns, e.g. a dropped table waiting for purge, has no permissions to
+        // check and stays listed.
+        private boolean isVisibleTableDir(long pUtf8NameZ) {
+            dirNameSink.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, dirNameSink);
+            final TableToken tableToken = engine.getTableTokenByDirName(dirNameSink);
+            return tableToken == null || securityContext.isTableVisible(tableToken);
+        }
+
         private boolean next0() {
             do {
                 // scans the db directory reading metadata files per table, so observe the breaker each iteration
@@ -227,17 +238,6 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
             tableId = -1;
             findFileStruct = -1;
             return false;
-        }
-
-        // The scan reads the db root rather than the table registry, so it maps each directory
-        // back to its table to skip the ones the principal may not see. A directory that no
-        // registered table owns, e.g. a dropped table waiting for purge, has no permissions to
-        // check and stays listed.
-        private boolean isVisibleTableDir(long pUtf8NameZ) {
-            dirNameSink.clear();
-            Utf8s.utf8ToUtf16Z(pUtf8NameZ, dirNameSink);
-            final TableToken tableToken = engine.getTableTokenByDirName(dirNameSink);
-            return tableToken == null || securityContext.isTableVisible(tableToken);
         }
 
         private class DiskReadingRecord implements Record {

@@ -7358,15 +7358,31 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> expressionModels = model.getExpressionModels();
         final int n = expressionModels.size();
         if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                final ExpressionNode node = expressionModels.getQuick(i);
-                // for expression models that have been converted to
-                // the joins, the query model will be set to null.
-                if (node.queryModel != null) {
-                    IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
-                    if (optimised != node.queryModel) {
-                        node.queryModel = optimised;
+            // A table-name function in a sub-query of a view reads its argument through that view, like
+            // one in the view's FROM clause, see SqlExecutionContext.isTableFunctionVisible(). The tables
+            // such a sub-query reads are not affected: they are still accessed as the caller. The view is
+            // decided here, where the sub-query is written, and kept on its node for later compiles.
+            final ExpressionNode viewNameExpr = model.getViewNameExpr();
+            final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
+            if (viewNameExpr != null) {
+                executionContext.setTableFunctionView(TableUtils.getTableFunctionView(viewNameExpr, executionContext));
+            }
+            try {
+                for (int i = 0; i < n; i++) {
+                    final ExpressionNode node = expressionModels.getQuick(i);
+                    // for expression models that have been converted to
+                    // the joins, the query model will be set to null.
+                    if (node.queryModel != null) {
+                        node.tableFunctionView = executionContext.getTableFunctionView();
+                        IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
+                        if (optimised != node.queryModel) {
+                            node.queryModel = optimised;
+                        }
                     }
+                }
+            } finally {
+                if (viewNameExpr != null) {
+                    executionContext.setTableFunctionView(previousView);
                 }
             }
         }

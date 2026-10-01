@@ -1025,21 +1025,31 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGlobOutsideCopyRootRequiresSystemAdmin() throws Exception {
         assertMemoryLeak(() -> {
-            final StringSink sink = new StringSink();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
                 // the copy root is open to everyone, whether the pattern is relative or absolute
-                engine.print("select count(*) cnt from glob('data/*.parquet')", sink, context);
-                TestUtils.assertEquals("cnt\n7\n", sink);
-                engine.print("select count(*) cnt from glob('" + inputRoot + "/data/*.parquet')", sink, context);
-                TestUtils.assertEquals("cnt\n7\n", sink);
+                assertQuery("select count(*) cnt from glob('data/*.parquet')")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("cnt\n7\n");
+                assertQuery("select count(*) cnt from glob('" + inputRoot + "/data/*.parquet')")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("cnt\n7\n");
                 // Anywhere else only a system admin may list files. The database root would disclose
                 // every table and column, including those the principal may not see.
                 assertSystemAdminRequired("select * from glob('" + root + "/*')", context);
                 // a sibling of the copy root that shares its name as a prefix is outside it too
                 assertSystemAdminRequired("select * from glob('" + inputRoot + "_sibling/*')", context);
             }
-            engine.print("select count(*) > 0 found from glob('" + root + "/*')", sink, sqlExecutionContext);
-            TestUtils.assertEquals("found\ntrue\n", sink);
+            assertQuery("select count(*) > 0 found from glob('" + root + "/*')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("found\ntrue\n");
         });
     }
 

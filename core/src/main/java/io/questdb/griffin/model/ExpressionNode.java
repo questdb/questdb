@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -84,6 +85,10 @@ public class ExpressionNode implements Mutable, Sinkable {
     // speculative pruning-bound compile was declined, so the residual filter re-compiled from this
     // same node reuses that already-generated sub-query instead of generating it a second time.
     public ScalarSubQueryCompileCache scalarBoundCompileCache;
+    // Compile-time link (like scalarBoundHolder): set on a sub-query QUERY node written inside a view, so
+    // that every compile of the sub-query, the re-compiled residual and per-worker filters included,
+    // reads its table-name functions through that view, see SqlExecutionContext.isTableFunctionVisible().
+    public SqlExecutionContext.TableFunctionView tableFunctionView;
     public CharSequence token;
     public int type;
     public WindowExpression windowExpression;
@@ -227,6 +232,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         // parked compile, and later clones (per-worker filters) find the slot empty and generate
         // their own copy, which they need anyway - a sub-query factory is not thread-safe
         copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
+        copy.tableFunctionView = node.tableFunctionView;
         copy.isConstantExpression = node.isConstantExpression;
         copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
         copy.innerPredicate = node.innerPredicate;
@@ -328,6 +334,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         isConstFoldWidening = false;
         scalarBoundHolder = null;
         scalarBoundCompileCache = null;
+        tableFunctionView = null;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -346,6 +353,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.intrinsicValue = other.intrinsicValue;
         this.scalarBoundHolder = other.scalarBoundHolder;
         this.scalarBoundCompileCache = other.scalarBoundCompileCache;
+        this.tableFunctionView = other.tableFunctionView;
         this.isConstantExpression = other.isConstantExpression;
         this.isTimestampOrderInherited = other.isTimestampOrderInherited;
         this.innerPredicate = other.innerPredicate;

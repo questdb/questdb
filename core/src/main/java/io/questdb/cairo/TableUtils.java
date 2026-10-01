@@ -477,15 +477,7 @@ public final class TableUtils {
         final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
         final ExpressionNode viewNameExpr = model.getViewNameExpr();
         if (viewNameExpr != null) {
-            final TableToken viewToken = executionContext.getTableTokenIfExists(viewNameExpr.token);
-            if (viewToken == null || !viewToken.isView()) {
-                throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
-            }
-            final ViewDefinition viewDefinition = executionContext.getCairoEngine().getViewGraph().getViewDefinition(viewToken);
-            if (viewDefinition == null) {
-                throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
-            }
-            executionContext.setTableFunctionView(new SqlExecutionContext.TableFunctionView(viewToken, viewDefinition.getSeqTxn()));
+            executionContext.setTableFunctionView(getTableFunctionView(viewNameExpr, executionContext));
         }
         final Function function;
         try {
@@ -1132,6 +1124,26 @@ public final class TableUtils {
             dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
         return dirName;
+    }
+
+    /**
+     * Returns the view, as of its current definition, that the table-name functions of a model
+     * expanded from that view read their arguments through, see
+     * {@link SqlExecutionContext#isTableFunctionVisible(TableToken, SqlExecutionContext.TableFunctionView)}.
+     */
+    public static SqlExecutionContext.TableFunctionView getTableFunctionView(
+            @NotNull ExpressionNode viewNameExpr,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+        final TableToken viewToken = executionContext.getTableTokenIfExists(viewNameExpr.token);
+        if (viewToken == null || !viewToken.isView()) {
+            throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
+        }
+        final ViewDefinition viewDefinition = executionContext.getCairoEngine().getViewGraph().getViewDefinition(viewToken);
+        if (viewDefinition == null) {
+            throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
+        }
+        return new SqlExecutionContext.TableFunctionView(viewToken, viewDefinition.getSeqTxn());
     }
 
     public static int getTableIdFromTableDir(CharSequence dirName) throws NumericException {

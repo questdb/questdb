@@ -161,9 +161,12 @@ public class TableVisibilityTest extends AbstractCairoTest {
                 }
                 final StringSink sink = new StringSink();
                 engine.print("SELECT count() FROM tables() WHERE table_name LIKE 'visible%'", sink, hidingContext);
-                final String visibleCount = sink.toString();
-                engine.print("SELECT count() FROM tables()", sink, hidingContext);
-                TestUtils.assertEquals(visibleCount, sink);
+                assertQuery("SELECT count() FROM tables()")
+                        .withContext(hidingContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(sink.toString());
             }
         });
     }
@@ -263,14 +266,10 @@ public class TableVisibilityTest extends AbstractCairoTest {
             final int visibleTableId = engine.verifyTableName("visible_t").getTableId();
             final String secretRows = "SELECT count() FROM pg_catalog.pg_attrdef() WHERE adrelid = " + secretTableId;
             final String visibleRows = "SELECT count() FROM pg_catalog.pg_attrdef() WHERE adrelid = " + visibleTableId;
-            final StringSink sink = new StringSink();
-            engine.print(secretRows, sink, sqlExecutionContext);
-            TestUtils.assertEquals("count\n2\n", sink);
+            assertQuery(secretRows).noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
             try (SqlExecutionContext hidingContext = newHidingContext()) {
-                engine.print(secretRows, sink, hidingContext);
-                TestUtils.assertEquals("count\n0\n", sink);
-                engine.print(visibleRows, sink, hidingContext);
-                TestUtils.assertEquals("count\n2\n", sink);
+                assertQuery(secretRows).withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+                assertQuery(visibleRows).withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
             }
         });
     }
@@ -450,11 +449,18 @@ public class TableVisibilityTest extends AbstractCairoTest {
             execute("CREATE VIEW visible_v2 AS (SELECT ts, visible_col FROM secret_v)");
             drainWalAndViewQueues();
             try (SqlExecutionContext hidingContext = newHidingContext()) {
-                final StringSink sink = new StringSink();
-                engine.print("SELECT * FROM visible_v1", sink, hidingContext);
-                TestUtils.assertEquals("ts\tsecret_col\n2024-01-01T00:00:00.000000Z\t1\n", sink);
-                engine.print("SELECT * FROM visible_v2", sink, hidingContext);
-                TestUtils.assertEquals("ts\tvisible_col\n2024-01-01T00:00:00.000000Z\t2\n", sink);
+                assertQuery("SELECT * FROM visible_v1")
+                        .withContext(hidingContext)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("ts\tsecret_col\n2024-01-01T00:00:00.000000Z\t1\n");
+                assertQuery("SELECT * FROM visible_v2")
+                        .withContext(hidingContext)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("ts\tvisible_col\n2024-01-01T00:00:00.000000Z\t2\n");
             }
         });
     }
@@ -469,13 +475,10 @@ public class TableVisibilityTest extends AbstractCairoTest {
             execute("CREATE VIEW visible_outer AS (SELECT * FROM visible_parts)");
             drainWalAndViewQueues();
             try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertQuery("SELECT count() FROM visible_parts").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                assertQuery("SELECT count() FROM visible_outer").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                assertQuery("SELECT count() FROM visible_columns").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
                 final StringSink sink = new StringSink();
-                engine.print("SELECT count() FROM visible_parts", sink, hidingContext);
-                TestUtils.assertEquals("count\n1\n", sink);
-                engine.print("SELECT count() FROM visible_outer", sink, hidingContext);
-                TestUtils.assertEquals("count\n1\n", sink);
-                engine.print("SELECT count() FROM visible_columns", sink, hidingContext);
-                TestUtils.assertEquals("count\n2\n", sink);
                 engine.print("SELECT count() FROM visible_txns", sink, hidingContext);
                 Assert.assertFalse(sink.toString(), Chars.equals(sink, "count\n0\n"));
                 assertMaskedLikeMissing("SELECT * FROM table_partitions('%s')", "secret_t", hidingContext);
@@ -487,9 +490,7 @@ public class TableVisibilityTest extends AbstractCairoTest {
                     return super.isTableVisible(tableToken) && !Chars.equals(tableToken.getTableName(), "visible_parts");
                 }
             })) {
-                final StringSink sink = new StringSink();
-                engine.print("SELECT count() FROM visible_outer", sink, hidingInnerView);
-                TestUtils.assertEquals("count\n1\n", sink);
+                assertQuery("SELECT count() FROM visible_outer").withContext(hidingInnerView).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
             }
             // A factory compiled while the view was visible must not bypass a later visibility change.
             try (
@@ -533,6 +534,29 @@ public class TableVisibilityTest extends AbstractCairoTest {
                 } catch (TableReferenceOutOfDateException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testVisibleViewSubQueryReadsInvisibleTableNameFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            execute("CREATE TABLE visible_names (ts TIMESTAMP, name SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO visible_names VALUES ('2024-01-01', 'secret_col'), ('2024-01-01', 'other')");
+            drainWalQueue();
+            // a table-name function in a sub-query of a view reads its argument through the view,
+            // like one in its FROM clause, but the tables such a sub-query reads are read as the caller
+            execute("CREATE VIEW visible_in AS (SELECT name FROM visible_names WHERE name IN (SELECT \"column\" FROM table_columns('secret_t')))");
+            execute("CREATE VIEW visible_table_in AS (SELECT name FROM visible_names WHERE name IN (SELECT 'secret_col' FROM secret_t))");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertQuery("SELECT * FROM visible_in")
+                        .withContext(hidingContext)
+                        .noLeakCheck()
+                        .returns("name\nsecret_col\n");
+                assertMaskedLikeMissing("SELECT name FROM visible_names WHERE name IN (SELECT \"column\" FROM table_columns('%s'))", "secret_t", hidingContext);
+                assertFailure("SELECT * FROM visible_table_in", hidingContext, "table does not exist [table=secret_t]");
             }
         });
     }
@@ -588,19 +612,6 @@ public class TableVisibilityTest extends AbstractCairoTest {
 
     private static void assertFailure(CharSequence sql, SqlExecutionContext context, String expectedMessage) throws Exception {
         TestUtils.assertContains(failureOf(sql, context), expectedMessage);
-    }
-
-    // The statements under test must have left the hidden objects as they were.
-    private static void assertHiddenObjectsIntact() throws Exception {
-        for (String name : new String[]{"secret_t", "secret_nw", "secret_v", "secret_mv", "secret_lv"}) {
-            Assert.assertNotNull(name, engine.getTableTokenIfExists(name));
-        }
-        Assert.assertNull(engine.getTableTokenIfExists("renamed_t"));
-        final StringSink sink = new StringSink();
-        engine.print("SELECT * FROM secret_t", sink, sqlExecutionContext);
-        TestUtils.assertEquals("ts\tsecret_col\n2024-01-01T00:00:00.000000Z\t1\n", sink);
-        engine.print("SELECT * FROM secret_nw", sink, sqlExecutionContext);
-        TestUtils.assertEquals("ts\tsecret_nw_col\n2024-01-01T00:00:00.000000Z\t3\n", sink);
     }
 
     // Asserts that the statement fails for the hidden object exactly like it does for a missing one of
@@ -700,6 +711,24 @@ public class TableVisibilityTest extends AbstractCairoTest {
         }
     }
 
+    // The statements under test must have left the hidden objects as they were.
+    private void assertHiddenObjectsIntact() throws Exception {
+        for (String name : new String[]{"secret_t", "secret_nw", "secret_v", "secret_mv", "secret_lv"}) {
+            Assert.assertNotNull(name, engine.getTableTokenIfExists(name));
+        }
+        Assert.assertNull(engine.getTableTokenIfExists("renamed_t"));
+        assertQuery("SELECT * FROM secret_t")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("ts\tsecret_col\n2024-01-01T00:00:00.000000Z\t1\n");
+        assertQuery("SELECT * FROM secret_nw")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("ts\tsecret_nw_col\n2024-01-01T00:00:00.000000Z\t3\n");
+    }
+
     // like HidingSecurityContext, but may drop nothing
     private static final class HidingNoDropSecurityContext extends HidingSecurityContext {
         @Override
@@ -723,6 +752,18 @@ public class TableVisibilityTest extends AbstractCairoTest {
         }
     }
 
+    private static final class HidingNoWalSecurityContext extends HidingSecurityContext {
+        @Override
+        public void authorizeRebaseWal(TableToken tableToken) {
+            throw CairoException.authorization().put("wal denied");
+        }
+
+        @Override
+        public void authorizeResumeWal(TableToken tableToken) {
+            throw CairoException.authorization().put("wal denied");
+        }
+    }
+
     // may see every object except those named secret*
     private static class HidingSecurityContext extends AllowAllSecurityContext {
         @Override
@@ -733,18 +774,6 @@ public class TableVisibilityTest extends AbstractCairoTest {
         @Override
         protected SecurityContext newPrincipalContext(CharSequence principal) {
             return this;
-        }
-    }
-
-    private static final class HidingNoWalSecurityContext extends HidingSecurityContext {
-        @Override
-        public void authorizeRebaseWal(TableToken tableToken) {
-            throw CairoException.authorization().put("wal denied");
-        }
-
-        @Override
-        public void authorizeResumeWal(TableToken tableToken) {
-            throw CairoException.authorization().put("wal denied");
         }
     }
 

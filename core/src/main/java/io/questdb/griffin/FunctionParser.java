@@ -913,7 +913,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         boolean hasPushedWindowContext = false;
+        final SqlExecutionContext.TableFunctionView previousView = sqlExecutionContext.getTableFunctionView();
         try {
+            // The sub-query reads table-name functions through the view it is written in, if any, see
+            // ExpressionNode.tableFunctionView, whichever model the compile that reaches it belongs to.
+            sqlExecutionContext.setTableFunctionView(node.tableFunctionView);
             if (!sqlExecutionContext.getWindowContext().isEmpty()) {
                 // The inner SELECT must resolve its own aggregates and windows independently.
                 // In particular, an inner window must not clear the outer function's OVER spec.
@@ -941,6 +945,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
             return function;
         } finally {
+            sqlExecutionContext.setTableFunctionView(previousView);
             if (hasPushedWindowContext) {
                 sqlExecutionContext.popWindowContext();
             }

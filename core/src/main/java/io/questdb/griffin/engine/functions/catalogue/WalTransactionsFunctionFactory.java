@@ -95,8 +95,8 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         CharSequence tableName = args.get(0).getStrA(null);
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        // Outside a view, an invisible table fails like a missing one.
-        if (tableToken == null || !sqlExecutionContext.isTableFunctionVisible(tableToken, view)) {
+        // Outside a view, a table the principal may not see fails like a missing one.
+        if (tableToken == null || !isVisible(sqlExecutionContext, tableToken, view)) {
             throw SqlException.$(argPositions.get(0), "table does not exist: ").put(tableName);
         }
         if (!sqlExecutionContext.getCairoEngine().isWalTable(tableToken)) {
@@ -109,6 +109,14 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             }
         }
         return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType, argPositions.get(0), view));
+    }
+
+    // WAL diagnostics show a protected table to the operators allowed to recover it, see
+    // SecurityContext.isWalTableVisible(). Inside a view, the view's authority decides as usual.
+    private static boolean isVisible(SqlExecutionContext executionContext, TableToken tableToken, SqlExecutionContext.TableFunctionView view) {
+        return view != null
+                ? executionContext.isTableFunctionVisible(tableToken, view)
+                : executionContext.getSecurityContext().isWalTableVisible(tableToken);
     }
 
     private static class WalTransactionsCursorFactory extends AbstractRecordCursorFactory {
@@ -129,7 +137,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
             // Recheck the table or enclosing view: a compiled factory can outlive a grant or view definition.
-            if (!executionContext.isTableFunctionVisible(tableToken, view)) {
+            if (!isVisible(executionContext, tableToken, view)) {
                 throw SqlException.$(tableNamePosition, "table does not exist: ").put(tableToken.getTableName());
             }
             cursor.close();
