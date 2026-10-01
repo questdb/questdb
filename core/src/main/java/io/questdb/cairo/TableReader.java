@@ -1736,7 +1736,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 // Size the mapping by the file extent and RECORD the live row count -
                                 // the same split openPartition0 makes. Re-mapping to the live count
                                 // shrinks a composite partition below the pieces that sit above it.
-                                if (reloadColumnFiles(partitionIndex, mappedRowCount(partitionIndex, txPartitionSize))) {
+                                if (reloadColumnFiles(partitionIndex, mappedRowCount(partitionIndex, txPartitionSize), false)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
@@ -1761,10 +1761,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             return;
         }
-        reconcileOpenPartitions0(truncateHappened);
+        reconcileOpenPartitions0(truncateHappened, txFile.getColumnVersion() != prevColumnVersion);
     }
 
-    private void reconcileOpenPartitions0(boolean forceTruncate) {
+    private void reconcileOpenPartitions0(boolean forceTruncate, boolean isColumnVersionChanged) {
         int partitionIndex = 0;
         int txPartitionCount = txFile.getPartitionCount();
         int txPartitionIndex = partitionIndex;
@@ -1807,7 +1807,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 // Size the mapping by the file extent and RECORD the live row count -
                                 // the same split openPartition0 makes. Re-mapping to the live count
                                 // shrinks a composite partition below the pieces that sit above it.
-                                if (reloadColumnFiles(partitionIndex, mappedRowCount(txPartitionIndex, txPartitionSize))) {
+                                if (reloadColumnFiles(partitionIndex, mappedRowCount(txPartitionIndex, txPartitionSize), isColumnVersionChanged)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                                 } else {
@@ -2027,17 +2027,33 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     /**
      * Updates boundaries of all columns in partition.
+     * <p>
+     * The name txn and the partition's max column name txn the callers compare say nothing about column TOPS: a
+     * {@code _cv} commit can move one in place (MAKE-PLAIN's clamp, a split's trim), and the file then starts at
+     * the new top. So when {@code _cv} moved, each column's cached top is refreshed from its record before the
+     * mapping is sized - one record lookup per column, on the rare commit that changes column versions.
      *
-     * @param partitionIndex index of partition
-     * @param rowCount       number of rows in partition
+     * @param partitionIndex         index of partition
+     * @param rowCount               number of rows in partition
+     * @param isColumnVersionChanged whether {@code _cv} changed since this partition was last reconciled
      */
-    private boolean reloadColumnFiles(int partitionIndex, long rowCount) {
-        int columnBase = getColumnBase(partitionIndex);
+    private boolean reloadColumnFiles(int partitionIndex, long rowCount, boolean isColumnVersionChanged) {
+        final int columnBase = getColumnBase(partitionIndex);
+        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
         for (int i = 0; i < columnCount; i++) {
             final int index = getPrimaryColumnIndex(columnBase, i);
             MemoryCMR mem1 = columns.getQuick(index);
             if (mem1 == null) {
                 continue; // column was never opened — nothing to grow
+            }
+
+            if (isColumnVersionChanged) {
+                // _cv records are keyed by the WRITER index; a column without a record keeps the top it was
+                // opened with, which reloadColumnAt derived from the column's add time alone.
+                final int recordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, metadata.getWriterIndex(i));
+                if (recordIndex > -1) {
+                    columnTops.setQuick(columnBase / 2 + i, columnVersionReader.getColumnTopByIndex(recordIndex));
+                }
             }
 
             long columnFilesRowCount = rowCount - getColumnTop(columnBase, i);

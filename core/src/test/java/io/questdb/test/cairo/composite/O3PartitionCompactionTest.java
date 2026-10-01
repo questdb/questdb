@@ -33,9 +33,11 @@ import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -55,6 +57,8 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
  * Tests for partition COMPACTION (PARTITION_COMPACTION.md), which reclaims the dead space
@@ -964,6 +968,93 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     0,
                     deadRowsOfDay("x", "2024-01-01")
             );
+        });
+    }
+
+    /**
+     * MAKE-PLAIN's clampColumnTopsToLiveRows lowers the day's column tops in place (1000 to 264 here) under the
+     * SAME column name txn. The reader's reconcileOpenPartitions0 keys its "reload in place" decision on
+     * {@code ColumnVersionReader.getMaxPartitionVersion}, which folds name txns only, so it takes the
+     * reloadColumnFiles path - which used to size the mapping by the top the column was opened with. The squash
+     * then grows the day back to 1126 rows; the reader mapped 126 rows at file offset 0 and kept reading with top
+     * 1000. reloadColumnFiles now refreshes each column's top from {@code _cv} whenever the column version moved.
+     */
+    @Test
+    public void testLongLivedReaderSeesLateAddedColumnsAfterMakePlainAndSquash() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+
+            execute("create table x as (select cast(x as int) i, rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                    " timestamp_sequence('2024-01-01', 1000000L) ts from long_sequence(1000))," +
+                    " index(sym2 TYPE POSTING DELTA) timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            // Still the last partition, so each top lands at the row count: 1000.
+            execute("alter table x add column v long");
+            execute("alter table x add column sym_top symbol index");
+            execute("alter table x add column ip4 ipv4");
+            execute("alter table x add column var_top varchar");
+            drainWalQueue();
+            // Rows past the original span, carrying the late-added columns.
+            execute("insert into x (i, sym2, ts, v, sym_top, ip4, var_top) select cast(x as int) + 100000, 'DE'," +
+                    " timestamp_sequence('2024-01-01T19:00:00', 1000000L), x, 'NGW', '1.2.3.4', 'abc' from long_sequence(59)");
+            drainWalQueue();
+            // A replace-range commit over [00:04:24, 00:13:13) with 529 rows: leaves a clean front [0, 264)
+            // at row 0 and relocates the rest, the 59 rows above included, to the tail. Three times over,
+            // so the dead space outweighs the tail and MOVE-TAIL is worth its copy.
+            final TableToken xt = engine.verifyTableName("x");
+            for (int round = 0; round < 3; round++) {
+                try (WalWriter ww = engine.getWalWriter(xt)) {
+                    final long lo = MicrosTimestampDriver.floor("2024-01-01T00:04:24.000000Z");
+                    for (int k = 0; k < 529; k++) {
+                        final TableWriter.Row r = ww.newRow(lo + k * 1_000_000L);
+                        r.putInt(0, 200_000 + k);
+                        r.append();
+                    }
+                    ww.commitWithParams(lo, MicrosTimestampDriver.floor("2024-01-01T00:13:13.000000Z"), WAL_DEDUP_MODE_REPLACE_RANGE);
+                }
+                drainWalQueue();
+            }
+            // More rows carrying the late-added columns, merged into the relocated tail.
+            execute("insert into x (i, sym2, ts, v, sym_top, ip4, var_top) select cast(x as int) + 300000, 'EF'," +
+                    " timestamp_sequence('2024-01-01T17:30:00', 1000000L), x + 1000, 'ABC', '5.6.7.8', 'xyz' from long_sequence(67)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 is not the last partition when compaction reaches it.
+            execute("insert into x (i, ts) select cast(x as int) + 400000, timestamp_sequence('2024-01-02', 60*1000000L) from long_sequence(5)");
+            drainWalQueue();
+
+            final String query = "select * from x where ts in '2024-01-01'";
+            final String expected = snapshot(query);
+            Assert.assertTrue("fixture produced no composite partition", isComposite("x", "2024-01-01"));
+
+            pinPieceCap(1);
+            // The pooled reader stays open across the whole compaction, as a live view's does: the base
+            // drainWalQueue skips releaseInactive(), and a query after every commit reloads it in place.
+            for (int i = 0; i < 3; i++) {
+                execute("insert into x (i, ts) select cast(x as int) + 800000, timestamp_sequence('2024-03-0" + (i + 1) + "', 60*1000000L) from long_sequence(2)");
+            }
+            AbstractCairoTest.drainWalQueue();
+            snapshot(query);
+            for (int i = 0; i < 6; i++) {
+                execute("insert into x (i, ts) select cast(x as int) + 900000, timestamp_sequence('" + nextPassDay() + "', 60*1000000L) from long_sequence(2)");
+                AbstractCairoTest.drainWalQueue();
+                snapshot(query);
+            }
+            Assert.assertFalse("MAKE-PLAIN did not run, the fixture proves nothing", isComposite("x", "2024-01-01"));
+
+            final String actual = snapshot(query);
+            try (TableReader r = engine.getReader(xt)) {
+                final int vIdx = r.getMetadata().getColumnIndex("v");
+                Assert.assertEquals(
+                        "the long-lived reader kept the column top MAKE-PLAIN lowered",
+                        r.getColumnVersionReader().getColumnTop(parseMicros("2024-01-01T00:00:00.000000Z"), vIdx),
+                        r.getColumnTop(r.getColumnBase(0), vIdx)
+                );
+            }
+            Assert.assertEquals("the long-lived reader lost the late-added columns' values", expected, actual);
+            engine.releaseAllReaders();
+            Assert.assertEquals("a fresh reader disagrees with the pre-compaction data", expected, snapshot(query));
         });
     }
 
@@ -1949,6 +2040,12 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             drainWalQueue();
         }
         engine.releaseInactive();
+    }
+
+    private static String snapshot(String sql) throws Exception {
+        sink.clear();
+        printSql(sql);
+        return sink.toString();
     }
 
     private static long scalar(String sql) throws Exception {
