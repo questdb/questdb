@@ -299,6 +299,21 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     noTimestamp
             );
 
+            // Column pruning drops x from the dateadd() projection, and the code generator restores a
+            // pruned dateadd() timestamp as a hidden column for an operator that requires one. The
+            // ASOF JOIN must not get it back over the GROUP BY output.
+            assertExceptionNoLeakCheck(
+                    """
+                            WITH t AS (
+                                SELECT dateadd('s', -30, ts) AS x, sym
+                                FROM (SELECT ts, sym, count() c FROM trades GROUP BY ts, sym)
+                            )
+                            SELECT t.sym, m.ts mts FROM t ASOF JOIN marks m ON (sym) LIMIT 3
+                            """,
+                    153,
+                    "left side of time series join has no timestamp"
+            );
+
             // An outer ORDER BY drops the ORDER BY that SAMPLE BY adds to its own sub-query, so the
             // rows that reach the projection are no longer in timestamp order.
             assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) ORDER BY x LIMIT 3")
@@ -3181,8 +3196,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             """);
 
             // a hand-written and_offset over the same GROUP BY output is still rejected
-            assertException(
-                    "SELECT * FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym) WHERE and_offset(ts < '2024-01-01T00:03:05', 's', -1)",
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym) WHERE and_offset(ts < '2024-01-01T00:03:05', 's', 1)",
                     70,
                     "unknown function name: and_offset(BOOLEAN,CHAR,INT)"
             );
@@ -3775,7 +3790,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                 .sizeMayVary()
                 .returns(expectedHead);
         // SAMPLE BY rejects the unordered rows...
-        assertException(
+        assertExceptionNoLeakCheck(
                 "SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ")) SAMPLE BY 10m",
                 sampleByErrorPosition,
                 sampleByError

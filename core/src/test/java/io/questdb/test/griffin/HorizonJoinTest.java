@@ -3029,7 +3029,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 2024-01-01T00:00:02.000000Z
                                 2024-01-01T00:00:03.000000Z
                                 """));
-                assertException(
+                assertExceptionNoLeakCheck(
                         "SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + horizon + ")) SAMPLE BY 10m",
                         0,
                         "base query does not provide designated TIMESTAMP column"
