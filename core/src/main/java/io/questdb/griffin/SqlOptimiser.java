@@ -8177,12 +8177,12 @@ public class SqlOptimiser implements Mutable {
                 emitLiteralsTopDown(model.getTimestamp(), nested);
             }
 
-            // If any UNION branch is GROUP BY, pre-add its key column positions
-            // to nested's topDownColumns. GROUP BY branches need all key columns
-            // for correct grouping, even if the outer query doesn't select them.
+            // If any UNION branch is GROUP BY or an aggregating HORIZON JOIN, pre-add its
+            // key column positions to nested's topDownColumns. Such branches need all key
+            // columns for correct grouping, even if the outer query doesn't select them.
             // By adding them here (before the indexed propagation below), the
             // indexed loop will propagate them to ALL branches uniformly,
-            // regardless of where the GROUP BY branch sits in the UNION chain.
+            // regardless of where the keyed branch sits in the UNION chain.
             if (nested.getUnionModel() != null && nested.getTopDownColumns().size() > 0) {
                 final ObjList<QueryColumn> nestedBu = nested.getBottomUpColumns();
                 IQueryModel groupByScan = nested;
@@ -8193,6 +8193,16 @@ public class SqlOptimiser implements Mutable {
                             QueryColumn qc = groupByBu.getQuick(i);
                             if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                                 nested.addTopDownColumn(nestedBu.getQuick(i), nestedBu.getQuick(i).getAlias());
+                            }
+                        }
+                    } else if (groupByScan.getSelectModelType() == IQueryModel.SELECT_MODEL_HORIZON_JOIN) {
+                        // retainGroupByKeysAsTopDownColumns() keeps these columns in the horizon
+                        // branch. A projection has no grouping columns, so it adds nothing here.
+                        final ObjList<QueryColumn> groupingColumns = groupByScan.getHorizonJoinContext().getGroupingColumns();
+                        for (int i = 0, n = groupingColumns.size(); i < n; i++) {
+                            final int index = groupByScan.getColumnAliasIndex(groupingColumns.getQuick(i).getAlias());
+                            if (index > -1 && index < nestedBu.size()) {
+                                nested.addTopDownColumn(nestedBu.getQuick(index), nestedBu.getQuick(index).getAlias());
                             }
                         }
                     }
