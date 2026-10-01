@@ -123,6 +123,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // Bind+reopen the map as super.of() does the allocator; reopen() is idempotent.
         map.setMemoryTracker(executionContext.getMemoryTracker());
         map.reopen();
+        // hasNext() consults the map cursor before it builds the first bucket, so drop
+        // the rows that the previous execution left unread in it.
+        map.clear();
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
     }
@@ -130,6 +134,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     @Override
     public void toTop() {
         super.toTop();
+        // drop the rows left unread in the map cursor, as of() does
+        map.clear();
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
     }

@@ -3864,6 +3864,160 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedSampleByFillNoneLimit() throws Exception {
+        assertKeyedSampleByLimit(
+                "",
+                null,
+                """
+                        sym\tsum
+                        a\t1.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\t5.0
+                        \t6.0
+                        """
+        );
+    }
+
+    @Test
+    public void testKeyedSampleByFillNonePartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(
+                "",
+                null,
+                """
+                        sym\tsum
+                        a\t1.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\t5.0
+                        \t6.0
+                        """
+        );
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullLimit() throws Exception {
+        assertKeyedSampleByLimit(
+                " FILL(NULL)",
+                "null",
+                """
+                        sym\tsum
+                        a\t1.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\tnull
+                        \tnull
+                        a\tnull
+                        b\t5.0
+                        \t6.0
+                        """
+        );
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(
+                " FILL(NULL)",
+                "null",
+                """
+                        sym\tsum
+                        a\t1.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\tnull
+                        \tnull
+                        a\tnull
+                        b\t5.0
+                        \t6.0
+                        """
+        );
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevLimit() throws Exception {
+        assertKeyedSampleByLimit(
+                " FILL(PREV)",
+                "prev",
+                """
+                        sym\tsum
+                        a\t1.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\t5.0
+                        \t6.0
+                        """
+        );
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(
+                " FILL(PREV)",
+                "prev",
+                """
+                        sym\tsum
+                        a\t1.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\t5.0
+                        \t6.0
+                        """
+        );
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueLimit() throws Exception {
+        assertKeyedSampleByLimit(
+                " FILL(42)",
+                "value",
+                """
+                        sym\tsum
+                        a\t1.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\t42.0
+                        \t42.0
+                        a\t42.0
+                        b\t5.0
+                        \t6.0
+                        """
+        );
+    }
+
+    @Test
+    public void testKeyedSampleByFillValuePartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(
+                " FILL(42)",
+                "value",
+                """
+                        sym\tsum
+                        a\t1.0
+                        b\t2.0
+                        \t3.0
+                        a\t4.0
+                        b\t42.0
+                        \t42.0
+                        a\t42.0
+                        b\t5.0
+                        \t6.0
+                        """
+        );
+    }
+
+    @Test
     public void testMultiFillCountMismatchPrecedesCapability() throws Exception {
         // When FILL(...) provides more than one value but fewer than the
         // aggregate count, GroupByUtils.assembleGroupByFunctions used to clamp
@@ -17686,6 +17840,21 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    private static void createKeyedSampleByReuseTable() throws SqlException {
+        // Three one-hour buckets over the keys 'a', 'b' and NULL. The first bucket holds all three
+        // keys, so reading two rows leaves the NULL key unread; the later buckets have gaps to fill.
+        execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO trades VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-01T00:10:00.000000Z'),
+                    (NULL, 3.0, '2024-01-01T00:20:00.000000Z'),
+                    ('a', 4.0, '2024-01-01T01:00:00.000000Z'),
+                    ('b', 5.0, '2024-01-01T02:10:00.000000Z'),
+                    (NULL, 6.0, '2024-01-01T02:20:00.000000Z')
+                """);
+    }
+
     @NotNull
     private static CairoConfiguration createMmapFailingConfiguration(int x) {
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -17706,6 +17875,23 @@ public class SampleByTest extends AbstractCairoTest {
                 return ff;
             }
         };
+    }
+
+    private static String keyedSampleByReusePlan(String planFill) {
+        return "Sample By\n" +
+                (planFill != null ? "  fill: " + planFill + "\n" : "") +
+                """
+                          keys: [sym]
+                          values: [sum(price)]
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                        """;
+    }
+
+    private static String keyedSampleByReuseSql(String fill) {
+        return "SELECT sym, sum(price) FROM (SELECT sym, price FROM trades) SAMPLE BY 1h" + fill;
     }
 
     private static String sampleByPushdownPlan(String fill, String align) {
@@ -17740,6 +17926,55 @@ public class SampleByTest extends AbstractCairoTest {
                 "            PageFrame\n" +
                 "                Row forward scan\n" +
                 "                Frame forward scan on: #TABLE#\n";
+    }
+
+    private void assertKeyedSampleByLimit(String fill, String planFill, String expected) throws Exception {
+        // The sub-query hides the designated timestamp from the SAMPLE BY to GROUP BY rewrite,
+        // so the query runs on the keyed SAMPLE BY cursor that owns the map.
+        assertMemoryLeak(() -> {
+            createKeyedSampleByReuseTable();
+            final String sql = keyedSampleByReuseSql(fill);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan(keyedSampleByReusePlan(planFill))
+                    .returns(expected);
+            // LIMIT stops reading in the middle of the first bucket, so the repeated passes
+            // of the assertion rewind a partially read cursor.
+            assertQuery(sql + " LIMIT 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tsum
+                            a\t1.0
+                            b\t2.0
+                            """);
+        });
+    }
+
+    private void assertKeyedSampleByPartialRead(String fill, String planFill, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedSampleByReuseTable();
+            final String sql = keyedSampleByReuseSql(fill);
+            assertQuery(sql).noLeakCheck().assertsPlan(keyedSampleByReusePlan(planFill));
+            try (RecordCursorFactory factory = select(sql)) {
+                // read two of the three keys of the first bucket, then close the cursor
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                }
+                // the next execution must not start with the key that the previous one left unread
+                assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().returns(expected);
+
+                // the same for toTop() on a partially read cursor
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                    cursor.toTop();
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
+            }
+        });
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {
