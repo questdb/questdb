@@ -9805,6 +9805,114 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinOnKeyImpliedByInnerJoinKey() throws Exception {
+        // The ON keys t3.id = t2.id AND t3.id = t1.id imply t2.id = t1.id, which the INNER join
+        // key t1.id = t2.id already enforces. The optimiser drops the implied equality instead of
+        // adding it as an outer join filter or a second key, which slowed the join down.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnImpliedKey();
+
+            final String expectedFull = """
+                    id\tid1\tid2
+                    null\tnull\tnull
+                    null\tnull\t3
+                    null\tnull\t5
+                    1\t1\t1
+                    1\t1\t1
+                    2\t2\tnull
+                    """;
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.id=t1.id")
+                    .withPlanNotContaining("filter: t2.id=t1.id")
+                    .returns(expectedFull);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(expectedFull);
+
+            final String expectedRight = """
+                    id\tid1\tid2
+                    null\tnull\tnull
+                    null\tnull\t3
+                    null\tnull\t5
+                    1\t1\t1
+                    1\t1\t1
+                    """;
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.id=t1.id")
+                    .withPlanNotContaining("filter: t2.id=t1.id")
+                    .returns(expectedRight);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(expectedRight);
+
+            final String expectedLt = """
+                    id\tid1\tid2
+                    null\tnull\tnull
+                    1\t1\t1
+                    2\t2\tnull
+                    """;
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join", "condition: t3.id=t1.id")
+                    .withPlanNotContaining("t3.id=t2.id")
+                    .returns(expectedLt);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(expectedLt);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeyNotImpliedByInnerJoinKey() throws Exception {
+        // The implied equality t2.id = t1.id stays an outer join filter when no INNER join key
+        // enforces it: after a CROSS JOIN, or when a RIGHT JOIN between the INNER join and the
+        // FULL JOIN can null both columns.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnImpliedKey();
+
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 CROSS JOIN t2 FULL JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: t2.id=t1.id")
+                    .returns("""
+                            id\tid1\tid2
+                            null\tnull\tnull
+                            null\tnull\t3
+                            null\tnull\t5
+                            null\t1\tnull
+                            null\t2\tnull
+                            null\t4\tnull
+                            1\tnull\tnull
+                            1\t1\t1
+                            1\t1\t1
+                            1\t2\tnull
+                            1\t4\tnull
+                            2\tnull\tnull
+                            2\t1\tnull
+                            2\t2\tnull
+                            2\t4\tnull
+                            3\tnull\tnull
+                            3\t1\tnull
+                            3\t2\tnull
+                            3\t4\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t2.id, t4.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t4 ON t4.id = t2.id FULL JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: t2.id=t1.id")
+                    .returns("""
+                            id\tid1\tid2\tid3
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t5
+                            null\tnull\t4\tnull
+                            1\t1\t1\t1
+                            1\t1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testOuterJoinOnKeysSharingColumn() throws Exception {
         // Two ON keys that share a column (a.x = b.k AND a.k = b.k) imply a.x = a.k, but only
         // for rows that match. The optimiser pushed that implied equality into the scan of the
@@ -11965,6 +12073,40 @@ public class JoinTest extends AbstractCairoTest {
         execute("CREATE TABLE f5 (a5 INT, b5 INT)");
         execute("CREATE TABLE f6 (a6 INT, b6 INT)");
         execute("INSERT INTO f6 VALUES (200, 1), (5, 5)");
+    }
+
+    private void createTablesForOuterJoinOnImpliedKey() throws SqlException {
+        execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t1 VALUES
+                (1, '2024-01-01T00:00:01'),
+                (2, '2024-01-01T00:00:02'),
+                (3, '2024-01-01T00:00:03'),
+                (null, '2024-01-01T00:00:04')
+                """);
+        execute("CREATE TABLE t2 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t2 VALUES
+                (1, '2024-01-01T00:00:01'),
+                (2, '2024-01-01T00:00:02'),
+                (4, '2024-01-01T00:00:03'),
+                (null, '2024-01-01T00:00:04')
+                """);
+        execute("CREATE TABLE t3 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t3 VALUES
+                (1, '2024-01-01T00:00:00'),
+                (3, '2024-01-01T00:00:01'),
+                (5, '2024-01-01T00:00:02'),
+                (null, '2024-01-01T00:00:03'),
+                (1, '2024-01-01T00:00:05')
+                """);
+        execute("CREATE TABLE t4 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t4 VALUES
+                (1, '2024-01-01T00:00:01'),
+                (4, '2024-01-01T00:00:02')
+                """);
     }
 
     private void createTablesForTransitiveJoinKeys() throws SqlException {

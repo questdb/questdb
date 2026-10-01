@@ -784,6 +784,33 @@ public class SqlOptimiser implements Mutable {
         };
     }
 
+    // Returns true when the INNER join of the later of the two models has the key ai.an = bi.bn, and no
+    // master-nulling join runs between that join and the join at hiIndex, so every row the join at
+    // hiIndex reads already satisfies the equality.
+    private static boolean isInnerJoinKey(IQueryModel parent, int ai, CharSequence an, int bi, CharSequence bn, int hiIndex) {
+        final int keyedIndex = Math.max(ai, bi);
+        if (ai == bi || keyedIndex >= hiIndex) {
+            return false;
+        }
+        final IQueryModel keyed = parent.getJoinModels().getQuick(keyedIndex);
+        final JoinContext jc = keyed.getJoinContext();
+        if (keyed.getJoinType() != IQueryModel.JOIN_INNER || jc == null
+                || hasMasterNullingJoinBetween(parent, keyedIndex, hiIndex)) {
+            return false;
+        }
+        for (int i = 0, n = jc.aIndexes.size(); i < n; i++) {
+            final int kai = jc.aIndexes.getQuick(i);
+            final CharSequence kan = jc.aNames.getQuick(i);
+            final int kbi = jc.bIndexes.getQuick(i);
+            final CharSequence kbn = jc.bNames.getQuick(i);
+            if ((kai == ai && Chars.equals(kan, an) && kbi == bi && Chars.equals(kbn, bn))
+                    || (kai == bi && Chars.equals(kan, bn) && kbi == ai && Chars.equals(kbn, an))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true for the join that LateralJoinRewriter.terminateHere() inserts for the outer references
     // of a LATERAL sub-query. Its ON holds the sub-query's correlated WHERE conjuncts.
     private static boolean isLateralOuterRefJoin(IQueryModel joinModel) {
@@ -1416,18 +1443,25 @@ public class SqlOptimiser implements Mutable {
                     && joinType != IQueryModel.JOIN_LT
                     && joinType != IQueryModel.JOIN_HORIZON;
             if (!isSlaveOnly || isSlavePreserved || joinFilterBarriers.contains(joinType)) {
+                // an earlier INNER join key that already enforces the equality makes it redundant
+                final boolean isInnerJoinKey = isInnerJoinKey(parent, ai, an, bi, bn, contextSlaveIndex);
                 if (joinType == IQueryModel.JOIN_LEFT_OUTER
                         || joinType == IQueryModel.JOIN_RIGHT_OUTER
-                        || joinType == IQueryModel.JOIN_FULL_OUTER) {
-                    // outer joins match on the extra equality without dropping preserved rows
-                    OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
-                    ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
-                    node.paramCount = 2;
-                    // the join context keeps ao and bo as keys, and the filter push-down rewrites
-                    // its nodes in place, so the outer join expression gets its own copies
-                    node.lhs = ExpressionNode.deepClone(expressionNodePool, ao);
-                    node.rhs = ExpressionNode.deepClone(expressionNodePool, bo);
-                    contextModel.setOuterJoinExpressionClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, contextModel.getOuterJoinExpressionClause(), node));
+                        || joinType == IQueryModel.JOIN_FULL_OUTER
+                        || (isInnerJoinKey && (joinType == IQueryModel.JOIN_ASOF
+                        || joinType == IQueryModel.JOIN_LT
+                        || joinType == IQueryModel.JOIN_SPLICE))) {
+                    if (!isInnerJoinKey) {
+                        // outer joins match on the extra equality without dropping preserved rows
+                        OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
+                        ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
+                        node.paramCount = 2;
+                        // the join context keeps ao and bo as keys, and the filter push-down rewrites
+                        // its nodes in place, so the outer join expression gets its own copies
+                        node.lhs = ExpressionNode.deepClone(expressionNodePool, ao);
+                        node.rhs = ExpressionNode.deepClone(expressionNodePool, bo);
+                        contextModel.setOuterJoinExpressionClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, contextModel.getOuterJoinExpressionClause(), node));
+                    }
                     // mergeContexts drops the parent of the deleted key, and a later merge rebuilds
                     // the context from its keys, so constrainOuterJoinsAfterExpressionParents
                     // restores the edge once every context is final
@@ -1442,7 +1476,8 @@ public class SqlOptimiser implements Mutable {
                     deletedContexts.add(idx);
                 }
                 // ASOF, LT, SPLICE and HORIZON joins reject outer join expressions, so they keep
-                // both key pairs. HORIZON also keeps both pairs for a slave-only equality,
+                // both key pairs unless an INNER join key makes the equality redundant. HORIZON
+                // keeps both pairs even then. It also keeps both pairs for a slave-only equality,
                 // because its slave must stay a bare table scan and cannot take a filter.
                 return;
             }
