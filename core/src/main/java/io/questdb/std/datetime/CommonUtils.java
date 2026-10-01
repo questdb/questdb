@@ -339,7 +339,9 @@ public class CommonUtils {
     }
 
     public static char getStrideUnit(CharSequence str, int position) throws SqlException {
-        assert !str.isEmpty();
+        if (str == null || str.isEmpty()) {
+            throw SqlException.position(position).put("invalid unit '").put(str == null ? "null" : "").put('\'');
+        }
         final char unit = str.charAt(str.length() - 1);
         return switch (unit) {
             case 'M', 'y', 'w', 'd', 'h', 'm', 's', 'T', 'U', 'n' -> unit;

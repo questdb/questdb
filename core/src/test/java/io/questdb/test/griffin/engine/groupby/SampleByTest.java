@@ -161,22 +161,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .fails(37, "Invalid unit: 1hour");
-    }
-
-    @Test
-    public void testBadIntervalMinutesSpelledOut() throws Exception {
-        // "1min" ends in 'n', which is the nanosecond unit, so it must not be
-        // silently accepted as a 1-nanosecond stride
+        // ends in the nanosecond unit 'n', but must not pass as a 1-nanosecond stride
         assertQuery("select b, sum(a), k from x sample by 1min")
-                .ddl("create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE")
                 .fails(37, "Invalid unit: 1min");
     }
 
