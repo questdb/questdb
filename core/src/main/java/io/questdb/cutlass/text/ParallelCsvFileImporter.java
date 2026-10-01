@@ -35,13 +35,13 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -877,12 +877,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 // when DATE type is mis-detected as STRING we
                 // would not have either date format nor locale to
                 // use when populating this field
-                switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
-                    case ColumnType.DATE:
+                switch (WireKind.of(columnType)) {
+                    case DATE:
                         logTypeError(i, detectedType);
                         types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
-                    case ColumnType.TIMESTAMP:
+                    case TIMESTAMP:
                         // different timestamp type
                         if (detectedAdapter instanceof TimestampAdapter) {
                             ((TimestampAdapter) detectedAdapter).reCompileDateFormat(ColumnType.getTimestampDriver(columnType).getTimestampDateFormatFactory());
@@ -893,10 +893,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             types.setQuick(i, BadTimestampAdapter.INSTANCE);
                         }
                         break;
-                    case ColumnType.BINARY:
+                    case BINARY:
                         writer.close();
                         throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
-                    default:
+                    case null, default:
+                        // a type without a wire kind gets no adapter: getTypeAdapter() refuses it
                         types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         break;
                 }

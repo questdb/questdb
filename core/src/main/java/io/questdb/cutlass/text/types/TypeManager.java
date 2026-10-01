@@ -26,7 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.WireKind;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
@@ -135,18 +135,18 @@ public class TypeManager implements Mutable {
     }
 
     /**
-     * The adapter that parses a CSV field into a column, by the column's accessor family (F39): an
-     * adapter parses the text with its family's parser and writes the value with its family's
-     * putter, and an empty field is NULL, left for the writer to store. Every family is named, so
-     * adding one makes javac stop here.
+     * The adapter that parses a CSV field into a column, by the column's wire kind (F41): the kind
+     * names the text form the export writes, so the adapter that reads it back parses that form, and
+     * an empty field is NULL, left for the writer to store. Every kind is named, so adding one makes
+     * javac stop here, also for a type whose text form is not its accessor family's.
      */
     public TypeAdapter getTypeAdapter(int columnType) {
-        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
-        if (accessor == null) {
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
             // the pseudo tags and VARCHAR_SLICE never name a column
             throw noAdapter(columnType);
         }
-        return switch (accessor) {
+        return switch (kind) {
             case BYTE -> ByteAdapter.INSTANCE;
             case SHORT -> ShortAdapter.INSTANCE;
             case CHAR -> CharAdapter.INSTANCE;
@@ -159,7 +159,7 @@ public class TypeManager implements Mutable {
             case SYMBOL -> nextSymbolAdapter(false);
             case LONG256 -> Long256Adapter.INSTANCE;
             case UUID -> UuidAdapter.INSTANCE;
-            case IPv4 -> IPv4Adapter.INSTANCE;
+            case IPV4 -> IPv4Adapter.INSTANCE;
             case VARCHAR -> varcharAdapter;
             case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> {
                 // keyed by the encoded type: a geohash without bits has no adapter

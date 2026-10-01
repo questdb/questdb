@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.line.LineUtils;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.test.cairo.types.TypeConformanceTypes;
 import org.junit.Assert;
 import org.junit.Test;
@@ -75,6 +76,8 @@ public class ProtocolOpcodeCoverageTest {
                 "GEOLONG", "GEOHASH(1c)", "GEOHASH(8b)", "GEOHASH(31b)", "GEOHASH(12c)", "BINARY", "LONG128", "VARCHAR",
                 "DOUBLE[]", "DOUBLE[][]", NOT_STORED), INTERVALS));
         unhandled.put("columnKind", Set.of(NOT_STORED));
+        // QWP egress has no wire code for LONG128, INTERVAL and the decimals narrower than DECIMAL64
+        unhandled.put("appendOpcode", with(Set.of("LONG128", "DECIMAL8", "DECIMAL16", "DECIMAL32", "DECIMAL(5,2)", NOT_STORED), INTERVALS));
 
         final Method print = method(CursorPrinter.class, "printOpcode", int.class);
         final Method csv = method(ExportQueryProcessor.class, "csvOpcode", int.class);
@@ -82,6 +85,7 @@ public class ProtocolOpcodeCoverageTest {
         final Method export = method(HybridColumnMaterializer.class, "exportOpcode", int.class);
         final Method parquet = method(Class.forName("io.questdb.cairo.ParquetColumnTypeConverter"), "fixedTargetOpcode", int.class);
         final Method line = method(LineUtils.class, "columnKind", int.class);
+        final Method qwp = method(QwpResultBatchBuffer.class, "appendOpcode", int.class);
 
         final StringBuilder failures = new StringBuilder();
         for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
@@ -104,6 +108,7 @@ public class ProtocolOpcodeCoverageTest {
             check(failures, unhandled, "exportOpcode", entry, () -> (int) export.invoke(null, type) == ColumnType.UNDEFINED);
             check(failures, unhandled, "fixedTargetOpcode", entry, () -> (int) parquet.invoke(null, type) == ColumnType.UNDEFINED);
             check(failures, unhandled, "columnKind", entry, () -> (int) line.invoke(null, type) == ColumnType.UNDEFINED);
+            check(failures, unhandled, "appendOpcode", entry, () -> (int) qwp.invoke(null, type) == ColumnType.UNDEFINED);
         }
         Assert.assertEquals("", failures.toString());
     }

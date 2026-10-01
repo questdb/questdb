@@ -25,7 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.WireKind;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
@@ -239,8 +239,9 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         columnNames.add(name);
 
-        switch (PhysicalDescriptor.accessorOpcodeOf(type)) {
-            case ColumnType.DATE:
+        // the declared type's wire kind names the text form the column is parsed from
+        switch (WireKind.of(type)) {
+            case DATE:
                 DateLocale dateLocale = locale == null ? this.dateLocale : dateLocaleFactory.getLocale(locale);
 
                 if (dateLocale == null) {
@@ -253,7 +254,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 }
                 columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
                 break;
-            case ColumnType.TIMESTAMP:
+            case TIMESTAMP:
                 DateLocale timestampLocale =
                         locale == null ?
                                 this.dateLocale
@@ -268,18 +269,19 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 }
                 columnTypes.add(typeManager.nextTimestampAdapter(utf8, ColumnType.getTimestampDriver(type).getTimestampDateFormatFactory().get(pattern), timestampLocale, pattern.toString()));
                 break;
-            case ColumnType.SYMBOL:
+            case SYMBOL:
                 columnTypes.add(typeManager.nextSymbolAdapter(index));
                 break;
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
+            case DECIMAL8:
+            case DECIMAL16:
+            case DECIMAL32:
+            case DECIMAL64:
+            case DECIMAL128:
+            case DECIMAL256:
                 columnTypes.add(typeManager.nextDecimalAdapter(type));
                 break;
-            default:
+            case null, default:
+                // a type without a wire kind gets no adapter: getTypeAdapter() refuses it
                 columnTypes.add(typeManager.getTypeAdapter(type));
                 break;
         }

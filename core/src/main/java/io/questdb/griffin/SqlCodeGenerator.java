@@ -153,6 +153,7 @@ import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
@@ -3634,7 +3635,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int toType = castToMetadata.getColumnType(i);
             int fromType = castFromMetadata.getColumnType(i);
             if (tagOf(fromType) == NULL) {
-                castFunctions.add(NullConstant.NULL);
+                // a NULL branch reads as the union type's NULL, which that type's definition answers
+                castFunctions.add(Constants.getNullConstant(toType));
             } else {
                 final Function castFunction = generateCastFunction(executionContext, castFromMetadata, i, fromType, toType, modelPosition);
                 if (castFunction != null) {
