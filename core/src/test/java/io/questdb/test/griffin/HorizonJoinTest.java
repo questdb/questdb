@@ -231,14 +231,18 @@ public class HorizonJoinTest extends AbstractCairoTest {
             for (boolean isParallel : new boolean[]{false, true}) {
                 sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
                 for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
-                    final String query = "SELECT avg(q.price) FROM trades t HORIZON JOIN quotes q ON (q.tag ~ $1) "
-                            + (hasMultipleSlaves ? "HORIZON JOIN (quotes WHERE tag ~ $1) r " : "")
-                            + "LIST (0s) AS h";
-                    final ObjList<BindVarTuple> cases = new ObjList<>();
-                    cases.add(BindVarTuple.ok("initial match", "avg\n10.0\n", b -> b.setStr(0, "^pass$")));
-                    cases.add(BindVarTuple.fails("invalid regex at init", "Unclosed character class", b -> b.setStr(0, "[")));
-                    cases.add(BindVarTuple.ok("reopen after failed init", "avg\n999.0\n", b -> b.setStr(0, "^reject$")));
-                    assertQuery(query).noRandomAccess().expectSize().assertBinds(cases);
+                    for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                        final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "") + "avg(q.price) FROM trades t "
+                                + "HORIZON JOIN quotes q ON (q.tag ~ $1) "
+                                + (hasMultipleSlaves ? "HORIZON JOIN (quotes WHERE tag ~ $1) r " : "")
+                                + "LIST (0s) AS h";
+                        final String header = hasGroupKeys ? "offset\tavg\n0\t" : "avg\n";
+                        final ObjList<BindVarTuple> cases = new ObjList<>();
+                        cases.add(BindVarTuple.ok("initial match", header + "10.0\n", b -> b.setStr(0, "^pass$")));
+                        cases.add(BindVarTuple.fails("invalid regex at init", "Unclosed character class", b -> b.setStr(0, "[")));
+                        cases.add(BindVarTuple.ok("reopen after failed init", header + "999.0\n", b -> b.setStr(0, "^reject$")));
+                        assertQuery(query).inferRandomAccess().expectSize().assertBinds(cases);
+                    }
                 }
             }
         });
@@ -252,11 +256,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
             for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
                 // alloc() owns native memory. The UNION ALL master rejects random access
                 // after code generation has stolen the slave filters and assembled aggregates.
-                assertQuery("SELECT avg(q.price) FROM ((SELECT * FROM trades UNION ALL SELECT * FROM trades) TIMESTAMP(ts)) t "
+                final String query = "SELECT avg(q.price) FROM ((SELECT * FROM trades UNION ALL SELECT * FROM trades) TIMESTAMP(ts)) t "
                         + "HORIZON JOIN quotes q ON (q.price > alloc(32)) "
                         + (hasMultipleSlaves ? "HORIZON JOIN (quotes WHERE price > alloc(64)) r " : "")
-                        + "LIST (0s) AS h")
-                        .fails(-1, "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+                        + "LIST (0s) AS h";
+                assertQuery(query).fails(query.indexOf("HORIZON"), "left-hand side of HORIZON JOIN can only be a table with an optional filter");
             }
         });
     }
@@ -266,7 +270,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)");
             execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
-            final ObjList<String> predicateValues = new ObjList<>("t.qty > 0", "t.qty > q.price", "h.offset > 0");
+            final ObjList<String> predicateValues = new ObjList<>("t.qty > 0", "t.qty > q.price", "q.price > t.qty", "h.offset > 0");
             for (int predicateIndex = 0; predicateIndex < predicateValues.size(); predicateIndex++) {
                 final String predicate = predicateValues.getQuick(predicateIndex);
                 for (int slave = 0; slave < 3; slave++) {
@@ -278,6 +282,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     assertQuery(query).fails(query.indexOf('>'), "unsupported HORIZON join expression");
                 }
             }
+            final String otherSlavePredicate = "SELECT avg(q.price) FROM trades t HORIZON JOIN quotes r ON (t.sym = r.sym) "
+                    + "HORIZON JOIN quotes q ON (t.sym = q.sym AND r.price > 0) LIST (0s) AS h";
+            assertQuery(otherSlavePredicate).fails(otherSlavePredicate.indexOf('>'), "unsupported HORIZON join expression");
             final String inSubquery = "SELECT avg(q.price) FROM trades t HORIZON JOIN quotes q "
                     + "ON (q.sym IN (SELECT sym FROM trades)) LIST (0s) AS h";
             assertQuery(inSubquery).fails(inSubquery.indexOf("SELECT sym"), "query is not allowed here");

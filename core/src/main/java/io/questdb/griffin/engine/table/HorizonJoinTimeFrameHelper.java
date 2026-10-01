@@ -208,7 +208,7 @@ public class HorizonJoinTimeFrameHelper {
 
         int rowVisitCount = 0;
         while (true) {
-            if ((rowVisitCount++ & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+            if ((++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
@@ -526,10 +526,13 @@ public class HorizonJoinTimeFrameHelper {
                 long bwdScanCost = backwardScanRows - bwdScanRowsAtPositionStart;
                 if (prevAsOfRowId != Long.MIN_VALUE) {
                     long gap = asOfRowId - prevAsOfRowId;
+                    // A filter-rejected key keeps exhausting the prefix; the map is complete
+                    // up to prevAsOfRowId, so extend it forward even across a small gap.
+                    final boolean isPrefixExhausted = filter != null && backwardWatermark == 0;
                     if (shouldSwitchToForwardScan(
                             bwdScanCost,
                             gap,
-                            bwdScanMinGap,
+                            isPrefixExhausted ? 0 : bwdScanMinGap,
                             bwdScanSwitchFactor,
                             bwdScanAbsoluteThreshold
                     )) {
@@ -671,7 +674,7 @@ public class HorizonJoinTimeFrameHelper {
                 break;
             }
 
-            if ((rowVisitCount++ & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+            if ((++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             // Position record and cache the key
@@ -795,7 +798,7 @@ public class HorizonJoinTimeFrameHelper {
             if (currentRowId <= stopRowId) {
                 return Long.MIN_VALUE;
             }
-            if ((rowVisitCount++ & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+            if ((++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
@@ -891,7 +894,7 @@ public class HorizonJoinTimeFrameHelper {
 
         int rowVisitCount = 0;
         for (long r = rowLo; r < scanHi; r++) {
-            if ((rowVisitCount++ & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+            if ((++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             timeFrameCursor.recordAtRowIndex(record, r);

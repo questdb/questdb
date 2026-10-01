@@ -128,11 +128,11 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                                     Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
                                 }
                                 Assert.assertTrue(trace.signal.get());
-                                Assert.assertEquals(cancelAt <= 64 ? 64 : 128, trace.visits);
+                                Assert.assertEquals(cancelAt < 64 ? 63 : 127, trace.visits);
                                 Assert.assertTrue(trace.visits - cancelAt <= 64);
                                 Assert.assertTrue(trace.visits < 256);
                                 for (int i = 0; i < trace.pollAtVisits.size(); i++) {
-                                    Assert.assertEquals(i * 64, trace.pollAtVisits.getQuick(i));
+                                    Assert.assertEquals(i * 64 + 63, trace.pollAtVisits.getQuick(i));
                                 }
                             }
                         }
@@ -161,7 +161,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                         Assert.assertEquals(300, helper.findAsOfRow(300, breaker));
                         Assert.assertEquals(visits, trace.visits);
                         Assert.assertEquals(polls, trace.pollAtVisits.size());
-                        Assert.assertEquals(lookahead == 64 ? 1 : 5, polls);
+                        Assert.assertEquals(lookahead == 64 ? 1 : 4, polls);
                         if (lookahead == 64) {
                             Assert.assertTrue(trace.visits <= 64 + 10 + 65 + 1);
                             helper.toTop();
@@ -209,6 +209,51 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     @Test
+    public void testFilteredKeyMissExtendsMapForward() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            State state = new State();
+            Trace trace = new Trace();
+            Cursor cursor = new Cursor(trace, 4096);
+            try (PollingEngine engine = new PollingEngine(root, state);
+                 Map map = newMap(engine)) {
+                SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(64, 1, 131_072, 1_024, 8, filter(trace, true));
+                helper.of(cursor);
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1001, trace.visits);
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1010, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1010, helper.findKeyedAsOfMatch(1010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1020, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1021, trace.visits);
+            }
+        });
+    }
+
+    @Test
+    public void testNotKeyedMatchOutOfOrderLookups() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Trace trace = new Trace();
+            Cursor cursor = new Cursor(trace, 256);
+            SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            HorizonJoinTimeFrameHelper helper = helper(cursor, new BooleanFunction() {
+                @Override
+                public boolean getBool(Record record) {
+                    trace.visit();
+                    return record.getRowId() % 100 == 0;
+                }
+            }, 64);
+            Assert.assertEquals(200, helper.findNotKeyedAsOfMatch(250, breaker));
+            Assert.assertEquals(100, helper.findNotKeyedAsOfMatch(150, breaker));
+            Assert.assertEquals(0, helper.findNotKeyedAsOfMatch(50, breaker));
+            Assert.assertEquals(0, helper.findNotKeyedAsOfMatch(99, breaker));
+            Assert.assertEquals(200, helper.findNotKeyedAsOfMatch(255, breaker));
+            Assert.assertEquals(258, trace.visits);
+            Assert.assertEquals(200, helper.findNotKeyedAsOfMatch(230, breaker));
+            Assert.assertEquals(258, trace.visits);
+        });
+    }
+
+    @Test
     public void testRowCadenceCrossesFrames() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             State state = new State();
@@ -227,7 +272,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                             default -> helper.forwardScanToPosition(last, KEY_SINK, map, breaker);
                         }
                         Assert.assertEquals(160, trace.visits);
-                        Assert.assertEquals("[0,40,64,80,120,128]", trace.pollAtVisits.toString());
+                        Assert.assertEquals("[40,63,80,120,127]", trace.pollAtVisits.toString());
                     }
                 }
             }
@@ -341,12 +386,12 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                     }
                     Assert.assertEquals(1023, trace.visits - visitsBefore);
                     if (kind < 2) {
-                        Assert.assertEquals(16, state.millisReads - readsBefore);
+                        Assert.assertEquals(15, state.millisReads - readsBefore);
                     }
                     if (kind == 0) {
-                        Assert.assertEquals(16, trace.pollAtVisits.size());
-                        for (int i = 0; i < 16; i++) {
-                            Assert.assertEquals(visitsBefore + i * 64, trace.pollAtVisits.getQuick(i));
+                        Assert.assertEquals(15, trace.pollAtVisits.size());
+                        for (int i = 0; i < 15; i++) {
+                            Assert.assertEquals(visitsBefore + i * 64 + 63, trace.pollAtVisits.getQuick(i));
                         }
                     }
                 }
