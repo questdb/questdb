@@ -359,17 +359,24 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyColWithRCommits() throws Exception {
-        // Replace commits not yet supported with Parquet
         Rnd rnd = generateRandomAndProps();
+        boolean createAsParquet = rnd.nextBoolean();
+        boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+        boolean parquet = createAsParquet || convertToParquet;
+        setCreateWalAsParquet(createAsParquet);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                0.1 * rnd.nextDouble(),
+                // TODO(eugene): table column manipulation is not yet supported for Parquet
+                parquet ? 0 : 0.1 * rnd.nextDouble(),
                 0,
-                rnd.nextDouble(),
+                parquet ? 0 : rnd.nextDouble(),
                 0.0,
+                // Keep data inserts on under Parquet: with every column operation off,
+                // a zero here would normalise truncate to probability 1.0 and the
+                // generator would emit no data or replace transactions at all.
                 rnd.nextDouble(),
                 0.0,
                 0.0,
@@ -393,7 +400,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 1 + rnd.nextInt(1)
         );
 
-        runFuzzWithRandomColsDedup(rnd, -1, false);
+        runFuzzWithRandomColsDedup(rnd, -1, convertToParquet);
     }
 
     @Test
