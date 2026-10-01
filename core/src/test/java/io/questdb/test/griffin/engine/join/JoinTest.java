@@ -9879,6 +9879,13 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
                     .noLeakCheck()
                     .returns(expectedFull);
+            // ON keys in the same order as the INNER join key: the implied equality t1.id = t2.id
+            // matches that key in its forward orientation.
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.id = t1.id AND t3.id = t2.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.id=t2.id")
+                    .withPlanNotContaining("filter: t1.id=t2.id")
+                    .returns(expectedFull);
 
             final String expectedRight = """
                     id\tid1\tid2
@@ -9896,6 +9903,23 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
                     .noLeakCheck()
                     .returns(expectedRight);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.id = t1.id AND t3.id = t2.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.id=t2.id")
+                    .withPlanNotContaining("filter: t1.id=t2.id")
+                    .returns(expectedRight);
+
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LEFT JOIN t3 ON t3.id = t1.id AND t3.id = t2.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: t3.id=t2.id")
+                    .withPlanNotContaining("filter: t1.id=t2.id")
+                    .returns("""
+                            id\tid1\tid2
+                            null\tnull\tnull
+                            1\t1\t1
+                            1\t1\t1
+                            2\t2\tnull
+                            """);
 
             final String expectedLt = """
                     id\tid1\tid2
@@ -9911,6 +9935,11 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
                     .noLeakCheck()
                     .returns(expectedLt);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.id = t1.id AND t3.id = t2.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join", "condition: t3.id=t2.id")
+                    .withPlanNotContaining("t3.id=t1.id")
+                    .returns(expectedLt);
         });
     }
 
@@ -9918,7 +9947,8 @@ public class JoinTest extends AbstractCairoTest {
     public void testOuterJoinOnKeyNotImpliedByInnerJoinKey() throws Exception {
         // The implied equality t2.id = t1.id stays an outer join filter when no INNER join key
         // enforces it: after a CROSS JOIN, or when a RIGHT JOIN between the INNER join and the
-        // FULL JOIN can null both columns.
+        // FULL JOIN can null both columns. The implied equality t1.a = t2.b joins the same two
+        // tables as the INNER join key t1.id = t2.id, but on other columns, so it stays too.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinOnImpliedKey();
 
@@ -9958,6 +9988,40 @@ public class JoinTest extends AbstractCairoTest {
                             null\tnull\t4\tnull
                             1\t1\t1\t1
                             1\t1\t1\t1
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LEFT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: t3.x=t2.b", "filter: t1.a=t2.b")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.x=t2.b", "filter: t1.a=t2.b")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join", "condition: t3.x=t2.b and t3.x=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
                             """);
         });
     }
@@ -12126,30 +12190,30 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void createTablesForOuterJoinOnImpliedKey() throws SqlException {
-        execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE t1 (id INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
                 INSERT INTO t1 VALUES
-                (1, '2024-01-01T00:00:01'),
-                (2, '2024-01-01T00:00:02'),
-                (3, '2024-01-01T00:00:03'),
-                (null, '2024-01-01T00:00:04')
+                (1, 10, '2024-01-01T00:00:01'),
+                (2, 20, '2024-01-01T00:00:02'),
+                (3, 30, '2024-01-01T00:00:03'),
+                (null, null, '2024-01-01T00:00:04')
                 """);
-        execute("CREATE TABLE t2 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE t2 (id INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
                 INSERT INTO t2 VALUES
-                (1, '2024-01-01T00:00:01'),
-                (2, '2024-01-01T00:00:02'),
-                (4, '2024-01-01T00:00:03'),
-                (null, '2024-01-01T00:00:04')
+                (1, 10, '2024-01-01T00:00:01'),
+                (2, 99, '2024-01-01T00:00:02'),
+                (4, 40, '2024-01-01T00:00:03'),
+                (null, null, '2024-01-01T00:00:04')
                 """);
-        execute("CREATE TABLE t3 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE t3 (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
                 INSERT INTO t3 VALUES
-                (1, '2024-01-01T00:00:00'),
-                (3, '2024-01-01T00:00:01'),
-                (5, '2024-01-01T00:00:02'),
-                (null, '2024-01-01T00:00:03'),
-                (1, '2024-01-01T00:00:05')
+                (1, 10, '2024-01-01T00:00:00'),
+                (3, 99, '2024-01-01T00:00:01'),
+                (5, 20, '2024-01-01T00:00:02'),
+                (null, null, '2024-01-01T00:00:03'),
+                (1, 10, '2024-01-01T00:00:05')
                 """);
         execute("CREATE TABLE t4 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
