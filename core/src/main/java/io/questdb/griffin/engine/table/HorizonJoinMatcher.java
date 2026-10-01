@@ -109,7 +109,7 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
                     asOfJoinMaps.add(null);
                 }
                 translatingRecords.add(state.getMasterSymbolKeyColumnIndices() != null
-                        ? new SymbolTranslatingRecord(state.getMasterColumnCount(), state.getMasterSymbolKeyColumnIndices(), state.getSlaveSymbolKeyColumnIndices())
+                        ? new SymbolTranslatingRecord(configuration, state.getMasterColumnCount(), state.getMasterSymbolKeyColumnIndices(), state.getSlaveSymbolKeyColumnIndices())
                         : null);
             }
         } catch (Throwable th) {
@@ -184,13 +184,15 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     }
 
     /**
-     * Binds one slave's time frame cursor for the current query and opens its key cache.
+     * Binds one slave's time frame cursor for the current query and opens its key cache and its
+     * symbol translation caches.
      *
      * @param slaveIndex              slave position in the join
      * @param slaveCursor             time frame cursor owned by the caller
      * @param masterSymbolTableSource symbol tables of the master rows passed to {@link #match}
      * @param slaveSymbolTableSource  symbol tables of the slave
-     * @param memoryTracker           per-query tracker charged for the key cache, or null
+     * @param memoryTracker           per-query tracker charged for the key cache and the symbol
+     *                                translation caches, or null
      */
     public void of(
             int slaveIndex,
@@ -202,6 +204,8 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
         helpers.getQuick(slaveIndex).of(slaveCursor);
         final SymbolTranslatingRecord translatingRecord = translatingRecords.getQuick(slaveIndex);
         if (translatingRecord != null) {
+            // initSources() reopens the translation caches, so the tracker must be bound first.
+            translatingRecord.setMemoryTracker(memoryTracker);
             translatingRecord.initSources(masterSymbolTableSource, slaveSymbolTableSource);
         }
         final Map asOfJoinMap = asOfJoinMaps.getQuick(slaveIndex);
