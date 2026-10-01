@@ -125,6 +125,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseRecord = baseCursor.getRecord();
         prevDst = Long.MIN_VALUE;
         parseParams(baseCursor, executionContext);
+        // toTop() restores tzOffset from topTzOffset. initTimestamps() saves it on the first read,
+        // but a caller such as LIMIT rewinds the cursor before that, and only a time zone name has
+        // rules to recompute the offset from. Save the numeric offset that parseParams() derived.
+        topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
         circuitBreaker = executionContext.getCircuitBreaker();
         // Consult the breaker at open, so an empty base scan (whose row loops never run) stays cancellable.
