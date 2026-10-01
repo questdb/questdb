@@ -342,12 +342,14 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         symbolTranslatingRecords.add(null);
                     }
                     timeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
+                            configuration,
                             lookahead,
                             ss.getSlaveTsScale(),
                             bwdScanAbsoluteThreshold,
                             bwdScanMinGap,
                             bwdScanSwitchFactor,
-                            ss.getFilter()
+                            ss.getFilter(),
+                            ss.getAsOfJoinKeyTypes()
                     ));
                 }
                 this.isOpen = false;
@@ -377,6 +379,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     Misc.clearObjList(groupByFunctions);
                     Misc.free(groupByAllocator);
                     Misc.freeObjListAndKeepObjects(asOfJoinMaps);
+                    Misc.freeObjListAndKeepObjects(timeFrameHelpers);
                     Misc.freeObjListAndKeepObjects(symbolTranslatingRecords);
                     Misc.free(horizonIterator);
                 } catch (Throwable th) {
@@ -557,7 +560,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 if (slaveFilter != null) {
                     slaveFilter.init(slaveCursors.getQuick(s), executionContext);
                 }
-                timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s));
+                timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s), executionContext.getMemoryTracker());
                 slaveSymbolSources.setQuick(s, slaveCursors.getQuick(s));
                 final SymbolTranslatingRecord symbolTranslatingRecord = symbolTranslatingRecords.getQuick(s);
                 if (symbolTranslatingRecord != null) {

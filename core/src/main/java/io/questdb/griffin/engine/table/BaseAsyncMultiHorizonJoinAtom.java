@@ -207,12 +207,14 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                 HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 ownerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
                 ownerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
+                        configuration,
                         lookahead,
                         state.getSlaveTsScale(),
                         bwdScanAbsoluteThreshold,
                         bwdScanMinGap,
                         bwdScanSwitchFactor,
-                        state.getFilter()
+                        state.getFilter(),
+                        state.getAsOfJoinKeyTypes()
                 ));
             }
             // Per-worker flat lists use worker-major order so that element at
@@ -222,12 +224,14 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                     HorizonJoinSlaveState state = slaveStates.getQuick(s);
                     perWorkerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
                     perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
+                            configuration,
                             lookahead,
                             state.getSlaveTsScale(),
                             bwdScanAbsoluteThreshold,
                             bwdScanMinGap,
                             bwdScanSwitchFactor,
-                            state.getPerWorkerFilters() == null ? state.getFilter() : state.getPerWorkerFilters().getQuick(w)
+                            state.getPerWorkerFilters() == null ? state.getFilter() : state.getPerWorkerFilters().getQuick(w),
+                            state.getAsOfJoinKeyTypes()
                     ));
                 }
             }
@@ -368,6 +372,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             // Clear ASOF join maps (per-slave)
             Misc.freeObjListAndKeepObjects(ownerAsOfJoinMaps);
             Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
+            Misc.freeObjListAndKeepObjects(ownerSlaveTimeFrameHelpers);
+            Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameHelpers);
 
             // Clear filter context (memory pools, etc.)
             filterCtx.clear();
@@ -432,6 +438,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
         }
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerAsOfJoinMaps);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAsOfJoinMaps);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerSlaveTimeFrameHelpers);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveTimeFrameHelpers);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerSlaveTimeFrameCursors);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
         // Horizon timestamp iterators
@@ -666,7 +674,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
         int tsIndex = ownerSlaveTimeFrameCursors.getQuick(slaveIndex).getTimestampIndex();
         ownerSlaveTimeFrameCursors.getQuick(slaveIndex).of(sharedState, slavePageFrameCursor, tsIndex);
         ownerSlaveTimeFrameCursors.getQuick(slaveIndex).setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-        ownerSlaveTimeFrameHelpers.getQuick(slaveIndex).of(ownerSlaveTimeFrameCursors.getQuick(slaveIndex));
+        ownerSlaveTimeFrameHelpers.getQuick(slaveIndex).of(ownerSlaveTimeFrameCursors.getQuick(slaveIndex), memoryTracker);
 
         // Initialize per-worker cursors for this slave
         for (int w = 0; w < workerCount; w++) {
@@ -674,7 +682,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             ConcurrentTimeFrameCursor c = perWorkerSlaveTimeFrameCursors.getQuick(idx);
             c.of(sharedState, slavePageFrameCursor, tsIndex);
             c.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            perWorkerSlaveTimeFrameHelpers.getQuick(idx).of(c);
+            perWorkerSlaveTimeFrameHelpers.getQuick(idx).of(c, memoryTracker);
         }
 
         // Initialize symbol translating records for this slave

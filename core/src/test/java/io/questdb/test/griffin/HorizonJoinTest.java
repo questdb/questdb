@@ -180,6 +180,66 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinRightFilterKeyMissAcrossMasterFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 16 * 1024 * 1024L);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, context) -> {
+                // Every 'B' quote fails the filter, so 'B' trades never match in any master frame.
+                engine.execute("""
+                        CREATE TABLE trades AS (
+                            SELECT timestamp_sequence('2000-01-01T00:00:01Z'::TIMESTAMP, 1_000_000) ts,
+                                   (CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END)::SYMBOL sym
+                            FROM long_sequence(256)
+                        ) TIMESTAMP(ts)
+                        """, context);
+                engine.execute("""
+                        CREATE TABLE quotes AS (
+                            SELECT timestamp_sequence('2000-01-01T00:00:00.5Z'::TIMESTAMP, 500_000) ts,
+                                   (CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END)::SYMBOL sym,
+                                   (CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END)::SYMBOL venue,
+                                   x::DOUBLE price
+                            FROM long_sequence(512)
+                        ) TIMESTAMP(ts)
+                        """, context);
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    context.setParallelHorizonJoinEnabled(isParallel);
+                    for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                        for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                            final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "") + "count(q.price) c, sum(q.price) s FROM trades t "
+                                    + "HORIZON JOIN quotes q ON (t.sym = q.sym AND q.venue = 'X') "
+                                    + (hasMultipleSlaves ? "HORIZON JOIN quotes r ON (t.sym = r.sym AND r.venue = 'X') " : "")
+                                    + "LIST (0s) AS h";
+                            try (RecordCursorFactory factory = engine.select(query, context)) {
+                                Assert.assertEquals((isParallel ? "Async" : "") + (hasMultipleSlaves ? "Multi" : "")
+                                                + "HorizonJoin" + (hasGroupKeys ? "" : "NotKeyed") + "RecordCursorFactory",
+                                        factory.getBaseFactory().getClass().getSimpleName());
+                                for (int i = 0; i < 2; i++) {
+                                    final MemoryTracker tracker;
+                                    try (RecordCursor cursor = factory.getCursor(context)) {
+                                        tracker = context.getMemoryTracker();
+                                        Assert.assertNotNull(tracker);
+                                        Assert.assertTrue(cursor.hasNext());
+                                        Assert.assertEquals(128, cursor.getRecord().getLong(hasGroupKeys ? 1 : 0));
+                                        Assert.assertFalse(cursor.hasNext());
+                                    }
+                                    Assert.assertEquals(query, 0, tracker.getUsed());
+                                }
+                                new QueryAssertion(engine, factory).withContext(context).inferRandomAccess().expectSize()
+                                        .returns(hasGroupKeys ? "offset\tc\ts\n0\t128\t32640.0\n" : "c\ts\n128\t32640.0\n");
+                            }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testHorizonJoinRightFilterNullProjection() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");

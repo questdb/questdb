@@ -217,14 +217,87 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             try (PollingEngine engine = new PollingEngine(root, state);
                  Map map = newMap(engine)) {
                 SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-                HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(64, 1, 131_072, 1_024, 8, filter(trace, true));
-                helper.of(cursor);
+                HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), null);
+                helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(1001, trace.visits);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1010, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(1010, helper.findKeyedAsOfMatch(1010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1020, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(1021, trace.visits);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredKeyMissSurvivesFrameReset() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Trace trace = new Trace();
+            Cursor cursor = new Cursor(trace, 4096);
+            SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            try (PollingEngine engine = new PollingEngine(root, new State());
+                 Map map = newMap(engine);
+                 HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT)
+                 )) {
+                helper.of(cursor, null);
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1001, trace.visits);
+
+                // A later master frame scans only the rows above the recorded miss.
+                helper.toTop();
+                map.clear();
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1010, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1011, trace.visits);
+                Assert.assertEquals(1010, helper.findKeyedAsOfMatch(1010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+
+                // An out-of-order master frame below the recorded miss scans nothing for the key.
+                helper.toTop();
+                map.clear();
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(500, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1011, trace.visits);
+                Assert.assertEquals(500, helper.findKeyedAsOfMatch(500, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1012, trace.visits);
+
+                // A new cursor drops the recorded misses.
+                helper.of(cursor, null);
+                map.clear();
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(100, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1113, trace.visits);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredKeyMissSwitchesToForwardScan() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Trace trace = new Trace();
+            Cursor cursor = new Cursor(trace, 4096);
+            SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            final Record otherMissingKey = new Record() {
+                @Override
+                public int getInt(int columnIndex) {
+                    return 3;
+                }
+            };
+            try (PollingEngine engine = new PollingEngine(root, new State());
+                 Map map = newMap(engine);
+                 HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT)
+                 )) {
+                helper.of(cursor, null);
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1001, trace.visits);
+
+                helper.toTop();
+                map.clear();
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(2001, trace.visits);
+                // The bounded miss scan triggers the forward switch, so the second key
+                // does not rescan the rows the first key already covered.
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2001, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(2003, trace.visits);
             }
         });
     }
@@ -440,8 +513,8 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     private static HorizonJoinTimeFrameHelper helper(Cursor cursor, Function filter, long lookahead) {
-        HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(lookahead, 1, 0, 0, 1, filter);
-        helper.of(cursor);
+        HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(null, lookahead, 1, 0, 0, 1, filter, null);
+        helper.of(cursor, null);
         return helper;
     }
 

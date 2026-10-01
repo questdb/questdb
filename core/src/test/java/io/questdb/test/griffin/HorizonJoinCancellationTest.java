@@ -63,7 +63,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
         for (boolean isParallel : new boolean[]{false, true}) {
             assertMemoryLeak(() -> {
                 AtomicLong millis = new AtomicLong(1000);
-                TestUtils.execute(null, (engine, compiler, context) -> {
+                TestUtils.execute(null, (engine, _, context) -> {
                     createTables(engine, context);
                     for (boolean isGrouped : new boolean[]{false, true}) {
                         for (int slavePosition = 0; slavePosition < 3; slavePosition++) {
@@ -84,7 +84,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
         for (boolean isParallel : new boolean[]{false, true}) {
             assertMemoryLeak(() -> {
                 AtomicLong millis = new AtomicLong(1000);
-                TestUtils.execute(null, (engine, compiler, context) -> {
+                TestUtils.execute(null, (engine, _, context) -> {
                     createTables(engine, context);
                     assertCancellation(engine, context, millis, isParallel, false, 0, 0, null, false, true);
                 }, testConfiguration(isParallel, millis), LOG);
@@ -97,7 +97,7 @@ public class HorizonJoinCancellationTest extends AbstractCairoTest {
         for (WorkerPoolMode mode : WorkerPoolMode.values()) {
             assertMemoryLeak(() -> {
                 AtomicLong millis = new AtomicLong(1000);
-                TestUtils.execute(new TestWorkerPool(1, mode), (engine, compiler, context) -> {
+                TestUtils.execute(new TestWorkerPool(1, mode), (engine, _, context) -> {
                     createTables(engine, context);
                     for (boolean hasMasterFilter : new boolean[]{false, true}) {
                         assertCancellation(engine, context, millis, true, false, 0, 0, mode, hasMasterFilter, false);

@@ -364,11 +364,13 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             }
 
             this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
+                    configuration,
                     configuration.getSqlAsOfJoinLookAhead(), slaveTsScale,
                     configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
                     configuration.getSqlHorizonJoinBwdScanMinGap(),
                     configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
-                    slaveFilter
+                    slaveFilter,
+                    asOfJoinKeyTypes
             );
             this.isOpen = false;
         }
@@ -394,6 +396,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     if (asOfJoinMap != null) {
                         asOfJoinMap.close();
                     }
+                    Misc.free(slaveTimeFrameHelper);
                     Misc.free(symbolTranslatingRecord);
                     Misc.free(horizonIterator);
                 } catch (Throwable th) {
@@ -557,7 +560,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 isSlaveFilterInitialized = true;
                 slaveFilter.init(slaveCursor, executionContext);
             }
-            slaveTimeFrameHelper.of(slaveCursor);
+            slaveTimeFrameHelper.of(slaveCursor, executionContext.getMemoryTracker());
 
             // Initialize horizon timestamp iterator with master cursor
             Record recordBMaster = masterCursor.getRecordB();

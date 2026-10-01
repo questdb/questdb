@@ -24,8 +24,13 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -33,6 +38,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,7 +59,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * An optional borrowed filter excludes rows before choosing the latest match. Its
  * factory or atom owns, initializes and closes it; this helper never frees it.
  */
-public class HorizonJoinTimeFrameHelper {
+public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private static final int CIRCUIT_BREAKER_CHECK_INTERVAL = 64;
     private static final int LINEAR_SCAN_LIMIT = 64;
     // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
@@ -59,6 +67,8 @@ public class HorizonJoinTimeFrameHelper {
     private final long bwdScanMinGap;
     private final long bwdScanSwitchFactor;
     private final @Nullable Function filter;
+    // Join key -> position with no qualifying row for the key at or below it, valid for the whole cursor.
+    private final @Nullable Map keyMissMap;
     private final long lookahead;
     // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
     private final long slaveTsScale;
@@ -80,6 +90,8 @@ public class HorizonJoinTimeFrameHelper {
     private long filterMissWatermark = Long.MIN_VALUE;
     // Forward watermark: highest rowId we've forward-scanned (inclusive)
     private long forwardWatermark = Long.MIN_VALUE;
+    // A keyed lookup found no match at the current ASOF position.
+    private boolean hasKeyMiss;
     private boolean isForwardScanMode;
     private long prevAsOfRowId = Long.MIN_VALUE;
     private Record record;
@@ -88,14 +100,19 @@ public class HorizonJoinTimeFrameHelper {
     private int timestampIndex;
 
     public HorizonJoinTimeFrameHelper(
+            CairoConfiguration configuration,
             long lookahead,
             long slaveTsScale,
             long bwdScanAbsoluteThreshold,
             long bwdScanMinGap,
             long bwdScanSwitchFactor,
-            @Nullable Function filter
+            @Nullable Function filter,
+            @Nullable ColumnTypes asOfJoinKeyTypes
     ) {
         this.filter = filter;
+        this.keyMissMap = filter != null && asOfJoinKeyTypes != null
+                ? MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, new SingleColumnType(ColumnType.LONG), false, false)
+                : null;
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
         this.bwdScanAbsoluteThreshold = bwdScanAbsoluteThreshold;
@@ -179,6 +196,7 @@ public class HorizonJoinTimeFrameHelper {
 
             if (backwardWatermark == 0) {
                 // We've scanned all the way to the beginning; key doesn't exist.
+                recordKeyMiss(findKeyMiss(masterRecord, masterAsOfJoinMapSink), masterRecord, masterAsOfJoinMapSink, startRowId);
                 return Long.MIN_VALUE;
             }
 
@@ -188,6 +206,13 @@ public class HorizonJoinTimeFrameHelper {
             effectiveStart = backwardWatermark;
         } else {
             effectiveStart = startRowId;
+        }
+
+        final MapValue missValue = findKeyMiss(masterRecord, masterAsOfJoinMapSink);
+        final long missRowId = missValue != null ? missValue.getLong(0) : Long.MIN_VALUE;
+        if (effectiveStart <= missRowId) {
+            recordKeyMiss(missValue, masterRecord, masterAsOfJoinMapSink, startRowId);
+            return Long.MIN_VALUE;
         }
 
         int frameIndex = Rows.toPartitionIndex(effectiveStart);
@@ -212,6 +237,9 @@ public class HorizonJoinTimeFrameHelper {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
+            if (currentRowId <= missRowId) {
+                break;
+            }
             backwardScanRows++;
 
             // Update backward watermark
@@ -271,7 +299,13 @@ public class HorizonJoinTimeFrameHelper {
             }
         }
 
+        recordKeyMiss(missValue, masterRecord, masterAsOfJoinMapSink, startRowId);
         return Long.MIN_VALUE;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(keyMissMap);
     }
 
     /**
@@ -526,13 +560,12 @@ public class HorizonJoinTimeFrameHelper {
                 long bwdScanCost = backwardScanRows - bwdScanRowsAtPositionStart;
                 if (prevAsOfRowId != Long.MIN_VALUE) {
                     long gap = asOfRowId - prevAsOfRowId;
-                    // A filter-rejected key keeps exhausting the prefix; the map is complete
-                    // up to prevAsOfRowId, so extend it forward even across a small gap.
-                    final boolean isPrefixExhausted = filter != null && backwardWatermark == 0;
+                    // A filter-rejected key repeats its miss scan at every position; the map
+                    // is valid up to prevAsOfRowId, so extend it forward even across a small gap.
                     if (shouldSwitchToForwardScan(
                             bwdScanCost,
                             gap,
-                            isPrefixExhausted ? 0 : bwdScanMinGap,
+                            filter != null && hasKeyMiss ? 0 : bwdScanMinGap,
                             bwdScanSwitchFactor,
                             bwdScanAbsoluteThreshold
                     )) {
@@ -549,6 +582,7 @@ public class HorizonJoinTimeFrameHelper {
             if (isForwardScanMode) {
                 forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, keyToRowIdMap, circuitBreaker);
             }
+            hasKeyMiss = false;
             prevAsOfRowId = asOfRowId;
         }
 
@@ -729,7 +763,11 @@ public class HorizonJoinTimeFrameHelper {
         this.forwardWatermark = rowId;
     }
 
-    public void of(TimeFrameCursor timeFrameCursor) {
+    public void of(TimeFrameCursor timeFrameCursor, @Nullable MemoryTracker memoryTracker) {
+        if (keyMissMap != null) {
+            keyMissMap.close();
+            keyMissMap.setMemoryTracker(memoryTracker);
+        }
         this.timeFrameCursor = timeFrameCursor;
         this.record = timeFrameCursor.getRecord();
         this.timeFrame = timeFrameCursor.getTimeFrame();
@@ -758,8 +796,8 @@ public class HorizonJoinTimeFrameHelper {
     /**
      * Reset state for processing a new master page frame.
      * <p>
-     * Resets navigation and keyed-scan state. The unkeyed filtered interval stays valid
-     * for the slave cursor. Bookmarks are reset because workers process
+     * Resets navigation and keyed-scan state. The unkeyed filtered interval and the keyed
+     * misses stay valid for the slave cursor. Bookmarks are reset because workers process
      * master page frames in non-deterministic order (dispatched via ring queue). A stale
      * bookmark from a previously processed frame could point to a slave position far from
      * the current target, causing findAsOfRow() to linearly scan through O(N) slave frames
@@ -779,6 +817,7 @@ public class HorizonJoinTimeFrameHelper {
         cachedAsOfRowId = Long.MIN_VALUE;
         cachedNextRowTs = Long.MIN_VALUE;
         backwardScanRows = 0;
+        hasKeyMiss = false;
         isForwardScanMode = false;
         prevAsOfRowId = Long.MIN_VALUE;
     }
@@ -881,6 +920,15 @@ public class HorizonJoinTimeFrameHelper {
         bookmarkedRowIndex = rowIndex;
     }
 
+    private @Nullable MapValue findKeyMiss(Record masterRecord, RecordSink masterAsOfJoinMapSink) {
+        if (keyMissMap == null || !keyMissMap.isOpen()) {
+            return null;
+        }
+        final MapKey key = keyMissMap.withKey();
+        key.put(masterRecord, masterAsOfJoinMapSink);
+        return key.findValue();
+    }
+
     /**
      * Linear scan for the last row with timestamp <= targetTimestamp.
      * Returns:
@@ -917,5 +965,22 @@ public class HorizonJoinTimeFrameHelper {
 
         // Scanned entire frame
         return result;
+    }
+
+    // The caller has established that the key has no qualifying row at or below rowId.
+    private void recordKeyMiss(@Nullable MapValue missValue, Record masterRecord, RecordSink masterAsOfJoinMapSink, long rowId) {
+        hasKeyMiss = true;
+        if (keyMissMap == null) {
+            return;
+        }
+        if (missValue == null) {
+            keyMissMap.reopen();
+            final MapKey key = keyMissMap.withKey();
+            key.put(masterRecord, masterAsOfJoinMapSink);
+            missValue = key.createValue();
+            missValue.putLong(0, rowId);
+        } else if (missValue.getLong(0) < rowId) {
+            missValue.putLong(0, rowId);
+        }
     }
 }
