@@ -46,6 +46,32 @@ import java.io.File;
  * 3. The SQL plan shows the expected interval filters
  */
 public class TimestampOffsetPushdownTest extends AbstractCairoTest {
+    // unit, table of createDayClampTables() whose rows a one-unit shift folds onto the same day
+    private static final String[][] CALENDAR_UNIT_TABLES = {
+            {"M", "jan"},
+            {"y", "feb"},
+    };
+    // dateadd('M', 1, ts) over jan, in the order of the shifted value
+    private static final String JAN_PLUS_ONE_MONTH_ORDERED = """
+            x
+            2024-02-29T00:00:00.000000Z
+            2024-02-29T00:00:00.000000Z
+            2024-02-29T00:00:00.000000Z
+            2024-02-29T06:00:00.000000Z
+            2024-02-29T06:00:00.000000Z
+            2024-02-29T06:00:00.000000Z
+            2024-02-29T12:00:00.000000Z
+            2024-02-29T12:00:00.000000Z
+            2024-02-29T12:00:00.000000Z
+            2024-02-29T18:00:00.000000Z
+            2024-02-29T18:00:00.000000Z
+            2024-02-29T18:00:00.000000Z
+            2024-03-01T00:00:00.000000Z
+            2024-03-01T06:00:00.000000Z
+            2024-03-01T12:00:00.000000Z
+            2024-03-01T18:00:00.000000Z
+            """;
+    private static final String NO_DESIGNATED_TIMESTAMP_ERROR = "base query does not provide designated TIMESTAMP column";
 
     @Test
     public void testAndOffsetWithSubQueryPredicateArg() throws Exception {
@@ -288,12 +314,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertMemoryLeak(() -> {
                 node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, exportDir);
                 createDayClampTables();
-                // unit, table
-                final String[][] projections = {
-                        {"M", "jan"},
-                        {"y", "feb"},
-                };
-                for (String[] p : projections) {
+                for (String[] p : CALENDAR_UNIT_TABLES) {
                     // the error points at the query: COPY validates it without the PARTITION_BY position
                     assertExceptionNoLeakCheck(
                             "COPY (SELECT dateadd('" + p[0] + "', 1, ts) x, i FROM " + p[1] + ") TO 'shifted' WITH FORMAT parquet PARTITION_BY DAY",
@@ -395,25 +416,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("x")
                     .expectSize()
-                    .returns("""
-                            x
-                            2024-02-29T00:00:00.000000Z
-                            2024-02-29T00:00:00.000000Z
-                            2024-02-29T00:00:00.000000Z
-                            2024-02-29T06:00:00.000000Z
-                            2024-02-29T06:00:00.000000Z
-                            2024-02-29T06:00:00.000000Z
-                            2024-02-29T12:00:00.000000Z
-                            2024-02-29T12:00:00.000000Z
-                            2024-02-29T12:00:00.000000Z
-                            2024-02-29T18:00:00.000000Z
-                            2024-02-29T18:00:00.000000Z
-                            2024-02-29T18:00:00.000000Z
-                            2024-03-01T00:00:00.000000Z
-                            2024-03-01T06:00:00.000000Z
-                            2024-03-01T12:00:00.000000Z
-                            2024-03-01T18:00:00.000000Z
-                            """);
+                    .returns(JAN_PLUS_ONE_MONTH_ORDERED);
         });
     }
 
@@ -425,13 +428,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // TIMESTAMP(x) on the table or ORDER BY x in the query names the designated timestamp again.
         assertMemoryLeak(() -> {
             createDayClampTables();
-            // unit, table
-            final String[][] projections = {
-                    {"M", "jan"},
-                    {"y", "feb"},
-            };
             final String noTimestamp = "partitioning is possible only on tables with designated timestamps";
-            for (String[] p : projections) {
+            for (String[] p : CALENDAR_UNIT_TABLES) {
                 final String projection = "(SELECT dateadd('" + p[0] + "', 1, ts) x, i FROM " + p[1] + ")";
                 assertExceptionNoLeakCheck("CREATE TABLE shifted AS " + projection + " PARTITION BY DAY", 80, noTimestamp);
                 assertExceptionNoLeakCheck("CREATE TABLE shifted AS " + projection + " PARTITION BY DAY WAL", 80, noTimestamp);
@@ -445,25 +443,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .timestamp("x")
                         .expectSize()
-                        .returns("""
-                                x
-                                2024-02-29T00:00:00.000000Z
-                                2024-02-29T00:00:00.000000Z
-                                2024-02-29T00:00:00.000000Z
-                                2024-02-29T06:00:00.000000Z
-                                2024-02-29T06:00:00.000000Z
-                                2024-02-29T06:00:00.000000Z
-                                2024-02-29T12:00:00.000000Z
-                                2024-02-29T12:00:00.000000Z
-                                2024-02-29T12:00:00.000000Z
-                                2024-02-29T18:00:00.000000Z
-                                2024-02-29T18:00:00.000000Z
-                                2024-02-29T18:00:00.000000Z
-                                2024-03-01T00:00:00.000000Z
-                                2024-03-01T06:00:00.000000Z
-                                2024-03-01T12:00:00.000000Z
-                                2024-03-01T18:00:00.000000Z
-                                """);
+                        .returns(JAN_PLUS_ONE_MONTH_ORDERED);
             }
         });
     }
@@ -562,7 +542,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "SELECT x, count() FROM (SELECT dateadd('M', 1, ts) x FROM jan_ns) SAMPLE BY 12h",
                     0,
-                    "base query does not provide designated TIMESTAMP column"
+                    NO_DESIGNATED_TIMESTAMP_ERROR
             );
             assertDateaddCalendarUnitSampleByOverSortedSubQuery(
                     "dateadd('M', 1, ts)",
@@ -594,29 +574,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // projection in the order of ts, which is not the order of the shifted value.
         assertMemoryLeak(() -> {
             createDayClampTables();
-            assertDateaddCalendarUnitOrderBySorts(
-                    "dateadd('M', 1, ts)",
-                    "jan",
-                    """
-                            x
-                            2024-02-29T00:00:00.000000Z
-                            2024-02-29T00:00:00.000000Z
-                            2024-02-29T00:00:00.000000Z
-                            2024-02-29T06:00:00.000000Z
-                            2024-02-29T06:00:00.000000Z
-                            2024-02-29T06:00:00.000000Z
-                            2024-02-29T12:00:00.000000Z
-                            2024-02-29T12:00:00.000000Z
-                            2024-02-29T12:00:00.000000Z
-                            2024-02-29T18:00:00.000000Z
-                            2024-02-29T18:00:00.000000Z
-                            2024-02-29T18:00:00.000000Z
-                            2024-03-01T00:00:00.000000Z
-                            2024-03-01T06:00:00.000000Z
-                            2024-03-01T12:00:00.000000Z
-                            2024-03-01T18:00:00.000000Z
-                            """
-            );
+            assertDateaddCalendarUnitOrderBySorts("dateadd('M', 1, ts)", "jan", JAN_PLUS_ONE_MONTH_ORDERED);
             // a negative stride clamps too: March 29, 30 and 31 minus one month land on February 29
             assertDateaddCalendarUnitOrderBySorts(
                     "dateadd('M', -1, ts)",
@@ -854,13 +812,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // compile. They used to run over the out-of-order rows.
         assertMemoryLeak(() -> {
             createDayClampTables();
-            // unit, table
-            final String[][] projections = {
-                    {"M", "jan"},
-                    {"y", "feb"},
-            };
             final String noLeftTimestamp = "left side of time series join has no timestamp";
-            for (String[] p : projections) {
+            for (String[] p : CALENDAR_UNIT_TABLES) {
                 final String table = p[1];
                 final String projection = "(SELECT dateadd('" + p[0] + "', 1, ts) x, i FROM " + table + ")";
                 assertExceptionNoLeakCheck("SELECT a.x, b.ts FROM " + projection + " a ASOF JOIN " + table + " b", 67, noLeftTimestamp);
@@ -891,19 +844,23 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                 );
             }
 
-            // ORDER BY in the sub-query restores the order and the designated timestamp. Every
-            // shifted row is later than the last row of jan.
-            assertQuery("SELECT a.x, b.ts FROM (SELECT dateadd('M', 1, ts) x, i FROM jan ORDER BY x) a ASOF JOIN jan b LIMIT -4")
+            // ORDER BY in the sub-query restores the order and the designated timestamp. feb holds a
+            // row at every shifted timestamp, so each left row joins the feb row of its own timestamp.
+            // The first five rows tell the sorted projection from the unsorted one, which runs
+            // 00:00, 06:00, 12:00, 18:00 and 00:00 again: the join would pair that fifth row with
+            // the 18:00 row of feb.
+            assertQuery("SELECT a.x, b.ts FROM (SELECT dateadd('M', 1, ts) x, i FROM jan ORDER BY x) a ASOF JOIN feb b LIMIT 5")
                     .noLeakCheck()
                     .timestamp("x")
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
                             x\tts
-                            2024-03-01T00:00:00.000000Z\t2024-02-01T18:00:00.000000Z
-                            2024-03-01T06:00:00.000000Z\t2024-02-01T18:00:00.000000Z
-                            2024-03-01T12:00:00.000000Z\t2024-02-01T18:00:00.000000Z
-                            2024-03-01T18:00:00.000000Z\t2024-02-01T18:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z\t2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z\t2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z\t2024-02-29T00:00:00.000000Z
+                            2024-02-29T06:00:00.000000Z\t2024-02-29T06:00:00.000000Z
+                            2024-02-29T06:00:00.000000Z\t2024-02-29T06:00:00.000000Z
                             """);
         });
     }
@@ -981,7 +938,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck(
                         "SELECT x, count() FROM (SELECT " + p[0] + " x FROM " + p[1] + ") SAMPLE BY 12h",
                         0,
-                        "base query does not provide designated TIMESTAMP column"
+                        NO_DESIGNATED_TIMESTAMP_ERROR
                 );
             }
         });
@@ -1185,7 +1142,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             x
                             2024-02-29T00:00:00.000000Z
                             """);
+            // The optimiser does tag a constant unit of any shape, so NULL, an empty unit and a
+            // two-character unit reach the code generator's unit check, which sees a token that is
+            // not a quoted single character. The function parser then rejects each of them.
             assertExceptionNoLeakCheck("SELECT dateadd(NULL, 1, ts) x FROM jan", 15, "invalid time period");
+            assertExceptionNoLeakCheck("SELECT dateadd('', 1, ts) x FROM jan", 15, "invalid time period");
+            assertExceptionNoLeakCheck(
+                    "SELECT dateadd('ms', 1, ts) x FROM jan",
+                    7,
+                    "there is no matching function `dateadd` with the argument types: (STRING, INT, TIMESTAMP)"
+            );
         });
     }
 
@@ -1225,9 +1191,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     2024-01-01T00:20:00.000000Z\t600
                     2024-01-01T00:30:00.000000Z\t201
                     """;
-            final String noTimestamp = "base query does not provide designated TIMESTAMP column";
-            assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, noTimestamp);
-            assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", expectedHead, expectedBuckets, 0, noTimestamp);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery(
                     "SELECT DISTINCT ts, price FROM trades",
                     expectedHead,
@@ -1235,8 +1200,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     0,
                     "TIMESTAMP column is required but not provided"
             );
-            assertDateaddOverUnorderedSubQuery("SELECT ts, price FROM trades ORDER BY price", expectedHead, expectedBuckets, 0, noTimestamp);
-            assertDateaddOverUnorderedSubQuery("SELECT ts2 ts, price FROM trades", expectedHead, expectedBuckets, 0, noTimestamp);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, price FROM trades ORDER BY price", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts2 ts, price FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery(
                     "SELECT ts, sym FROM trades UNION ALL SELECT ts, sym FROM trades WHERE ts >= '2024-01-01T00:30'",
                     expectedHead,
@@ -1248,7 +1213,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-01-01T00:30:00.000000Z\t401
                             """,
                     0,
-                    noTimestamp
+                    NO_DESIGNATED_TIMESTAMP_ERROR
             );
             // the join output follows trades, so the slave timestamp cycles through the five marks
             assertDateaddOverUnorderedSubQuery(
@@ -1279,7 +1244,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-01-01T00:30:00.000000Z\t5
                             """,
                     0,
-                    noTimestamp
+                    NO_DESIGNATED_TIMESTAMP_ERROR
             );
 
             // Column pruning drops x from the dateadd() projection, and the code generator restores a
@@ -1533,6 +1498,49 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHandWrittenAndOffsetOverCalendarUnitProjectionIsRejected() throws Exception {
+        // generateFilter0() rebuilds a hand-written and_offset only over the designated timestamp of
+        // the factory it filters. A LIMIT on the dateadd() projection keeps the wrapper above that
+        // projection, and a month or year projection has no designated timestamp, so the wrapper
+        // reaches the function compiler, which rejects it as an unknown function. The code generator
+        // used to rebuild it into dateadd('d', -1, y), the explicit spelling below. and_offset is an
+        // internal pseudo-function, so the rejection is the one that
+        // testHandwrittenAndOffsetOverNonTimestampIsRejected pins for a non-timestamp column.
+        assertMemoryLeak(() -> {
+            createMonthEndTable();
+            for (String unit : new String[]{"M", "y"}) {
+                assertExceptionNoLeakCheck(
+                        "SELECT * FROM (SELECT dateadd('" + unit + "', 1, ts) y, v FROM tab LIMIT 10) WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)",
+                        72,
+                        "unknown function name: and_offset(BOOLEAN,CHAR,INT)"
+                );
+            }
+
+            // the explicit dateadd() spelling of the same predicate
+            assertQuery("SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM tab LIMIT 10) WHERE dateadd('d', -1, y) > '2024-03-30T00:00:00'")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,y)")
+                    .returns("""
+                            y\tv
+                            2024-04-01T00:00:00.000000Z\t3
+                            2024-04-30T00:00:00.000000Z\t4
+                            2024-04-30T00:00:00.000000Z\t5
+                            """);
+
+            // Control: a fixed-duration projection keeps the designated timestamp, so the code
+            // generator still rebuilds the hand-written wrapper over it.
+            assertQuery("SELECT * FROM (SELECT dateadd('h', 1, ts) y, v FROM tab LIMIT 10) WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)")
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .withPlanContaining("Filter filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,y)")
+                    .returns("""
+                            y\tv
+                            2024-03-31T01:00:00.000000Z\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testHandWrittenAndOffsetOverNonTimestampPredicateDoesNotDropIt() throws Exception {
         // and_offset is an internal pseudo-function with no FunctionFactory, but intrinsicOps
         // dispatches it on its token alone, so a hand-written call reached analyzeAndOffset
@@ -1583,15 +1591,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // dateadd('M',1,dateadd('d',-1,ts)), maps 2024-03-01 onto 2024-03-29 instead of 2024-03-31
         // and drops that row.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
-            execute("""
-                    INSERT INTO tab VALUES
-                        ('2024-01-31T00:00:00.000000Z', 1),
-                        ('2024-02-29T00:00:00.000000Z', 2),
-                        ('2024-03-01T00:00:00.000000Z', 3),
-                        ('2024-03-30T00:00:00.000000Z', 4),
-                        ('2024-03-31T00:00:00.000000Z', 5)
-                    """);
+            createMonthEndTable();
             final String expected = """
                     y\tv
                     2024-04-01T00:00:00.000000Z\t3
@@ -4732,6 +4732,19 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-03-01T00:00:00.000000Z
                             """);
         });
+    }
+
+    // rows at the month ends where one month added to ts clamps the day of month
+    private static void createMonthEndTable() throws SqlException {
+        execute("CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
+        execute("""
+                INSERT INTO tab VALUES
+                    ('2024-01-31T00:00:00.000000Z', 1),
+                    ('2024-02-29T00:00:00.000000Z', 2),
+                    ('2024-03-01T00:00:00.000000Z', 3),
+                    ('2024-03-30T00:00:00.000000Z', 4),
+                    ('2024-03-31T00:00:00.000000Z', 5)
+                """);
     }
 
     // ts runs from 00:00:00 to 00:03:10 in 10s steps; ts2 holds the same values in reverse order
