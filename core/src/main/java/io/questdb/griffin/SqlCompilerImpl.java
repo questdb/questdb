@@ -81,12 +81,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
-import io.questdb.griffin.engine.functions.QuaternaryFunction;
-import io.questdb.griffin.engine.functions.TernaryFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -185,6 +180,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return true;
         }
     };
+    // Operators and functions whose result depends only on their arguments. A row-expiry predicate built
+    // only from these, the table's columns and constants gives each row the same result in every
+    // execution and every session, so the cleanup job may reclaim under it. Any other operator or
+    // function leaves the policy FILTER_ONLY: that costs disk, while the read filter keeps results correct.
+    private static final LowerCaseCharSequenceHashSet EXPIRY_ROW_ONLY_FUNCTIONS = new LowerCaseCharSequenceHashSet();
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     // Raised from two places: once on the parsed model, where it has to win over the more general
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
@@ -319,6 +319,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Lets a test put a hook function of its own into a predicate that has to reclaim.
+    @TestOnly
+    public static void addExpiryRowOnlyFunctionForTesting(CharSequence name) {
+        EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
+    }
+
     public static long copyOrderedBatched(
             SqlExecutionContext context,
             TableWriterAPI writer,
@@ -411,6 +417,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @Nullable Throwable failure
     ) {
         return freePooledTableNameFunctions(queryModelPool, failure);
+    }
+
+    @TestOnly
+    public static void removeExpiryRowOnlyFunctionForTesting(CharSequence name) {
+        EXPIRY_ROW_ONLY_FUNCTIONS.remove(name);
     }
 
     @TestOnly
@@ -877,11 +888,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // function that evaluates such a string reads it in init() but reports neither
             // isNonDeterministic() nor isRuntimeConstant(), so only the AST shows the clock read.
             final boolean hasClock = expiryExpressionHasClock(node) || expiryExpressionHasDateVariable(node);
-            // The predicate counts as depending only on the row (isDeterministic) only when no node can
-            // give a different value to a different execution or session. The cleanup job evaluates the
-            // predicate once per sweep under the root context, so a clock read, a session value such as
-            // current_user(), or any other non-deterministic or runtime-constant function could make it
-            // delete a row that a later read, or a reader in another session, keeps.
+            // The predicate counts as depending only on the row (isDeterministic) only when its AST proves
+            // that every node gives each row the same value in every execution and session. The cleanup job
+            // evaluates the predicate once per sweep under the root context, so a clock read, a session
+            // value such as current_user(), or any other function whose value can change could make it
+            // delete a row that a later read, or a reader in another session, keeps. The proof works on the
+            // AST rather than on the bound functions: a function reports isNonDeterministic(),
+            // isRuntimeConstant() or isRandom() reliably only when the answer is true, and some functions
+            // keep an operand, such as the IN list of a SYMBOL column, where no walk of the bound tree
+            // reaches it.
             // A subquery (e.g. `sym IN (SELECT s FROM blacklist)`) reads other tables whose contents can
             // change between evaluations, so a row expired now can un-expire later - physical cleanup
             // under such a predicate could delete rows the read filter must show again. The expression
@@ -891,7 +906,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // non-monotonic and the cleanup job skips physical deletion for it.
             final boolean isDeterministic = !hasClock
                     && !expiryExpressionHasQuery(node)
-                    && !expiryFunctionHasExecutionState(f);
+                    && isExpiryRowOnlyExpression(node, metadata);
             final int timestampIndex = metadata.getTimestampIndex();
             final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
             final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
@@ -906,6 +921,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return result;
         } finally {
             Misc.free(f);
+        }
+    }
+
+    private static void addExpiryRowOnlyFunctions(String... names) {
+        for (String name : names) {
+            EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
         }
     }
 
@@ -7506,47 +7527,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return false;
     }
 
-    // True if any function in the bound tree can report a different value to a different
-    // execution or session: non-deterministic (now(), rnd_*), random, or runtime-constant
-    // (current_user(), session_user(), today(), bind variables).
-    private static boolean expiryFunctionHasExecutionState(Function function) {
-        if (function == null) {
-            return false;
-        }
-        if (function.isNonDeterministic() || function.isRandom() || function.isRuntimeConstant()) {
-            return true;
-        }
-        if (function instanceof UnaryFunction u) {
-            return expiryFunctionHasExecutionState(u.getArg());
-        }
-        if (function instanceof BinaryFunction b) {
-            return expiryFunctionHasExecutionState(b.getLeft())
-                    || expiryFunctionHasExecutionState(b.getRight());
-        }
-        if (function instanceof TernaryFunction t) {
-            return expiryFunctionHasExecutionState(t.getLeft())
-                    || expiryFunctionHasExecutionState(t.getCenter())
-                    || expiryFunctionHasExecutionState(t.getRight());
-        }
-        if (function instanceof QuaternaryFunction q) {
-            return expiryFunctionHasExecutionState(q.getFunc0())
-                    || expiryFunctionHasExecutionState(q.getFunc1())
-                    || expiryFunctionHasExecutionState(q.getFunc2())
-                    || expiryFunctionHasExecutionState(q.getFunc3());
-        }
-        if (function instanceof MultiArgFunction m) {
-            final ObjList<Function> args = m.args();
-            if (args != null) {
-                for (int i = 0, n = args.size(); i < n; i++) {
-                    if (expiryFunctionHasExecutionState(args.getQuick(i))) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
     /**
      * The threshold operand of a designated-timestamp ordering comparison, in either direction and with the
      * timestamp on either side, or null when the predicate is not that shape or the other operand references
@@ -7604,6 +7584,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return exprReferencesColumn(node.lhs) ? null : node.lhs;
         }
         return null;
+    }
+
+    // True when the sub-tree proves that it gives each row the same value in every execution and session:
+    // every node is a column of the table, a constant, or an operator or function on the
+    // EXPIRY_ROW_ONLY_FUNCTIONS list. An unknown column name counts as not proven too, because the
+    // function parser could resolve it to something other than a column. Date variables inside string
+    // constants are the caller's separate check.
+    private static boolean isExpiryRowOnlyExpression(ExpressionNode node, RecordMetadata metadata) {
+        if (node == null) {
+            return true;
+        }
+        final boolean isNodeRowOnly = switch (node.type) {
+            case ExpressionNode.CONSTANT -> true;
+            case ExpressionNode.LITERAL -> resolvePredicateColumnIndex(metadata, node.token) >= 0;
+            case ExpressionNode.OPERATION, ExpressionNode.SET_OPERATION, ExpressionNode.FUNCTION ->
+                    EXPIRY_ROW_ONLY_FUNCTIONS.contains(node.token);
+            default -> false;
+        };
+        if (!isNodeRowOnly
+                || !isExpiryRowOnlyExpression(node.lhs, metadata)
+                || !isExpiryRowOnlyExpression(node.rhs, metadata)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isExpiryRowOnlyExpression(node.args.getQuick(i), metadata)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -8081,6 +8090,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add("--");
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
+
+        // operators
+        addExpiryRowOnlyFunctions(
+                "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "&", "|", "^", "::",
+                "and", "or", "not", "in", "between", "like", "ilike", "~", "!~"
+        );
+        // functions
+        addExpiryRowOnlyFunctions(
+                "abs", "case", "cast", "ceil", "ceiling", "coalesce", "concat", "dateadd", "datediff", "day",
+                "day_of_week", "floor", "hour", "left", "length", "lower", "minute", "month", "right", "round",
+                "second", "starts_with", "substring", "timestamp_ceil", "timestamp_floor", "to_lowercase",
+                "to_uppercase", "trim", "upper", "year"
+        );
 
         short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
         addSupportedConversion(ColumnType.BYTE, numericTypes);

@@ -127,18 +127,31 @@ for it, so the row expires. `KEEP HIGHEST/LOWEST` keeps NULL rows. Under
 
 ### Cleanup classification is conservative
 
-`SqlCompilerImpl.validateExpiryPredicateOnMetadata` classifies a policy as
-`FILTER_ONLY`, so cleanup leaves its expired rows on disk, when the predicate:
+`SqlCompilerImpl.validateExpiryPredicateOnMetadata` reclaims only under a
+predicate it can prove safe, and classifies every other policy as
+`FILTER_ONLY`, so cleanup leaves its expired rows on disk. Two shapes count as
+proven:
 
-- reads the clock through a date variable (`$now`, `$today`, `$yesterday`,
+- a row-only predicate: every AST node is a column of the view, a constant, or
+  an operator or function on the `EXPIRY_ROW_ONLY_FUNCTIONS` list (comparisons,
+  arithmetic, `AND`/`OR`/`NOT`, `IN`, `BETWEEN`, `LIKE`, `~`, casts and a set of
+  pure scalar functions), with no date variable in its string constants;
+- a proven advancing-clock threshold such as `ts < dateadd('d', -30, now())`.
+
+Everything else filters only, for example:
+
+- a clock read through a date variable (`$now`, `$today`, `$yesterday`,
   `$tomorrow`), including a string literal that only looks like one
   (`owner = '$now'`);
-- depends on the session (`current_user()`, `session_user()`);
-- contains any other non-deterministic or runtime-constant function, including
-  harmless ones such as `version()`;
-- is not monotonic, for example `ts > now()`.
+- a session value (`current_user()`, `session_user()`), wherever it appears,
+  including inside an `IN` list or a regex pattern;
+- any function not on the list, including pure ones such as `sqrt()`;
+- a non-monotonic threshold, for example `ts > now()`.
 
-Only the proven advancing-clock thresholds and row-only predicates reclaim.
+The proof reads the AST because a function's `isNonDeterministic()`,
+`isRuntimeConstant()` and `isRandom()` are reliable only when they return true,
+and some functions keep an operand where the bound function tree does not
+expose it.
 
 - **Why accepted:** cleanup evaluates the predicate once per sweep, as the root
   user. Reclaiming under any of these would delete rows that later reads, or
@@ -149,6 +162,7 @@ Only the proven advancing-clock thresholds and row-only predicates reclaim.
   `MatViewExpireRowsHardeningTest.testExpireEnforcementMatchesCleanupBehaviour`,
   `MatViewExpireRowsHardeningTest.testDateVariablePredicateCleanupSkippedAndRowsSurvive`,
   `MatViewExpireRowsHardeningTest.testSessionDependentPredicateCleanupSkippedAndRowsSurvive`,
+  `MatViewExpireRowsHardeningTest.testSessionValueInListOrPatternCleanupSkippedAndRowsSurvive`,
   `MatViewExpireRowsTest.testReadFilterCorrectForNonMonotonicFuturePredicate`.
 
 ### Relative and window policies never reclaim disk

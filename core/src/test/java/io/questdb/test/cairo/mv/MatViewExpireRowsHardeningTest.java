@@ -51,6 +51,7 @@ import io.questdb.griffin.ExpiryPolicyVersionChangedException;
 import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -68,7 +69,9 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -100,6 +103,22 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     private static final long JAN_15_07 = 1_705_302_000_000_000L; // 2024-01-15T07:00:00Z
     private static final long JAN_25 = 1_706_140_800_000_000L; // 2024-01-25T00:00:00Z
     private static final long MAR_01 = 1_709_251_200_000_000L; // 2024-03-01T00:00:00Z
+
+    // Some tests put a hook function into a policy that has to reclaim. Hook functions are not on the
+    // row-only list, so without these registrations their policies would only filter.
+    @BeforeClass
+    public static void registerHookFunctions() {
+        SqlCompilerImpl.addExpiryRowOnlyFunctionForTesting("alloc_tracked");
+        SqlCompilerImpl.addExpiryRowOnlyFunctionForTesting("test_fault");
+        SqlCompilerImpl.addExpiryRowOnlyFunctionForTesting("test_latched_counter");
+    }
+
+    @AfterClass
+    public static void unregisterHookFunctions() {
+        SqlCompilerImpl.removeExpiryRowOnlyFunctionForTesting("alloc_tracked");
+        SqlCompilerImpl.removeExpiryRowOnlyFunctionForTesting("test_fault");
+        SqlCompilerImpl.removeExpiryRowOnlyFunctionForTesting("test_latched_counter");
+    }
 
     @Before
     public void setUp() {
@@ -540,6 +559,31 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 assertExpiryClassification(compiler, metadata, "owner = 'US$'", false, true, true);
             }
 
+            // The proof works on the AST: only the table's columns, constants and listed pure operators
+            // and functions count as row-only. A session value inside an IN list or a regex pattern hides
+            // from the bound function tree, so it has to fail the proof here.
+            execute("CREATE TABLE z (owner SYMBOL, s STRING, vc VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (
+                    TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("z"));
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                assertExpiryClassification(compiler, metadata, "owner IN ('a', 'b')", false, true, true);
+                assertExpiryClassification(compiler, metadata, "owner NOT IN ('a', 'b') AND ts BETWEEN '2024-01-01' AND '2024-01-02'", false, true, true);
+                assertExpiryClassification(compiler, metadata, "abs(v) > 5 OR s ~ 'ab.*'", false, true, true);
+                assertExpiryClassification(compiler, metadata, "coalesce(v, 0) < 1 AND lower(vc) LIKE 'x%'", false, true, true);
+
+                assertExpiryClassification(compiler, metadata, "owner IN (current_user(), 'nobody')", false, false, false);
+                assertExpiryClassification(compiler, metadata, "owner NOT IN (current_user(), 'shared')", false, false, false);
+                assertExpiryClassification(compiler, metadata, "owner IN (session_user(), 'nobody')", false, false, false);
+                assertExpiryClassification(compiler, metadata, "owner ~ current_user()", false, false, false);
+                assertExpiryClassification(compiler, metadata, "s ~ current_user()", false, false, false);
+                assertExpiryClassification(compiler, metadata, "vc ~ current_user()", false, false, false);
+                assertExpiryClassification(compiler, metadata, "regexp_replace(s, current_user(), '') = ''", false, false, false);
+                assertExpiryClassification(compiler, metadata, "v < rnd_double()", false, false, false);
+                // A pure function that is not on the list is not proven either: the policy only filters.
+                assertExpiryClassification(compiler, metadata, "sqrt(v) > 2", false, false, false);
+            }
+
             // A subquery predicate is never treated as safe for physical cleanup: the expression parse
             // rejects it up front (it runs without a query model), and isExpiryCleanupReclaiming maps
             // the rejection to non-monotonic, so the cleanup job skips such a policy. The classifier
@@ -942,43 +986,16 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     public void testSessionDependentPredicateCleanupSkippedAndRowsSurvive() throws Exception {
         // "owner != current_user()" shows each reader their own rows. The cleanup runs as admin, so every
         // row of another owner looks expired to it; deleting them would remove alice's rows for good.
+        assertMemoryLeak(() -> assertSessionPredicateCleanupSkipped("owner != current_user()"));
+    }
+
+    @Test
+    public void testSessionValueInListOrPatternCleanupSkippedAndRowsSurvive() throws Exception {
+        // These functions keep current_user() in a field of their own, where the bound function tree does
+        // not expose it. Each predicate keeps the same rows as "owner != current_user()".
         assertMemoryLeak(() -> {
-            setCurrentMicros(JAN_10);
-            final SqlExecutionContextImpl aliceContext = new SqlExecutionContextImpl(engine, 1).with(
-                    AllowAllSecurityContext.INSTANCE.forPrincipal("alice"),
-                    new BindVariableServiceImpl(configuration),
-                    null
-            );
-            try {
-                execute("CREATE TABLE base (owner SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("""
-                        INSERT INTO base VALUES
-                        ('admin', 1.0, '2024-01-01T01:00:00.000000Z'),
-                        ('admin', 2.0, '2024-01-01T02:00:00.000000Z'),
-                        ('alice', 3.0, '2024-01-01T03:00:00.000000Z'),
-                        ('alice', 4.0, '2024-01-01T04:00:00.000000Z'),
-                        ('alice', 5.0, '2024-01-02T01:00:00.000000Z'),
-                        ('alice', 6.0, '2024-01-02T02:00:00.000000Z'),
-                        ('admin', 7.0, '2024-01-03T01:00:00.000000Z'),
-                        ('alice', 8.0, '2024-01-03T02:00:00.000000Z')""");
-                drainWalAndMatViewQueues();
-                execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN owner != current_user()");
-                drainWalAndMatViewQueues();
-
-                assertQuery("SELECT count() FROM mv").withContext(aliceContext)
-                        .noRandomAccess().expectSize().noLeakCheck().returns("count\n5\n");
-                assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
-
-                Assert.assertFalse("a session-dependent policy must skip physical cleanup", runCleanup("mv"));
-                drainWalAndMatViewQueues();
-
-                assertQuery("SELECT count() FROM mv").withContext(aliceContext)
-                        .noRandomAccess().expectSize().noLeakCheck().returns("count\n5\n");
-                assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
-                assertPhysicalRows(8);
-            } finally {
-                Misc.free(aliceContext);
-            }
+            assertSessionPredicateCleanupSkipped("owner NOT IN (current_user(), 'nobody')");
+            assertSessionPredicateCleanupSkipped("NOT (owner ~ current_user())");
         });
     }
 
@@ -3497,6 +3514,50 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     // Creates view mv over base, with a policy that expires row OLD and keeps row NEW, and returns the view's
     // refresh state.
+    // Runs the cleanup on a view whose policy shows each reader their own rows, and checks that it
+    // deletes nothing: alice keeps her 5 rows, admin keeps 3, and all 8 rows stay on disk.
+    private void assertSessionPredicateCleanupSkipped(String predicate) throws Exception {
+        setCurrentMicros(JAN_10);
+        final SqlExecutionContextImpl aliceContext = new SqlExecutionContextImpl(engine, 1).with(
+                AllowAllSecurityContext.INSTANCE.forPrincipal("alice"),
+                new BindVariableServiceImpl(configuration),
+                null
+        );
+        try {
+            execute("CREATE TABLE base (owner SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('admin', 1.0, '2024-01-01T01:00:00.000000Z'),
+                    ('admin', 2.0, '2024-01-01T02:00:00.000000Z'),
+                    ('alice', 3.0, '2024-01-01T03:00:00.000000Z'),
+                    ('alice', 4.0, '2024-01-01T04:00:00.000000Z'),
+                    ('alice', 5.0, '2024-01-02T01:00:00.000000Z'),
+                    ('alice', 6.0, '2024-01-02T02:00:00.000000Z'),
+                    ('admin', 7.0, '2024-01-03T01:00:00.000000Z'),
+                    ('alice', 8.0, '2024-01-03T02:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN " + predicate);
+            drainWalAndMatViewQueues();
+
+            assertQuery("SELECT count() FROM mv").withContext(aliceContext)
+                    .noRandomAccess().expectSize().noLeakCheck().returns("count\n5\n");
+            assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
+
+            Assert.assertFalse("a session-dependent policy must skip physical cleanup [predicate=" + predicate + ']', runCleanup("mv"));
+            drainWalAndMatViewQueues();
+
+            assertQuery("SELECT count() FROM mv").withContext(aliceContext)
+                    .noRandomAccess().expectSize().noLeakCheck().returns("count\n5\n");
+            assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
+            assertPhysicalRows(8);
+        } finally {
+            Misc.free(aliceContext);
+        }
+        execute("DROP MATERIALIZED VIEW mv");
+        execute("DROP TABLE base");
+        drainWalAndMatViewQueues();
+    }
+
     private MatViewState createValueExpiryView() throws SqlException {
         execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
         execute("""
