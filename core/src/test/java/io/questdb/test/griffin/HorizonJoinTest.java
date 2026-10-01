@@ -782,6 +782,79 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinKeyedAdaptiveScanSwitchAcrossSmallGaps() throws Exception {
+        // Tests the adaptive switch over a run of ASOF positions that sit closer than MIN_GAP (1,024).
+        // No single gap qualifies for the relative check, so the helper sums the gaps and the
+        // backward scan cost of the run and checks the totals once they cover more than MIN_GAP.
+        // The rare key makes every other lookup scan back to row 0, which triggers the switch
+        // at the second window. The scan mode is not observable, so the test pins the results.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // 20,000 price rows 1us apart: RARE at row 0, A everywhere else.
+            execute(
+                    """
+                            INSERT INTO prices
+                            SELECT dateadd('u', (x - 1)::int, '2024-01-01T00:00:00.000000Z'),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 100.0 ELSE 1.0 END
+                            FROM long_sequence(20_000)
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            // 150 trades alternating A/RARE, 100us apart: the gap between ASOF positions is 100 rows.
+            execute(
+                    """
+                            INSERT INTO trades
+                            SELECT dateadd('u', (x * 100)::int, '2024-01-01T00:00:00.000000Z'),
+                                   CASE WHEN x % 2 = 0 THEN 'RARE' ELSE 'A' END,
+                                   1.0
+                            FROM long_sequence(150)
+                            """
+            );
+
+            String sql = "SELECT t.sym, count() AS n, avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym";
+
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tn\tavg_price
+                            A\t75\t1.0
+                            RARE\t75\t100.0
+                            """);
+
+            // The same run of positions through the row-preserving factories.
+            assertQuery("""
+                    SELECT sym, count() AS n, avg(price) AS avg_price FROM (
+                        SELECT t.sym, p.price FROM trades AS t
+                        HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0) AS h
+                    ) ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tn\tavg_price
+                            A\t75\t1.0
+                            RARE\t75\t100.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyedAdaptiveScanSwitchCrossPartition() throws Exception {
         // Tests the absolute threshold path that triggers the adaptive switch
         // when ASOF positions cross partition boundaries. When prevAsOfRowId and
