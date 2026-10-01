@@ -39,10 +39,12 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
 import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.State;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -212,6 +214,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     @Before
     @Override
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(LineTcpConnectionContext.class);
         super.setUp();
         startQuestDB();
         capture.start();
@@ -220,6 +223,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     @After
     @Override
     public void tearDown() throws Exception {
+        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class);
         capture.stop();
         stopQuestDB();
         super.tearDown();

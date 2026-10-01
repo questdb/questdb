@@ -36,6 +36,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -1961,7 +1962,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
 
             final int workerCount = 4;
-            WorkerPool pool = new WorkerPool(() -> workerCount);
+            WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -2394,6 +2395,52 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 B\tB\t2
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createHorizonSymbolAndStringKeyTables();
+            // At offset 0: AAPL/US -> 100.0, AAPL/EU -> 105.0, avg = 102.5
+            assertQuery("""
+                    SELECT avg(p.price)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.region = p.region)
+                    LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(getHorizonJoinPlanType())
+                    .returns("""
+                            avg
+                            102.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSymbolAndStringKeyIndexCollisionKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            createHorizonSymbolAndStringKeyTables();
+            // At offset 0 (1s): AAPL/US -> 100.0, AAPL/EU -> 105.0
+            // At offset 1s (2s): AAPL/US -> 110.0, AAPL/EU -> 115.0
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, t.region, avg(p.price) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.region = p.region) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs, t.region")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(getHorizonJoinPlanType())
+                    .returns("""
+                            sec_offs\tregion\tavg
+                            0\tEU\t105.0
+                            0\tUS\t100.0
+                            1\tEU\t115.0
+                            1\tUS\t110.0
+                            """);
         });
     }
 
@@ -6563,6 +6610,52 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiHorizonJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createHorizonSymbolAndStringKeyTables();
+            // At offset 0: AAPL/US -> 100.0, AAPL/EU -> 105.0, avg = 102.5; both mids -> 1.0
+            assertQuery("""
+                    SELECT avg(p.price), avg(m.mid)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.region = p.region)
+                    HORIZON JOIN mids AS m ON (t.sym = m.sym)
+                    LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(getMultiHorizonJoinPlanType())
+                    .returns("""
+                            avg\tavg1
+                            102.5\t1.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinSymbolAndStringKeyIndexCollisionSecondSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createHorizonSymbolAndStringKeyTables();
+            assertQuery("""
+                    SELECT t.region, avg(m.mid), avg(p.price)
+                    FROM orders AS t
+                    HORIZON JOIN mids AS m ON (t.sym = m.sym)
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.region = p.region)
+                    LIST (0) AS h
+                    ORDER BY t.region
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(getMultiHorizonJoinPlanType())
+                    .returns("""
+                            region\tavg\tavg1
+                            EU\t1.0\t105.0
+                            US\t1.0\t100.0
+                            """);
+        });
+    }
+
+    @Test
     public void testMultiHorizonJoinThreeSlaves() throws Exception {
         // Validates multi-horizon join with more than 2 slaves
         assertMemoryLeak(() -> {
@@ -6949,6 +7042,39 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             1\t160.0\t300
                             """);
         });
+    }
+
+    /**
+     * Creates orders (master) with SYMBOL sym and region, prices with SYMBOL sym and STRING region,
+     * and mids with SYMBOL sym. HORIZON JOIN compares t.sym = p.sym as int symbol keys and
+     * t.region = p.region as strings. Both generateHorizonJoinFactory() and
+     * generateMultiHorizonJoinFactory() keep one asOfWriteSymbolAsString BitSet for master and slave
+     * column indexes, so the region bit of one side can land on the index of the other side's sym
+     * column. That side then writes sym as a string while the other side writes it as an int.
+     */
+    private void createHorizonSymbolAndStringKeyTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, region SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, region STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE mids (ts #TIMESTAMP, sym SYMBOL, mid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        // TSLA goes first, so prices and orders assign different symbol keys to AAPL
+        execute("""
+                INSERT INTO prices VALUES
+                    ('1970-01-01T00:00:00.100000Z', 'TSLA', 'US', 1.0),
+                    ('1970-01-01T00:00:00.500000Z', 'AAPL', 'US', 100.0),
+                    ('1970-01-01T00:00:00.500000Z', 'AAPL', 'EU', 105.0),
+                    ('1970-01-01T00:00:01.500000Z', 'AAPL', 'US', 110.0),
+                    ('1970-01-01T00:00:01.500000Z', 'AAPL', 'EU', 115.0)
+                """);
+        execute("""
+                INSERT INTO mids VALUES
+                    ('1970-01-01T00:00:00.500000Z', 'AAPL', 1.0),
+                    ('1970-01-01T00:00:01.500000Z', 'AAPL', 2.0)
+                """);
+        execute("""
+                INSERT INTO orders VALUES
+                    ('1970-01-01T00:00:01.000000Z', 'AAPL', 'US', 100),
+                    ('1970-01-01T00:00:01.000000Z', 'AAPL', 'EU', 200)
+                """);
     }
 
     private String getHorizonJoinPlanType() {

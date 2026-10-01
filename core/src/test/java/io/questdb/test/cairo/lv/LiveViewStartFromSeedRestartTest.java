@@ -185,6 +185,114 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testMidSeedFaultKeepsRetryBudgetAcrossReplayTurns() throws Exception {
+        // A transient mid-seed fault charges the flush retry budget, and the replay turns that follow
+        // must leave that charge standing. The recovery rewinds the sweep to its newest seed boundary
+        // and re-feeds the rows between that boundary and the on-disk output to rebuild the window
+        // state; those rows are already durable, so a replay turn appends nothing, and a build that
+        // recorded a refresh success for it would zero the budget every time a fault sent the sweep
+        // back to the boundary - a fault that never clears would then retry forever. Only the first
+        // turn to commit new output past the skip-write floor, real progress, clears the charge.
+        //
+        // Two rows per turn, five admitted day-one rows at ONE timestamp: turn one seals the only seed
+        // boundary, at offset 2, and turn two cannot seal another because the timeline refuses a
+        // boundary whose max timestamp does not climb above the sealed one. Turn three feeds row 9 and
+        // then faults opening day two's x.d, so row 9 rolls back: four rows on disk, resume point at
+        // two. Turn four replays rows 7 and 8 off the disk without appending (the lifetime row count
+        // ends AT the floor, not past it), turn five appends rows 9 and 10 past the floor, turn six
+        // appends row 11 and completes. The fault is one-shot, as in
+        // testMidSeedRefreshFailureDoesNotDoubleAdvanceWindowState, whose fixture this borrows.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 2);
+        final String[] baseDir = new String[1];
+        final AtomicBoolean isSeamReadArmed = new AtomicBoolean();
+        final AtomicBoolean hasReadFailed = new AtomicBoolean();
+        final FilesFacade ff = failBaseColumnOpenOnce(baseDir, "2026-04-02", isSeamReadArmed, hasReadFailed);
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base (ts, sym, x) VALUES
+                    ('2026-04-01T00:00:01.000000Z', 'a', 1),
+                    ('2026-04-01T00:00:02.000000Z', 'a', 2),
+                    ('2026-04-01T00:00:03.000000Z', 'a', 3),
+                    ('2026-04-01T00:00:04.000000Z', 'a', 4),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 5),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 6),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 7),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 8),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 9),
+                    ('2026-04-02T00:00:01.000000Z', 'a', 10),
+                    ('2026-04-02T00:00:02.000000Z', 'a', 11)""");
+            drainWalQueue();
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM " + START_FROM + " AS " + VIEW_SQL);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                runSeedTurn(job);
+                assertSeedTurn("turn 1", instance, 2, 2, 0);
+                Assert.assertEquals("turn 1 must seal the seed boundary", 2, instance.getSeedCheckpointDataOffset());
+                runSeedTurn(job);
+                assertSeedTurn("turn 2", instance, 4, 4, 0);
+                Assert.assertEquals(
+                        "turn 2 ends on the sealed max timestamp, so it must not seal another boundary",
+                        2,
+                        instance.getSeedCheckpointDataOffset()
+                );
+
+                isSeamReadArmed.set(true);
+                runSeedTurn(job);
+                Assert.assertTrue("the seam read must actually have been failed", hasReadFailed.get());
+                assertSeedTurn("turn 3, the fault", instance, 4, 4, 1);
+                Assert.assertEquals("the fault must have been counted", 1, instance.getRefreshFaultCount());
+
+                runSeedTurn(job);
+                Assert.assertEquals(
+                        "the resume must derive the skip-write floor from the four rows on disk",
+                        4,
+                        instance.getSeedSkipWriteFloor()
+                );
+                assertSeedTurn("turn 4, the replay", instance, 4, 4, 1);
+
+                runSeedTurn(job);
+                assertSeedTurn("turn 5, new output past the floor", instance, 6, 6, 0);
+
+                runSeedTurn(job);
+                Assert.assertEquals(
+                        "turn 6 must complete the sweep",
+                        LiveViewState.SEED_STATE_ACTIVE,
+                        instance.getStateReader().getSeedState()
+                );
+                Assert.assertEquals("the completing turn must not charge the budget", 0, instance.getFlushRetryCount());
+                Assert.assertFalse("a transient fault must not invalidate the view", instance.isInvalid());
+                driveRefreshToQuiescence(job);
+            }
+
+            // rn is gapless and the running sum matches a clean single pass; a re-appended replay row
+            // or a double-fed accumulator would show in both.
+            assertQuery("SELECT ts, x, rn, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn\ts
+                            2026-04-01T00:00:05.000000Z\t5\t1\t5.0
+                            2026-04-01T00:00:05.000000Z\t6\t2\t11.0
+                            2026-04-01T00:00:05.000000Z\t7\t3\t18.0
+                            2026-04-01T00:00:05.000000Z\t8\t4\t26.0
+                            2026-04-01T00:00:05.000000Z\t9\t5\t30.0
+                            2026-04-02T00:00:01.000000Z\t10\t6\t34.0
+                            2026-04-02T00:00:02.000000Z\t11\t7\t38.0
+                            """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testMidSeedRefreshFailureDoesNotDoubleAdvanceWindowState() throws Exception {
         // A seed turn that feeds rows through the incremental window cursor - advancing the
         // accumulators - and then throws before the LV commit must not leave those accumulators
@@ -459,6 +567,176 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
             assertSeededRows();
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testSeedFaultBeforeReplayOnlyCompletionClearsRetryBudget() throws Exception {
+        // The counterpart of testMidSeedFaultKeepsRetryBudgetAcrossReplayTurns: a charge that replay
+        // turns rightly keep must still clear when the sweep completes, even when the completing turns
+        // append nothing at all - a sweep whose every row was already on disk when the fault struck.
+        // Leaving the charge standing into ACTIVE would let the first genuine drain fault inherit a
+        // streak that started in the seed.
+        //
+        // Two rows per turn, four admitted rows at ONE timestamp: turn one seals the only seed
+        // boundary, at offset 2, and turn two appends rows 7 and 8 and yields on its budget without
+        // sealing, so the whole output is on disk while the view is still SEEDING with a resume point
+        // at 2. A restart drops the in-memory sweep state, and the first turn after it faults opening
+        // day one's x.d before feeding a row: one charge, nothing to repair. The next turn replays rows
+        // 7 and 8 off the disk (charge kept), and the one after finds the cursor exhausted and
+        // completes: no new row, ACTIVE, charge cleared.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 2);
+        final String[] baseDir = new String[1];
+        final AtomicBoolean isDayOneReadArmed = new AtomicBoolean();
+        final AtomicBoolean hasReadFailed = new AtomicBoolean();
+        final FilesFacade ff = failBaseColumnOpenOnce(baseDir, "2026-04-01", isDayOneReadArmed, hasReadFailed);
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base (ts, sym, x) VALUES
+                    ('2026-04-01T00:00:01.000000Z', 'a', 1),
+                    ('2026-04-01T00:00:02.000000Z', 'a', 2),
+                    ('2026-04-01T00:00:03.000000Z', 'a', 3),
+                    ('2026-04-01T00:00:04.000000Z', 'a', 4),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 5),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 6),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 7),
+                    ('2026-04-01T00:00:05.000000Z', 'a', 8)""");
+            drainWalQueue();
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM " + START_FROM + " AS " + VIEW_SQL);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                runSeedTurn(job);
+                assertSeedTurn("turn 1", instance, 2, 2, 0);
+                runSeedTurn(job);
+                assertSeedTurn("turn 2", instance, 4, 4, 0);
+                Assert.assertEquals(
+                        "turn 2 ends on the sealed max timestamp, so it must not seal another boundary",
+                        2,
+                        instance.getSeedCheckpointDataOffset()
+                );
+
+                restart();
+                // Close the pooled base reader the pre-restart sweep pinned, so the resumed sweep opens
+                // day one afresh and meets the armed fault rather than a partition already open.
+                engine.releaseInactive();
+                final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertNotSame("the restart must rebuild the instance", instance, reloaded);
+                Assert.assertEquals(
+                        "the view must come back SEEDING",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        reloaded.getStateReader().getSeedState()
+                );
+
+                isDayOneReadArmed.set(true);
+                runSeedTurn(job);
+                Assert.assertTrue("the day-one read must actually have been failed", hasReadFailed.get());
+                // The resume restored offset 2 off the boundary before the reader open faulted, and
+                // the turn fed nothing, so nothing re-arms the resume: the charge is the fault's only trace.
+                assertSeedTurn("turn 3, the fault before any row", reloaded, 2, 2, 1);
+                Assert.assertEquals(
+                        "the resume must derive the skip-write floor from the four rows on disk",
+                        4,
+                        reloaded.getSeedSkipWriteFloor()
+                );
+
+                runSeedTurn(job);
+                assertSeedTurn("turn 4, the replay", reloaded, 4, 4, 1);
+
+                runSeedTurn(job);
+                Assert.assertEquals(
+                        "turn 5 must complete the sweep off the exhausted cursor",
+                        LiveViewState.SEED_STATE_ACTIVE,
+                        reloaded.getStateReader().getSeedState()
+                );
+                Assert.assertEquals(
+                        "completion must clear the charge even though it appended nothing",
+                        0,
+                        reloaded.getFlushRetryCount()
+                );
+                Assert.assertFalse("a transient fault must not invalidate the view", reloaded.isInvalid());
+                driveRefreshToQuiescence(job);
+            }
+
+            // The four rows the first sweep committed are there exactly once; neither the replay nor
+            // the completing turn re-appended any of them.
+            assertQuery("SELECT ts, x, rn, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn\ts
+                            2026-04-01T00:00:05.000000Z\t5\t1\t5.0
+                            2026-04-01T00:00:05.000000Z\t6\t2\t11.0
+                            2026-04-01T00:00:05.000000Z\t7\t3\t18.0
+                            2026-04-01T00:00:05.000000Z\t8\t4\t26.0
+                            """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    /**
+     * Pins the sweep's in-memory coordinates and its retry charge after one turn: still SEEDING, the
+     * lifetime output row count, the data offset the next turn resumes from, and the flush retry
+     * count the budget measures.
+     */
+    private static void assertSeedTurn(
+            String turn,
+            LiveViewInstance instance,
+            long expectedLvRowsTotal,
+            long expectedDataOffset,
+            int expectedRetryCount
+    ) {
+        Assert.assertEquals(
+                turn + ": the sweep must still be SEEDING",
+                LiveViewState.SEED_STATE_SEEDING,
+                instance.getStateReader().getSeedState()
+        );
+        Assert.assertEquals(turn + ": lifetime LV row count", expectedLvRowsTotal, instance.getLvRowsTotal());
+        Assert.assertEquals(turn + ": seed data offset", expectedDataOffset, instance.getSeedDataOffset());
+        Assert.assertEquals(turn + ": flush retry count", expectedRetryCount, instance.getFlushRetryCount());
+    }
+
+    /**
+     * A files facade that fails the next read-only open of the base's {@code x.d} in the named
+     * partition once {@code isArmed} is set, then disarms and records the failure in {@code hasFailed}.
+     * The caller fills in {@code baseDir} once the base table exists; the WAL exclusion keeps the fault off
+     * the base's own segments, so only the sweep's applied-base reader can meet it.
+     */
+    private static FilesFacade failBaseColumnOpenOnce(String[] baseDir, String partition, AtomicBoolean isArmed, AtomicBoolean hasFailed) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isArmed.get()
+                        && baseDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, partition)
+                        && !Utf8s.containsAscii(name, "wal")) {
+                    isArmed.set(false);
+                    hasFailed.set(true);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+    }
+
+    /**
+     * Runs exactly one seed turn. A SEEDING view attempts a sweep turn on every job pass whatever the
+     * clock says, so one {@code job.run()} is one turn; the clock still advances so the pass matches
+     * the cadence the other drivers use. The WAL drain lands whatever the turn committed.
+     */
+    private static void runSeedTurn(LiveViewRefreshJob job) {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        job.run();
+        drainWalQueue();
     }
 
     private void assertSeededRows() throws Exception {

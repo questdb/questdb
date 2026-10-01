@@ -24,20 +24,21 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderServerException;
+import io.questdb.client.Sender;
+import io.questdb.client.SenderError;
+import io.questdb.client.SenderErrorHandler;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.client.LineSenderServerException;
-import io.questdb.client.Sender;
-import io.questdb.client.SenderError;
-import io.questdb.client.SenderErrorHandler;
-import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.ObjHashSet;
@@ -63,12 +64,14 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(AbstractQwpWebSocketTest.class);
     protected int recvChunk;
     protected int sendChunk;
+    protected WorkerPoolMode workerPoolMode;
 
     @Before
     public void setUpFragmentationChunks() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         recvChunk = 1 + rnd.nextInt(500);
         sendChunk = 1 + rnd.nextInt(500);
+        workerPoolMode = TestUtils.getWorkerPoolMode(rnd);
     }
 
     /**
@@ -325,7 +328,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (
-                    TestWorkerPool workerPool = new TestWorkerPool(1);
+                    TestWorkerPool workerPool = new TestWorkerPool(1, workerPoolMode);
                     HttpServer server = new HttpServer(httpConfig, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 server.bind(new HttpRequestHandlerFactory() {

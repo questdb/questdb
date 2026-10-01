@@ -25,18 +25,25 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
+import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -3991,6 +3998,105 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonParallelAggregateWindowJoinDowngradesToSerial() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            // these aggregates report supportsParallelism() == false
+            final String query = """
+                    SELECT t.sym, t.ts, %s
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    %s
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    """;
+            final String[] aggregates = {
+                    "string_agg(p.sym::string, ',')",
+                    "string_distinct_agg(p.sym::string, ',')",
+                    "approx_percentile(p.price, 0.5)",
+                    "count_distinct(p.sym::string)"
+            };
+            for (String aggregate : aggregates) {
+                for (String onClause : new String[]{"", "ON (t.sym = p.sym)"}) {
+                    try (RecordCursorFactory factory = select(query.formatted(aggregate, onClause))) {
+                        Assert.assertFalse(
+                                aggregate,
+                                containsFactory(factory, AsyncWindowJoinFastRecordCursorFactory.class)
+                                        || containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class)
+                        );
+                    }
+                }
+            }
+            assertQuery("""
+                    SELECT t.price, string_agg(p.price::string, ',') agg, count_distinct(p.price::string) cd
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    ON (t.sym = p.sym)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE t.sym = 'TSLA'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            price\tagg\tcd
+                            400.0\t399.5,400.5\t2
+                            401.0\t400.5\t1
+                            402.0\t401.5\t1
+                            """);
+            assertQuery("""
+                    SELECT t.price, string_distinct_agg(p.sym::string, ',') agg, approx_percentile(p.price, 0.5) ap
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE t.sym = 'TSLA'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            price\tagg\tap
+                            400.0\tTSLA,AMZN\t400.0
+                            401.0\tTSLA,AMZN\t496.0
+                            402.0\tTSLA,AMZN,META\t496.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonParallelWindowJoinFilterStaysAsync() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String query = """
+                    SELECT t.sym, t.ts, sum(p.price)
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    ON (t.sym = p.sym AND %s)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    """;
+            try (RecordCursorFactory factory = select(query.formatted("t.price > 0"))) {
+                Assert.assertTrue(
+                        containsFactory(factory, AsyncWindowJoinFastRecordCursorFactory.class)
+                                || containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class)
+                );
+            }
+            // A supportsParallelism() == false filter is also thread-unsafe, so per-worker
+            // clones keep the async join valid; the planner must not downgrade to serial.
+            try (
+                    RecordCursorFactory factory = select(
+                            query.formatted("length((t.sym::STRING)::SYMBOL) > 0")
+                    )
+            ) {
+                Assert.assertTrue(
+                        containsFactory(factory, AsyncWindowJoinFastRecordCursorFactory.class)
+                                || containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testNotThreadSafeFunction() throws Exception {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
@@ -4387,6 +4493,45 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns(sink);
+        });
+    }
+
+    @Test
+    public void testWindowJoinBrokenConnectionPreserved() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    throw CairoException.queryDisconnected(-1);
+                }
+            });
+            try (
+                    RecordCursorFactory factory = select(
+                            """
+                                    SELECT t.ts, sum(p.price)
+                                    FROM trades t
+                                    WINDOW JOIN prices p
+                                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                                    EXCLUDE PREVAILING
+                                    WHERE test_latched_counter()
+                                    """
+                    )
+            ) {
+                Assert.assertTrue(containsFactory(factory, AsyncWindowJoinRecordCursorFactory.class));
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
+                    Assert.fail("query must abort when the reducer reports a broken connection");
+                } catch (CairoException e) {
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION, e.getInterruptionReason());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "remote disconnected, query aborted");
+                }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
         });
     }
 
@@ -6583,7 +6728,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, "true");
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -8237,6 +8382,16 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym2	sym2	2023-01-01T09:00:00.000000Z	1
                             """);
         });
+    }
+
+    private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {
+        while (factory != null) {
+            if (factoryClass.isInstance(factory)) {
+                return true;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
     }
 
     /**

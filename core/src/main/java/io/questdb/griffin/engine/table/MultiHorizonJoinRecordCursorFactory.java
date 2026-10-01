@@ -332,7 +332,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         asOfJoinMaps.add(null);
                     }
                     if (ss.getMasterSymbolKeyColumnIndices() != null) {
-                        symbolTranslatingRecords.add(new SymbolTranslatingRecord(ss.getMasterColumnCount(), ss.getMasterSymbolKeyColumnIndices(), ss.getSlaveSymbolKeyColumnIndices()));
+                        symbolTranslatingRecords.add(new SymbolTranslatingRecord(configuration, ss.getMasterColumnCount(), ss.getMasterSymbolKeyColumnIndices(), ss.getSlaveSymbolKeyColumnIndices()));
                     } else {
                         symbolTranslatingRecords.add(null);
                     }
@@ -368,7 +368,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 Misc.clearObjList(groupByFunctions);
                 Misc.free(groupByAllocator);
                 Misc.freeObjListAndKeepObjects(asOfJoinMaps);
-                Misc.clearObjList(symbolTranslatingRecords);
+                Misc.freeObjListAndKeepObjects(symbolTranslatingRecords);
                 Misc.free(horizonIterator);
                 isOpen = false;
             }
@@ -435,7 +435,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
          */
         private void buildMap() {
             // Consult the breaker before iterating, so an empty master still observes cancellation.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
@@ -445,7 +445,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             dataMap.clear();
 
             while (horizonIterator.next()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
@@ -532,8 +532,10 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s));
                 slaveSymbolSources.setQuick(s, slaveCursors.getQuick(s));
-                if (symbolTranslatingRecords.getQuick(s) != null) {
-                    symbolTranslatingRecords.getQuick(s).initSources(masterCursor, slaveCursors.getQuick(s));
+                final SymbolTranslatingRecord symbolTranslatingRecord = symbolTranslatingRecords.getQuick(s);
+                if (symbolTranslatingRecord != null) {
+                    symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
+                    symbolTranslatingRecord.initSources(masterCursor, slaveCursors.getQuick(s));
                 }
             }
 

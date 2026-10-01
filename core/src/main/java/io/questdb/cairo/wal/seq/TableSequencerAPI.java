@@ -205,6 +205,22 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public @NotNull TransactionLogCursor getCursor(
+            final TableToken tableToken,
+            long seqTxn,
+            @NotNull TableSequencerCursorHolder cursorHolder
+    ) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            TransactionLogCursor cursor;
+            try {
+                cursor = tableSequencer.getTransactionLogCursor(seqTxn, cursorHolder);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return cursor;
+        }
+    }
+
     public @NotNull TableMetadataChangeLog getMetadataChangeLog(final TableToken tableToken, long structureVersionLo) {
         try (TableSequencerImpl tableSequencer = getOrOpenSequencer(tableToken, this.openSequencerInstanceLambda)) {
             if (tableSequencer.metadataMatches(structureVersionLo)) {
@@ -225,6 +241,22 @@ public class TableSequencerAPI implements QuietCloseable {
             TableMetadataChangeLog metadataChangeLog;
             try {
                 metadataChangeLog = tableSequencer.getMetadataChangeLogSlow(structureVersionLo);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return metadataChangeLog;
+        }
+    }
+
+    public TableMetadataChangeLog getMetadataChangeLogSlow(
+            final TableToken tableToken,
+            long structureVersionLo,
+            @NotNull TableSequencerCursorHolder cursorHolder
+    ) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            TableMetadataChangeLog metadataChangeLog;
+            try {
+                metadataChangeLog = tableSequencer.getMetadataChangeLogSlow(structureVersionLo, cursorHolder);
             } finally {
                 tableSequencer.unlockRead();
             }

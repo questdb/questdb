@@ -188,8 +188,8 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
-    public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
-        return null;
+    public @NotNull SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
+        return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     }
 
     @Override
@@ -279,6 +279,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public void popWindowContext() {
+    }
+
+    @Override
     public void pushHasInterval(int hasInterval) {
     }
 
@@ -288,6 +292,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
 
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
+    }
+
+    @Override
+    public void pushWindowContext() {
     }
 
     @Override

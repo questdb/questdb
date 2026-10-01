@@ -126,6 +126,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
             this.joinFilter = joinFilter;
+            this.groupByFunctions = groupByFunctions;
             this.windowLo = windowLo;
             this.windowHi = windowHi;
             this.windowLoFunc = windowLoFunc;
@@ -294,6 +295,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             failure = Misc.freeBestEffort(failure, slaveFactory);
         }
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
         failure = Misc.freeBestEffort(failure, joinFilter);
         if (joinMetadata != metadata) {
             failure = Misc.freeBestEffort(failure, joinMetadata);
@@ -471,7 +473,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
             for (; ; ) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                 final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (slaveTimestamp > slaveTimestampHi) {
@@ -631,7 +633,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             // If so, we don't need to do backward scan to find the prevailing row.
             boolean needToFindPrevailing = true;
             for (; ; ) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                     if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                         break;
@@ -672,7 +674,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // Aggregate the rows within the time window.
             for (; ; ) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                     if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                         break;

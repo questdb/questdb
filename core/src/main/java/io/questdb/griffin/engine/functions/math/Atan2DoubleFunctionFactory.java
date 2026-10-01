@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -51,15 +52,14 @@ public class Atan2DoubleFunctionFactory implements FunctionFactory {
         return new Atan2Function(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Atan2Function extends DoubleFunction implements Function {
-        final Function x;
-        final Function y;
+    private static class Atan2Function extends DoubleFunction implements BinaryFunction {
+        private final Function x;
+        private final Function y;
 
-        public Atan2Function(Function y, Function x) {
+        private Atan2Function(Function y, Function x) {
             this.y = y;
             this.x = x;
         }
-
 
         @Override
         public double getDouble(Record rec) {
@@ -67,8 +67,18 @@ public class Atan2DoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getLeft() {
+            return y;
+        }
+
+        @Override
         public String getName() {
             return SYMBOL;
+        }
+
+        @Override
+        public Function getRight() {
+            return x;
         }
     }
 }

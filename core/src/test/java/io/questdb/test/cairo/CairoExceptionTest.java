@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractTest;
 import org.junit.Assert;
@@ -149,6 +150,26 @@ public class CairoExceptionTest extends AbstractTest {
     @Test
     public void testMatViewDoesNotExistIsNotCritical() {
         Assert.assertFalse(CairoException.matViewDoesNotExist("foo").isCritical());
+    }
+
+    @Test
+    public void testQueryInterruptionReasons() {
+        Assert.assertEquals(
+                SqlExecutionCircuitBreaker.STATE_CANCELLED,
+                CairoException.queryCancelled().getInterruptionReason()
+        );
+        Assert.assertEquals(
+                SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION,
+                CairoException.queryDisconnected(42).getInterruptionReason()
+        );
+        Assert.assertEquals(
+                SqlExecutionCircuitBreaker.STATE_TIMEOUT,
+                CairoException.queryTimedOut().getInterruptionReason()
+        );
+        Assert.assertEquals(
+                SqlExecutionCircuitBreaker.STATE_OK,
+                CairoException.nonCritical().getInterruptionReason()
+        );
     }
 
     @Test

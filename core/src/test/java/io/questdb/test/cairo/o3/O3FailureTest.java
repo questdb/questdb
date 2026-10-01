@@ -3345,7 +3345,7 @@ public class O3FailureTest extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            try (WorkerPool pool1 = new WorkerPool(() -> 1)) {
+            try (WorkerPool pool1 = new TestWorkerPool(1)) {
                 pool1.assign(new Job() {
                     private boolean toRun = true;
 

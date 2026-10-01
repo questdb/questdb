@@ -344,7 +344,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             }
 
             if (masterSymbolKeyColumnIndices != null) {
-                this.symbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
+                this.symbolTranslatingRecord = new SymbolTranslatingRecord(configuration, masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
             } else {
                 this.symbolTranslatingRecord = null;
             }
@@ -376,7 +376,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 if (asOfJoinMap != null) {
                     asOfJoinMap.close();
                 }
-                Misc.clear(symbolTranslatingRecord);
+                Misc.free(symbolTranslatingRecord);
                 Misc.free(horizonIterator);
                 isOpen = false;
             }
@@ -438,7 +438,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
         private void buildMap() {
             // Consult the breaker before iterating, so an empty master still observes cancellation.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
 
             slaveTimeFrameHelper.toTop();
@@ -450,7 +450,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             while (horizonIterator.next()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
@@ -535,6 +535,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
             // Initialize symbol translating record
             if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
 

@@ -76,7 +76,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
-                new SymbolTranslatingRecord(Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
+                new SymbolTranslatingRecord(configuration, Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
                         masterSymbolKeyColumnIndices.length) : null;
         try {
             this.masterSink = masterSink;
@@ -120,8 +120,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            // of() binds the per-query tracker and reopens the join map + slave chain before it can throw;
-            // close() frees them under that tracker and resets isOpen so the factory is reusable.
+            // of() binds the per-query tracker and reopens the join map, slave chain and caches before it adopts
+            // the cursors; close() frees them under that tracker and resets isOpen so the factory is reusable.
             Misc.free(cursor);
             throw e;
         }
@@ -165,7 +165,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = keyMap.withKey();
             key.put(keyRecord, recordSink);
@@ -231,7 +231,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
             final Record masterRecord = masterCursor.getRecord();
             while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
@@ -247,6 +247,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isOpen = false;
                 Misc.free(joinKeyMap);
                 Misc.free(slaveChain);
+                Misc.free(symbolTranslatingRecord);
                 super.close();
             }
         }
@@ -276,7 +277,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
 
             while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
@@ -340,8 +341,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 slaveChain.setMemoryTracker(executionContext.getMemoryTracker());
                 slaveChain.reopen();
             }
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             this.circuitBreaker = executionContext.getCircuitBreaker();
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
@@ -357,6 +356,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 if (swapped) {
                     symbolTranslatingRecord.initSources(slaveCursor, masterCursor,
                             masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
@@ -367,6 +367,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
             slaveChainCursor = null;
             isMapBuilt = false;
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

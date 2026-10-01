@@ -26,6 +26,7 @@ package io.questdb.mp;
 
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
@@ -101,6 +102,18 @@ final class ConcurrentQueueSegment<T> {
         }
     }
 
+    int getApproximateCount() {
+        final long currentHead = headAndTail.head;
+        long currentTail = headAndTail.tail;
+        if (frozenForEnqueues) {
+            if (currentTail - currentHead < freezeOffset) {
+                return slots.length;
+            }
+            currentTail -= freezeOffset;
+        }
+        return (int) Math.max(0, Math.min(slots.length, currentTail - currentHead));
+    }
+
     /**
      * Gets the capacity of the segment.
      *
@@ -108,6 +121,22 @@ final class ConcurrentQueueSegment<T> {
      */
     public int getCapacity() {
         return slots.length;
+    }
+
+    boolean hasAvailable() {
+        final long currentHead = headAndTail.head;
+        final long currentTail = headAndTail.tail;
+        if (frozenForEnqueues) {
+            return currentTail - currentHead != freezeOffset;
+        }
+        return currentTail - currentHead > 0;
+    }
+
+    @TestOnly
+    void setSequenceForTesting(long headSequence, long tailSequence, boolean isFrozen) {
+        headAndTail.head = headSequence;
+        headAndTail.tail = tailSequence;
+        frozenForEnqueues = isFrozen;
     }
 
     /**

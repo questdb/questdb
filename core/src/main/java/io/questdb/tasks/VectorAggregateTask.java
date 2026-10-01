@@ -25,7 +25,24 @@
 package io.questdb.tasks;
 
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberDispatchContext;
 
 public class VectorAggregateTask {
     public VectorAggregateEntry entry;
+    private FiberDispatchContext dispatchContext;
+
+    public void clear() {
+        dispatchContext = null;
+        entry = null;
+    }
+
+    public FiberDispatchContext getDispatchContext() {
+        return dispatchContext;
+    }
+
+    public void of(VectorAggregateEntry entry) {
+        this.dispatchContext = Fiber.captureParallelDispatchContext();
+        this.entry = entry;
+    }
 }

@@ -1,0 +1,38 @@
+name: PR title
+
+on:
+  pull_request:
+    # synchronize is here even though pushing cannot change a title: the required
+    # status is attached to the head commit, so every new head needs its own verdict
+    # or the check reads as missing and the pull request cannot merge.
+    types: [ synchronize, opened, reopened, edited ]
+  merge_group:
+
+permissions: {}
+
+# One job, so a pull request shows one "PR title / validate" row beside the
+# "PR title" status this posts. The rules' own tests live in pr_title_rules.yml,
+# which runs only when ci/validate-pr-title changes: keeping them out of this
+# workflow is what stops a failing test from taking the verdict down with it, and
+# keeps two near-identical rows off every unrelated pull request.
+jobs:
+  validate:
+    # A pull request from a fork gets a read-only token, so this job could post
+    # neither the status nor the comment. Same condition the Danger job carried,
+    # and the same consequence: a fork pull request gets no status at all, so
+    # while this context is required, a fork cannot satisfy it without a bypass.
+    if: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write      # the "PR title" commit status the master ruleset requires
+      pull-requests: write # write, update and delete the explanation comment
+    steps:
+      - uses: actions/checkout@v5
+      # No setup-node step: the runner ships a current Node, and nothing under
+      # ci/validate-pr-title depends on anything outside the standard library.
+      - name: Validate the pull request title
+        working-directory: ./ci/validate-pr-title
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node check.js

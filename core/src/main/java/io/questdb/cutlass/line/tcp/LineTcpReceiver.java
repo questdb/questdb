@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.AcceptGatedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
@@ -85,8 +86,9 @@ public class LineTcpReceiver implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(scheduler);
-        Misc.free(dispatcher);
+        Throwable failure = Misc.freeBestEffort(null, scheduler);
+        failure = Misc.freeBestEffort(failure, dispatcher);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
 }

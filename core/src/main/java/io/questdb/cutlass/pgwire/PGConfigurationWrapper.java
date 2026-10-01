@@ -29,6 +29,9 @@ import io.questdb.Metrics;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
+import io.questdb.mp.DynamicFiberWorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolConfigurationWrapper;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
@@ -38,15 +41,12 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-import java.util.concurrent.atomic.AtomicReference;
-
-public class PGConfigurationWrapper implements PGConfiguration {
-    private final AtomicReference<PGConfiguration> delegate = new AtomicReference<>();
+public class PGConfigurationWrapper implements DynamicFiberWorkerPoolConfiguration, PGConfiguration {
     private final Metrics metrics;
+    private final WorkerPoolConfigurationWrapper workerPoolConfiguration = new WorkerPoolConfigurationWrapper();
 
     public PGConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
-        delegate.set(null);
     }
 
     @Override
@@ -142,6 +142,26 @@ public class PGConfigurationWrapper implements PGConfiguration {
     @Override
     public FactoryProvider getFactoryProvider() {
         return getDelegate().getFactoryProvider();
+    }
+
+    @Override
+    public FiberConfiguration getFiberConfiguration() {
+        return workerPoolConfiguration.getFiberConfiguration();
+    }
+
+    @Override
+    public int getFiberMaxLiveCount() {
+        return workerPoolConfiguration.getFiberMaxLiveCount();
+    }
+
+    @Override
+    public int getFiberMountBudget() {
+        return workerPoolConfiguration.getFiberMountBudget();
+    }
+
+    @Override
+    public int getFiberRetainedCount() {
+        return workerPoolConfiguration.getFiberRetainedCount();
     }
 
     @Override
@@ -335,6 +355,11 @@ public class PGConfigurationWrapper implements PGConfiguration {
     }
 
     @Override
+    public WorkerPoolMode getWorkerPoolMode() {
+        return getDelegate().getWorkerPoolMode();
+    }
+
+    @Override
     public long getYieldThreshold() {
         return getDelegate().getYieldThreshold();
     }
@@ -352,6 +377,11 @@ public class PGConfigurationWrapper implements PGConfiguration {
     @Override
     public boolean isEnabled() {
         return getDelegate().isEnabled();
+    }
+
+    @Override
+    public boolean isFiberEnabled() {
+        return getDelegate().isFiberEnabled();
     }
 
     @Override
@@ -380,7 +410,12 @@ public class PGConfigurationWrapper implements PGConfiguration {
     }
 
     public void setDelegate(PGConfiguration delegate) {
-        this.delegate.set(delegate);
+        workerPoolConfiguration.setDelegate(delegate);
+    }
+
+    @Override
+    public void setFiberConfigurationListener(FiberConfigurationListener listener) {
+        workerPoolConfiguration.setFiberConfigurationListener(listener);
     }
 
     @Override
@@ -389,6 +424,6 @@ public class PGConfigurationWrapper implements PGConfiguration {
     }
 
     protected PGConfiguration getDelegate() {
-        return delegate.get();
+        return (PGConfiguration) workerPoolConfiguration.getDelegate();
     }
 }

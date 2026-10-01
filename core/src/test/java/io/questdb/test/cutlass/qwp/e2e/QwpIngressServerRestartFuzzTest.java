@@ -448,7 +448,6 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     // and phase 2's bare ids have nowhere else to come from.
                     TestUtils.assertEventually(() -> {
                         drainWalQueue();
-                        engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
                         assertRowCount(rowsPerPhase);
                     });
                     // Deterministic: drain() returns once the client has the acks, which is

@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -38,21 +39,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // However, the `delegate` circuit breaker instance referenced by the wrapper has to be thread-safe
 // if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
+    private final @Nullable AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker;
+    private final CancellationBinding cancellationBinding = new CancellationBinding();
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
 
     public SqlExecutionCircuitBreakerWrapper(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
+        atomicBooleanCircuitBreaker = engine.isSqlExecutionCooperativePollingEnabled()
+                ? new AtomicBooleanCircuitBreaker(engine, configuration.getCircuitBreakerThrottle())
+                : null;
         networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, configuration);
     }
 
     @Override
     public void cancel() {
         delegate.cancel();
-    }
-
-    @Override
-    public boolean checkIfTripped(long millis, long fd) {
-        return delegate.checkIfTripped(millis, fd);
     }
 
     @Override
@@ -66,19 +67,42 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public boolean checkIfTrippedOrYield() {
+        return delegate.checkIfTrippedOrYield();
+    }
+
+    public void clear() {
+        if (atomicBooleanCircuitBreaker != null && delegate == atomicBooleanCircuitBreaker) {
+            atomicBooleanCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
+        }
+        networkSqlExecutionCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
+        delegate = networkSqlExecutionCircuitBreaker;
+    }
+
+    @Override
+    public void clearCancelledFlag(AtomicBoolean expected) {
+        delegate.clearCancelledFlag(expected);
+    }
+
+    @Override
+    public void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        delegate.clearCancelledFlag(expected, expectedGeneration);
+    }
+
+    @Override
     public void close() {
         networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
         delegate = null;
     }
 
     @Override
-    public AtomicBoolean getCancelledFlag() {
-        return delegate.getCancelledFlag();
+    public void copyCancelledFlagTo(CancellationBinding target) {
+        delegate.copyCancelledFlagTo(target);
     }
 
     @Override
-    public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-        return delegate.getConfiguration();
+    public AtomicBoolean getCancelledFlag() {
+        return delegate.getCancelledFlag();
     }
 
     @TestOnly
@@ -92,6 +116,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public long getRemainingTimeoutMillis() {
+        return delegate.getRemainingTimeoutMillis();
+    }
+
+    @Override
     public int getState() {
         return delegate.getState();
     }
@@ -102,8 +131,23 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public int getStateOrYield() {
+        return delegate.getStateOrYield();
+    }
+
+    @Override
+    public int getStateOrYield(long millis, long fd) {
+        return delegate.getStateOrYield(millis, fd);
+    }
+
+    @Override
     public long getTimeout() {
         return delegate.getTimeout();
+    }
+
+    @TestOnly
+    public boolean hasLocalAtomicCircuitBreaker() {
+        return atomicBooleanCircuitBreaker != null;
     }
 
     public void init(SqlExecutionCircuitBreakerWrapper wrapper) {
@@ -111,13 +155,18 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (executionContextCircuitBreaker.isThreadSafe()) {
+        if (atomicBooleanCircuitBreaker != null
+                && executionContextCircuitBreaker.getClass() == AtomicBooleanCircuitBreaker.class) {
+            atomicBooleanCircuitBreaker.of((AtomicBooleanCircuitBreaker) executionContextCircuitBreaker);
+            delegate = atomicBooleanCircuitBreaker;
+        } else if (executionContextCircuitBreaker.isThreadSafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
             networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
             networkSqlExecutionCircuitBreaker.setTimeout(executionContextCircuitBreaker.getTimeout());
             networkSqlExecutionCircuitBreaker.rearmTimer();
-            networkSqlExecutionCircuitBreaker.setCancelledFlag(executionContextCircuitBreaker.getCancelledFlag());
+            executionContextCircuitBreaker.copyCancelledFlagTo(cancellationBinding);
+            networkSqlExecutionCircuitBreaker.setCancelledFlag(cancellationBinding);
             delegate = networkSqlExecutionCircuitBreaker;
         }
     }
@@ -143,8 +192,13 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setFd(long fd) {
-        delegate.setFd(fd);
+    public void setCancelledFlag(CancellationBinding source) {
+        delegate.setCancelledFlag(source);
+    }
+
+    @Override
+    public void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        delegate.setCancelledFlag(cancelled, generation);
     }
 
     @Override
@@ -158,8 +212,23 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
+        delegate.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedOrYield() {
+        delegate.statefulThrowExceptionIfTrippedOrYield();
+    }
+
+    @Override
     public void statefulThrowExceptionIfTrippedTimeThrottled() {
         delegate.statefulThrowExceptionIfTrippedTimeThrottled();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+        delegate.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
     }
 
     @Override
