@@ -330,8 +330,10 @@ pub struct ParquetMetaUpdateWriter<'a> {
     existing_parquet_meta_file_size: u64,
     existing_footer_offset: u64,
     existing_footer_length: u32,
-    /// (original_offset | None for new/replaced, builder)
+    /// Final row-group list: reused committed blocks and new blocks.
     entries: Vec<RowGroupEntry>,
+    /// Block offset of each committed row group, by original index.
+    existing_row_group_offsets: Vec<u64>,
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     unused_bytes: u64,
@@ -357,8 +359,18 @@ pub struct ParquetMetaUpdateWriter<'a> {
 }
 
 enum RowGroupEntry {
-    /// Reuse an existing block at this offset.
-    Existing(u64),
+    /// Reuse the committed block of original row group `orig_idx`, which sits
+    /// at `offset`. Its bloom-section entries are copied through from
+    /// `orig_idx`, independent of the entry's position in the new footer.
+    Existing { offset: u64, orig_idx: usize },
+    /// Write a new block.
+    New(RowGroupBlockBuilder),
+}
+
+/// One row group of the new footer, for [`ParquetMetaUpdateWriter::set_row_groups`].
+pub enum RowGroupSlot {
+    /// Reuse the committed block (and bloom entries) of original row group `i`.
+    Existing(usize),
     /// Write a new block.
     New(RowGroupBlockBuilder),
 }
@@ -385,10 +397,15 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let rg_count = footer.row_group_count() as usize;
 
         // Initialize entries with existing row group offsets.
-        let mut entries = Vec::with_capacity(rg_count);
+        let mut existing_row_group_offsets = Vec::with_capacity(rg_count);
         for i in 0..rg_count {
-            entries.push(RowGroupEntry::Existing(footer.row_group_block_offset(i)?));
+            existing_row_group_offsets.push(footer.row_group_block_offset(i)?);
         }
+        let entries = existing_row_group_offsets
+            .iter()
+            .enumerate()
+            .map(|(orig_idx, &offset)| RowGroupEntry::Existing { offset, orig_idx })
+            .collect();
 
         // Parse existing bloom filter data.
         let bloom_filter_columns = reader.bloom_filter_columns();
@@ -431,6 +448,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             existing_footer_offset,
             existing_footer_length,
             entries,
+            existing_row_group_offsets,
             parquet_footer_offset: footer.parquet_footer_offset(),
             parquet_footer_length: footer.parquet_footer_length(),
             unused_bytes: footer.unused_bytes(),
@@ -489,6 +507,42 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             )
         })?;
         *slot = RowGroupEntry::New(builder);
+        Ok(self)
+    }
+
+    /// Replaces the entry list wholesale, in final row-group order.
+    /// `Existing(i)` reuses committed block `i` (its offset and bloom entries);
+    /// each `i` may appear at most once. Errors on an out-of-range or
+    /// duplicate index, leaving the entry list unchanged.
+    pub fn set_row_groups(&mut self, slots: Vec<RowGroupSlot>) -> ParquetMetaResult<&mut Self> {
+        let committed_count = self.existing_row_group_offsets.len();
+        let mut used = vec![false; committed_count];
+        let mut entries = Vec::with_capacity(slots.len());
+        for slot in slots {
+            match slot {
+                RowGroupSlot::Existing(orig_idx) => {
+                    let Some(&offset) = self.existing_row_group_offsets.get(orig_idx) else {
+                        return Err(parquet_meta_err!(
+                            ParquetMetaErrorKind::InvalidValue,
+                            "existing row group index {} out of range [0, {})",
+                            orig_idx,
+                            committed_count
+                        ));
+                    };
+                    if used[orig_idx] {
+                        return Err(parquet_meta_err!(
+                            ParquetMetaErrorKind::InvalidValue,
+                            "existing row group index {} referenced more than once",
+                            orig_idx
+                        ));
+                    }
+                    used[orig_idx] = true;
+                    entries.push(RowGroupEntry::Existing { offset, orig_idx });
+                }
+                RowGroupSlot::New(builder) => entries.push(RowGroupEntry::New(builder)),
+            }
+        }
+        self.entries = entries;
         Ok(self)
     }
 
@@ -584,7 +638,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let mut final_offsets: Vec<u64> = Vec::with_capacity(self.entries.len());
         for entry in &self.entries {
             match entry {
-                RowGroupEntry::Existing(offset) => {
+                RowGroupEntry::Existing { offset, .. } => {
                     final_offsets.push(*offset);
                 }
                 RowGroupEntry::New(builder) => {
@@ -620,12 +674,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
 
             for (rg_idx, entry) in self.entries.iter().enumerate() {
                 match entry {
-                    RowGroupEntry::Existing(_) => {
-                        // Copy through existing bloom filter entries.
-                        // Index by rg_idx (original position), not a running counter,
-                        // because existing_bloom_* is indexed by original row group position.
+                    RowGroupEntry::Existing { orig_idx, .. } => {
+                        // Copy through the committed bloom entries. Read them at
+                        // orig_idx (existing_bloom_* is indexed by original row
+                        // group) and write them at rg_idx (the final position):
+                        // the two differ once a split or an insert shifts groups.
                         if self.is_bloom_external {
-                            if let Some(ext) = self.existing_bloom_external.get(rg_idx) {
+                            if let Some(ext) = self.existing_bloom_external.get(*orig_idx) {
                                 for (pos, &(off, len)) in ext.iter().enumerate() {
                                     let idx = rg_idx * bloom_col_count + pos;
                                     let o = idx * 16;
@@ -633,7 +688,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
                                     section[o + 8..o + 16].copy_from_slice(&len.to_le_bytes());
                                 }
                             }
-                        } else if let Some(inl) = self.existing_bloom_inlined.get(rg_idx) {
+                        } else if let Some(inl) = self.existing_bloom_inlined.get(*orig_idx) {
                             for (pos, &shifted) in inl.iter().enumerate() {
                                 let idx = rg_idx * bloom_col_count + pos;
                                 let o = idx * 4;
@@ -1087,6 +1142,140 @@ mod tests {
                 "RG{rg_idx} bloom filter data mismatch"
             );
         }
+    }
+
+    /// Commits `append_bytes` onto `original` by patching the header size.
+    fn commit_update(original: &[u8], append_bytes: &[u8], new_size: u64) -> Vec<u8> {
+        let mut full = original.to_vec();
+        full.extend_from_slice(append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+        full
+    }
+
+    #[test]
+    fn set_row_groups_moves_inlined_bloom_with_existing_group() {
+        // Three committed groups, each with a distinct inlined bloom filter.
+        let blooms = [vec![0xAA_u8; 64], vec![0xBB_u8; 64], vec![0xCC_u8; 64]];
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        for (i, bf) in blooms.iter().enumerate() {
+            let mut rg = RowGroupBlockBuilder::new(1);
+            rg.set_num_rows(100 * (i as u64 + 1));
+            rg.add_bloom_filter(0, bf).unwrap();
+            w.add_row_group(rg);
+        }
+        let (original, original_size) = w.finish().unwrap();
+
+        // Final: [new, rg0, rg2, rg1]. rg1 and rg2 swap positions; rg0 shifts.
+        let bf_new = vec![0xDD_u8; 64];
+        let mut new_rg = RowGroupBlockBuilder::new(1);
+        new_rg.set_num_rows(7);
+        new_rg.add_bloom_filter(0, &bf_new).unwrap();
+        let mut updater = ParquetMetaUpdateWriter::new(&original, original_size).unwrap();
+        updater
+            .set_row_groups(vec![
+                RowGroupSlot::New(new_rg),
+                RowGroupSlot::Existing(0),
+                RowGroupSlot::Existing(2),
+                RowGroupSlot::Existing(1),
+            ])
+            .unwrap();
+        let (append_bytes, new_size) = updater.finish().unwrap();
+        let full = commit_update(&original, &append_bytes, new_size);
+
+        let old_reader = ParquetMetaReader::from_file_size(&original, original_size).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        reader.verify_checksum().unwrap();
+        assert_eq!(reader.row_group_count(), 4);
+        let expected: [(u64, &Vec<u8>); 4] = [
+            (7, &bf_new),
+            (100, &blooms[0]),
+            (300, &blooms[2]),
+            (200, &blooms[1]),
+        ];
+        for (rg_idx, (rows, bf)) in expected.iter().enumerate() {
+            assert_eq!(reader.row_group(rg_idx).unwrap().num_rows(), *rows);
+            let off = reader.bloom_filter_offset_in_pm(rg_idx, 0).unwrap() as usize;
+            assert_ne!(off, 0, "rg {rg_idx} lost its bloom filter");
+            let len = i32::from_le_bytes(full[off..off + 4].try_into().unwrap()) as usize;
+            assert_eq!(&full[off + 4..off + 4 + len], bf.as_slice(), "rg {rg_idx}");
+        }
+        // Existing groups reuse their committed block and bloom bytes: nothing
+        // is rewritten for them, so their offsets equal the committed ones.
+        for (rg_idx, orig_idx) in [(1, 0), (2, 2), (3, 1)] {
+            assert_eq!(
+                reader.bloom_filter_offset_in_pm(rg_idx, 0).unwrap(),
+                old_reader.bloom_filter_offset_in_pm(orig_idx, 0).unwrap()
+            );
+        }
+        // MVCC: the old footer still resolves to the old layout.
+        let old_view = ParquetMetaReader::from_file_size(&full, original_size).unwrap();
+        assert_eq!(old_view.row_group_count(), 3);
+        assert_eq!(old_view.row_group(1).unwrap().num_rows(), 200);
+    }
+
+    #[test]
+    fn set_row_groups_moves_external_bloom_with_existing_group() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_bloom_filters_external(true);
+        for i in 0..2u64 {
+            let mut rg = RowGroupBlockBuilder::new(1);
+            rg.set_num_rows(10 + i);
+            rg.add_external_bloom_filter(0, 1000 * (i + 1), 32 + i)
+                .unwrap();
+            w.add_row_group(rg);
+        }
+        let (original, original_size) = w.finish().unwrap();
+
+        let mut new_rg = RowGroupBlockBuilder::new(1);
+        new_rg.set_num_rows(5);
+        new_rg.add_external_bloom_filter(0, 9000, 64).unwrap();
+        let mut updater = ParquetMetaUpdateWriter::new(&original, original_size).unwrap();
+        updater
+            .set_row_groups(vec![
+                RowGroupSlot::Existing(1),
+                RowGroupSlot::New(new_rg),
+                RowGroupSlot::Existing(0),
+            ])
+            .unwrap();
+        let (append_bytes, new_size) = updater.finish().unwrap();
+        let full = commit_update(&original, &append_bytes, new_size);
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        reader.verify_checksum().unwrap();
+        assert_eq!(reader.bloom_filter_parquet_ref(0, 0).unwrap(), (2000, 33));
+        assert_eq!(reader.bloom_filter_parquet_ref(1, 0).unwrap(), (9000, 64));
+        assert_eq!(reader.bloom_filter_parquet_ref(2, 0).unwrap(), (1000, 32));
+        assert_eq!(reader.row_group(0).unwrap().num_rows(), 11);
+        assert_eq!(reader.row_group(2).unwrap().num_rows(), 10);
+    }
+
+    #[test]
+    fn set_row_groups_rejects_bad_existing_index() {
+        let (original, original_size) = make_simple_file();
+        let mut updater = ParquetMetaUpdateWriter::new(&original, original_size).unwrap();
+
+        let err = updater
+            .set_row_groups(vec![RowGroupSlot::Existing(1)])
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("out of range"), "{err}");
+
+        let err = updater
+            .set_row_groups(vec![RowGroupSlot::Existing(0), RowGroupSlot::Existing(0)])
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("more than once"), "{err}");
+
+        // A rejected call leaves the entry list unchanged.
+        let (append_bytes, new_size) = updater.finish().unwrap();
+        let full = commit_update(&original, &append_bytes, new_size);
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(reader.row_group_count(), 1);
+        assert_eq!(reader.row_group(0).unwrap().num_rows(), 1000);
     }
 
     #[test]
