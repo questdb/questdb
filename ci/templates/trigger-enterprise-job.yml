@@ -75,59 +75,47 @@ jobs:
             exit 1
           fi
 
-          # Check if matching branch exists in enterprise repo (private, requires auth).
-          # An unreachable API falls back to main rather than failing the build.
-          ENT_BRANCH="main"
-          if [ -n "$OSS_BRANCH" ]; then
-            BRANCH_CHECK=$(curl -sS --max-time 30 --retry 3 --retry-delay 2 --retry-connrefused \
-              -o /dev/null -w "%{http_code}" \
-              -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/repos/questdb/questdb-enterprise/branches/$OSS_BRANCH" || echo "000")
-            if [ "$BRANCH_CHECK" = "200" ]; then
-              ENT_BRANCH="$OSS_BRANCH"
-            fi
-          fi
-          echo "Enterprise branch: $ENT_BRANCH (OSS branch '$OSS_BRANCH')"
-
-          PAYLOAD=$(cat <<EOF
-          {
-            "resources": {
-              "repositories": {
-                "self": {
-                  "refName": "refs/heads/$ENT_BRANCH"
-                }
-              }
-            },
-            "templateParameters": {
-              "ossCommit": "$OSS_COMMIT",
-              "ossPrNumber": "$OSS_PR_NUMBER",
-              "ossFlavour": "$ENT_FLAVOUR"
-            }
-          }
-          EOF
-          )
-
+          # Queue the enterprise run. $1: enterprise branch; $2: "with-flavour" to pass ossFlavour.
           trigger() {
             curl -s -o response.json -w "%{http_code}" -X POST \
               -H "$AUTH_HEADER" \
               -H "Content-Type: application/json" \
               "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/23/runs?api-version=7.0" \
-              -d "$1"
+              -d "$(jq -n --arg ref "refs/heads/$1" --arg commit "$OSS_COMMIT" \
+                --arg pr "$OSS_PR_NUMBER" --arg flavour "$ENT_FLAVOUR" --arg mode "$2" '
+                {resources: {repositories: {self: {refName: $ref}}},
+                 templateParameters: ({ossCommit: $commit, ossPrNumber: $pr}
+                   + (if $mode == "with-flavour" then {ossFlavour: $flavour} else {} end))}')"
           }
 
-          echo "Triggering $ENT_FLAVOUR enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER)"
-          HTTP_CODE=$(trigger "$PAYLOAD")
+          # Test against the enterprise branch named like the OSS one, if there is one. Azure
+          # resolves the ref itself through its own GitHub connection, so no GitHub token with
+          # access to the private enterprise repo is needed; a ref it cannot resolve means there
+          # is no such branch, and the run falls back to main.
+          ENT_BRANCH="${OSS_BRANCH:-main}"
+          FLAVOUR_MODE="with-flavour"
+          echo "Triggering $ENT_FLAVOUR enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER) on enterprise branch $ENT_BRANCH"
+          HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
+          if [ "$ENT_BRANCH" != "main" ] && grep -q "Unable to resolve the reference" response.json; then
+            echo "Enterprise repo has no branch $ENT_BRANCH; triggering on main"
+            ENT_BRANCH="main"
+            HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
+          fi
           if [ "$HTTP_CODE" = "400" ] && grep -q ossFlavour response.json; then
             # An enterprise branch that predates the ossFlavour parameter rejects it; run that
             # branch's pipeline as it is, which is the full run.
             echo "Enterprise branch $ENT_BRANCH has no ossFlavour parameter; triggering without it"
-            HTTP_CODE=$(trigger "$(echo "$PAYLOAD" | jq 'del(.templateParameters.ossFlavour)')")
+            FLAVOUR_MODE="without-flavour"
+            HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
           fi
 
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            RUN_ID=$(jq -r '.id // empty' response.json)
-            echo "Triggered enterprise CI: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
+          # A 2xx without a run id is Azure's sign-in page (HTTP 203), not a queued run.
+          RUN_ID=$(jq -r '.id // empty' response.json 2>/dev/null || true)
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && [ -n "$RUN_ID" ]; then
+            echo "Triggered enterprise CI on $ENT_BRANCH: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
           else
+            # 203, 302 and 401 mean AZURE_DEVOPS_ENT_PAT is missing or invalid on this pipeline.
+            echo "Response: $(jq -r '.message // empty' response.json 2>/dev/null || true)"
             echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE); see pipeline logs"
             rm -f response.json
             exit 1
