@@ -68,10 +68,14 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
      */
     long open(TableReader reader, int partitionIndex, long readerSeqTxn);
 
-    /** Opens a carried catalog read-only, outside the live partition registry. */
+    /**
+     * Opens a carried catalog read-only, outside the live partition registry.
+     */
     long openDetached(Path partitionPath, long readerSeqTxn);
 
-    /** Reads logical rows and Delta-only bounds from the same pinned snapshot. */
+    /**
+     * Reads logical rows and Delta-only bounds from the same pinned snapshot.
+     */
     void readStats(long state, PartitionDeltaStats target);
 
     /**

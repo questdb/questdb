@@ -24,7 +24,9 @@
 
 package io.questdb.cairo;
 
-/** Logical row count and Delta-only timestamp bounds at one partition snapshot. */
+/**
+ * Logical row count and Delta-only timestamp bounds at one partition snapshot.
+ */
 public final class PartitionDeltaStats {
     private long maxTimestamp;
     private long minTimestamp;
@@ -42,7 +44,9 @@ public final class PartitionDeltaStats {
         return rowCount;
     }
 
-    /** Empty Delta bounds are {@code (Long.MAX_VALUE, Long.MIN_VALUE)}. */
+    /**
+     * Empty Delta bounds are {@code (Long.MAX_VALUE, Long.MIN_VALUE)}.
+     */
     public void of(long rowCount, long minTimestamp, long maxTimestamp) {
         this.rowCount = rowCount;
         this.minTimestamp = minTimestamp;

@@ -590,7 +590,9 @@ public class RecentWriteTracker {
         }
     }
 
-    /** Selects metadata that can resolve the table's logical count. */
+    /**
+     * Selects metadata that can resolve the table's logical count.
+     */
     public enum RowCountSource {
         TXN,
         DELTA;
