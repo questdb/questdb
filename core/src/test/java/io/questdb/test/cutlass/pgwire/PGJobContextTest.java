@@ -13750,6 +13750,41 @@ nodejs code:
     }
 
     @Test
+    public void testRepeatedExecuteAfterFailedFetchInTransaction() throws Exception {
+        // Q BEGIN | P '' SELECT that fails on its first row; B; E '' 0; E '' 0; S | Q ROLLBACK
+        // The failed fetch fails the transaction, and the second Execute sends nothing.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(
+                    pgParse("", "SELECT (CASE WHEN x = 1 THEN 'a' ELSE '1' END)::int FROM long_sequence(3)"),
+                    pgBind("", ""), pgExecute("", 0), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 E(00000)[inconvertible value: a [CHAR -> INT]] Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("ROLLBACK"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
+    public void testRepeatedExecuteAfterFailedFetchSkipsUntilSync() throws Exception {
+        // P '' SELECT that fails on its first row; B; E '' 0; E '' 0; S | Q SELECT 7
+        // PostgreSQL skips every message after the error until Sync, so the second Execute
+        // of the failed portal sends no CommandComplete.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT (CASE WHEN x = 1 THEN 'a' ELSE '1' END)::int FROM long_sequence(3)"),
+                    pgBind("", ""), pgExecute("", 0), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 E[inconvertible value: a [CHAR -> INT]] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 7"));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testRepeatedExecuteDisconnectReleasesPortal() throws Exception {
         // 1: P x2 "SELECT x FROM long_sequence(2_000_000)"; B p2 <- x2; S
         //    | P '' "SELECT x FROM long_sequence(3) ORDER BY x DESC"; B; E '' 1; E p2; E '' 1; E '' 1; S
@@ -13865,6 +13900,22 @@ nodejs code:
                 <31000000043200000004440000000d000100000003323031430000000d53454c45435420310031000000043200000004440000000d000100000003323032430000000d53454c45435420310031000000043200000004440000000d000100000003323033430000000d53454c4543542031005a0000000549
                 >5800000004
                 """);
+    }
+
+    @Test
+    public void testRepeatedExecuteOfSuspendedPortalAfterFailedFetch() throws Exception {
+        // P '' SELECT that fails on its second row; B p; E p 1; E p 1; E p 1; S | Q SELECT 7
+        // The second Execute fails while it continues the cursor, and the third sends nothing.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT (CASE WHEN x = 2 THEN 'a' ELSE '1' END)::int FROM long_sequence(3)"),
+                    pgBind("p", ""), pgExecute("p", 1), pgExecute("p", 1), pgExecute("p", 1),
+                    pgSync()
+            ));
+            assertEquals("1 2 D(1) s E[inconvertible value: a [CHAR -> INT]] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 7"));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
     }
 
     @Test
