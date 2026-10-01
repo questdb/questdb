@@ -9944,6 +9944,46 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinOnKeysSharingColumnOfSubQuery() throws Exception {
+        // The ON keys b.k2 = a.m AND b.kk = a.m imply b.k2 = b.kk, which becomes the outer join filter.
+        // The WHERE constant a.m = 1 implies b.kk = 1, and pushing it into the sub-query renames the key
+        // node kk to the inner name k in place. The outer join filter shared that node, so it read a.k
+        // or failed to resolve k.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, m INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 1, 100), (2, 7, 200), (3, 1, 1)");
+            execute("CREATE TABLE b (id INT, k INT, k2 INT)");
+            execute("INSERT INTO b VALUES (11, 1, 1), (12, 7, 1), (13, 1, 5)");
+            execute("CREATE TABLE a2 (id INT, k INT)");
+            execute("INSERT INTO a2 VALUES (1, 1), (2, 7)");
+
+            final String expectedRenamed = """
+                    id\tid1
+                    1\t11
+                    3\t11
+                    """;
+            assertQuery("SELECT a.id, b.id FROM a RIGHT JOIN (SELECT id, k2, k AS kk FROM b WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: b.k2=b.kk")
+                    .returns(expectedRenamed);
+            assertQuery("SELECT a.id, b.id FROM a FULL JOIN (SELECT id, k2, k AS kk FROM b WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns(expectedRenamed);
+
+            final String expectedSameName = """
+                    id\tid1
+                    1\t11
+                    """;
+            assertQuery("SELECT a.id, b.id FROM a2 a RIGHT JOIN (SELECT * FROM b WHERE id > 0) b ON b.k2 = a.k AND b.k = a.k WHERE a.k = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns(expectedSameName);
+            assertQuery("SELECT a.id, b.id FROM a2 a FULL JOIN (SELECT * FROM b WHERE id > 0) b ON b.k2 = a.k AND b.k = a.k WHERE a.k = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns(expectedSameName);
+        });
+    }
+
+    @Test
     public void testOuterJoinOnKeysSharingColumnWithInnerKeyMovedToOuterJoin() throws Exception {
         // The INNER join f6 keys share b6, and the implied equality b4 = b1 as a key of LEFT JOIN f4 would
         // not filter its preserved rows. The equality filters the INNER join f6 instead, and the query

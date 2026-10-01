@@ -1423,8 +1423,10 @@ public class SqlOptimiser implements Mutable {
                     OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
                     ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
                     node.paramCount = 2;
-                    node.lhs = ao;
-                    node.rhs = bo;
+                    // the join context keeps ao and bo as keys, and the filter push-down rewrites
+                    // its nodes in place, so the outer join expression gets its own copies
+                    node.lhs = ExpressionNode.deepClone(expressionNodePool, ao);
+                    node.rhs = ExpressionNode.deepClone(expressionNodePool, bo);
                     contextModel.setOuterJoinExpressionClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, contextModel.getOuterJoinExpressionClause(), node));
                     // mergeContexts drops the parent of the deleted key, and a later merge rebuilds
                     // the context from its keys, so constrainOuterJoinsAfterExpressionParents
