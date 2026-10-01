@@ -1522,12 +1522,15 @@ public class DeclareTest extends AbstractSqlParserTest {
             // Every read of a view parses its stored body again, so a body that reads a declared
             // sub-query in a window clause and in FROM has to parse at CREATE and at every read.
             // The body reads four rows and partitions them by the sub-query's value, 3 by default,
-            // so a read that yields anything else moves rows between the partitions.
+            // so a read that yields anything else moves rows between the partitions. The two rows
+            // that equal the value share a partition and tie on x, so o, which tells the two
+            // branches of the union apart, orders them: no row number depends on how the window's
+            // sort breaks a tie.
             execute("""
                     CREATE VIEW v_win AS (
                         DECLARE OVERRIDABLE @m := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
-                        SELECT x, row_number() OVER (PARTITION BY x = @m ORDER BY x) r
-                        FROM (SELECT * FROM @m UNION ALL SELECT x FROM long_sequence(3))
+                        SELECT x, row_number() OVER (PARTITION BY x = @m ORDER BY x, o) r
+                        FROM (SELECT x, 0 o FROM @m UNION ALL SELECT x, 1 o FROM long_sequence(3))
                     )
                     """);
             drainWalAndViewQueues();
