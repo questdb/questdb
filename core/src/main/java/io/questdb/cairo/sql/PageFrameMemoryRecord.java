@@ -114,8 +114,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
     // Pool bind generation captured when boundPool was stamped. The pool bumps its
-    // generation when it closes buffers that records may still alias (failed decode,
-    // bulk release), so a stale generation forces a rebind instead of a freed read.
+    // generation when it closes a buffer that records may still alias (failed decode,
+    // budget eviction, row-filtered eviction, bulk release) and when it reuses an
+    // unpinned buffer's memory in place for a different frame (acquireBuffer), so a
+    // stale generation forces a rebind instead of a freed or repurposed read.
     protected long boundGeneration;
     // Pool that owns the parquet buffers this record currently points at, or null.
     // PageFrameMemoryPool.navigateTo() uses it to early-return only when the record

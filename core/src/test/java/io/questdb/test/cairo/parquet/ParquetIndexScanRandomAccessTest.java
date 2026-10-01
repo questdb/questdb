@@ -84,6 +84,8 @@ public class ParquetIndexScanRandomAccessTest extends AbstractCairoTest {
         });
     }
 
+    // Control: matches spread across partitions under the default (non-evicting)
+    // budget, so the key distribution never recycles a bound buffer. Passes on master.
     @Test
     public void testManyMatchesAcrossPartitionsWithNulls() throws Exception {
         assertIndexScan(
