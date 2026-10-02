@@ -3203,6 +3203,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
         rowAction = ROW_ACTION_OPEN_PARTITION;
+        // No partition is left, so reset the append horizon to the state a writer opened on an
+        // empty table starts with. Left stale, it survives the next block apply when that apply
+        // creates an earlier parquet partition: processO3Block only ever raises it and
+        // finishO3Commit only re-syncs a native last partition. processWalCommit's
+        // partition-timestamp consistency assert then fails on the next commit.
+        partitionTimestampHi = Long.MIN_VALUE;
+        lastPartitionTimestamp = Long.MIN_VALUE;
 
         closeActivePartition(false);
         processPartitionRemoveCandidates();
@@ -7235,6 +7242,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
+                // The only partition is gone, the table is empty: see removeAllPartitions()
+                partitionTimestampHi = Long.MIN_VALUE;
+                lastPartitionTimestamp = Long.MIN_VALUE;
             }
         } else {
             // when we want to delete first partition we must find out minTimestamp from
