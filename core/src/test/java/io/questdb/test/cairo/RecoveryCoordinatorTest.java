@@ -63,6 +63,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -77,6 +80,7 @@ import static org.junit.Assert.assertTrue;
  * {@code _cv.epoch} back over them, so the table opens at exactly {@code epoch.seqTxn}.
  */
 public class RecoveryCoordinatorTest extends AbstractCairoTest {
+    private static final int PAGE_SIZE_4K = 4096;
 
     /**
      * A table created while the instance ran nosync has no anchor: the generation-zero baseline is
@@ -908,6 +912,110 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * Every page mix of a torn {@code _txn} must recover to the epoch cut. ADAPTIVE never msyncs {@code _txn}
+     * between epochs, and the kernel writes dirty mmap pages back in no fixed order. After a power loss, each 4 KiB
+     * page of {@code _txn} can therefore hold its content at the epoch, after the first commit since the
+     * epoch, or after the second. The table has 130 partitions, so its {@code _txn} spans three pages.
+     * <p>
+     * In some mixes page 0 still holds the epoch's version word while a later page holds the second commit's
+     * rewrite of the same A/B slot. The latest slot is then torn, and {@code unsafeLoadAll()} falls back to
+     * the predecessor slot, whose record predates the epoch. The freshness guard must treat that as a crash,
+     * not as a restore to another lineage. After the sweep, the WAL must replay the table to the full row
+     * count.
+     */
+    @Test
+    public void testRecoverRestoresEpochUnderEveryTornTxnPageMix() throws Exception {
+        org.junit.Assume.assumeFalse("page-mix simulation rewrites live files, which Windows forbids", Os.isWindows());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                final int partitionCount = 130;
+                final long firstDay = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
+                execute("CREATE TABLE torn (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO torn SELECT timestamp_sequence(" + firstDay + ", " + Micros.DAY_MICROS + ") ts, x v" +
+                        " FROM long_sequence(" + partitionCount + ")");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("torn");
+                final long lastDay = firstDay + (partitionCount - 1) * Micros.DAY_MICROS;
+                for (int i = 1; i <= 3; i++) {
+                    execute("INSERT INTO torn VALUES (" + (lastDay + i * Micros.HOUR_MICROS) + "::timestamp, " + (1000 + i) + ")");
+                    drainWalQueue();
+                }
+
+                final long epochSeqTxn;
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                    epochSeqTxn = w.getSeqTxn();
+                }
+                final java.nio.file.Path txnPath = Paths.get(
+                        engine.getConfiguration().getDbRoot(), tt.getDirName(), TableUtils.TXN_FILE_NAME
+                );
+                final byte[][] images = new byte[3][];
+                images[0] = Files.readAllBytes(txnPath);
+                for (int i = 1; i <= 2; i++) {
+                    execute("INSERT INTO torn VALUES (" + (lastDay + (3 + i) * Micros.HOUR_MICROS) + "::timestamp, " + (1003 + i) + ")");
+                    drainWalQueue();
+                    images[i] = Files.readAllBytes(txnPath);
+                }
+                Assert.assertEquals("a later commit must not move the epoch", epochSeqTxn, readTxnSeqTxn(tt) - 2);
+                Assert.assertTrue("the _txn record must span several pages", images[2].length > 2 * PAGE_SIZE_4K);
+
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                copyTableFile(tt, TableUtils.COLUMN_VERSION_FILE_NAME, "_cv.live");
+
+                final int pageCount = (images[2].length + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K;
+                final int[] mix = new int[pageCount];
+                int combinations = 0;
+                int fallbacksBelowEpoch = 0;
+                do {
+                    final byte[] torn = new byte[images[2].length];
+                    for (int p = 0; p < pageCount; p++) {
+                        final byte[] src = images[mix[p]];
+                        final int lo = p * PAGE_SIZE_4K;
+                        final int hi = Math.min(Math.min(lo + PAGE_SIZE_4K, torn.length), src.length);
+                        if (lo < hi) {
+                            System.arraycopy(src, lo, torn, lo, hi - lo);
+                        }
+                    }
+                    Files.write(txnPath, torn);
+                    copyTableFile(tt, "_cv.live", TableUtils.COLUMN_VERSION_FILE_NAME);
+                    if (isTornFallbackBelow(tt, epochSeqTxn)) {
+                        fallbacksBelowEpoch++;
+                    }
+
+                    try {
+                        new RecoveryCoordinator(engine).recover();
+                    } catch (CairoException e) {
+                        Assert.fail("recovery refused page mix " + Arrays.toString(mix) + ": " + e.getFlyweightMessage());
+                    }
+                    Assert.assertEquals("page mix " + Arrays.toString(mix) + " must recover to the epoch cut",
+                            epochSeqTxn, readTxnSeqTxn(tt));
+                    combinations++;
+                } while (nextMix(mix, images.length));
+
+                Assert.assertTrue("the sweep must reach the torn fallback below the epoch, " + combinations + " mixes",
+                        fallbacksBelowEpoch > 0);
+
+                // The last mix left the table at the epoch cut; the WAL replays it to the full row count.
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                drainWalQueue();
+                assertQuery("SELECT count() c, sum(v) s FROM torn")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                c\ts
+                                135\t13530
+                                """);
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
      * A table-type conversion RESETS the WAL lineage: {@code TableConverter} zeroes {@code _txn.seqTxn}
      * and re-seeds {@code txn_seq} from txn 0. The durable epoch taken under the PREVIOUS lineage is then
      * unreachable, and left on disk it post-dates the live cut, which is a refusal that takes the whole
@@ -1120,14 +1228,16 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * {@code RecoveryCoordinator.epochIsAheadOfLiveTxn}'s C2 assert relies on: {@code unsafeLoadAll} returns
      * the VERSION-SELECTED (latest) A/B slot when it is intact, and ONLY its IMMEDIATE predecessor
      * (version - 1) when the latest is torn — never an older slot. So {@code unsafeReadVersion() -
-     * getVersion()} is exactly 0 on a clean load and exactly 1 on the torn-latest fallback. Together with the
-     * version word being durably floored at the epoch cut, that is WHY a single-lineage post-crash {@code
-     * _txn} can never load cleanly BELOW the epoch, so the recovery guard's refusal is only ever the genuine
-     * multi-lineage / stale-epoch case (never a slot-selection artifact).
+     * getVersion()} is exactly 0 on a clean load and exactly 1 on the torn-latest fallback. The recovery guard
+     * checks lineage only on diff 0. The version word is durably floored at the epoch cut, so on a single
+     * lineage the latest slot never loads below the epoch, and a refusal always means a stale epoch from
+     * another lineage. The predecessor slot (diff 1) can predate the epoch on a single lineage, so the guard
+     * treats a diff of 1 as a crash.
      * <p>
      * The recovery guard's clean-load branch (diff 0) is exercised end-to-end by
      * {@link #testRecoverRestoresTxnToEpochCut} (proceed) and {@link #testRecoverSkipsEpochAheadOfRestoredTxn}
-     * (refuse). This test pins the tolerated FALLBACK branch (diff 1) directly and deterministically, using the
+     * (refuse), and its fallback branch by {@link #testRecoverRestoresEpochUnderEveryTornTxnPageMix}. This
+     * test pins the slot selection behind the fallback branch (diff 1) directly and deterministically, using the
      * proven two-commit {@code TxWriter} torn-body pattern (A and B both hold a valid checksummed record), so
      * a regression that narrowed the assert to "must be the latest" (which would wrongly reject the
      * legitimate torn-latest fallback) or widened slot selection to return an older slot is caught here.
@@ -1184,6 +1294,26 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                         1L, tx.unsafeReadVersion() - tx.getVersion());
             }
         });
+    }
+
+    private static boolean nextMix(int[] mix, int imageCount) {
+        for (int p = 0; p < mix.length; p++) {
+            if (++mix[p] < imageCount) {
+                return true;
+            }
+            mix[p] = 0;
+        }
+        return false;
+    }
+
+    private boolean isTornFallbackBelow(TableToken tt, long epochSeqTxn) {
+        try (TxReader tx = new TxReader(engine.getConfiguration().getFilesFacade()); Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
+            tx.ofRO(p.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+            return tx.unsafeLoadAll() && tx.unsafeReadVersion() != tx.getVersion() && tx.getSeqTxn() < epochSeqTxn;
+        } catch (CairoException e) {
+            return false;
+        }
     }
 
     /**

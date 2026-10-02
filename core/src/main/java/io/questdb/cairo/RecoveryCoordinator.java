@@ -796,17 +796,18 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * Restore/PITR freshness guard. Returns {@code true} iff the LIVE {@code _txn} loads cleanly AND its
-     * {@code seqTxn} is strictly BELOW {@code epochSeqTxn} — i.e. the durable epoch is AHEAD of the current
-     * materialized state. In a single lineage that cannot happen (an epoch is a past cut; lazy apply only
-     * advances {@code _txn} after it), so it signals the table was rewound beneath a stale, higher-lineage
-     * epoch by a backup / checkpoint-recover / PITR restore that failed to clear {@code _snapshot}/{@code
+     * Restore/PITR freshness guard. Returns {@code true} when the durable epoch is ahead of the live
+     * {@code _txn}: the live {@code _txn} loads cleanly from its latest A/B slot, and its {@code seqTxn} is
+     * below {@code epochSeqTxn}. On a single lineage that cannot happen, because an epoch is a past cut and
+     * lazy apply only advances {@code _txn} after it. It means a backup, checkpoint-recover or PITR restore
+     * rewound the table beneath a stale, higher-lineage epoch and did not clear {@code _snapshot}/{@code
      * .epoch}.
      * <p>
-     * FAIL-OPEN on an unreadable live {@code _txn}: a torn / short / garbage {@code _txn} is exactly the
-     * genuine post-crash state this whole mechanism exists to repair, so it returns {@code false} (NOT
-     * ahead -> allow the roll-forward). A {@code true} answer is only ever produced by a CLEAN load that is
-     * provably behind the epoch — never by the crash case.
+     * The guard fails open. It returns {@code false} for any live {@code _txn} that does not load cleanly
+     * from its latest slot, which lets recovery roll forward to the epoch. A torn, short or garbage
+     * {@code _txn} is the post-crash state recovery exists to repair. That includes a {@code _txn} whose
+     * latest slot is torn and which {@code unsafeLoadAll()} serves from the predecessor slot. On a single
+     * lineage the predecessor slot can predate the epoch, so its {@code seqTxn} is no evidence of a restore.
      * <p>
      * The caller decides what a {@code true} answer means, by comparing the epoch with the sequencer
      * frontier: an epoch beyond it belongs to a re-seeded lineage and is discarded, and anything else fails
@@ -847,37 +848,12 @@ public class RecoveryCoordinator {
                 return false;
             }
 
-            // INVARIANT PIN (review Finding C2). The return-true verdict below is only SOUND because, on a
-            // SINGLE lineage, a CLEAN unsafeLoadAll() can never report a seqTxn BELOW the durable epoch.
-            // That rests on a SLOT-SELECTION property of TxReader which we pin here so a future A/B refactor
-            // cannot silently turn a genuine post-crash cut into a wrongful skip:
-            //
-            //   unsafeLoadAll() returns the record from the VERSION-WORD-selected (latest) A/B slot, and
-            //   ONLY when that latest slot is torn does it fall back to its IMMEDIATE predecessor
-            //   (version - 1). It never returns an older slot. So the loaded record's version (getVersion(),
-            //   == its stored txn) is either the on-disk version word (clean latest) or exactly one below it
-            //   (torn-latest fallback): versionWord - getVersion() in {0, 1}.
-            //
-            // Why that yields loadedSeqTxn >= epochSeqTxn on ONE lineage:
-            //   - The version word is MONOTONE and durably floored at V_E: fsyncMaterializedState() fsync'd
-            //     the live _txn at version=V_E / seqTxn=epochSeqTxn BEFORE copying it to _txn.epoch, and lazy
-            //     apply only advances the word afterwards, so the post-crash word is >= V_E.
-            //   - The predecessor (version - 1) is reached only when the latest is torn, and the latest can
-            //     be torn only when the word > V_E (at word == V_E the latest slot IS the durable, un-torn
-            //     epoch record — a torn latest implies a strictly-later write overwrote/advanced it), so
-            //     version - 1 >= V_E there too.
-            //   - seqTxn is monotone with version within a lineage, hence loadedSeqTxn >= epochSeqTxn.
-            // A clean load BELOW the epoch is therefore NEVER a slot-selection artifact — it is the genuine
-            // multi-lineage / stale-epoch case (a restore/PITR rewound the live _txn beneath a leftover,
-            // higher-lineage epoch), which is exactly what the return-true verdict hands to the caller.
-            //
-            // Why NOT a blanket `assert loadedSeqTxn >= epochSeqTxn`: that WRONG form would fire on the
-            // legitimate multi-lineage case this method exists to detect (there loadedSeqTxn < epochSeqTxn by
-            // design). The invariant is single-lineage-scoped; we can soundly pin only the lineage-INDEPENDENT
-            // slot-selection property (latest, or its immediate predecessor), which holds equally in the
-            // multi-lineage case (a restored _txn is self-consistent and loads its own latest slot). At
-            // recovery there is no concurrent writer, so the on-disk version word is stable and this is
-            // race-free.
+            // Invariant pin (review Finding C2). unsafeLoadAll() returns the record in the latest A/B slot, which
+            // the version word selects. Only when that slot is torn does it fall back to the predecessor slot
+            // (version - 1), and it never returns an older slot. So versionWord - getVersion() is 0 for the
+            // latest slot and 1 for the predecessor slot. The assert pins this, so an A/B refactor cannot
+            // silently change which record the guard judges. The property holds on any lineage. Recovery runs
+            // with no concurrent writer, so the version word on disk cannot change during this check.
             final long loadedVersion = liveTxn.getVersion();
             final long versionWord = liveTxn.unsafeReadVersion();
             assert versionWord - loadedVersion >= 0 && versionWord - loadedVersion <= 1
@@ -886,6 +862,23 @@ public class RecoveryCoordinator {
                     + "latest is torn — never an older slot [table=" + token.getTableName()
                     + ", loadedVersion=" + loadedVersion + ", versionWord=" + versionWord + ']';
 
+            // A load from the predecessor slot means a crash, not a restore, even when it is below the epoch.
+            // ADAPTIVE never msyncs _txn between epochs, and the kernel writes dirty mmap pages back in no fixed
+            // order. A power loss can therefore persist a later page of commit V_E+2, which reuses the A/B slot
+            // of the epoch record V_E, while page 0 still holds version word V_E. The latest slot is then torn,
+            // and the predecessor slot holds V_E - 1, below the epoch. A restore leaves a self-consistent _txn
+            // that loads from its latest slot, so returning false here does not hide a restore from the guard.
+            if (versionWord != loadedVersion) {
+                return false;
+            }
+
+            // On a single lineage, a crash cannot leave the latest slot below the epoch:
+            // - fsyncMaterializedState() fsyncs the live _txn at version V_E and seqTxn epochSeqTxn before
+            //   copying it to _txn.epoch, and the version word only grows after that;
+            // - a checksum covers the record in the latest slot;
+            // - seqTxn grows with version within a lineage.
+            // A latest slot below the epoch therefore means a restore or PITR rewound the live _txn beneath a
+            // leftover, higher-lineage epoch. The caller decides what to do about it.
             return liveTxn.getSeqTxn() < epochSeqTxn;
         } catch (AssertionError ae) {
             // The invariant pin above must stay LOUD — never fail-open. A slot-selection regression is a real
