@@ -9952,7 +9952,8 @@ public class JoinTest extends AbstractCairoTest {
         // either conjunct order: t3.x = t1.a AND t3.x = t2.b implies t1.a = t2.b, while
         // t3.x = t2.b AND t3.x = t1.a implies t2.b = t1.a, which names the tables in reverse.
         // A RIGHT JOIN drops unmatched master rows, so there t1.a = t2.b keys the INNER join
-        // instead, unless a LEFT JOIN joins t2. A same-table equality stays a RIGHT JOIN filter.
+        // instead, unless a LEFT JOIN joins t2 or a RIGHT JOIN runs between the INNER join and
+        // the RIGHT JOIN. A same-table equality stays a RIGHT JOIN filter.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinOnImpliedKey();
 
@@ -10089,6 +10090,22 @@ public class JoinTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\t99
                             1\t10\t1\t10\t10
                             1\t10\t1\t10\t10
+                            """);
+
+            // the RIGHT JOIN t4 may null-extend t1 and t2 after the INNER join, so t1.a = t2.b
+            // must not key it: the INNER join would drop (2, 20, 2, 99), t4 would emit (2) with
+            // null t1.a and t2.b, and that row would match the null t3.x
+            execute("INSERT INTO t4 VALUES (2, '2024-01-01T00:00:03')");
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t4.id, t3.x FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t4 ON t4.id = t2.id RIGHT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5, 6")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t2.b", "filter: t1.a=t2.b", "Hash Join Light", "condition: t2.id=t1.id")
+                    .returns("""
+                            id\ta\tid1\tb\tid2\tx
+                            null\tnull\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\tnull\t99
+                            null\tnull\tnull\tnull\t4\tnull
+                            1\t10\t1\t10\t1\t10
+                            1\t10\t1\t10\t1\t10
                             """);
 
             assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
