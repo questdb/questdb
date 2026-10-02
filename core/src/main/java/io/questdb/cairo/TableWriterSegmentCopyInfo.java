@@ -39,15 +39,6 @@ import io.questdb.std.Vect;
  * Apart from the segments and transactions it builds the sort plan of the block, see {@link #buildSortPlan()}.
  */
 public class TableWriterSegmentCopyInfo implements QuietCloseable {
-    // Item layout matches sort_plan_item in ooo.h
-    public static final int SORT_PLAN_ITEM_COPY = 0;
-    public static final int SORT_PLAN_ITEM_LONGS = 5;
-    public static final int SORT_PLAN_ITEM_SORT = 1;
-    // A cluster of fewer rows is sorted with its neighbours rather than copied,
-    // this bounds the number of plan items and the per-item overhead
-    public static final long SORT_PLAN_MIN_COPY_ROWS = 64;
-    // The plan is not built when runs are shorter than this on average, sorting all rows is cheaper then
-    public static final long SORT_PLAN_MIN_ROWS_PER_RUN = 32;
     private static final int RUN_LONGS = 7;
     private static final int RUN_MAX_TS = 1;
     private static final int RUN_MIN_TS = 0;
@@ -56,10 +47,19 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
     private static final int RUN_SEGMENT = 6;
     private static final int RUN_TXN_HI = 3;
     private static final int RUN_TXN_LO = 2;
+    // Item layout matches sort_plan_item in ooo.h
+    private static final int SORT_PLAN_ITEM_COPY = 0;
+    private static final int SORT_PLAN_ITEM_LONGS = 5;
     private static final int SORT_PLAN_ITEM_MAX_TS = 4;
     private static final int SORT_PLAN_ITEM_MIN_TS = 3;
+    private static final int SORT_PLAN_ITEM_SORT = 1;
     private static final int SORT_PLAN_ITEM_TXN_HI = 2;
     private static final int SORT_PLAN_ITEM_TYPE = 0;
+    // A cluster of fewer rows is sorted with its neighbours rather than copied,
+    // this bounds the number of plan items and the per-item overhead
+    private static final long SORT_PLAN_MIN_COPY_ROWS = 64;
+    // The plan is not built when runs are shorter than this on average, sorting all rows is cheaper then
+    private static final long SORT_PLAN_MIN_ROWS_PER_RUN = 32;
     private static final int TXN_META_LONGS = 3;
     private static final int TXN_META_MAX_TS = 1;
     private static final int TXN_META_MIN_TS = 0;
@@ -102,11 +102,11 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
             int segmentIndex,
             long minTimestamp,
             long maxTimestamp,
-            boolean txnDataInOrder
+            boolean isTxnDataInOrder
     ) {
         txnMeta.add(minTimestamp);
         txnMeta.add(maxTimestamp);
-        txnMeta.add(txnDataInOrder ? 1 : 0);
+        txnMeta.add(isTxnDataInOrder ? 1 : 0);
         txns.add(segmentRowOffset);
         txns.add(relativeSeqTxn);
         txns.add(committedRowsCount);
@@ -319,14 +319,14 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
 
     private void addSortPlanCluster(long orderLo, long orderHi, long clusterMin, long clusterMax) {
         final long firstRun = sortPlanRunOrder.get(2 * orderLo + 1);
-        final boolean copy = orderHi - orderLo == 1
+        final boolean isCopy = orderHi - orderLo == 1
                 && getRunValue(firstRun, RUN_ORDERED) == 1
                 && getRunValue(firstRun, RUN_ROWS) >= SORT_PLAN_MIN_COPY_ROWS;
-        final int itemType = copy ? SORT_PLAN_ITEM_COPY : SORT_PLAN_ITEM_SORT;
+        final int itemType = isCopy ? SORT_PLAN_ITEM_COPY : SORT_PLAN_ITEM_SORT;
         for (long i = orderLo; i < orderHi; i++) {
             addSortPlanRun(itemType, sortPlanRunOrder.get(2 * i + 1), clusterMin, clusterMax);
         }
-        if (copy) {
+        if (isCopy) {
             sortPlanCopyRows += getRunValue(firstRun, RUN_ROWS);
         }
     }
@@ -359,7 +359,7 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
     // transactions of a segment form a run while they are sorted and do not overlap, transactions of a segment
     // are in seqTxn order, so the rows of equal timestamps are in (timestamp, seqTxn) order in the run.
     // Returns false when there are not 2 to maxRunCount runs.
-    private boolean buildSortPlanRuns(boolean coalesce, long maxRunCount) {
+    private boolean buildSortPlanRuns(boolean isCoalescing, long maxRunCount) {
         runs.clear();
         long runCount = 0;
         for (long t = 0, n = getTxnCount(); t < n; t++) {
@@ -369,7 +369,7 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
             final long maxTs = txnMeta.get(t * TXN_META_LONGS + TXN_META_MAX_TS);
             final long ordered = txnMeta.get(t * TXN_META_LONGS + TXN_META_ORDERED);
 
-            if (coalesce && runCount > 0) {
+            if (isCoalescing && runCount > 0) {
                 final long last = (runCount - 1) * RUN_LONGS;
                 // empty transactions do not change the order
                 if (rowCount == 0 || (ordered == 1

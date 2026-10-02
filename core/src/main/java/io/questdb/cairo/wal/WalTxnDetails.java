@@ -491,9 +491,9 @@ public class WalTxnDetails implements QuietCloseable {
             isLastSegmentUse = isLastSegmentUse | sortedBySegmentTxnSlice.isLastSegmentUse(i);
             roHi = sortedBySegmentTxnSlice.getRoHi(i);
             long committedRowsCount = roHi - roLo;
-            boolean txnDataInOrder = sortedBySegmentTxnSlice.isTxnDataInOrder(i);
-            allInOrder = allInOrder && minTimestamp >= copyTasks.getMaxTimestamp() && txnDataInOrder;
-            copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp, txnDataInOrder);
+            boolean isTxnDataInOrder = sortedBySegmentTxnSlice.isTxnDataInOrder(i);
+            allInOrder = allInOrder && minTimestamp >= copyTasks.getMaxTimestamp() && isTxnDataInOrder;
+            copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp, isTxnDataInOrder);
 
             if (prevRoHi != -1 && prevRoHi != roLo) {
                 // In theory it's possible but in practice it should not happen

@@ -243,6 +243,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
+    private final boolean isWalApplySortPlanEnabled;
     private final PostingIndexChainWriter linkPostingIndexChainWriter = new PostingIndexChainWriter();
     private final LongList linkPostingIndexOrphanSealTxns = new LongList();
     // This is the same message bus. When TableWriter instance is created via CairoEngine, message bus is shared
@@ -324,7 +325,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
-    private final boolean walApplySortPlanEnabled;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -480,7 +480,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.walApplySortPlanEnabled = configuration.isWalApplySortPlanEnabled();
+        this.isWalApplySortPlanEnabled = configuration.isWalApplySortPlanEnabled();
         this.engine = cairoEngine;
         this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         this.isInCtorRecovery = true;
@@ -11095,7 +11095,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", maxTs=").$ts(timestampDriver, maxTs)
                     .I$();
 
-            long indexFormat = needsDedup || !walApplySortPlanEnabled
+            long indexFormat = needsDedup || !isWalApplySortPlanEnabled
                     ? -1
                     : processWalCommitBlock_sortWalSegmentTimestamps_sortByPlan(timestampAddr, tsAddresses.getAddress());
 
