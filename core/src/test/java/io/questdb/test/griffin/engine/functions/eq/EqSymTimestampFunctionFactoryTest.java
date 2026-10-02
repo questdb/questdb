@@ -375,21 +375,6 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVarcharSymbolCacheReopen() throws Exception {
-        testSymbolCacheReopen("VARCHAR");
-    }
-
-    @Test
-    public void testVarcharSymbolFilterCacheReopen() throws Exception {
-        testVarcharSymbolFilterCacheReopen(false);
-    }
-
-    @Test
-    public void testVarcharSymbolFilterCacheReopenParallel() throws Exception {
-        testVarcharSymbolFilterCacheReopen(true);
-    }
-
-    @Test
     public void testStaticSymbolTableNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5', null) a from long_sequence(30))");
@@ -555,6 +540,11 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharSymbolCacheReopen() throws Exception {
+        testSymbolCacheReopen("VARCHAR");
+    }
+
+    @Test
     public void testVarcharSymbolCompoundFilterCacheReopen() throws Exception {
         testVarcharSymbolCompoundFilterCacheReopen(false);
     }
@@ -562,6 +552,16 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarcharSymbolCompoundFilterCacheReopenParallel() throws Exception {
         testVarcharSymbolCompoundFilterCacheReopen(true);
+    }
+
+    @Test
+    public void testVarcharSymbolFilterCacheReopen() throws Exception {
+        testVarcharSymbolFilterCacheReopen(false);
+    }
+
+    @Test
+    public void testVarcharSymbolFilterCacheReopenParallel() throws Exception {
+        testVarcharSymbolFilterCacheReopen(true);
     }
 
     private void assertSymbolCacheInit(Function function, IntList initOrder) throws SqlException {

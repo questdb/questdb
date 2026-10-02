@@ -1050,6 +1050,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return indices;
     }
 
+    // A peeled HORIZON slave exposes columns its projection dropped. They keep their record
+    // positions for the borrowed filter, but only the projected names may resolve.
+    private static void addHorizonJoinSlaveColumns(
+            JoinRecordMetadata metadata,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata,
+            @Nullable RecordMetadata slaveProjectionMetadata
+    ) {
+        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+            final TableColumnMetadata m = slaveMetadata.getColumnMetadata(i);
+            if (slaveProjectionMetadata == null || slaveProjectionMetadata.getColumnIndexQuiet(m.getColumnName()) > -1) {
+                metadata.add(slaveAlias, m);
+            } else {
+                metadata.addHidden(slaveAlias, m);
+            }
+        }
+    }
+
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(IQueryModel model, RecordMetadata metadata) {
         final ObjList<QueryColumn> columns = model.getColumns();
         CharSequence symbolToken = null;
@@ -2966,7 +2984,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata masterMetadata,
             CharSequence horizonAlias,
             CharSequence slaveAlias,
-            RecordMetadata slaveMetadata
+            RecordMetadata slaveMetadata,
+            @Nullable RecordMetadata slaveProjectionMetadata
     ) {
         // Create metadata with master columns + horizon columns (offset, timestamp) + slave columns
         JoinRecordMetadata metadata = new JoinRecordMetadata(
@@ -2984,10 +3003,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         metadata.add(horizonAlias, new TableColumnMetadata("offset", ColumnType.LONG));
         metadata.add(horizonAlias, new TableColumnMetadata("timestamp", masterMetadata.getTimestampType()));
 
-        // Add slave columns
-        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            metadata.add(slaveAlias, slaveMetadata.getColumnMetadata(i));
-        }
+        addHorizonJoinSlaveColumns(metadata, slaveAlias, slaveMetadata, slaveProjectionMetadata);
 
         // Set timestamp index from master
         int masterTsIdx = masterMetadata.getTimestampIndex();
@@ -5245,6 +5261,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slaveFactory,
             IQueryModel slaveModel,
             RecordMetadata slaveMetadata,
+            @Nullable RecordMetadata slaveProjectionMetadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
         long[] offsets;
@@ -5336,7 +5353,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata,
                     horizonAlias,
                     slaveAlias,
-                    slaveMetadata
+                    slaveMetadata,
+                    slaveProjectionMetadata
             );
 
             // Prepare GROUP BY functions using the join result metadata
@@ -6306,6 +6324,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         CharSequence masterAlias = null;
         ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
         ObjList<IQueryModel> pendingHorizonSlaveModels = null;
+        ObjList<RecordMetadata> pendingHorizonSlaveProjectionMetadatas = null;
         boolean isHorizonJoinCompleted = false;
 
         try {
@@ -6369,6 +6388,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     // compile
+                    RecordMetadata horizonSlaveProjectionMetadata = null;
                     final IQueryModel previousHorizonSlaveModel = horizonJoinSlaveModel;
                     if (slaveModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
                         horizonJoinSlaveModel = slaveModel;
@@ -6407,6 +6427,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                                 if (hasRenamedColumn) {
                                     break;
+                                }
+                                if (horizonSlaveProjectionMetadata == null) {
+                                    // Peeling preserves names, so the outermost projection
+                                    // names every column the query may reference.
+                                    horizonSlaveProjectionMetadata = slaveToFree.getMetadata();
                                 }
                                 // Projection cursors have not been opened and own no native
                                 // resources; the base remains the sole rollback owner.
@@ -7231,9 +7256,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     if (pendingHorizonSlaves == null) {
                                         pendingHorizonSlaves = new ObjList<>();
                                         pendingHorizonSlaveModels = new ObjList<>();
+                                        pendingHorizonSlaveProjectionMetadatas = new ObjList<>();
                                     }
                                     pendingHorizonSlaves.add(slaveToFree);
                                     pendingHorizonSlaveModels.add(slaveModel);
+                                    pendingHorizonSlaveProjectionMetadatas.add(horizonSlaveProjectionMetadata);
                                     closeSlaveOnFailure = false;
                                     break;
                                 }
@@ -7267,11 +7294,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // to false so the outer catch block doesn't double-free.
                                     pendingHorizonSlaves.add(slaveToFree);
                                     pendingHorizonSlaveModels.add(slaveModel);
+                                    pendingHorizonSlaveProjectionMetadatas.add(horizonSlaveProjectionMetadata);
                                     closeSlaveOnFailure = false;
                                     ObjList<RecordCursorFactory> slaves = pendingHorizonSlaves;
                                     ObjList<IQueryModel> slaveModels = pendingHorizonSlaveModels;
+                                    ObjList<RecordMetadata> slaveProjectionMetadatas = pendingHorizonSlaveProjectionMetadatas;
                                     pendingHorizonSlaves = null;
                                     pendingHorizonSlaveModels = null;
+                                    pendingHorizonSlaveProjectionMetadatas = null;
                                     final RecordCursorFactory masterToTransfer = master;
                                     master = null;
                                     slaveToFree = null;
@@ -7283,6 +7313,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             masterMetadata,
                                             slaves,
                                             slaveModels,
+                                            slaveProjectionMetadatas,
                                             executionContext
                                     );
                                 } else {
@@ -7301,6 +7332,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveToTransfer,
                                             slaveModel,
                                             slaveMetadata,
+                                            horizonSlaveProjectionMetadata,
                                             executionContext
                                     );
                                 }
@@ -8132,6 +8164,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata masterMetadata,
             ObjList<RecordCursorFactory> slaveFactories,
             ObjList<IQueryModel> slaveModels,
+            ObjList<RecordMetadata> slaveProjectionMetadatas,
             SqlExecutionContext executionContext
     ) throws SqlException {
         long[] offsets;
@@ -8230,9 +8263,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             innerMetadata.add(horizonAlias, new TableColumnMetadata("offset", ColumnType.LONG));
             innerMetadata.add(horizonAlias, new TableColumnMetadata("timestamp", masterMetadata.getTimestampType()));
             for (int s = 0; s < slaveCount; s++) {
-                for (int col = 0, n = slaveMetadatas[s].getColumnCount(); col < n; col++) {
-                    innerMetadata.add(slaveAliases[s], slaveMetadatas[s].getColumnMetadata(col));
-                }
+                addHorizonJoinSlaveColumns(innerMetadata, slaveAliases[s], slaveMetadatas[s], slaveProjectionMetadatas.getQuick(s));
             }
             int masterTsIdx = masterMetadata.getTimestampIndex();
             if (masterTsIdx >= 0) {

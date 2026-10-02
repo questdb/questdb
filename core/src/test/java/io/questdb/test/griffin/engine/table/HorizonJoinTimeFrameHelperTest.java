@@ -303,6 +303,59 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     @Test
+    public void testFilteredKeyMissThenMatch() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Trace trace = new Trace();
+            Cursor cursor = new Cursor(trace, 4096);
+            SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            Function filter = new BooleanFunction() {
+                @Override
+                public boolean getBool(Record record) {
+                    trace.visit();
+                    return record.getRowId() == 1005;
+                }
+            };
+            try (PollingEngine engine = new PollingEngine(root, new State());
+                 Map map = newMap(engine);
+                 HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT)
+                 )) {
+                helper.of(cursor, null);
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1001, trace.visits);
+
+                // A recorded miss must not hide a qualifying row above it.
+                helper.toTop();
+                map.clear();
+                Assert.assertEquals(1005, helper.findKeyedAsOfMatch(1010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1007, trace.visits);
+
+                // Positions between the recorded miss and the qualifying row still miss,
+                // and each one raises the recorded miss.
+                helper.toTop();
+                map.clear();
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1003, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1010, trace.visits);
+                helper.toTop();
+                map.clear();
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1004, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1011, trace.visits);
+                helper.toTop();
+                map.clear();
+                Assert.assertEquals(1005, helper.findKeyedAsOfMatch(1005, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1012, trace.visits);
+
+                // Within one master frame, the miss switches to a forward scan that picks up the row.
+                helper.of(cursor, null);
+                map.clear();
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(1005, helper.findKeyedAsOfMatch(1010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(2023, trace.visits);
+            }
+        });
+    }
+
+    @Test
     public void testNotKeyedMatchOutOfOrderLookups() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Trace trace = new Trace();
