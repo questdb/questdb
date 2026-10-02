@@ -3881,6 +3881,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testAsOfSelfJoinOnSymbolSharedBySymbolColumns() throws Exception {
         // t2.s pairs with its namesake t1.s and with t1.s2. The self-join key t1.s = t2.s could
         // compare symbol ids, but t2.s needs one encoding, so the join compares both keys as strings.
+        // The SPLICE section also covers the master-side case, where t1.s is the shared column.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id INT, s SYMBOL, s2 SYMBOL, str STRING, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -3984,6 +3985,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns(expectedSplice);
+            // t1.s pairs with its namesake t2.s and with t2.s2, so the master column t1.s needs one encoding;
+            // only SPLICE keeps both keys, the other joins turn t2.s = t2.s2 into a filter
+            for (String on : new String[]{"t1.s = t2.s AND t1.s = t2.s2", "t1.s = t2.s2 AND t1.s = t2.s"}) {
+                assertQuery("SELECT t1.id, t2.id FROM t t1 SPLICE JOIN u t2 ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expectedSplice);
+                assertQuery("SELECT t1.id, t2.id FROM t t1 SPLICE JOIN t t2 ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expectedSplice);
+            }
 
             // SYMBOL and VARCHAR keys sharing a column still need different encodings
             assertQuery("SELECT t1.id, t2.id FROM t t1 ASOF JOIN t t2 ON t1.s = t2.s AND t1.v = t2.s")
