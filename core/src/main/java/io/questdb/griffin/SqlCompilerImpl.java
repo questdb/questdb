@@ -236,6 +236,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
+    // True when the wildcard of the last materialized view query parsed by compileMatViewQuery() is one the
+    // parser added to a query written without SELECT, such as `base WHERE v > 0`.
+    private boolean isMatViewWildcardArtificial;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -938,19 +941,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    // Appends a column name the way an expanded materialized view query spells it: bare when it is a plain
-    // identifier, otherwise double-quoted with any embedded double quote doubled. A keyword is quoted too,
-    // so a column named "from" does not end the select list.
+    // Appends a column name the way an expanded materialized view query spells it: always double-quoted, so
+    // no name can read as a keyword or start another clause, whatever the grammar treats as a keyword.
     private static void appendMatViewColumnName(CharSink<?> sink, CharSequence name) {
-        boolean isBare = name.length() > 0 && !SqlKeywords.isKeyword(name);
-        for (int i = 0, n = name.length(); isBare && i < n; i++) {
-            final char c = name.charAt(i);
-            isBare = c == '_' || Character.isLetter(c) || (i > 0 && Character.isDigit(c));
-        }
-        if (isBare) {
-            sink.put(name);
-            return;
-        }
         sink.putAscii('"');
         for (int i = 0, n = name.length(); i < n; i++) {
             final char c = name.charAt(i);
@@ -1230,6 +1223,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.STRING)
                 || (from == ColumnType.VARCHAR && to == ColumnType.IPv4)
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
+    }
+
+    // True for a character that already separates the expanded column list from its neighbour.
+    private static boolean isMatViewSpliceSeparator(char c) {
+        return Character.isWhitespace(c) || c == ',' || c == '(' || c == ')';
     }
 
     private static boolean isTimestampUpdateCast(int from, int to) {
@@ -2532,16 +2530,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // Records each wildcard in the top-level select list of a materialized view query as a
     // (projection index, start, end) triple, with start and end positions in the query text. The
     // optimizer expands wildcards in place, so this runs on the parsed model, before optimise().
+    // A query written without SELECT, such as `base WHERE v > 0`, gets a wildcard from the parser that
+    // has no text of its own; its start and end are both the position where the query starts.
     private void captureMatViewWildcards(IQueryModel queryModel, CharSequence selectText) {
         matViewWildcards.clear();
+        isMatViewWildcardArtificial = queryModel.isArtificialStar();
         final ObjList<QueryColumn> columns = queryModel.getColumns();
         matViewProjectionSize = columns.size();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final ExpressionNode ast = columns.getQuick(i).getAst();
             if (ast != null && ast.isWildcard()) {
                 matViewWildcards.add(i);
-                matViewWildcards.add(ast.position);
-                matViewWildcards.add(findWildcardEnd(selectText, ast.position));
+                if (isMatViewWildcardArtificial) {
+                    matViewWildcards.add(queryModel.getModelPosition());
+                    matViewWildcards.add(queryModel.getModelPosition());
+                } else {
+                    matViewWildcards.add(ast.position);
+                    matViewWildcards.add(findWildcardEnd(selectText, ast.position));
+                }
             }
         }
     }
@@ -6080,9 +6086,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     // Returns the materialized view query with its top-level wildcard replaced by the columns it expands to
-    // now, which are the view's columns. The rewritten query is compiled and has to produce exactly the same
-    // column names, types and designated timestamp as the original, so the stored query stays equivalent to
-    // what the user wrote at CREATE.
+    // now, which are the view's columns, each double-quoted. A query written without SELECT gets
+    // `select <columns> from ` in front of where it starts. The rewritten query is compiled and has to
+    // produce exactly the same column names, types and designated timestamp as the original, so the stored
+    // query stays equivalent to what the user wrote at CREATE. The names come from the view's columns, so a
+    // wildcard that repeats a column the select list also names (`SELECT ts, * FROM base`) expands to the
+    // deduplicated name ts1, which the base does not have, and CREATE rejects it.
     private String expandMatViewWildcard(
             SqlExecutionContext executionContext,
             CreateMatViewOperation createMatViewOp,
@@ -6102,20 +6111,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int wildcardHi = matViewWildcards.getQuick(2);
         final int columnCount = metadata.getColumnCount();
         final int expandedCount = columnCount - (matViewProjectionSize - 1);
-        if (wildcardHi < 0 || expandedCount < 1 || wildcardIndex + expandedCount > columnCount) {
-            throw SqlException.$(selectTextPosition + wildcardLo,
+        final String selectText = createTableOp.getSelectText();
+        final int selectTextLen = selectText.length();
+        if (wildcardLo < 0 || wildcardHi < wildcardLo || wildcardHi > selectTextLen
+                || expandedCount < 1 || wildcardIndex + expandedCount > columnCount) {
+            throw SqlException.$(selectTextPosition + Math.max(wildcardLo, 0),
                     "could not expand the wildcard of the materialized view query, list the columns explicitly");
         }
-        final String selectText = createTableOp.getSelectText();
         final StringSink sink = new StringSink();
         sink.put(selectText, 0, wildcardLo);
+        if (isMatViewWildcardArtificial) {
+            // The query has no SELECT of its own: write one in front of where the query starts.
+            sink.putAscii("select ");
+        } else if (wildcardLo > 0 && !isMatViewSpliceSeparator(selectText.charAt(wildcardLo - 1))) {
+            // `SELECT*FROM t`: keep the column list from running into the token before it.
+            sink.putAscii(' ');
+        }
         for (int i = 0; i < expandedCount; i++) {
             if (i > 0) {
                 sink.putAscii(", ");
             }
             appendMatViewColumnName(sink, metadata.getColumnName(wildcardIndex + i));
         }
-        sink.put(selectText, wildcardHi, selectText.length());
+        if (isMatViewWildcardArtificial) {
+            sink.putAscii(" from ");
+        } else if (wildcardHi < selectTextLen && !isMatViewSpliceSeparator(selectText.charAt(wildcardHi))) {
+            // `SELECT *FROM t`: keep the column list from running into the token after it.
+            sink.putAscii(' ');
+        }
+        sink.put(selectText, wildcardHi, selectTextLen);
         final String expandedSql = sink.toString();
 
         RecordMetadata expandedMetadata = null;

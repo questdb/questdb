@@ -49,7 +49,10 @@ which these queries do not accept:
 ### Passthrough views keep the columns they were created with
 
 CREATE stores a passthrough view's query with its top-level `SELECT *` expanded
-into the base table's columns at that moment. A column the base table gains
+into the base table's columns at that moment, each name double-quoted, for
+example `select "sym", "price", "ts" from base_price`. A query written without
+`SELECT`, such as `base_price WHERE price > 0`, is stored with
+`select <columns> from` in front. A column the base table gains
 later, through `ALTER TABLE ... ADD COLUMN` or a new ILP field, stays out of the
 view. The view keeps refreshing its original columns and stays valid. Picking
 up the new column takes a drop and re-create.
@@ -59,8 +62,22 @@ up the new column takes a drop and re-create.
   renaming a base column the view reads still invalidates the view, as for any
   materialized view. The public docs describe this, because ILP users hit it.
 - **Pinned by:** `MatViewTest.testPassthroughSelectStarStoresExpandedColumns`,
-  `MatViewTest.testPassthroughSelectStarKeepsColumnsWhenBaseGainsColumn`.
+  `MatViewTest.testPassthroughSelectStarKeepsColumnsWhenBaseGainsColumn`,
+  `MatViewTest.testPassthroughWildcardSpellingsStoreExpandedColumns`,
+  `MatViewTest.testPassthroughShowCreateRoundTrips`.
 - **Follow-up:** add new base columns to the view automatically.
+
+A wildcard that repeats a column the select list also names, such as
+`SELECT ts, * FROM base_price`, is rejected at CREATE with "could not expand the
+wildcard of the materialized view query, list the columns explicitly". List the
+columns, or alias the extra one: `SELECT *, ts AS ts2 FROM base_price` works.
+
+- **Why accepted:** the expansion takes its names from the view's columns, and
+  the view renames the repeated column (`ts1`), which the base table does not
+  have. Using the source's names instead means tracking which table or
+  sub-query each wildcard expands from. A view with a duplicated column is
+  unusual.
+- **Pinned by:** `MatViewTest.testPassthroughSelectStarRepeatingColumnRejected`.
 
 ### Subqueries that read the base table in a view definition
 
