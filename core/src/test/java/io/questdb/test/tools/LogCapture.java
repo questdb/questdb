@@ -36,8 +36,6 @@ public class LogCapture {
         consoleWriter.setInterceptor(logRecordSink -> logRecordSink.toSink(sink));
     }
 
-    @SuppressWarnings("unused")
-    // used in the Ent, will be useful in OSS eventually
     public void assertLogged(String message) {
         final int idx = sink.indexOf(message);
         if (idx < 0) {

@@ -1372,8 +1372,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final ArrayColumnTypes mapValueTypes;
         private final String name;
         private double stddev = Double.NaN;
-        // Welford's other two slots in LiveViewWindow's fused map value. The base class
-        // caches the counter, which every family has; these two are this family's own.
+        // Welford's other two slots in the fused map value WindowMapState owns. The base
+        // class caches the counter, which every family has; these two are this family's own.
         private int windowStateM2Slot = -1;
         private int windowStateMeanSlot = -1;
 
@@ -1481,6 +1481,15 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             return isSample
                     ? WindowAccumulatorProjection.PROJECTION_VAR_SAMP
                     : WindowAccumulatorProjection.PROJECTION_VAR_POP;
+        }
+
+        /**
+         * The whole image is {@code (mean, m2, nonNullCount)} - the frame start is
+         * unbounded, so there are no live rows behind the accumulator to carry.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return 2 * Double.BYTES + Long.BYTES;
         }
 
         @Override

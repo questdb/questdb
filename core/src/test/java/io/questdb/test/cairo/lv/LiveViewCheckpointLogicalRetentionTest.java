@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
@@ -36,14 +37,25 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Zip;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Acceptance coverage for the retention rule the versioned timeline replaced the
@@ -105,9 +117,16 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
                 long entries = 0;
                 for (int commit = 1; commit <= SEALS; commit++) {
                     appendAndRefresh(job, commit * 10, commit);
+                    if (commit == 1) {
+                        Assert.assertSame(
+                                engine.getLiveViewCheckpointLifecycleState(),
+                                job.getCheckpointTimelineLifecycleStateForTest()
+                        );
+                    }
                     final LiveViewInstance instance = viewInstance();
                     entries = assertEpochRetainsEveryEntry(instance, entries, "after commit " + commit);
                     Assert.assertEquals("one cadence seal appends one logical entry", commit, entries);
@@ -237,12 +256,22 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     public void testLocalizedRepairsReVersionRootsWithoutDroppingOne() throws Exception {
         assertMemoryLeak(() -> {
             createView();
+            final LiveViewInstance instance;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                final LiveViewInstance instance = buildHistory(job);
+                instance = buildHistory(job);
+            }
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
                 long entries = SEALS;
                 for (int correction = 1; correction <= CORRECTIONS; correction++) {
                     final long generationBefore = generation(instance);
                     correct(job, instance, historicalSecond(correction), 900 + correction);
+                    if (correction == 1) {
+                        Assert.assertSame(
+                                engine.getLiveViewCheckpointLifecycleState(),
+                                job.getCheckpointTimelineLifecycleStateForTest()
+                        );
+                    }
 
                     final String when = "after correction " + correction;
                     Assert.assertTrue(
@@ -267,9 +296,9 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 final LiveViewInstance instance = buildHistory(job);
-                // The shape a crash inside the Windows marker rewrite leaves: the
-                // previous record unlinked, the replacement staged but not renamed
-                // over it. It has to read as a live repair, not as "none in flight".
+                // A staged marker with no record in it, and no final name: what a
+                // crash inside the staged write itself can leave. With no generation to
+                // test, it has to read as a live repair, not as "none in flight".
                 writeRepairMarker(instance, generation(instance));
                 try (Path dir = checkpointsDir(instance); Path path = new Path()) {
                     LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
@@ -323,7 +352,12 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             // to its predecessor, and the restart reconstructs the corrupt id in place
             // before restoring cleanly from the healed generation.
             try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertNull(resumed.getCheckpointTimelineLifecycleStateForTest());
                 driveRefreshToQuiescence(resumed);
+                Assert.assertSame(
+                        engine.getLiveViewCheckpointLifecycleState(),
+                        resumed.getCheckpointTimelineLifecycleStateForTest()
+                );
             }
 
             final LiveViewInstance restored = viewInstance();
@@ -380,7 +414,116 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
-    public void testEofRepairPreservesThePrefixInsteadOfRetiring() throws Exception {
+    public void testEofRepairKeepsTheWholeLadderInsteadOfTruncatingIt() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long generationBefore = generation(instance);
+                Assert.assertEquals("the epoch allocated one id per seal", SEALS, nextCheckpointId(instance));
+                final LongList idsBefore = logicalCheckpointIds(instance);
+
+                // Five seconds under the head, so the correction's influence reaches the
+                // runtime frontier instead of converging under it. There is no proven
+                // converged suffix to keep untouched, but every root above the repair
+                // floor describes output the replay is about to reproduce - so the repair
+                // re-versions them in place rather than dropping them.
+                correct(job, instance, SEALS * 10 - 5, 800);
+
+                // Preserved, not retired: the generation advances rather than restarting
+                // at 1, and the checkpoint id space carries forward rather than resetting.
+                Assert.assertTrue(
+                        "an EOF repair must preserve the timeline, not reset its generation [generation="
+                                + generation(instance) + ']',
+                        generation(instance) > generationBefore
+                );
+
+                // The ladder is what the next correction resumes from, so the repair has
+                // to leave it standing. Every id survives, in place: a splice re-versions
+                // a boundary's payload and keeps its logical coordinate, where the
+                // truncate this replaced dropped every entry above the repair floor and
+                // left the newest usable anchor pinned wherever the last in-order commit
+                // had put it.
+                final LongList ids = logicalCheckpointIds(instance);
+                Assert.assertEquals("the repair must drop no logical entry", idsBefore.size(), ids.size());
+                for (int i = 0, n = ids.size(); i < n; i++) {
+                    Assert.assertEquals("the ladder keeps its ids in place", idsBefore.getQuick(i), ids.getQuick(i));
+                }
+                // A splice appends no root, and the replay stops at the end of the base
+                // table - which is the newest boundary it just re-versioned - so nothing
+                // above it needs sealing and no fresh id is minted.
+                Assert.assertEquals(
+                        "a splice that reaches its own newest root mints no boundary [nextCheckpointId="
+                                + nextCheckpointId(instance) + ']',
+                        SEALS,
+                        nextCheckpointId(instance)
+                );
+
+                // The oldest boundary keeps the exact coordinate it was sealed at, which
+                // is what makes an old O3 row's predecessor lookup a search rather than a
+                // fallback to the view boundary.
+                final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+                Assert.assertTrue(
+                        "the oldest boundary must survive the near-head repair",
+                        findsEntry(instance, ts(timestamp(10)), 0, entry)
+                );
+                assertViewMatchesRecompute();
+
+                // A subsequent, deeper O3 correction reuses one of the surviving
+                // predecessors: it localizes against them (a splice that re-versions in
+                // place and mints no new boundary) instead of falling back to a full
+                // rebuild from the view boundary, which a retired timeline would have
+                // forced.
+                final long generationBeforeDeep = generation(instance);
+                final long nextIdBeforeDeep = nextCheckpointId(instance);
+                correct(job, instance, 103, 700); // between the 100 and 110 groups
+                Assert.assertTrue(
+                        "the deeper repair must advance the generation",
+                        generation(instance) > generationBeforeDeep
+                );
+                Assert.assertEquals(
+                        "a localized repair reusing the preserved prefix mints no new boundary",
+                        nextIdBeforeDeep,
+                        nextCheckpointId(instance)
+                );
+                Assert.assertTrue(
+                        "the preserved prefix stays addressable after the deeper repair",
+                        findsEntry(instance, ts(timestamp(10)), 0, entry)
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshJobTruncateUsesEngineLifecycleState() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            final LiveViewInstance instance;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                instance = buildHistory(job);
+            }
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
+                Assert.assertTrue(job.truncateOrRetireTimelineOnO3ForTest(
+                        instance,
+                        ts(timestamp(SEALS * 10 - 5))
+                ));
+                Assert.assertSame(
+                        engine.getLiveViewCheckpointLifecycleState(),
+                        job.getCheckpointTimelineLifecycleStateForTest()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testEofRepairTruncatesThePrefixWhenTheChainIsDeclined() throws Exception {
+        // The budget that governs how many boundaries one repair may re-version. Zero
+        // declines the chain outright, which is the fallback a correction deeper than the
+        // budget takes in the field - and the only way left to reach the truncate, since
+        // an ordinary EOF correction now keeps its ladder.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -388,16 +531,13 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 final long generationBefore = generation(instance);
                 Assert.assertEquals("the epoch allocated one id per seal", SEALS, nextCheckpointId(instance));
 
-                // Five seconds under the head, so the correction's influence reaches the
-                // runtime frontier instead of converging under it. There is no proven
-                // converged suffix, but the roots below the repair floor are still
-                // correct, so a truncate preserves the prefix and re-seals a fresh head.
                 correct(job, instance, SEALS * 10 - 5, 800);
 
-                // Preserved, not retired: the generation advances rather than restarting
-                // at 1, and the checkpoint id space carries forward rather than resetting.
+                // Preserved, not retired: the roots below the repair floor are still
+                // correct whatever happens above them, so the truncate keeps them and the
+                // generation and id space carry forward rather than restarting.
                 Assert.assertTrue(
-                        "an EOF repair must preserve the timeline, not reset its generation [generation="
+                        "a truncating repair must preserve the prefix, not reset its generation [generation="
                                 + generation(instance) + ']',
                         generation(instance) > generationBefore
                 );
@@ -417,10 +557,19 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 for (int i = 0, n = ids.size() - 1; i < n; i++) {
                     Assert.assertEquals("the preserved prefix is contiguous from zero", i, ids.getQuick(i));
                 }
+                // The head the truncate re-sealed takes the next free id, and the run
+                // below it stops one short of it - which is the entry the truncate
+                // dropped, and the discriminator against the splice this case exists to
+                // avoid taking.
                 Assert.assertEquals(
                         "the sealed head takes the preserved next id",
                         SEALS,
                         ids.getQuick(ids.size() - 1)
+                );
+                Assert.assertEquals(
+                        "the truncate must have dropped the tail it rewrote",
+                        SEALS - 1,
+                        ids.getQuick(ids.size() - 2) + 1
                 );
 
                 // The oldest boundary keeps the exact coordinate it was sealed at, which
@@ -432,30 +581,77 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                         findsEntry(instance, ts(timestamp(10)), 0, entry)
                 );
                 assertViewMatchesRecompute();
+            }
+        });
+    }
 
-                // A subsequent, deeper O3 correction reuses one of the preserved
-                // predecessors: it localizes against the surviving roots (a splice that
-                // re-versions in place and mints no new boundary) instead of falling back
-                // to a full rebuild from the view boundary, which a retired timeline
-                // would have forced.
-                final long generationBeforeDeep = generation(instance);
-                final long nextIdBeforeDeep = nextCheckpointId(instance);
-                correct(job, instance, 103, 700); // between the 100 and 110 groups
-                Assert.assertTrue(
-                        "the deeper repair must advance the generation",
-                        generation(instance) > generationBeforeDeep
-                );
+    @Test
+    public void testEofRepairRetiresTheTimelineWhenTheTruncateCannotWriteItsMarker() throws Exception {
+        // The truncate above, on a filesystem that refuses the repair marker. The marker
+        // has to be durable before the truncate publishes, because it alone holds a restart
+        // off the truncated head until the post-replay seal re-anchors it. A truncate that
+        // cannot write one keeps nothing: truncateOrRetireTimelineOnO3 catches the failure
+        // and retires the whole timeline ahead of the replacement commit, so no root above
+        // the floor outlives the output it describes. The repair itself goes through, and
+        // the post-replay seal opens a fresh history that a restart restores from.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicInteger markerAttempts = new AtomicInteger();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (isArmed.get() && Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                    markerAttempts.incrementAndGet();
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+
+                isArmed.set(true);
+                correct(job, instance, SEALS * 10 - 5, 800);
+                isArmed.set(false);
+
+                Assert.assertEquals("the truncate attempts its marker once", 1, markerAttempts.get());
                 Assert.assertEquals(
-                        "a localized repair reusing the preserved prefix mints no new boundary",
-                        nextIdBeforeDeep,
-                        nextCheckpointId(instance)
+                        "a truncate that cannot write its marker must retire the timeline",
+                        resetsBefore + 1,
+                        instance.getCheckpointTimelineResets()
                 );
+                try (Path dir = checkpointsDir(instance)) {
+                    Assert.assertFalse(
+                            "a retired timeline owes no marker",
+                            LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
+                    );
+                }
+                // Retired, not preserved: the post-replay seal opens a fresh history instead
+                // of carrying the generation and the id space forward, and the oldest boundary
+                // goes with the timeline it belonged to.
+                Assert.assertEquals("the post-replay seal must open a fresh history", 1, generation(instance));
+                final long entries = assertEpochRetainsEveryEntry(instance, 0, "after the retire");
                 Assert.assertTrue(
-                        "the preserved prefix stays addressable after the deeper repair",
-                        findsEntry(instance, ts(timestamp(10)), 0, entry)
+                        "no entry of the retired history may survive [entries=" + entries + ']',
+                        entries < SEALS
+                );
+                Assert.assertFalse(
+                        "the oldest boundary must go with the retired timeline",
+                        findsEntry(instance, ts(timestamp(10)), 0, new LiveViewCheckpointTimelineEntry())
                 );
                 assertViewMatchesRecompute();
             }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+            }
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
         });
     }
 
@@ -484,6 +680,70 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             try (Path dir = checkpointsDir(restored)) {
                 Assert.assertFalse(
                         "a stale marker must be cleared on restore",
+                        LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
+                );
+            }
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testVersionOneRepairMarkerUnderItsOwnGenerationForcesRebuildOnRestart() throws Exception {
+        // A version 1 marker, the layout builds before the seqTxn was recorded wrote, reads
+        // back with no seqTxn. Under its own generation only the seqTxn can prove the repair
+        // moved nothing durable, so a marker without one must read as live and send the
+        // restart to the rebuild from the applied base.
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                // The control: the same marker in version 2, recording the seqTxn the view's
+                // WAL ends at and its table applied, reads as stale. That proves the view
+                // meets every other staleness condition, so the version 1 marker below reads
+                // as live on its missing seqTxn alone.
+                writeRepairMarker(
+                        instance,
+                        generation(instance),
+                        engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken())
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+            }
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance restored = viewInstance();
+            final long generation = generation(restored);
+            Assert.assertTrue("the control must restore rather than rebuild", generation > 1);
+            try (Path dir = checkpointsDir(restored)) {
+                Assert.assertFalse(
+                        "the restart must clear the stale control marker",
+                        LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
+                );
+                writeVersionOneRepairMarker(restored, generation);
+                // The premise: a valid version 1 record under the view's own generation, not a
+                // torn one, whose unreadable base generation would force the rebuild by itself.
+                Assert.assertEquals(generation, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+            }
+            final long lvSeqTxn = engine.getTableSequencerAPI().lastTxn(restored.getLiveViewToken());
+            try (TableReader reader = engine.getReader(restored.getLiveViewToken())) {
+                Assert.assertEquals("the view's table must have applied its whole WAL", lvSeqTxn, reader.getSeqTxn());
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(resumed);
+            }
+            assertRebuiltFromAppliedBase("lv");
+            final LiveViewInstance rebuilt = viewInstance();
+            Assert.assertEquals("the live marker must force a rebuild that resets the generation", 1, generation(rebuilt));
+            try (Path dir = checkpointsDir(rebuilt)) {
+                Assert.assertFalse(
+                        "the rebuild must remove the repair marker",
                         LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
                 );
             }
@@ -733,9 +993,19 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     // Stamps a repair marker on disk to stand in for a crash in the middle of a
-    // prefix-preserving repair. The identity fields mirror what the repair writes;
-    // only the base generation drives the restart decision.
+    // prefix-preserving repair. The identity fields mirror what the repair writes. The
+    // recorded seqTxn sits one below the view's newest commit, as a repair whose
+    // replacement committed leaves it, so only the base generation drives the restart
+    // decision.
     private void writeRepairMarker(LiveViewInstance instance, long baseGeneration) {
+        writeRepairMarker(
+                instance,
+                baseGeneration,
+                engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()) - 1
+        );
+    }
+
+    private void writeRepairMarker(LiveViewInstance instance, long baseGeneration, long lvSeqTxn) {
         try (Path dir = checkpointsDir(instance)) {
             LiveViewCheckpointRepairMarker.write(
                     configuration,
@@ -743,8 +1013,39 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     instance.getLiveViewToken().getTableId(),
                     0,
                     baseGeneration,
-                    ts(timestamp(10))
+                    ts(timestamp(10)),
+                    lvSeqTxn
             );
+        }
+    }
+
+    // Stamps the version 1 marker layout the builds before the seqTxn was recorded wrote:
+    // the identity fields writeRepairMarker records, up to the floor timestamp, then the CRC
+    // of everything before it. The record carries no seqTxn.
+    private void writeVersionOneRepairMarker(LiveViewInstance instance, long baseGeneration) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int size = LiveViewCheckpointRepairMarker.V1_SIZE;
+        try (Path dir = checkpointsDir(instance); Path markerPath = new Path()) {
+            LiveViewCheckpointLayout.repairingMarkerPath(markerPath, dir);
+            final long fd = ff.openRW(markerPath.$(), configuration.getWriterFileOpenOpts());
+            Assert.assertTrue(fd > -1);
+            final long buf = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putLong(buf + LiveViewCheckpointRepairMarker.MAGIC_OFFSET, LiveViewCheckpointRepairMarker.MARKER_MAGIC);
+                Unsafe.getUnsafe().putInt(buf + LiveViewCheckpointRepairMarker.FORMAT_VERSION_OFFSET, LiveViewCheckpointRepairMarker.V1_FORMAT_VERSION);
+                Unsafe.getUnsafe().putLong(buf + LiveViewCheckpointRepairMarker.DEFINITION_TXN_OFFSET, instance.getLiveViewToken().getTableId());
+                Unsafe.getUnsafe().putLong(buf + LiveViewCheckpointRepairMarker.HISTORY_EPOCH_OFFSET, 0);
+                Unsafe.getUnsafe().putLong(buf + LiveViewCheckpointRepairMarker.BASE_GENERATION_OFFSET, baseGeneration);
+                Unsafe.getUnsafe().putLong(buf + LiveViewCheckpointRepairMarker.FLOOR_TIMESTAMP_OFFSET, ts(timestamp(10)));
+                Unsafe.getUnsafe().putInt(
+                        buf + LiveViewCheckpointRepairMarker.V1_CRC_OFFSET,
+                        Zip.crc32(0, buf, LiveViewCheckpointRepairMarker.V1_CRC_OFFSET)
+                );
+                Assert.assertEquals(size, ff.write(fd, buf, size, 0));
+            } finally {
+                ff.close(fd);
+                Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
+            }
         }
     }
 }

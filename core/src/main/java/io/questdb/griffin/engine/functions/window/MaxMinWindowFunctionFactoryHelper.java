@@ -2328,6 +2328,17 @@ public class MaxMinWindowFunctionFactoryHelper {
             return offset;
         }
 
+        /**
+         * The running extremum, one 64-bit payload, which is the whole of the state the
+         * {@link #windowAccumulatorFamily() family} declares. Declaring it is what offers the
+         * function to a live view's fused window state: the group carries the same one slot,
+         * and the component codec writes this very image out of it.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;

@@ -25,12 +25,20 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
 /**
- * In-heap image of one immutable persistent partition-map B+ tree page.
+ * Decoded image of one immutable persistent partition-map B+ tree page. Every entry's
+ * key, scalar state and state page references live in a
+ * {@link LiveViewCheckpointMutationArena}: the build's own staging arena for a node a
+ * copy-on-write build decodes or mints, and an arena the reader owns per node for a
+ * node a lookup or a walk decodes. The node itself holds only which arena and which
+ * staged entry each slot names, plus the child references of an internal page.
+ * <p>
+ * A key passes in as an {@code (address, length)} pair valid only for the call.
  */
 final class LiveViewCheckpointPartitionMapNode {
 
@@ -44,8 +52,8 @@ final class LiveViewCheckpointPartitionMapNode {
     private static final int HEADER_SIZE = 2 * Integer.BYTES;
     LiveViewCheckpointPartitionMapNode[] childNodes = new LiveViewCheckpointPartitionMapNode[0];
     LiveViewCheckpointPageRef[] childRefs = new LiveViewCheckpointPageRef[0];
-    byte[][] keys = new byte[0][];
-    byte[][] scalarStates = new byte[0][];
+    LiveViewCheckpointMutationArena[] keyArenas = new LiveViewCheckpointMutationArena[0];
+    int[] keyMutationIndexes = new int[0];
     /**
      * Metadata segment of the published page this node was decoded from, or
      * {@link #NO_SOURCE_SEGMENT_ID}. A copy-on-write build reads it to report the
@@ -53,17 +61,41 @@ final class LiveViewCheckpointPartitionMapNode {
      * reachable page exactly when the build stops naming it.
      */
     long sourceSegmentId = NO_SOURCE_SEGMENT_ID;
-    LiveViewCheckpointStatePageRef[][] statePageRefs = new LiveViewCheckpointStatePageRef[0][];
+    /**
+     * Child references {@link #decodeOwned} borrows for this node's current page, reset
+     * per decode. What leaves the node does so through {@link #copyEntryTo}, which
+     * copies into the caller's own flyweight.
+     */
+    private final LiveViewCheckpointPageRefPool decodedChildRefs = new LiveViewCheckpointPageRefPool();
     private int count;
     private boolean leaf;
 
-    int childIndex(byte[] key) {
+    void adjustRefCountsAt(int index, LongList counts, int delta) {
+        keyArenas[index].adjustRefCounts(counts, keyMutationIndexes[index], delta);
+    }
+
+    int childIndex(long keyAddress, int keyLength) {
         assert !leaf && count > 0;
         int lo = 0;
         int hi = count;
         while (lo < hi) {
             final int mid = (lo + hi) >>> 1;
-            if (LiveViewCheckpointMetadata.compareBytes(keys[mid], key) <= 0) {
+            if (compareKeyAt(mid, keyAddress, keyLength) <= 0) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return Math.max(0, lo - 1);
+    }
+
+    int childIndex(LiveViewCheckpointMutationArena arena, int mutationIndex) {
+        assert !leaf && count > 0;
+        int lo = 0;
+        int hi = count;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (compareMutationToKeyAt(arena, mutationIndex, mid) >= 0) {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -77,14 +109,18 @@ final class LiveViewCheckpointPartitionMapNode {
     }
 
     void copyEntryTo(int index, LiveViewCheckpointPartitionMapEntry out) {
-        out.ofDecoded(
-                Arrays.copyOf(keys[index], keys[index].length),
-                Arrays.copyOf(scalarStates[index], scalarStates[index].length),
-                LiveViewCheckpointPartitionMapEntry.copyRefs(statePageRefs[index])
-        );
+        out.ofArena(keyArenas[index], keyMutationIndexes[index]);
     }
 
-    void decode(@NotNull LiveViewCheckpointMetaSegmentReader reader) {
+    /**
+     * Decodes the open page into {@code arena}, appending one staged entry per page entry.
+     * Child references come from {@code pageRefPool}.
+     */
+    void decode(
+            @NotNull LiveViewCheckpointMetaSegmentReader reader,
+            @NotNull LiveViewCheckpointMutationArena arena,
+            @NotNull LiveViewCheckpointPageRefPool pageRefPool
+    ) {
         final int pageKind = reader.getPageKind();
         if (pageKind != LiveViewCheckpointPartitionMap.PAGE_KIND_LEAF
                 && pageKind != LiveViewCheckpointPartitionMap.PAGE_KIND_INTERNAL) {
@@ -115,7 +151,7 @@ final class LiveViewCheckpointPartitionMapNode {
         sourceSegmentId = NO_SOURCE_SEGMENT_ID;
         ensureCapacity(decodedCount);
         long offset = HEADER_SIZE;
-        byte[] previousKey = null;
+        int previousMutationIndex = -1;
         for (int i = 0; i < decodedCount; i++) {
             requireRemaining(offset, Integer.BYTES, payloadLength, "entry key length");
             final int keyLength = reader.getInt(offset);
@@ -139,31 +175,36 @@ final class LiveViewCheckpointPartitionMapNode {
             final long tailLength = (long) keyLength + scalarLength
                     + (leaf ? (long) refCount * LiveViewCheckpointStatePageRef.BYTES : LiveViewCheckpointPageRef.BYTES);
             requireRemaining(offset, tailLength, payloadLength, "entry body");
-            final byte[] key = LiveViewCheckpointMetadata.readBytes(reader, offset, keyLength);
-            offset += keyLength;
-            if (previousKey != null && LiveViewCheckpointMetadata.compareBytes(previousKey, key) >= 0) {
+            final long keyOffset = offset;
+            final long scalarOffset = keyOffset + keyLength;
+            final long refsOffset = scalarOffset + scalarLength;
+            final int mutationIndex = arena.appendDecoded(
+                    reader,
+                    keyOffset,
+                    keyLength,
+                    scalarOffset,
+                    scalarLength,
+                    refsOffset,
+                    refCount,
+                    leaf ? LiveViewCheckpointMutationArena.OP_PUT : LiveViewCheckpointMutationArena.OP_DOMAIN
+            );
+            if (previousMutationIndex > -1 && arena.compareKey(previousMutationIndex, mutationIndex) >= 0) {
                 throw LiveViewCheckpointMetadata.invalid("partition map keys not strictly increasing");
             }
-            keys[i] = key;
+            keyArenas[i] = arena;
+            keyMutationIndexes[i] = mutationIndex;
+            offset += keyLength;
             if (leaf) {
-                scalarStates[i] = LiveViewCheckpointMetadata.readBytes(reader, offset, scalarLength);
-                offset += scalarLength;
-                final LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[refCount];
-                for (int r = 0; r < refCount; r++) {
-                    refs[r] = new LiveViewCheckpointStatePageRef().readFrom(reader, offset);
-                    LiveViewCheckpointMetadata.validateStateRef(refs[r], false, "partition");
-                    offset += LiveViewCheckpointStatePageRef.BYTES;
-                }
-                statePageRefs[i] = refs;
+                offset += scalarLength + (long) refCount * LiveViewCheckpointStatePageRef.BYTES;
             } else {
-                final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef ref = pageRefPool.next();
                 LiveViewCheckpointMetadata.readMetaRef(reader, offset, ref);
                 LiveViewCheckpointMetadata.validateMetaRef(ref, false, "partition child");
                 childRefs[i] = ref;
                 childNodes[i] = null;
                 offset += LiveViewCheckpointPageRef.BYTES;
             }
-            previousKey = key;
+            previousMutationIndex = mutationIndex;
             count++;
         }
         if (offset != payloadLength) {
@@ -172,26 +213,37 @@ final class LiveViewCheckpointPartitionMapNode {
         }
     }
 
-    int find(byte[] key) {
-        final int index = lowerBound(key);
-        return index < count && LiveViewCheckpointMetadata.compareBytes(keys[index], key) == 0 ? index : -1;
+    /**
+     * Decodes the open page into {@code arena}, which the caller owns for this node
+     * alone: the arena is cleared first, and the child references come from the node's
+     * own pool.
+     */
+    void decodeOwned(@NotNull LiveViewCheckpointMetaSegmentReader reader, @NotNull LiveViewCheckpointMutationArena arena) {
+        arena.clear();
+        decodedChildRefs.reset();
+        decode(reader, arena, decodedChildRefs);
     }
 
-    byte[] minKey() {
-        assert count > 0;
-        return keys[0];
+    int find(long keyAddress, int keyLength) {
+        final int index = lowerBound(keyAddress, keyLength);
+        return index < count && compareKeyAt(index, keyAddress, keyLength) == 0 ? index : -1;
+    }
+
+    int find(LiveViewCheckpointMutationArena arena, int mutationIndex) {
+        final int index = lowerBound(arena, mutationIndex);
+        return index < count && keyEqualsAt(index, arena, mutationIndex) ? index : -1;
     }
 
     boolean isLeaf() {
         return leaf;
     }
 
-    int lowerBound(byte[] key) {
+    int lowerBound(long keyAddress, int keyLength) {
         int lo = 0;
         int hi = count;
         while (lo < hi) {
             final int mid = (lo + hi) >>> 1;
-            if (LiveViewCheckpointMetadata.compareBytes(keys[mid], key) < 0) {
+            if (compareKeyAt(mid, keyAddress, keyLength) < 0) {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -200,29 +252,49 @@ final class LiveViewCheckpointPartitionMapNode {
         return lo;
     }
 
-    void putEntry(int index, LiveViewCheckpointPartitionMapEntry entry) {
+    boolean keyEqualsAt(int index, LiveViewCheckpointMutationArena arena, int mutationIndex) {
+        return compareMutationToKeyAt(arena, mutationIndex, index) == 0;
+    }
+
+    int lowerBound(LiveViewCheckpointMutationArena arena, int mutationIndex) {
+        assert arena.isLowerBoundCountRecordedForTest();
+        int lo = 0;
+        int hi = count;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (compareMutationToKeyAt(arena, mutationIndex, mid) > 0) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    void putEntry(int index, LiveViewCheckpointMutationArena arena, int mutationIndex) {
         assert leaf;
-        final int existing = index < count && LiveViewCheckpointMetadata.compareBytes(keys[index], entry.getKey()) == 0 ? index : -1;
+        final int existing = index < count && compareMutationToKeyAt(arena, mutationIndex, index) == 0 ? index : -1;
         if (existing < 0) {
             ensureCapacity(count + 1);
             shiftRight(index);
             count++;
         }
-        keys[index] = Arrays.copyOf(entry.getKey(), entry.getKey().length);
-        scalarStates[index] = Arrays.copyOf(entry.getScalarState(), entry.getScalarState().length);
-        statePageRefs[index] = LiveViewCheckpointPartitionMapEntry.copyRefs(entry.statePageRefs());
+        keyArenas[index] = arena;
+        keyMutationIndexes[index] = mutationIndex;
     }
 
     void removeChild(int index) {
         assert !leaf;
         final int moved = count - index - 1;
         if (moved > 0) {
-            System.arraycopy(keys, index + 1, keys, index, moved);
+            System.arraycopy(keyArenas, index + 1, keyArenas, index, moved);
+            System.arraycopy(keyMutationIndexes, index + 1, keyMutationIndexes, index, moved);
             System.arraycopy(childRefs, index + 1, childRefs, index, moved);
             System.arraycopy(childNodes, index + 1, childNodes, index, moved);
         }
         count--;
-        keys[count] = null;
+        keyArenas[count] = null;
+        keyMutationIndexes[count] = -1;
         childRefs[count] = null;
         childNodes[count] = null;
     }
@@ -231,14 +303,12 @@ final class LiveViewCheckpointPartitionMapNode {
         assert leaf;
         final int moved = count - index - 1;
         if (moved > 0) {
-            System.arraycopy(keys, index + 1, keys, index, moved);
-            System.arraycopy(scalarStates, index + 1, scalarStates, index, moved);
-            System.arraycopy(statePageRefs, index + 1, statePageRefs, index, moved);
+            System.arraycopy(keyArenas, index + 1, keyArenas, index, moved);
+            System.arraycopy(keyMutationIndexes, index + 1, keyMutationIndexes, index, moved);
         }
         count--;
-        keys[count] = null;
-        scalarStates[count] = null;
-        statePageRefs[count] = null;
+        keyArenas[count] = null;
+        keyMutationIndexes[count] = -1;
     }
 
     void resetInternal() {
@@ -255,7 +325,8 @@ final class LiveViewCheckpointPartitionMapNode {
 
     void setChild(int index, LiveViewCheckpointPartitionMapNode child) {
         assert !leaf && child.count > 0;
-        keys[index] = Arrays.copyOf(child.minKey(), child.minKey().length);
+        keyArenas[index] = child.keyArenas[0];
+        keyMutationIndexes[index] = child.keyMutationIndexes[0];
         childNodes[index] = child;
         childRefs[index] = null;
     }
@@ -268,8 +339,7 @@ final class LiveViewCheckpointPartitionMapNode {
         setChild(index, child);
     }
 
-    LiveViewCheckpointPartitionMapNode split() {
-        final LiveViewCheckpointPartitionMapNode right = new LiveViewCheckpointPartitionMapNode();
+    void splitInto(LiveViewCheckpointPartitionMapNode right) {
         if (leaf) {
             right.resetLeaf();
         } else {
@@ -278,25 +348,20 @@ final class LiveViewCheckpointPartitionMapNode {
         final int split = count >>> 1;
         final int rightCount = count - split;
         right.ensureCapacity(rightCount);
-        System.arraycopy(keys, split, right.keys, 0, rightCount);
-        if (leaf) {
-            System.arraycopy(scalarStates, split, right.scalarStates, 0, rightCount);
-            System.arraycopy(statePageRefs, split, right.statePageRefs, 0, rightCount);
-        } else {
+        System.arraycopy(keyArenas, split, right.keyArenas, 0, rightCount);
+        System.arraycopy(keyMutationIndexes, split, right.keyMutationIndexes, 0, rightCount);
+        if (!leaf) {
             System.arraycopy(childRefs, split, right.childRefs, 0, rightCount);
             System.arraycopy(childNodes, split, right.childNodes, 0, rightCount);
         }
-        Arrays.fill(keys, split, count, null);
-        if (leaf) {
-            Arrays.fill(scalarStates, split, count, null);
-            Arrays.fill(statePageRefs, split, count, null);
-        } else {
+        Arrays.fill(keyArenas, split, count, null);
+        Arrays.fill(keyMutationIndexes, split, count, -1);
+        if (!leaf) {
             Arrays.fill(childRefs, split, count, null);
             Arrays.fill(childNodes, split, count, null);
         }
         count = split;
         right.count = rightCount;
-        return right;
     }
 
     void writeTo(LiveViewCheckpointMetaSegmentWriter writer, LiveViewCheckpointPageRef out) {
@@ -306,17 +371,17 @@ final class LiveViewCheckpointPartitionMapNode {
         mem.putInt(FORMAT_VERSION);
         mem.putInt(count);
         for (int i = 0; i < count; i++) {
-            mem.putInt(keys[i].length);
+            final LiveViewCheckpointMutationArena arena = keyArenas[i];
+            final int mutationIndex = keyMutationIndexes[i];
+            mem.putInt(arena.keyLength(mutationIndex));
             if (leaf) {
-                mem.putInt(scalarStates[i].length);
-                mem.putInt(statePageRefs[i].length);
+                mem.putInt(arena.scalarLength(mutationIndex));
+                mem.putInt(arena.refCount(mutationIndex));
             }
-            LiveViewCheckpointMetadata.putBytes(mem, keys[i]);
+            arena.writeKeyTo(mutationIndex, mem);
             if (leaf) {
-                LiveViewCheckpointMetadata.putBytes(mem, scalarStates[i]);
-                for (int r = 0; r < statePageRefs[i].length; r++) {
-                    statePageRefs[i][r].writeTo(mem);
-                }
+                arena.writeScalarTo(mutationIndex, mem);
+                arena.writeRefsTo(mutationIndex, mem);
             } else {
                 LiveViewCheckpointMetadata.putMetaRef(mem, childRefs[i]);
             }
@@ -325,16 +390,14 @@ final class LiveViewCheckpointPartitionMapNode {
     }
 
     private void ensureCapacity(int capacity) {
-        if (keys.length >= capacity
-                && (leaf ? scalarStates.length >= capacity : childRefs.length >= capacity)) {
+        if (keyArenas.length >= capacity && (leaf || childRefs.length >= capacity)) {
             return;
         }
-        final int newCapacity = Math.max(capacity, Math.max(4, keys.length * 2));
-        keys = Arrays.copyOf(keys, newCapacity);
-        if (leaf) {
-            scalarStates = Arrays.copyOf(scalarStates, newCapacity);
-            statePageRefs = Arrays.copyOf(statePageRefs, newCapacity);
-        } else {
+        final int newCapacity = Math.max(capacity, Math.max(4, keyArenas.length * 2));
+        keyArenas = Arrays.copyOf(keyArenas, newCapacity);
+        keyMutationIndexes = Arrays.copyOf(keyMutationIndexes, newCapacity);
+        Arrays.fill(keyMutationIndexes, count, newCapacity, -1);
+        if (!leaf) {
             childRefs = Arrays.copyOf(childRefs, newCapacity);
             childNodes = Arrays.copyOf(childNodes, newCapacity);
         }
@@ -345,14 +408,31 @@ final class LiveViewCheckpointPartitionMapNode {
         if (moved <= 0) {
             return;
         }
-        System.arraycopy(keys, index, keys, index + 1, moved);
-        if (leaf) {
-            System.arraycopy(scalarStates, index, scalarStates, index + 1, moved);
-            System.arraycopy(statePageRefs, index, statePageRefs, index + 1, moved);
-        } else {
+        System.arraycopy(keyArenas, index, keyArenas, index + 1, moved);
+        System.arraycopy(keyMutationIndexes, index, keyMutationIndexes, index + 1, moved);
+        if (!leaf) {
             System.arraycopy(childRefs, index, childRefs, index + 1, moved);
             System.arraycopy(childNodes, index, childNodes, index + 1, moved);
         }
+    }
+
+    boolean valueEquals(int index, LiveViewCheckpointMutationArena arena, int mutationIndex) {
+        final LiveViewCheckpointMutationArena storedArena = keyArenas[index];
+        final int storedMutationIndex = keyMutationIndexes[index];
+        return arena.equalsScalar(mutationIndex, storedArena, storedMutationIndex)
+                && arena.refsEqual(mutationIndex, storedArena, storedMutationIndex);
+    }
+
+    private int compareKeyAt(int index, long keyAddress, int keyLength) {
+        return keyArenas[index].compareKey(keyMutationIndexes[index], keyAddress, keyLength);
+    }
+
+    private int compareMutationToKeyAt(
+            LiveViewCheckpointMutationArena arena,
+            int mutationIndex,
+            int index
+    ) {
+        return arena.compareKey(mutationIndex, keyArenas[index], keyMutationIndexes[index]);
     }
 
     private static void requireRemaining(long offset, long length, int payloadLength, CharSequence what) {
@@ -362,4 +442,5 @@ final class LiveViewCheckpointPartitionMapNode {
                     .put(", payloadLength=").put(payloadLength).put(']');
         }
     }
+
 }
