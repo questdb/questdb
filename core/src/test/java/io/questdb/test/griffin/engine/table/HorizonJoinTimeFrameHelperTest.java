@@ -119,7 +119,8 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                                 try {
                                     switch (kind) {
                                         case 0 -> helper.findNotKeyedAsOfMatch(255, breaker);
-                                        case 1 -> helper.findKeyedAsOfMatch(255, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker);
+                                        case 1 ->
+                                                helper.findKeyedAsOfMatch(255, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker);
                                         case 2 -> helper.forwardScanToPosition(255, KEY_SINK, map, breaker);
                                         default -> helper.findAsOfRow(300, breaker);
                                     }
@@ -394,7 +395,8 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                         long last = Rows.toRowID(3, 39);
                         switch (kind) {
                             case 0 -> Assert.assertEquals(Long.MIN_VALUE, helper.findNotKeyedAsOfMatch(last, breaker));
-                            case 1 -> Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(last, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                            case 1 ->
+                                    Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(last, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                             default -> helper.forwardScanToPosition(last, KEY_SINK, map, breaker);
                         }
                         Assert.assertEquals(160, trace.visits);
@@ -450,7 +452,8 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             long result = Long.MIN_VALUE;
             try {
                 switch (branch) {
-                    case 0 -> result = helper.findKeyedAsOfMatch(Rows.toRowID(9, 0), MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker);
+                    case 0 ->
+                            result = helper.findKeyedAsOfMatch(Rows.toRowID(9, 0), MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker);
                     case 1 -> result = helper.findAsOfRow(0, breaker);
                     case 2 -> result = helper.findAsOfRow(90_000, breaker);
                     case 3, 4, 5 -> helper.forwardScanToPosition(Rows.toRowID(9, 0), KEY_SINK, map, breaker);
