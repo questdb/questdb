@@ -2811,6 +2811,55 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardRefLeftJoinBeforeFullJoin() throws Exception {
+        // LEFT JOIN g1 reads JOIN g3, which reads CROSS JOIN g2. The optimiser unpinned LEFT JOIN g1, so
+        // FULL JOIN g4 lost the edge to its prefix and the query failed with "Invalid column: a3". Now
+        // CROSS JOIN g2 and JOIN g3 execute before LEFT JOIN g1 and the query returns the rows of the
+        // form that writes them first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (null, 2), (3, null)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (3, null), (4, 2), (3, 3)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (3, null), (null, 3), (3, 3)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (4, 2), (3, 2)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            execute("INSERT INTO g4 VALUES (null, 2), (3, 1), (3, null)");
+            final String expected = """
+                    a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t2
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\tnull
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1
+                    """;
+            assertQuery("SELECT a0, b0, a1, b1, a2, b2, a3, b3, a4, b4 FROM g0 CROSS JOIN g2 JOIN g3 ON a3 = b0 AND b3 > a2 LEFT JOIN g1 ON a1 < a3 FULL JOIN g4 ON a4 = a1 ORDER BY a4, b4")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT * FROM g0 LEFT JOIN g1 ON a1 < a3 CROSS JOIN g2 JOIN g3 ON a3 = b0 AND b3 > a2 FULL JOIN g4 ON a4 = a1 ORDER BY a4, b4")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testForwardRefLeftJoinReadBackBeforeFullJoin() throws Exception {
+        // LEFT JOIN g1 reads JOIN g2, whose ON clause reads g1 back: neither can execute first, so the
+        // optimiser keeps LEFT JOIN g1 unpinned and the query fails to resolve the forward reference.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 LEFT JOIN g1 ON a1 < a2 JOIN g2 ON a2 = b1 FULL JOIN g3 ON a3 < a0",
+                    38,
+                    "Invalid column: a2"
+            );
+        });
+    }
+
+    @Test
     public void testForwardRefOuterJoinColumnEqColumnFilterStaysPostJoin() throws Exception {
         // col=col counterpart of testForwardRefOuterJoinConstFilterStaysPostJoin: the RIGHT/FULL OUTER
         // ON b.k = c.k forward-references c (joined later), so no JoinContext attaches at the join's own
@@ -10199,11 +10248,12 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOuterJoinOnKeysSharingColumnAfterForwardReferencingLeftJoinFails() throws Exception {
-        // LEFT JOIN g2 reads the later CROSS JOIN g3, which leaves the non-equi RIGHT/FULL join without the
-        // ordering edges that keep it after its prefix. Restoring the edge of the outer join filter's table
-        // then let the optimiser run the last LEFT JOIN before the RIGHT/FULL join and return wrong rows,
-        // so these queries keep failing to resolve the filter's column instead.
+    public void testOuterJoinOnKeysSharingColumnAfterForwardReferencingLeftJoin() throws Exception {
+        // LEFT JOIN g2 reads the later CROSS JOIN g3. The optimiser unpinned LEFT JOIN g2, which left the
+        // non-equi RIGHT/FULL join without the ordering edges that keep it after its prefix, so these
+        // queries failed to resolve the outer join filter's column. LEFT JOIN g2 now stays pinned, CROSS
+        // JOIN g3 executes before it, and the queries return the rows of the form that writes CROSS JOIN
+        // g3 before LEFT JOIN g2.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE g0 (a0 INT, b0 INT)");
             execute("INSERT INTO g0 VALUES (3, 4), (null, 1), (3, 2)");
@@ -10217,13 +10267,14 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO g4 VALUES (4, null)");
             execute("CREATE TABLE g5 (a5 INT, b5 INT)");
             execute("INSERT INTO g5 VALUES (3, null), (null, 2), (2, 4)");
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON a2 = a3 CROSS JOIN g3 RIGHT JOIN g4 ON a4 <= a0 LEFT JOIN g5 ON a5 = b0 AND a5 = b1",
-                    116,
-                    "Invalid column: b0"
-            );
-            // keyed on a5 = b0, LEFT JOIN g5 keeps its order after RIGHT JOIN g4 and returns the rows of the
-            // form that writes CROSS JOIN g3 before LEFT JOIN g2
+            assertQuery("SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON a2 = a3 CROSS JOIN g3 RIGHT JOIN g4 ON a4 <= a0 LEFT JOIN g5 ON a5 = b0 AND a5 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t4\tnull\tnull\t2
+                            """);
+            // keyed on a5 = b0, LEFT JOIN g5 keeps its order after RIGHT JOIN g4
             assertQuery("SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON a2 = a3 CROSS JOIN g3 RIGHT JOIN g4 ON a4 <= a0 LEFT JOIN g5 ON a5 = b1 AND a5 = b0")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -10231,12 +10282,13 @@ public class JoinTest extends AbstractCairoTest {
                             a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
                             null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t4\tnull\tnull\t2
                             """);
-            // addOuterJoinExpression orders RIGHT JOIN g4 before LEFT JOIN g5, but not after LEFT JOIN g2
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON b2 <= b3 CROSS JOIN g3 RIGHT JOIN g4 ON b4 <= b0 AND b4 < b1 LEFT JOIN g5 ON b5 = b0 AND b5 = b3 AND a5 <= b1",
-                    93,
-                    "Invalid column: b0"
-            );
+            assertQuery("SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON b2 <= b3 CROSS JOIN g3 RIGHT JOIN g4 ON b4 <= b0 AND b4 < b1 LEFT JOIN g5 ON b5 = b0 AND b5 = b3 AND a5 <= b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t4\tnull\tnull\tnull
+                            """);
             // the unpinned FULL JOIN g4 follows the outer join that reads the forward-referenced g2
             assertExceptionNoLeakCheck(
                     "SELECT * FROM g0 RIGHT JOIN g1 ON b1 >= a0 JOIN g2 ON b2 <= a5 LEFT JOIN g3 ON a3 = a2 AND a3 = a0 FULL JOIN g4 ON a4 > a0 CROSS JOIN g5",

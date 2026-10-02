@@ -283,6 +283,7 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
     private final ObjHashSet<IQueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
+    private final IntList tempReadLaterModels = new IntList();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -820,6 +821,10 @@ public class SqlOptimiser implements Mutable {
         return joinModel.getAlias() != null && Chars.startsWith(joinModel.getAlias().token, LATERAL_OUTER_REF_PREFIX);
     }
 
+    private static boolean isLeftJoin(int joinType) {
+        return joinType == IQueryModel.JOIN_LEFT_OUTER || joinType == IQueryModel.JOIN_CROSS_LEFT;
+    }
+
     /**
      * Returns true for join types that NULL-extend the master (left) side: SPLICE, FULL OUTER and
      * RIGHT OUTER, plus the JOIN_CROSS_RIGHT / JOIN_CROSS_FULL variants {@code homogenizeCrossJoins}
@@ -913,6 +918,24 @@ public class SqlOptimiser implements Mutable {
                 || isSysdateKeyword(token)
                 || isSystimestampKeyword(token)
                 || isCurrentTimestampKeyword(token);
+    }
+
+    // Returns the last model before boundaryIndex that the ON clause of the prefix model may read while
+    // the prefix stays pinned. An INNER/CROSS join reads any prefix model. A LEFT join reads the run of
+    // INNER/CROSS joins that directly follows it, which behave as if written before it. Other barrier
+    // joins read no later model.
+    private static int lastPrefixIndexReadableBy(ObjList<IQueryModel> joinModels, int prefixIndex, int boundaryIndex) {
+        final int joinType = joinModels.getQuick(prefixIndex).getJoinType();
+        if (joinBarriers.excludes(joinType)) {
+            return boundaryIndex - 1;
+        }
+        int lastIndex = prefixIndex;
+        if (isLeftJoin(joinType)) {
+            while (lastIndex + 1 < boundaryIndex && joinBarriers.excludes(joinModels.getQuick(lastIndex + 1).getJoinType())) {
+                lastIndex++;
+            }
+        }
+        return lastIndex;
     }
 
     private static void linkDependencies(IQueryModel model, int parent, int child) {
@@ -3422,8 +3445,10 @@ public class SqlOptimiser implements Mutable {
     // it must execute first. doReorderTables would otherwise append a context-free prefix model after
     // the outer join, or run a non-equi one, which it appends last only while nothing links it, ahead
     // of its prefix. A prefix model keeps its order when its ON clause may read a model that cannot
-    // run before it: the outer join or a later model for an INNER/CROSS join, or any later model for
-    // an outer or time-series join. A non-equi outer join has no join key that keeps it after the
+    // run before it: the outer join or a later model for an INNER/CROSS join, a later model outside
+    // the run of INNER/CROSS joins that directly follows a LEFT join, or a model of that run that
+    // reads the LEFT join back, or any later model for another outer or time-series join. A pinned
+    // LEFT join runs after the models of that run its ON clause reads. A non-equi outer join has no join key that keeps it after the
     // prefix models it reads, so it keeps its order unless this method pins every prefix model, its ON
     // clause reads no later model, and every later time-series join can run ahead of it. The level
     // keeps its order when an ON clause anywhere on it has a name that does not resolve to one model:
@@ -3470,11 +3495,13 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
                     final IQueryModel prefixModel = joinModels.getQuick(prefixIndex);
-                    final int lastReadableIndex = joinBarriers.contains(prefixModel.getJoinType()) ? prefixIndex : boundaryIndex - 1;
+                    final int lastReadableIndex = lastPrefixIndexReadableBy(joinModels, prefixIndex, boundaryIndex);
                     refs.clear();
                     // resolves: the level check above returned otherwise
                     collectReferencedJoinModels(parent, prefixModel.getJoinCriteria(), refs);
-                    if (hasModelAfter(refs, lastReadableIndex) || intersects(refs, unpinned)) {
+                    if (hasModelAfter(refs, lastReadableIndex)
+                            || intersects(refs, unpinned)
+                            || (isLeftJoin(prefixModel.getJoinType()) && isReadByLaterModelItReads(parent, prefixIndex, refs))) {
                         unpinned.add(prefixIndex);
                         isChanged = true;
                     }
@@ -3487,6 +3514,29 @@ public class SqlOptimiser implements Mutable {
             for (int prefixIndex = 0; prefixIndex < boundaryIndex; prefixIndex++) {
                 if (!unpinned.contains(prefixIndex)) {
                     recordOrderingConstraint(parent, prefixIndex, boundaryIndex);
+                    if (isLeftJoin(joinModels.getQuick(prefixIndex).getJoinType())) {
+                        // the INNER/CROSS models after a LEFT join that its ON clause reads execute before it
+                        refs.clear();
+                        // resolves: the level check above returned otherwise
+                        collectReferencedJoinModels(parent, joinModels.getQuick(prefixIndex).getJoinCriteria(), refs);
+                        boolean isForwardReferencing = false;
+                        for (int i = 0, m = refs.size(); i < m; i++) {
+                            final int refIndex = refs.get(i);
+                            if (refIndex > prefixIndex) {
+                                recordOrderingConstraint(parent, refIndex, prefixIndex);
+                                isForwardReferencing = true;
+                            }
+                        }
+                        // doReorderTables counts every dependency against the parents, so the models
+                        // that addOuterJoinExpression links to the LEFT join become parents as well
+                        if (isForwardReferencing) {
+                            for (int i = 0; i < prefixIndex; i++) {
+                                if (joinModels.getQuick(i).getDependencies().contains(prefixIndex)) {
+                                    recordOrderingConstraint(parent, i, prefixIndex);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             // A time-series join other than SPLICE that reads only the prefix commutes with the outer
@@ -6799,6 +6849,38 @@ public class SqlOptimiser implements Mutable {
         for (int i = 1, n = outerJoinExpressionParents.size(); i < n; i += 2) {
             if (outerJoinExpressionParents.getQuick(i) == index) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    // Returns true when a later model that the ON clause of the model at modelIndex reads, directly or
+    // through other later models, reads that model back: neither can execute first.
+    private boolean isReadByLaterModelItReads(IQueryModel parent, int modelIndex, IntHashSet refs) throws SqlException {
+        final IntList pending = tempReadLaterModels;
+        final IntHashSet visited = intHashSetPool.next();
+        final IntHashSet laterRefs = intHashSetPool.next();
+        pending.clear();
+        for (int i = 0, n = refs.size(); i < n; i++) {
+            final int refIndex = refs.get(i);
+            if (refIndex > modelIndex && visited.add(refIndex)) {
+                pending.add(refIndex);
+            }
+        }
+        while (pending.size() > 0) {
+            final int laterIndex = pending.getLast();
+            pending.removeIndex(pending.size() - 1);
+            laterRefs.clear();
+            // resolves: constrainRightAndFullJoinsAfterPrefix checked the level
+            collectReferencedJoinModels(parent, parent.getJoinModels().getQuick(laterIndex).getJoinCriteria(), laterRefs);
+            for (int i = 0, n = laterRefs.size(); i < n; i++) {
+                final int refIndex = laterRefs.get(i);
+                if (refIndex == modelIndex) {
+                    return true;
+                }
+                if (refIndex > modelIndex && visited.add(refIndex)) {
+                    pending.add(refIndex);
+                }
             }
         }
         return false;
