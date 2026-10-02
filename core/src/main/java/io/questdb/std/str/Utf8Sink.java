@@ -103,10 +103,13 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         int i = 0;
         final int hi = utf8.size();
         while (i < hi) {
+            // A byte of a multibyte character is negative, so it widens to a char above 127. Only
+            // ASCII lands below 128, NUL included: JSON requires NUL to be escaped like any other
+            // control character, and put(byte) is for non-ASCII bytes only.
             char c = (char) utf8.byteAt(i++);
-            if (c > 0 && c < 32) {
+            if (c < 32) {
                 escapeJsonStrChar(c);
-            } else if (c > 0 && c < 128) {
+            } else if (c < 128) {
                 switch (c) {
                     case '\"':
                     case '\\':

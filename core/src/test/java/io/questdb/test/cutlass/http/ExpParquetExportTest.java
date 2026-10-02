@@ -2206,6 +2206,47 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFrameRecreatedViewAfterCache() throws Exception {
+        // A cached plan exports through getPageFrameCursor() rather than getCursor(), so the
+        // stale-view check has to run there too. Without it the cached plan outlives a DROP VIEW
+        // and CREATE VIEW, and goes on exporting the old body's rows.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE recreated_t (ts TIMESTAMP, symbol SYMBOL) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO recreated_t VALUES
+                                ('2024-01-01T00:00:00.000000Z', 'AAPL'),
+                                ('2024-01-01T00:00:01.000000Z', 'MSFT')""", sqlExecutionContext);
+                    engine.execute("CREATE VIEW recreated_v AS (SELECT ts, symbol FROM recreated_t)", sqlExecutionContext);
+
+                    final String query = "SELECT * FROM recreated_v";
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        httpClient.setKeepConnection(true);
+                        // The second request is served from the connection's select cache.
+                        for (int i = 0; i < 2; i++) {
+                            exportParquet(httpClient, sink, query);
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recreated_before_" + i + ".parquet");
+                        }
+
+                        engine.execute("DROP VIEW recreated_v", sqlExecutionContext);
+                        engine.execute(
+                                "CREATE VIEW recreated_v AS (SELECT ts, symbol FROM recreated_t WHERE symbol = 'AAPL')",
+                                sqlExecutionContext
+                        );
+
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recreated_after.parquet");
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameVarcharAndArrayColumns() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2706,6 +2747,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
         TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private void exportParquet(TestHttpClient httpClient, DirectUtf8Sink sink, String query) {
+        HttpClient.Request req = httpClient.getHttpClient().newRequest("localhost", 9001);
+        req.GET().url("/exp");
+        req.query("query", query);
+        req.query("fmt", "parquet");
+        sink.clear();
+        httpClient.reqToSink(req, sink, null, null, null, null);
     }
 
     private HttpQueryTestBuilder getExportTester() {

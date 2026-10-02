@@ -571,4 +571,62 @@ public final class WindowExpression extends QueryColumn {
                 && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LEAD_NAME)
                 && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LAG_NAME);
     }
+
+    /**
+     * Copies this window for one read of a declared variable whose value holds it, see
+     * {@link ExpressionNode#deepCloneSharingQueries}. {@code ast} is the read's clone of the function
+     * call this window belongs to. The copy clones the window's expressions the same way, so it
+     * shares their sub-query nodes, and copies every other field as it stands.
+     */
+    WindowExpression deepCloneSharingQueries(
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ExpressionNode ast
+    ) {
+        final WindowExpression dst = windowExpressionPool.next();
+        dst.of(null, ast, isIncludeIntoWildcard(), getColumnType());
+        dst.setAlias(getAlias(), getAliasPosition());
+        dst.setGenerated(isGenerated());
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            dst.partitionBy.add(ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, partitionBy.getQuick(i)));
+        }
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            dst.orderBy.add(ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, orderBy.getQuick(i)));
+        }
+        dst.orderByDirection.addAll(orderByDirection);
+        dst.anchorExpression = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, anchorExpression);
+        dst.anchorKind = anchorKind;
+        dst.anchorPosition = anchorPosition;
+        dst.anchorDailyTimeUs = anchorDailyTimeUs;
+        dst.anchorDailyTimeZone = anchorDailyTimeZone;
+        dst.baseWindowName = baseWindowName;
+        dst.baseWindowNamePosition = baseWindowNamePosition;
+        dst.exclusionKind = exclusionKind;
+        dst.exclusionKindPos = exclusionKindPos;
+        dst.framingMode = framingMode;
+        dst.ignoreNulls = ignoreNulls;
+        dst.nullsDescPos = nullsDescPos;
+        dst.pendingSubsample = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, pendingSubsample);
+        dst.isSubsampleProjectionPending = isSubsampleProjectionPending;
+        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
+        dst.subsamplePosition = subsamplePosition;
+        dst.rowsHi = rowsHi;
+        dst.rowsHiExpr = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, rowsHiExpr);
+        dst.rowsHiExprPos = rowsHiExprPos;
+        dst.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
+        dst.rowsHiKind = rowsHiKind;
+        dst.rowsHiKindPos = rowsHiKindPos;
+        dst.rowsLo = rowsLo;
+        dst.rowsLoExpr = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, rowsLoExpr);
+        dst.rowsLoExprPos = rowsLoExprPos;
+        dst.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
+        dst.rowsLoKind = rowsLoKind;
+        dst.rowsLoKindPos = rowsLoKindPos;
+        dst.subsampleKeepFlag = subsampleKeepFlag;
+        dst.windowName = windowName;
+        dst.windowNamePosition = windowNamePosition;
+        dst.resolvedWindowName = resolvedWindowName;
+        dst.resolvedWindowAnchored = resolvedWindowAnchored;
+        return dst;
+    }
 }

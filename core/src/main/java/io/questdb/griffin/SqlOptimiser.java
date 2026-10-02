@@ -243,6 +243,10 @@ public class SqlOptimiser implements Mutable {
     // lazily to the deepest wrapper nesting seen and is never shrunk.
     private final ObjList<SubsampleNameScope> subsampleNameScopes = new ObjList<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
+    // The model each entry of tableFactoriesInFlight hangs on, at the same index. A factory that is
+    // still its model's table name function has no owner yet: code generation detaches the ones it
+    // takes over.
+    private final ObjList<IQueryModel> tableFactoryModelsInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> tempAliasRewriteMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -422,6 +426,7 @@ public class SqlOptimiser implements Mutable {
         tempCursorAliases.clear();
         tempCursorAliasSequenceMap.clear();
         tableFactoriesInFlight.clear();
+        tableFactoryModelsInFlight.clear();
         groupByAliases.clear();
         groupByNodes.clear();
         innerWindowModels.clear();
@@ -7695,6 +7700,7 @@ public class SqlOptimiser implements Mutable {
                 tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
                 model.setTableNameFunction(tableFactory);
                 tableFactoriesInFlight.add(tableFactory);
+                tableFactoryModelsInFlight.add(model);
             }
         }
         copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
@@ -15222,6 +15228,42 @@ public class SqlOptimiser implements Mutable {
     void freeTableFactoriesInFlight(@NotNull Throwable failure) {
         Misc.freeObjList(tableFactoriesInFlight, failure);
         tableFactoriesInFlight.clear();
+        tableFactoryModelsInFlight.clear();
+    }
+
+    /**
+     * Closes the cursor-function factories {@link #parseFunctionAndEnumerateColumns} instantiated
+     * and code generation did not take over, and detaches each from its model.
+     * <p>
+     * The optimiser instantiates the factory of every model it optimises, and generation reaches
+     * only the models the plan reads. A sub-query in a column the outer query does not select, in
+     * a window column the optimiser dropped as a duplicate, or in a declared variable nothing
+     * reads is optimised and never generated, so its factory stays open on a compile that
+     * succeeds.
+     * <p>
+     * Unlike {@link #freeTableFactoriesInFlight}, a caller may run this after a generation
+     * attempt, whether it returned or threw. Generation detaches the model field it takes a
+     * factory from ({@code SqlCodeGenerator#generateFunctionQuery}), and so does the generator's
+     * cleanup of a failed attempt ({@code SqlCodeGenerator#freeTableNameFunctions}), so only a
+     * factory that is still its model's table name function has no owner. A later generation of
+     * such a model instantiates the factory again.
+     *
+     * @param failure the failure in flight, which takes every close failure as suppressed, or
+     *                null on a path that has not failed
+     * @return {@code failure}, or the first close failure when {@code failure} is null
+     */
+    @Nullable Throwable freeUnclaimedTableFactories(@Nullable Throwable failure) {
+        for (int i = 0, n = tableFactoriesInFlight.size(); i < n; i++) {
+            final RecordCursorFactory tableFactory = tableFactoriesInFlight.getQuick(i);
+            final IQueryModel model = tableFactoryModelsInFlight.getQuick(i);
+            if (model.getTableNameFunction() == tableFactory) {
+                model.setTableNameFunction(null);
+                failure = Misc.freeBestEffort(failure, tableFactory);
+            }
+        }
+        tableFactoriesInFlight.clear();
+        tableFactoryModelsInFlight.clear();
+        return failure;
     }
 
     IQueryModel optimise(
@@ -15279,6 +15321,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             rewrittenModel.recordViews(model.getReferencedViews());
+            rewrittenModel.recordViewAudits(model.getViewAudits());
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             if (ALLOW_FUNCTION_MEMOIZATION) {
                 collectColumnRefCount(null, rewrittenModel);
@@ -15301,6 +15344,12 @@ public class SqlOptimiser implements Mutable {
         selectQueryModel.setIsUpdate(true);
         IQueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext, sqlParserCallback);
         assert optimisedNested.isUpdate();
+        // The parser hands a statement's views and view audits to its top model, which for an
+        // UPDATE is this one. Code generation compiles the nested model into the cursor that reads
+        // the rows, so they have to be on that one, or an UPDATE that reads an audited view records
+        // nothing, and its plan never notices the view was redefined.
+        optimisedNested.recordViews(updateQueryModel.getReferencedViews());
+        optimisedNested.recordViewAudits(updateQueryModel.getViewAudits());
         updateQueryModel.setNestedModel(optimisedNested);
 
         // And then generate plan for UPDATE top level QueryModel

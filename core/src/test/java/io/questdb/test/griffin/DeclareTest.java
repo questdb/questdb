@@ -25,7 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.griffin.SqlExecutionRequirements;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
+import io.questdb.test.tools.TableFunctionTestUtils;
+import io.questdb.test.tools.TableFunctionTestUtils.CloseCountingRecordCursorFactory;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class DeclareTest extends AbstractSqlParserTest {
@@ -216,6 +226,31 @@ public class DeclareTest extends AbstractSqlParserTest {
               amount DOUBLE,
               timestamp TIMESTAMP
             ) timestamp (timestamp) PARTITION BY DAY WAL;""";
+
+    @Test
+    public void testBracketedSubqueryIsNotAList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a', 1), ('b', 2)");
+            drainWalQueue();
+            // A subquery puts commas at the same bracket depth a list separator sits at, so the
+            // lookahead has to recognise it rather than count commas. Declaring one is not
+            // supported either way - what matters is that it still says so, instead of blaming a
+            // list the user did not write.
+            assertQuery("DECLARE @x := (SELECT max(l), min(l) FROM k) SELECT @x")
+                    .fails(15, "query is not expected");
+            assertQuery("DECLARE @x := (SELECT l FROM k ORDER BY l, s LIMIT 1) SELECT @x")
+                    .fails(15, "query is not expected");
+            // ...and a subquery that IS usable with IN keeps working.
+            assertQuery("DECLARE @x := (SELECT s FROM k) SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            b
+                            """);
+        });
+    }
 
     @Test
     public void testDeclareCreateAsSelect() throws Exception {
@@ -811,12 +846,1073 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsComparisonUnderNot() throws Exception {
+        assertMemoryLeak(() -> {
+            // The optimiser folds NOT into a comparison by rewriting the comparison node in place.
+            // Every reference to a variable used to be the declared node itself, so `NOT @f` turned
+            // `@f` into its own negation for the other reference as well.
+            assertQuery("DECLARE @f := (1 = 1) SELECT count() FROM long_sequence(3) WHERE NOT @f OR @f")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
+            assertQuery("DECLARE @f := (x < 2) SELECT x, NOT @f AS n FROM long_sequence(3) WHERE @f OR NOT @f")
+                    .noLeakCheck()
+                    .returns("""
+                            x	n
+                            1	false
+                            2	true
+                            3	true
+                            """);
+            // A view body substitutes its variables the same way, the caller's value included.
+            execute("CREATE VIEW v_not AS (DECLARE OVERRIDABLE @f := (x < 2) SELECT x FROM long_sequence(3) WHERE NOT @f AND x > 2 OR @f)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_not")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            1
+                            3
+                            """);
+            assertQuery("DECLARE @f := (x > 2) SELECT * FROM v_not")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testDeclareVariableAsSubQuery() throws Exception {
         String targetModel = "select-choose y from (select-virtual [1 y] 1 y from (long_sequence(1)))";
         assertModel(targetModel,
                 "SELECT * FROM (SELECT 1 as y)", ExecutionModel.QUERY);
         assertModel(targetModel,
                 "DECLARE @x := (SELECT 1 as y) SELECT * FROM @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryKeepsOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            // FROM @x used to read the model the declaration parsed while the optimiser also rewrote
+            // that model as a standalone query, which left it without its ORDER BY but kept its LIMIT:
+            // the rows came back unsorted, and a top-N read returned the wrong rows.
+            assertQuery("DECLARE @x := (SELECT x FROM long_sequence(3) ORDER BY x DESC) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            2
+                            1
+                            """);
+            assertQuery("DECLARE @x := (DECLARE @n := 2 SELECT x FROM long_sequence(3) ORDER BY x % @n, x LIMIT 1) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2
+                            """);
+            execute("CREATE VIEW v_top AS (DECLARE OVERRIDABLE @x := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1) SELECT * FROM @x)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_top")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            """);
+            assertQuery("DECLARE @x := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 2) SELECT * FROM v_top")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryOverTableFunctionClosesEachFactoryOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            // owned_cursor() counts the closes of every cursor factory it hands out, which the
+            // memory check cannot do: a factory ignores a second close. The function returns no
+            // rows, so @q is 0, no x equals it, and all rows share one partition.
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "owned_cursor";
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, factories);
+            try {
+                final String declare = """
+                        DECLARE
+                            @q := (SELECT count() FROM owned_cursor()),
+                            @w := row_number() OVER (PARTITION BY x = @q)
+                        """;
+                // The optimiser drops the second window as a duplicate. Code generation takes the
+                // factory of the first read's model, which the compiled query closes, and never
+                // generates the second read's model.
+                assertQuery(declare + "SELECT x, @w a, @w b FROM long_sequence(2)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                x\ta\tb
+                                1\t1\t1
+                                2\t2\t2
+                                """);
+                assertEachClosedOnce(factories, 2);
+
+                // the first read sits in a CTE nothing references
+                factories.clear();
+                assertQuery(declare + """
+                        WITH c AS (SELECT @w r FROM long_sequence(1))
+                        SELECT x, @w r FROM long_sequence(2)
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                x\tr
+                                1\t1
+                                2\t2
+                                """);
+                assertEachClosedOnce(factories, 2);
+
+                // nothing reads the variable
+                factories.clear();
+                assertQuery("DECLARE @q := (SELECT count() FROM owned_cursor()) SELECT 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                1
+                                1
+                                """);
+                assertEachClosedOnce(factories, 1);
+
+                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // reference left behind there must not close a factory a second time.
+                execute("CREATE TABLE other (x LONG)");
+                assertEachClosedOnce(factories, 1);
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryOverTableFunctionFailingCompile() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetFile();
+            execute("CREATE TABLE base AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW v_plain AS (SELECT x FROM long_sequence(1))");
+            drainWalAndViewQueues();
+            // The optimiser opens the table function of every declared sub-query, read or not, and
+            // a compile that fails has to close the ones code generation never took, wherever it
+            // fails. @unread is never read, so no walk from the statement's model reaches it.
+            final String declare = """
+                    DECLARE
+                        @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
+                        @unread := (SELECT x FROM read_parquet('q.parquet'))
+                    """;
+            for (int i = 0; i < 3; i++) {
+                // the optimiser fails, after it opened both table functions
+                assertQuery(declare + "SELECT nonexistent, x = @q b FROM long_sequence(4)")
+                        .noLeakCheck()
+                        .fails(133, "Invalid column: nonexistent");
+                // code generation fails, before and after it took the table function @q reads
+                assertQuery(declare + "SELECT sin(x, x) a, x = @q b FROM long_sequence(4)")
+                        .noLeakCheck()
+                        .fails(133, "wrong number of arguments for function `sin`");
+                assertQuery(declare + "SELECT x = @q b, sin(x, x) a FROM long_sequence(4)")
+                        .noLeakCheck()
+                        .fails(143, "wrong number of arguments for function `sin`");
+                // Code generation rejects a window's ORDER BY before it generates the sub-query
+                // the ORDER BY reads. With two such windows, each read has a model of its own.
+                assertQuery(declare + "SELECT x, row_number() OVER (ORDER BY x = @q, x) a FROM long_sequence(4)")
+                        .noLeakCheck()
+                        .fails(166, "Invalid column: =");
+                assertQuery(declare + "SELECT x, row_number() OVER (ORDER BY x = @q, x) a, rank() OVER (ORDER BY x = @q, x) b FROM long_sequence(4)")
+                        .noLeakCheck()
+                        .fails(166, "Invalid column: =");
+                // CREATE VIEW and CREATE MATERIALIZED VIEW each compile the body on a path of
+                // their own.
+                assertExceptionNoLeakCheck(
+                        "CREATE VIEW v_bad AS (" + declare + "SELECT sin(x, x) a, x = @q b FROM long_sequence(4))",
+                        155,
+                        "wrong number of arguments for function `sin`"
+                );
+                assertExceptionNoLeakCheck(
+                        "CREATE MATERIALIZED VIEW mv_bad AS (" + declare + "SELECT ts, max(sin(x, x)) m FROM base SAMPLE BY 1d) PARTITION BY DAY",
+                        177,
+                        "wrong number of arguments for function `sin`"
+                );
+                // The statement fails between the two: the optimiser has returned and code
+                // generation has not started.
+                assertExceptionNoLeakCheck(
+                        "INSERT INTO v_plain SELECT * FROM (" + declare + "SELECT x FROM long_sequence(4) WHERE x = @q)",
+                        12,
+                        "cannot modify view [view=v_plain]"
+                );
+            }
+            // a compile that succeeds after the failed ones reads the file
+            assertQuery(declare + "SELECT x, x = @q b FROM long_sequence(4)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tb
+                            1\tfalse
+                            2\tfalse
+                            3\ttrue
+                            4\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryOverTableFunctionInOtherStatements() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetFile();
+            // @q is 3. The second read of @w is a duplicate window column, which the optimiser
+            // drops, so nothing generates the copy of @q that read parsed.
+            final String declare = """
+                    DECLARE
+                        @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
+                        @w := row_number() OVER (PARTITION BY x = @q)
+                    """;
+            final String select = declare + "SELECT x, @w a, @w b FROM long_sequence(4)";
+            final String expected = """
+                    x\ta\tb
+                    1\t1\t1
+                    2\t2\t2
+                    3\t1\t1
+                    4\t3\t3
+                    """;
+            execute("CREATE TABLE dst (x LONG, a LONG, b LONG)");
+            execute("CREATE TABLE upd AS (SELECT x, 0L v FROM long_sequence(4))");
+            execute("CREATE TABLE base AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW v_q AS (" + select + ")");
+            drainWalAndViewQueues();
+            for (int i = 0; i < 3; i++) {
+                // EXPLAIN generates the plan it prints
+                assertQuery("DECLARE @q := (SELECT x FROM read_parquet('q.parquet')) SELECT 1")
+                        .noLeakCheck()
+                        .assertsPlan("""
+                                VirtualRecord
+                                  functions: [1]
+                                    long_sequence count: 1
+                                """);
+                // a view body, parsed again on every read
+                assertQuery("SELECT * FROM v_q")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                execute("CREATE TABLE ctas" + i + " AS (" + select + ")");
+                assertQuery("SELECT * FROM ctas" + i)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expected);
+                execute("INSERT INTO dst SELECT * FROM (" + select + ")");
+                // the sub-query in FROM declares a sub-query of its own, which nothing reads
+                execute("""
+                        UPDATE upd SET v = v + s.x
+                        FROM (DECLARE @q := (SELECT x FROM read_parquet('q.parquet')) SELECT x FROM long_sequence(4)) s
+                        WHERE upd.x = s.x
+                        """);
+                execute("CREATE MATERIALIZED VIEW mv" + i + " AS ("
+                        + "DECLARE @q := (SELECT x FROM read_parquet('q.parquet')) SELECT ts, count() c FROM base SAMPLE BY 1d"
+                        + ") PARTITION BY DAY");
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT x, a, b, count() c FROM dst ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb\tc
+                            1\t1\t1\t3
+                            2\t2\t2\t3
+                            3\t1\t1\t3
+                            4\t3\t3\t3
+                            """);
+            assertQuery("SELECT * FROM upd")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tv
+                            1\t3
+                            2\t6
+                            3\t9
+                            4\t12
+                            """);
+            assertQuery("SELECT * FROM mv2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryOverTableFunctionNeverRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetFile();
+            // The optimiser opens the table function of every declared sub-query, and code
+            // generation takes over only the ones something reads.
+            for (int i = 0; i < 3; i++) {
+                assertQuery("DECLARE @q := (SELECT x FROM read_parquet('q.parquet')) SELECT 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                1
+                                1
+                                """);
+                // beside a declared sub-query that is read, whose table function has to stay open
+                assertQuery("""
+                        DECLARE
+                            @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
+                            @unread := (SELECT x FROM read_parquet('q.parquet'))
+                        SELECT x, x = @q b FROM long_sequence(4)
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x\tb
+                                1\tfalse
+                                2\tfalse
+                                3\ttrue
+                                4\tfalse
+                                """);
+                // declared in a sub-query, and read from the file itself
+                assertQuery("SELECT * FROM (DECLARE @q := (SELECT x FROM read_parquet('q.parquet')) SELECT x FROM read_parquet('q.parquet'))")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x
+                                3
+                                2
+                                1
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryOverTableFunctionReadInDuplicateWindows() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetFile();
+            // Each window read of @q has a model of its own, and the optimiser opens the table
+            // function of each. It then drops a window column identical to an earlier one, and
+            // with it the only reader of that column's model, so code generation never takes
+            // that table function. @q is 3, so x = 3 sits alone in its partition.
+            final String declare = """
+                    DECLARE
+                        @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
+                        @w := row_number() OVER (PARTITION BY x = @q)
+                    """;
+            final String expected = """
+                    x\ta\tb
+                    1\t1\t1
+                    2\t2\t2
+                    3\t1\t1
+                    4\t3\t3
+                    """;
+            for (int i = 0; i < 3; i++) {
+                // both windows written out
+                assertQuery(declare + """
+                        SELECT
+                            x,
+                            row_number() OVER (PARTITION BY x = @q) a,
+                            row_number() OVER (PARTITION BY x = @q) b
+                        FROM long_sequence(4)
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                // both read from a variable
+                assertQuery(declare + "SELECT x, @w a, @w b FROM long_sequence(4)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                // three reads, two of them dropped
+                assertQuery(declare + "SELECT x, @w a, @w b, @w c FROM long_sequence(4)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                x\ta\tb\tc
+                                1\t1\t1\t1
+                                2\t2\t2\t2
+                                3\t1\t1\t1
+                                4\t3\t3\t3
+                                """);
+                // a plain read takes the declaration's model ahead of the window reads
+                assertQuery(declare + "SELECT x, x = @q y, @w a, @w b FROM long_sequence(4)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                x\ty\ta\tb
+                                1\tfalse\t1\t1
+                                2\tfalse\t2\t2
+                                3\ttrue\t1\t1
+                                4\tfalse\t3\t3
+                                """);
+                // Two windows that differ both stay, and code generation takes both table functions.
+                assertQuery(declare + """
+                        SELECT
+                            x,
+                            row_number() OVER (PARTITION BY x = @q) a,
+                            rank() OVER (PARTITION BY x = @q ORDER BY x) b
+                        FROM long_sequence(4)
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryOverTableFunctionReadInUnusedCte() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetFile();
+            // The first read in parse order takes the model the declaration parsed. When that
+            // read sits in a CTE nothing references, the optimiser still opens the model's table
+            // function, as it does for every declared sub-query, and code generation never
+            // reaches the CTE. @q is 3.
+            final String declare = """
+                    DECLARE
+                        @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
+                        @w := row_number() OVER (PARTITION BY x = @q)
+                    """;
+            final String expected = """
+                    x\tr
+                    1\t1
+                    2\t2
+                    3\t1
+                    4\t3
+                    """;
+            for (int i = 0; i < 3; i++) {
+                // the window read from a variable
+                assertQuery(declare + """
+                        WITH c AS (SELECT @w r FROM long_sequence(1))
+                        SELECT x, @w r FROM long_sequence(4)
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                // both windows written out
+                assertQuery(declare + """
+                        WITH c AS (SELECT row_number() OVER (PARTITION BY x = @q) r FROM long_sequence(1))
+                        SELECT x, row_number() OVER (PARTITION BY x = @q) r FROM long_sequence(4)
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                // no window at all
+                assertQuery(declare + """
+                        WITH c AS (SELECT x = @q a FROM long_sequence(1))
+                        SELECT x, x = @q b FROM long_sequence(4)
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x\tb
+                                1\tfalse
+                                2\tfalse
+                                3\ttrue
+                                4\tfalse
+                                """);
+                // The outer read comes first and takes the declaration's model. The unused CTE,
+                // inside FROM, parses a copy the optimiser never visits.
+                assertQuery(declare + """
+                        SELECT x, @w AS r
+                        FROM (WITH c AS (SELECT @w r2 FROM long_sequence(1)) SELECT x FROM long_sequence(4))
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadInWindowClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a', 1), ('b', 2), ('c', 3)");
+            drainWalQueue();
+            // A read in a window clause takes the declaration's model or parses a copy, like any
+            // other read. Window reads used to go uncounted and share the declaration's model, so
+            // a FROM read took that model from under them and code generation met the window's
+            // sub-query without one.
+            //
+            // @q is the two rows with the highest l, c and b. FROM reads them, both are IN @q, so
+            // they share a partition. A read that loses the ORDER BY yields a and b instead: read
+            // by FROM those are the rows returned, and read by the window they leave c in a
+            // partition of its own.
+            assertQuery("DECLARE @q := (SELECT s FROM k ORDER BY l DESC LIMIT 2) SELECT s, row_number() OVER (PARTITION BY s IN @q) FROM @q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\trow_number
+                            c\t1
+                            b\t2
+                            """);
+            assertQuery("""
+                    DECLARE @q := (SELECT 1L x)
+                    SELECT x, row_number() OVER (PARTITION BY x = @q)
+                    FROM (SELECT * FROM @q UNION ALL SELECT x FROM long_sequence(3))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\trow_number
+                            1\t1
+                            1\t2
+                            2\t1
+                            3\t2
+                            """);
+            // The window read takes the declaration's model and FROM parses a copy, which keeps
+            // its ORDER BY and LIMIT.
+            assertQuery("""
+                    DECLARE @q := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
+                    SELECT x, row_number() OVER (PARTITION BY x = @q)
+                    FROM (SELECT * FROM @q UNION ALL SELECT x FROM long_sequence(3))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\trow_number
+                            3\t1
+                            1\t1
+                            2\t2
+                            3\t2
+                            """);
+            // Each case below reads four rows, and @q is 3, so the two rows with x = 3 share a
+            // partition. A read that runs a model the optimiser never saw loses the ORDER BY and
+            // yields 1 instead, and two reads that share one model do not both get its one row.
+            // Either changes the output, whereas row_number() over a single row is 1 whatever
+            // the reads did.
+            //
+            // A plain read ahead of the window read takes the model, so the window read parses a
+            // copy of its own.
+            assertQuery("""
+                    DECLARE @q := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
+                    SELECT x, x = @q AS y, row_number() OVER (PARTITION BY x = @q)
+                    FROM (SELECT * FROM @q UNION ALL SELECT x FROM long_sequence(3))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\ty\trow_number
+                            3\ttrue\t1
+                            1\tfalse\t1
+                            2\tfalse\t2
+                            3\ttrue\t2
+                            """);
+            // A FROM read in a CTE takes the model ahead of the window read, so the window read
+            // parses the copy and registers it for the optimiser.
+            assertQuery("""
+                    DECLARE @q := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
+                    WITH c AS (SELECT * FROM @q UNION ALL SELECT x FROM long_sequence(3))
+                    SELECT x, row_number() OVER (PARTITION BY x = @q) FROM c
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\trow_number
+                            3\t1
+                            1\t1
+                            2\t2
+                            3\t2
+                            """);
+            // Every branch of a union reads the sub-query twice, once in the window, once in FROM.
+            assertQuery("""
+                    DECLARE @q := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
+                    SELECT x, row_number() OVER (PARTITION BY x = @q)
+                    FROM (SELECT * FROM @q UNION ALL SELECT x FROM long_sequence(3))
+                    UNION ALL
+                    SELECT x, row_number() OVER (PARTITION BY x = @q)
+                    FROM (SELECT * FROM @q UNION ALL SELECT x FROM long_sequence(3))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\trow_number
+                            3\t1
+                            1\t1
+                            2\t2
+                            3\t2
+                            3\t1
+                            1\t1
+                            2\t2
+                            3\t2
+                            """);
+            // A declared value holding a window function reads the sub-query in its window.
+            assertQuery("""
+                    DECLARE
+                        @q := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1),
+                        @w := row_number() OVER (PARTITION BY x = @q)
+                    SELECT x, @w AS r
+                    FROM (SELECT * FROM @q UNION ALL SELECT x FROM long_sequence(3))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tr
+                            3\t1
+                            1\t1
+                            2\t2
+                            3\t2
+                            """);
+            // A frame bound is a read too. It has to be a constant, which the sub-query is not.
+            assertQuery("DECLARE @q := (SELECT 1L x) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN @q PRECEDING AND CURRENT ROW) FROM @q")
+                    .noLeakCheck()
+                    .fails(15, "constant expression expected");
+            assertQuery("DECLARE @q := (SELECT 1L x) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN CURRENT ROW AND @q FOLLOWING) FROM @q")
+                    .noLeakCheck()
+                    .fails(15, "constant expression expected");
+            // The bound is the sub-query itself here, so when FROM reads first, in a CTE, the copy
+            // parsed for the bound has to take the bound's place in the window. Left in place, the
+            // declaration's node has no model once FROM took it, and code generation tripped over
+            // it instead of reporting the bound.
+            assertQuery("DECLARE @q := (SELECT 1L x) WITH c AS (SELECT * FROM @q) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN @q PRECEDING AND CURRENT ROW) FROM c")
+                    .noLeakCheck()
+                    .fails(15, "constant expression expected");
+            assertQuery("DECLARE @q := (SELECT 1L x) WITH c AS (SELECT * FROM @q) SELECT x, sum(x) OVER (ORDER BY x ROWS BETWEEN 2 PRECEDING AND @q PRECEDING) FROM c")
+                    .noLeakCheck()
+                    .fails(15, "constant expression expected");
+            // A PARTITION BY key that is the sub-query itself needs the same write: FROM reads
+            // first, in a CTE, so the copy parsed for the key has to take the key's place in the
+            // window. Code generation compiles the keys in order, so it compiles the copy and then
+            // reports the unknown function in the next key. Left in place, the declaration's node
+            // has no model once FROM took it, and code generation trips over it before it reaches
+            // that key. The second key is there to end the compilation with an error: nothing
+            // refuses a declared sub-query key on its own yet, and the partition key sink throws
+            // on its CURSOR type.
+            assertQuery("DECLARE @q := (SELECT 1L x) WITH c AS (SELECT * FROM @q) SELECT x, row_number() OVER (PARTITION BY @q, nosuchfn(x)) FROM c")
+                    .noLeakCheck()
+                    .fails(103, "unknown function name: nosuchfn(LONG)");
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadInWindowClauseInsideView() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every read of a view parses its stored body again, so a body that reads a declared
+            // sub-query in a window clause and in FROM has to parse at CREATE and at every read.
+            // The body reads four rows and partitions them by the sub-query's value, 3 by default,
+            // so a read that yields anything else moves rows between the partitions. The two rows
+            // that equal the value share a partition and tie on x, so o, which tells the two
+            // branches of the union apart, orders them: no row number depends on how the window's
+            // sort breaks a tie.
+            execute("""
+                    CREATE VIEW v_win AS (
+                        DECLARE OVERRIDABLE @m := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
+                        SELECT x, row_number() OVER (PARTITION BY x = @m ORDER BY x, o) r
+                        FROM (SELECT x, 0 o FROM @m UNION ALL SELECT x, 1 o FROM long_sequence(3))
+                    )
+                    """);
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_win")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tr
+                            3\t1
+                            1\t1
+                            2\t2
+                            3\t2
+                            """);
+            assertQuery("SELECT count() FROM v_win")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            4
+                            """);
+            // A caller's sub-query for the overridable variable, read in the window and in FROM.
+            // It is 2, and 1 if a read loses its ORDER BY.
+            assertQuery("DECLARE @m := (SELECT x FROM long_sequence(2) ORDER BY x DESC LIMIT 1) SELECT * FROM v_win")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tr
+                            2\t1
+                            1\t1
+                            2\t2
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadInWindowClauseWhereNoQueryIsAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            // An expression without a model has nowhere to register a copy of a declared
+            // sub-query, so a read there that would need one is refused, as a sub-query written in
+            // place is. FROM takes the declaration's model here, which leaves the window in the
+            // SAMPLE BY time zone needing a copy. A read counts in every clause of the window:
+            // PARTITION BY, ORDER BY and either frame bound.
+            final String error = "query is not allowed here";
+            assertQuery("""
+                    DECLARE @q := (SELECT 1L x), @w := row_number() OVER (PARTITION BY x = @q)
+                    SELECT x FROM @q SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @w
+                    """)
+                    .noLeakCheck()
+                    .fails(15, error);
+            // Code generation looks a window's ORDER BY entry up as a column, by the entry's token,
+            // and compiles no expression for it. A statement that reads a sub-query there compiles
+            // only when a column carries that name or nothing selects the window's column, and
+            // nothing runs the sub-query either way, so its rows do not show whether the read
+            // counted. This refusal is where a read there shows.
+            assertQuery("""
+                    DECLARE @q := (SELECT 1L x), @w := row_number() OVER (ORDER BY x = @q)
+                    SELECT x FROM @q SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @w
+                    """)
+                    .noLeakCheck()
+                    .fails(15, error);
+            assertQuery("""
+                    DECLARE @q := (SELECT 1L x), @w := sum(x) OVER (ORDER BY x ROWS BETWEEN @q PRECEDING AND CURRENT ROW)
+                    SELECT x FROM @q SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @w
+                    """)
+                    .noLeakCheck()
+                    .fails(15, error);
+            assertQuery("""
+                    DECLARE @q := (SELECT 1L x), @w := sum(x) OVER (ORDER BY x ROWS BETWEEN 2 PRECEDING AND @q PRECEDING)
+                    SELECT x FROM @q SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @w
+                    """)
+                    .noLeakCheck()
+                    .fails(15, error);
+            // the window written in place of the variable
+            assertQuery("""
+                    DECLARE @q := (SELECT 1L x)
+                    SELECT x FROM @q SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE row_number() OVER (PARTITION BY x = @q)
+                    """)
+                    .noLeakCheck()
+                    .fails(15, error);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadMoreThanOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a', 1), ('b', 2), ('c', 3)");
+            drainWalQueue();
+            // The optimiser and the code generator rewrite a model in place for the one place it is
+            // read from, so every read of a declared sub-query needs a model of its own. The reads
+            // used to share the declaration's model, and all but one of them read it wrong.
+            assertQuery("DECLARE @x := (SELECT l FROM k WHERE l > 1 ORDER BY l DESC LIMIT 1) SELECT * FROM @x UNION ALL SELECT * FROM @x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l
+                            3
+                            3
+                            """);
+            assertQuery("DECLARE @x := (SELECT s FROM k WHERE l > 1) WITH w AS (SELECT * FROM @x) SELECT * FROM w UNION ALL SELECT * FROM w")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s
+                            b
+                            c
+                            b
+                            c
+                            """);
+            assertQuery("DECLARE @x := (SELECT s FROM k WHERE l > 1) SELECT * FROM k WHERE s IN @x OR s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s	l
+                            b	2
+                            c	3
+                            """);
+            // A read in an expression and a read in FROM, in either order.
+            assertQuery("DECLARE @x := (SELECT s FROM k WHERE l > 1) SELECT * FROM @x WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            b
+                            c
+                            """);
+            assertQuery("DECLARE @x := (SELECT s FROM k WHERE l > 1), @f := (s IN @x) SELECT s FROM k WHERE @f UNION ALL SELECT * FROM @x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s
+                            b
+                            c
+                            b
+                            c
+                            """);
+            // Every copy resolves variables as the declaration did, not as the scope it is read in.
+            assertQuery("DECLARE @n := 1, @x := (SELECT l FROM k WHERE l > @n) SELECT * FROM @x UNION ALL SELECT * FROM (DECLARE @n := 2 SELECT * FROM @x)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            l
+                            2
+                            3
+                            2
+                            3
+                            """);
+            // A view body parses a copy of a caller's value from the caller's text.
+            execute("CREATE VIEW v_sub AS (DECLARE OVERRIDABLE @x := (SELECT l FROM k ORDER BY l DESC LIMIT 1) SELECT * FROM @x)");
+            drainWalAndViewQueues();
+            assertQuery("DECLARE @x := (SELECT l FROM k ORDER BY l LIMIT 2) SELECT * FROM v_sub UNION ALL SELECT * FROM v_sub")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l
+                            1
+                            2
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadTwiceFailingInsideView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO k VALUES (1, '2024-01-01T00:00:00Z'), (2, '2024-01-01T01:00:00Z'), (3, '2024-01-02T00:00:00Z')");
+            execute("CREATE VIEW v_lim AS (DECLARE OVERRIDABLE @lim := 0 SELECT l FROM k WHERE l >= @lim AND l <= @lim)");
+            drainWalAndViewQueues();
+            // The second read of @lim in v_lim parses a copy of the caller's sub-query outside
+            // v_lim. The copy reads @tz a second time, as a SAMPLE BY time zone, which has no model
+            // to hold a copy of @tz, so the copy's parse fails. The views it set aside go back on
+            // the way out, and v_lim's expansion unwinds to the parse error.
+            assertQuery("""
+                    DECLARE
+                        @tz := (SELECT 'UTC'),
+                        @lim := (SELECT max(c) FROM (SELECT count() c FROM k SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE @tz))
+                    SELECT * FROM v_lim
+                    """)
+                    .noLeakCheck()
+                    .failsWith("query is not allowed here");
+            assertQuery("DECLARE @lim := (SELECT max(l) FROM k) SELECT * FROM v_lim")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadTwiceInNestedSelectWithoutFrom() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3), (4)");
+            drainWalQueue();
+            // Every read of a declared sub-query after the first parses a copy of it. That parse
+            // must leave the enclosing sub-query still parsing as one, or a select list without
+            // FROM rejects the ')' that closes it.
+            assertQuery("DECLARE @q := (SELECT max(l) FROM k) SELECT * FROM (SELECT 4 = @q a, 3 = @q b)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            true\tfalse
+                            """);
+            assertQuery("DECLARE @q := (SELECT max(l) FROM k) WITH w AS (SELECT 4 = @q a, 3 = @q b) SELECT * FROM w")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            true\tfalse
+                            """);
+            assertQuery("DECLARE @q := (SELECT max(l) FROM k) SELECT * FROM (SELECT 4 = @q a UNION ALL SELECT 3 = @q a)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a
+                            true
+                            false
+                            """);
+            assertQuery("DECLARE @q := (SELECT max(l) FROM k) SELECT * FROM (SELECT 4 = @q a) CROSS JOIN (SELECT 3 = @q b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            true\tfalse
+                            """);
+            // A later read in FROM parses a copy too.
+            assertQuery("DECLARE @x := (SELECT max(l) m FROM k) SELECT * FROM (SELECT * FROM @x UNION ALL SELECT * FROM @x UNION ALL SELECT 5)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            m
+                            4
+                            4
+                            5
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadTwiceInViewSelectWithoutFrom() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3), (4)");
+            // Every read of a view parses its stored body again, so a body that reads a declared
+            // sub-query twice in a select list without FROM has to parse at CREATE and at every read.
+            execute("CREATE VIEW v_decl AS (DECLARE @q := (SELECT max(l) FROM k) SELECT * FROM (SELECT 4 = @q a, 3 = @q b))");
+            execute("CREATE VIEW v_over AS (DECLARE OVERRIDABLE @q := 4 SELECT * FROM (SELECT 4 = @q a, 3 = @q b))");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_decl")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            true\tfalse
+                            """);
+            // A caller's sub-query for an overridable variable, read twice in the view body.
+            assertQuery("DECLARE @q := (SELECT max(l) - 1 FROM k) SELECT * FROM v_over")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            false\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadTwiceReadingSameView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3), (4), (5)");
+            execute("CREATE VIEW v_lim AS (DECLARE OVERRIDABLE @lim := 0 SELECT l FROM k WHERE l >= @lim AND l <= @lim)");
+            execute("CREATE VIEW v_eq AS (DECLARE OVERRIDABLE @v := 2 SELECT l FROM k WHERE l >= @v AND l <= @v)");
+            drainWalAndViewQueues();
+            // The view reads the caller's value twice, so the second read parses a copy of the
+            // caller's sub-query while the parser is still expanding the view. The sub-query reads
+            // that same view, which is no cycle: the caller declared the value outside the view,
+            // and the sub-query reads the view with its own default.
+            // The inner v_lim keeps only l = 0, which k lacks, so min(l) is NULL and no row
+            // passes a comparison with NULL.
+            assertQuery("DECLARE @lim := (SELECT min(l) FROM v_lim) SELECT * FROM v_lim")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            """);
+            // The inner v_eq keeps its default 2, so the caller's @v is 3, and the outer read
+            // keeps 3 where the view's default keeps 2.
+            assertQuery("DECLARE @v := (SELECT max(l) + 1 FROM v_eq) SELECT * FROM v_eq")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            3
+                            """);
+            // The same value reaching v_eq through a view that wraps it: the second read of @v
+            // happens two views deep, so the copy of the caller's sub-query sets both views aside.
+            execute("CREATE VIEW v_wrap AS (SELECT * FROM v_eq)");
+            drainWalAndViewQueues();
+            assertQuery("DECLARE @v := (SELECT max(l) + 1 FROM v_eq) SELECT * FROM v_wrap")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            3
+                            """);
+            // A sub-query that reads the outer view passes only if the copy sets aside every view,
+            // not just the innermost one.
+            assertQuery("DECLARE @v := (SELECT max(l) + 1 FROM v_wrap) SELECT * FROM v_wrap")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            3
+                            """);
+            // A view body that hands such a value to the view it reads: the second read happens
+            // two views deep, at CREATE VIEW and at every read of the outer view.
+            execute("CREATE VIEW v_outer AS (DECLARE @v := (SELECT max(l) + 1 FROM v_eq) SELECT * FROM v_eq)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_outer")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadTwiceWithViewCycle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            execute("CREATE VIEW v_cyc AS (DECLARE OVERRIDABLE @lim := 0 SELECT l FROM k WHERE l >= @lim AND l <= @lim)");
+            execute("CREATE VIEW v_back AS (SELECT * FROM v_cyc)");
+            execute("CREATE VIEW v_self AS (SELECT l FROM k)");
+            execute("CREATE VIEW v_lim AS (DECLARE OVERRIDABLE @lim := 0 SELECT l FROM k WHERE l >= @lim AND l <= @lim)");
+            drainWalAndViewQueues();
+            // DDL refuses a view cycle, and a concurrent ALTER VIEW is the only way past that check.
+            // The test stands in for the race: it swaps the bodies the view graph holds, closing
+            // v_cyc -> v_back -> v_cyc and v_self -> v_self through a declared sub-query that the
+            // view body reads twice.
+            final ViewDefinition cyc = engine.getViewGraph().getViewDefinition(engine.verifyTableName("v_cyc"));
+            cyc.init(
+                    cyc.getViewToken(),
+                    "DECLARE OVERRIDABLE @lim := (SELECT min(l) FROM v_back) SELECT l FROM k WHERE l >= @lim AND l <= @lim",
+                    cyc.getSeqTxn(),
+                    cyc.isAudited()
+            );
+            final ViewDefinition self = engine.getViewGraph().getViewDefinition(engine.verifyTableName("v_self"));
+            self.init(
+                    self.getViewToken(),
+                    "DECLARE @lim := (SELECT min(l) FROM v_self) SELECT l FROM k WHERE l >= @lim AND l <= @lim",
+                    self.getSeqTxn(),
+                    self.isAudited()
+            );
+            assertQuery("SELECT * FROM v_cyc")
+                    .noLeakCheck()
+                    .failsWith("circular view reference detected: v_cyc");
+            assertQuery("SELECT * FROM v_back")
+                    .noLeakCheck()
+                    .failsWith("circular view reference detected: v_back");
+            assertQuery("SELECT * FROM v_self")
+                    .noLeakCheck()
+                    .failsWith("circular view reference detected: v_self");
+            // A caller's value does not stop the view parsing its own declaration.
+            assertQuery("DECLARE @lim := 2 SELECT * FROM v_cyc")
+                    .noLeakCheck()
+                    .failsWith("circular view reference detected: v_cyc");
+            // A caller's sub-query, read twice in v_lim, that reads a view in a cycle.
+            assertQuery("DECLARE @lim := (SELECT min(l) FROM v_cyc) SELECT * FROM v_lim")
+                    .noLeakCheck()
+                    .failsWith("circular view reference detected: v_cyc");
+            assertQuery("DECLARE @lim := (SELECT min(l) FROM v_self) SELECT * FROM v_lim")
+                    .noLeakCheck()
+                    .failsWith("circular view reference detected: v_self");
+        });
     }
 
     @Test
@@ -841,19 +1937,578 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsSubQueryWithTopLevelComma() throws Exception {
+        assertMemoryLeak(() -> {
+            // A subquery that opens with its own DECLARE is still a subquery, not a value list,
+            // however many commas its select list, its DECLARE or its ORDER BY puts directly inside
+            // the brackets.
+            assertQuery("DECLARE @x := (DECLARE @y := 4 SELECT @y AS a, 5 AS b) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            4\t5
+                            """);
+            assertQuery("DECLARE @x := (DECLARE @a := 1, @b := 2 SELECT @a + @b AS s) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            3
+                            """);
+            assertQuery("DECLARE @x := (/* leading */ DECLARE @y := 4 SELECT @y AS a, 5 AS b) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            4\t5
+                            """);
+            assertQuery("DECLARE @x := (DECLARE @n := 2 SELECT x FROM long_sequence(3) ORDER BY x % @n, x) SELECT * FROM @x ORDER BY x DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            2
+                            1
+                            """);
+            // A view body is parsed again on every read, so a stored body of this shape has to
+            // keep parsing too.
+            execute("CREATE VIEW v_decl AS (DECLARE @x := (DECLARE @y := 4 SELECT @y AS a, 5 AS b) SELECT * FROM @x)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_decl")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            4\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsWindowFunctionKeepsItsAnchor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Only a live view takes ANCHOR, and only on a named window, so it refuses the inline
+            // window a declared value holds, at the ANCHOR. Each read's copy of the window has to
+            // keep the anchor and where it sits for the refusal to see it and to point at it.
+            // Without the anchor a copy read as a bare unbounded window, and without its position
+            // the refusal pointed at the first PARTITION BY key.
+            assertExceptionNoLeakCheck(
+                    """
+                            CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS
+                            DECLARE @w := row_number() OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')
+                            SELECT ts, sym, @w AS a, @w AS b FROM base
+                            """,
+                    115,
+                    "ANCHOR is only supported on named WINDOW clauses"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsWindowFunctionKeepsItsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, '2024-01-01T00:00:00Z'),
+                        (2, '2024-01-01T00:00:01Z'),
+                        (3, '2024-01-01T00:00:02Z'),
+                        (4, '2024-01-01T00:00:03Z'),
+                        (5, '2024-01-01T00:00:04Z'),
+                        (6, '2024-01-01T00:00:05Z')
+                    """);
+            // Each read of a variable that holds a window function copies the window, and the
+            // copy has to carry every part of the frame. Each frame below differs from the default
+            // in the part it names, so a copy that falls back to the default returns other sums.
+            //
+            // A frame that ends before the current row: the end's kind and its offset. Ending at
+            // the current row, the default, the sums are 1, 3, 6, 9, 12.
+            assertQuery("""
+                    DECLARE @w := sum(x) OVER (ORDER BY x ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)
+                    SELECT x, @w a, @w b FROM long_sequence(5)
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\tnull\tnull
+                            2\t1.0\t1.0
+                            3\t3.0\t3.0
+                            4\t5.0\t5.0
+                            5\t7.0\t7.0
+                            """);
+            // A frame that starts at the current row: the start's kind. Starting at UNBOUNDED
+            // PRECEDING, the default, the sums are 1, 3, 6, 10, 15.
+            assertQuery("""
+                    DECLARE @w := sum(x) OVER (ORDER BY x ROWS BETWEEN CURRENT ROW AND CURRENT ROW)
+                    SELECT x, @w a, @w b FROM long_sequence(5)
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t1.0\t1.0
+                            2\t2.0\t2.0
+                            3\t3.0\t3.0
+                            4\t4.0\t4.0
+                            5\t5.0\t5.0
+                            """);
+            // The exclusion. With the current row in the frame, the default, the sums are
+            // 1, 3, 5, 7, 9.
+            assertQuery("""
+                    DECLARE @w := sum(x) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)
+                    SELECT x, @w a, @w b FROM long_sequence(5)
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\tnull\tnull
+                            2\t1.0\t1.0
+                            3\t2.0\t2.0
+                            4\t3.0\t3.0
+                            5\t4.0\t4.0
+                            """);
+            // The time unit of each bound of a RANGE frame. The rows are a second apart, so the
+            // frame holds the rows two and three seconds back. Read in microseconds, the default,
+            // the start bound leaves the frame empty and the end bound lets in the row before.
+            assertQuery("""
+                    DECLARE @w := sum(x) OVER (ORDER BY ts RANGE BETWEEN 3 SECOND PRECEDING AND 2 SECOND PRECEDING)
+                    SELECT x, @w a, @w b FROM t
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            3\t1.0\t1.0
+                            4\t3.0\t3.0
+                            5\t5.0\t5.0
+                            6\t7.0\t7.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsWindowFunctionKeepsItsPositions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // A window that a function or the optimiser refuses is reported at the part of it the
+            // refusal names, which a read's copy of the window keeps from the declaration. A copy
+            // without the position reported it at 0, and IGNORE NULLS, which a function finds by
+            // its position, went unnoticed.
+            assertQuery("DECLARE @w := row_number() OVER nosuch SELECT x, @w a, @w b FROM long_sequence(3)")
+                    .noLeakCheck()
+                    .fails(32, "window 'nosuch' is not defined");
+            assertQuery("DECLARE @w := rank() IGNORE NULLS OVER (ORDER BY x) SELECT x, @w a, @w b FROM long_sequence(3)")
+                    .noLeakCheck()
+                    .fails(21, "RESPECT/IGNORE NULLS is not supported for current window function");
+            // the frame start's kind and the frame end's kind
+            assertQuery("DECLARE @w := ntile(2) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) SELECT x, @w a, @w b FROM long_sequence(3)")
+                    .noLeakCheck()
+                    .fails(55, "ntile() does not support framing; remove the frame clause");
+            assertQuery("DECLARE @w := sum(x) OVER (ORDER BY x ROWS BETWEEN 2 PRECEDING AND UNBOUNDED FOLLOWING) SELECT x, @w a, @w b FROM long_sequence(3)")
+                    .noLeakCheck()
+                    .fails(77, "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
+            // the exclusion
+            assertQuery("""
+                    DECLARE @w := sum(x) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW)
+                    SELECT x, @w a, @w b FROM long_sequence(3)
+                    """)
+                    .noLeakCheck()
+                    .fails(95, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
+            // the offset of the frame start and of the frame end
+            assertQuery("""
+                    DECLARE @w := sum(x) OVER (ORDER BY ts RANGE BETWEEN 9_223_372_036_854_775_807 SECOND PRECEDING AND CURRENT ROW)
+                    SELECT x, @w a, @w b FROM t
+                    """)
+                    .noLeakCheck()
+                    .fails(53, "RANGE frame start is out of range for the designated timestamp");
+            assertQuery("""
+                    DECLARE @w := sum(x) OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND 9_223_372_036_854_775_807 SECOND PRECEDING)
+                    SELECT x, @w a, @w b FROM t
+                    """)
+                    .noLeakCheck()
+                    .fails(77, "RANGE frame end is out of range for the designated timestamp");
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsWindowFunctionReadMoreThanOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every read of a variable that holds a window function gets a window of its own. The
+            // reads used to share one, so the second read in a select list reused the first read's
+            // column and the parser rejected its alias as a duplicate.
+            assertQuery("DECLARE @w := row_number() OVER (PARTITION BY x % 2 ORDER BY x) SELECT x, @w a, @w b FROM long_sequence(4)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t1\t1
+                            2\t1\t1
+                            3\t2\t2
+                            4\t2\t2
+                            """);
+            // A variable built on another one copies its window as well.
+            assertQuery("DECLARE @w := row_number() OVER (PARTITION BY x % 2 ORDER BY x), @y := @w SELECT x, @w a, @y b FROM long_sequence(4)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t1\t1
+                            2\t1\t1
+                            3\t2\t2
+                            4\t2\t2
+                            """);
+            // The copy keeps the ORDER BY direction, the frame, IGNORE NULLS and a reference to a
+            // named window.
+            assertQuery("DECLARE @w := row_number() OVER (PARTITION BY x % 2 ORDER BY x DESC) SELECT x, @w a, @w b FROM long_sequence(4)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t2\t2
+                            2\t2\t2
+                            3\t1\t1
+                            4\t1\t1
+                            """);
+            assertQuery("""
+                    DECLARE @w := sum(x) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
+                    SELECT x, @w a, @w b FROM (SELECT x * 2 x FROM long_sequence(4))
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            2\t2.0\t2.0
+                            4\t6.0\t6.0
+                            6\t10.0\t10.0
+                            8\t14.0\t14.0
+                            """);
+            assertQuery("""
+                    DECLARE @w := last_value(nullif(x, 3)) IGNORE NULLS OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                    SELECT x, @w a, @w b FROM long_sequence(4)
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t1\t1
+                            2\t2\t2
+                            3\t2\t2
+                            4\t4\t4
+                            """);
+            assertQuery("DECLARE @w := row_number() OVER w1 SELECT x, @w a, @w b FROM long_sequence(4) WINDOW w1 AS (PARTITION BY x % 2 ORDER BY x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t1\t1
+                            2\t1\t1
+                            3\t2\t2
+                            4\t2\t2
+                            """);
+            // Each read names its own column. A shared window took the alias of whichever read
+            // the parser met last, the inner r2 here.
+            assertQuery("DECLARE @w := row_number() OVER (PARTITION BY x % 2 ORDER BY x) SELECT x, @w r FROM (SELECT x, @w r2 FROM long_sequence(4))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tr
+                            1\t1
+                            2\t1
+                            3\t2
+                            4\t2
+                            """);
+            // Each read's window points at the read's own function call. The optimiser rewrites
+            // that call in place, qualified columns included. Pointed at the declared call, the
+            // reads shared it, and one read's rewrite of t1.x left the other with an ambiguous x.
+            execute("CREATE TABLE t1 AS (SELECT x, x * 10 y FROM long_sequence(3))");
+            execute("CREATE TABLE t2 AS (SELECT x * 100 x, x y FROM long_sequence(3))");
+            assertQuery("DECLARE @w := sum(t1.x) OVER (ORDER BY t1.y) SELECT t1.y, @w a, @w b FROM t1 JOIN t2 ON t1.x = t2.y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            y\ta\tb
+                            10\t1.0\t1.0
+                            20\t3.0\t3.0
+                            30\t6.0\t6.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsWindowFunctionReadingSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            // @q is 3, so x = 3 sits alone in its partition. The unoptimised sub-query loses its
+            // ORDER BY and yields 1 instead, which puts x = 1 alone.
+            final String declare = """
+                    DECLARE
+                        @q := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1),
+                        @w := row_number() OVER (PARTITION BY x = @q)
+                    """;
+            final String expected = """
+                    x\tr
+                    1\t1
+                    2\t2
+                    3\t1
+                    4\t3
+                    """;
+            // a single read
+            assertQuery(declare + "SELECT x, @w r FROM long_sequence(4)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            // Each read of @w reads @q in its window, and each read of @q needs a model of its own.
+            // The reads used to share one window, so the read in the unused CTE, second in parse
+            // order, wrote its copy of @q into the window of the outer read too. The optimiser
+            // never visits the unused CTE, so the outer window ran the copy unoptimised.
+            assertQuery(declare + """
+                    SELECT x, @w AS r
+                    FROM (WITH c AS (SELECT @w r2 FROM long_sequence(1)) SELECT x FROM long_sequence(4))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            // the same, with the unused CTE in a UNION ALL branch
+            assertQuery(declare + """
+                    SELECT x, @w r
+                    FROM (
+                        SELECT x FROM long_sequence(3)
+                        UNION ALL
+                        (WITH c AS (SELECT @w r2 FROM long_sequence(1)) SELECT x FROM long_sequence(1))
+                    )
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tr
+                            1\t1
+                            2\t2
+                            3\t1
+                            1\t3
+                            """);
+            // The unused CTE read first, the outer read second. The outer read names no column,
+            // so its column takes the function's name. Over a shared window it took r2, the alias
+            // the read before it had set.
+            assertQuery(declare + """
+                    WITH c AS (SELECT @w r2 FROM long_sequence(1))
+                    SELECT x, @w FROM long_sequence(4)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\trow_number
+                            1\t1
+                            2\t2
+                            3\t1
+                            4\t3
+                            """);
+            // Two unused CTEs read first. The second one's read parses a copy of @q, which over a
+            // shared window was the sub-query the outer read ran, unoptimised as before.
+            assertQuery(declare + """
+                    WITH c AS (SELECT @w r2 FROM long_sequence(1)), d AS (SELECT @w r3 FROM long_sequence(1))
+                    SELECT x, @w r FROM long_sequence(4)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            // A plain read in the unused CTE takes @q's model ahead of both window reads, so the
+            // outer window's copy of @q has to come from the outer read itself, whichever window
+            // read the parser meets first.
+            assertQuery(declare + """
+                    WITH c AS (SELECT x = @q a, @w r2 FROM long_sequence(1))
+                    SELECT x, @w r FROM long_sequence(4)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            // An aggregate the optimiser never rewrote failed code generation instead.
+            assertQuery("""
+                    DECLARE
+                        @q := (SELECT max(x) FROM long_sequence(3)),
+                        @w := row_number() OVER (PARTITION BY x = @q)
+                    SELECT x, @w r
+                    FROM (WITH c AS (SELECT @w r2 FROM long_sequence(1)) SELECT x FROM long_sequence(4))
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            // A view body parses the same way at CREATE and at every read.
+            execute("CREATE VIEW v_win_q AS (" + declare + """
+                    SELECT x, @w r
+                    FROM (WITH c AS (SELECT @w r2 FROM long_sequence(1)) SELECT x FROM long_sequence(4))
+                    )""");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_win_q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testDeclareVariableDefinedByAnotherVariable() throws Exception {
         assertModel("select-virtual 2 2, 2 * 2 column from (long_sequence(1))",
                 "DECLARE @y := 2, @y2 := (@y * @y) SELECT @y, @y2", ExecutionModel.QUERY);
     }
 
     @Test
+    public void testDeclareVariableWithArrayCastBeforeBracketedQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            // An array type ends at its `[]`, which completes the declared value, so a bracket
+            // after it starts the statement, as it does after any other complete value.
+            assertQuery("DECLARE @a := '{1,2}'::double[] (SELECT @a AS a)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            [1.0,2.0]
+                            """);
+            assertQuery("DECLARE @a := '{1,2}'::double[](SELECT @a AS a)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            [1.0,2.0]
+                            """);
+            assertQuery("DECLARE @a := '{{1,2},{3,4}}'::double[][] (SELECT @a AS a)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            [[1.0,2.0],[3.0,4.0]]
+                            """);
+            assertQuery("DECLARE @a := 1, @b := '{1,2}'::double[] (SELECT @a AS a, @b AS b)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            1\t[1.0,2.0]
+                            """);
+            // The array type still may not contain whitespace.
+            assertQuery("DECLARE @a := '{1,2}'::double [] (SELECT @a AS a)")
+                    .fails(30, "array type requires no whitespace");
+        });
+    }
+
+    @Test
     public void testDeclareVariableWithBracketedExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
+            // A list is the set of values IN tests against, so it cannot also be the value under
+            // test. The position is the declaration's opening bracket, as it is for any substituted
+            // variable - the misuse site is not where the list was written.
             assertQuery("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
                     "SELECT * FROM trades WHERE @symbols IN @symbols")
-                    .fails(43, "bracket lists");
+                    .fails(20, "declared list can only be used on the right-hand side of IN");
+        });
+    }
 
+    @Test
+    public void testDeclareVariableWithBracketedOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            // A bracket used to end a declared value after anything but a bracket, a literal or the
+            // `:=` itself, so a bracketed operand after an operator, a comma or a keyword cut the
+            // value short. Only a complete value, outside every bracket, ends at one.
+            assertQuery("""
+                    DECLARE @a := (1 + 2) * (3), @b := abs(1 - (5)), @c := NOT (1 = 1), @d := -(1),
+                        @e := CASE WHEN (1 = 1) THEN 1 END, @f := 2 BETWEEN (1) AND (3), @g := cast((1) AS LONG)
+                    SELECT @a a, @b b, @c c, @d d, @e e, @f f, @g g
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a	b	c	d	e	f	g
+                            9	4	false	-1	1	true	1
+                            """);
+            assertQuery("DECLARE @x := 1 (SELECT @x AS x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            """);
+            // A sub-query nested in a declared value now gets the error it gets written in place.
+            execute("CREATE TABLE k (l LONG, ts TIMESTAMP)");
+            assertQuery("DECLARE @v := dateadd('d', -1, (SELECT max(ts) FROM k)) SELECT * FROM k WHERE ts > @v")
+                    .fails(14, "there is no matching function `dateadd` with the argument types: (CHAR, INT, CURSOR)");
+            assertQuery("DECLARE @v := 1 + (SELECT max(l) FROM k) SELECT * FROM k WHERE l = @v")
+                    .fails(16, "there is no matching operator `+` with the argument types: INT + CURSOR");
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithClosingBracketBeforeBracketedQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            // A call's `)`, an array's `]` and the `)` of a sized type such as `decimal(10,2)` or
+            // `geohash(6c)` each complete the declared value, so a bracket after them starts the
+            // statement, as it does after any other complete value.
+            assertQuery("DECLARE @x := abs(-1) (SELECT @x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            abs
+                            1
+                            """);
+            assertQuery("DECLARE @x := ARRAY[1.0,2.0] (SELECT @x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ARRAY
+                            [1.0,2.0]
+                            """);
+            assertQuery("DECLARE @x := 1.5::decimal(10,2) (SELECT @x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            cast
+                            1.50
+                            """);
+            assertQuery("DECLARE @x := 'sp052w'::geohash(6c) (SELECT @x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            cast
+                            sp052w
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithTrailingDotBeforeBracketedQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            // A number may end at its decimal point, which completes the declared value, so a
+            // bracket after it starts the statement. The bracket used to open the value's next
+            // operand instead, and the parse failed with a NullPointerException.
+            assertQuery("DECLARE @a := 1. (SELECT @a AS a)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1.0
+                            """);
+            assertQuery("DECLARE @a := -1., @b := 1 + 2. (SELECT @a AS a, @b AS b)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            -1.0\t3.0
+                            """);
         });
     }
 
@@ -1068,8 +2723,15 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertQuery("declare @ts1 := '2024-01-01', @ts2 := '2024-08-23' select timestamp, count() from trades where timestamp IN (@ts1, @ts2);")
                     .noLeakCheck()
                     .assertsPlan(plan);
+            // A declared list is spliced into the IN it is used with, so it plans identically to
+            // the written-out list above - including the interval scan the TIMESTAMP overload of
+            // IN gives, which is the whole point of declaring the list rather than a string.
             assertQuery("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts")
-                    .fails(44, "bracket lists are not supported");
+                    .noLeakCheck()
+                    .assertsPlan(plan);
+            assertQuery("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN (@ts)")
+                    .noLeakCheck()
+                    .assertsPlan(plan);
         });
     }
 
@@ -1111,5 +2773,893 @@ public class DeclareTest extends AbstractSqlParserTest {
                             3\t1970-01-01T00:33:20.000000Z
                             """);
         });
+    }
+
+    @Test
+    public void testDeclaredEmptyListNamesTheMistake() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(TRADES_DDL);
+            // An empty bracket pair is a list with nothing in it, never a scalar, so the lookahead
+            // claims it. Left to the scalar parse it complained about ':=' having one argument,
+            // which describes the parser's predicament rather than the user's mistake.
+            assertQuery("DECLARE @s := () SELECT * FROM trades WHERE symbol IN @s")
+                    .fails(15, "value expected in list");
+        });
+    }
+
+    @Test
+    public void testDeclaredListCannotNestInAnotherList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            // Flattening one list into another is not supported; `IN (@a, 'z')` already covers it.
+            assertQuery("DECLARE @a := ('x','y'), @b := (@a, 'z') SELECT s FROM k WHERE s IN @b")
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
+        });
+    }
+
+    @Test
+    public void testDeclaredListInWindowClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            execute("INSERT INTO k VALUES ('a'), ('b')");
+            drainWalQueue();
+            final String expected = """
+                    s\tcount
+                    a\t2
+                    b\t2
+                    """;
+            // Declared variables are substituted inside window clauses, so a list reaches them too
+            // and the splice pass has to walk them as well. It did not, and an IN in a window
+            // partition failed with the marker's own token showing through as
+            // `unknown function name: ()()`. It has to match the list written out in full.
+            assertQuery("SELECT s, count() OVER (PARTITION BY s IN ('a','b')) FROM k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("DECLARE @x := ('a','b') SELECT s, count() OVER (PARTITION BY s IN @x) FROM k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            // A bare list is no more usable here than anywhere else, and has to say so rather than
+            // leak the marker downstream.
+            assertQuery("DECLARE @x := ('a','b') SELECT row_number() OVER (PARTITION BY @x) FROM k")
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
+            assertQuery("DECLARE @x := ('a','b') SELECT count() OVER (ORDER BY @x) FROM k")
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
+        });
+    }
+
+    @Test
+    public void testDeclaredListInsideView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            execute("INSERT INTO k VALUES ('a'), ('b'), ('c')");
+            drainWalQueue();
+            // Reading a view parses its stored body as a subquery, where a bare ')' marks the end
+            // of that subquery. A list has to keep its own closing bracket there, so this fails
+            // even when the identical DECLARE works as a top-level query.
+            execute("CREATE VIEW v_list AS (DECLARE @s := ('a','b') SELECT s FROM k WHERE s IN @s)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_list")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            b
+                            """);
+            execute("CREATE VIEW v_list_ovr AS (DECLARE OVERRIDABLE @s := ('a','b') SELECT s FROM k WHERE s IN @s)");
+            drainWalAndViewQueues();
+            assertQuery("DECLARE @s := ('b','c') SELECT * FROM v_list_ovr")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            b
+                            c
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclaredListIsRejectedOutsideIn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(TRADES_DDL);
+            // A list has no value of its own, so anything other than IN is a mistake worth naming
+            // at parse time rather than leaving to fail obscurely further down.
+            assertQuery("DECLARE @s := ('ETH-USD', 'BTC-USD') SELECT @s FROM trades")
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
+            assertQuery("DECLARE @s := ('ETH-USD', 'BTC-USD') SELECT * FROM trades WHERE symbol = @s")
+                    .fails(14, "declared list can only be used on the right-hand side of IN");
+        });
+    }
+
+    @Test
+    public void testDeclaredListKeepsElementTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG, d DOUBLE, c CHAR)");
+            execute("INSERT INTO k VALUES (1, 1.5, 'a'), (2, 2.5, 'b'), (3, 3.5, 'c')");
+            drainWalQueue();
+            // Each element keeps its own type and picks the matching IN overload - there is no
+            // array in the middle forcing them to a single element type.
+            assertQuery("DECLARE @l := (1,3) SELECT l FROM k WHERE l IN @l")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            1
+                            3
+                            """);
+            assertQuery("DECLARE @c := ('a','c') SELECT c FROM k WHERE c IN @c")
+                    .noLeakCheck()
+                    .returns("""
+                            c
+                            a
+                            c
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclaredListLookaheadReadsCommentsLikeTheLexer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a', 1), ('b', 2), ('c', 3)");
+            drainWalQueue();
+            // The lookahead that tells a list from a scalar or a sub-query has to read comments
+            // exactly as the lexer does: a `--` comment ends at a lone '\r' as well as at '\n',
+            // block comments nest, and quoted text inside a block comment does not close it.
+            // Reading one differently hides a separator, or invents one inside the comment.
+            final String expectedList = """
+                    s
+                    a
+                    b
+                    """;
+            assertQuery("DECLARE @x := --c\r('a', 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns(expectedList);
+            assertQuery("DECLARE @x := /* a /* b */ c */ ('a', 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns(expectedList);
+            assertQuery("DECLARE @x := /* '*/' */ ('a', 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns(expectedList);
+            assertQuery("DECLARE @x := (--c\r'a', 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns(expectedList);
+            assertQuery("DECLARE @x := (/* '*/' */ 'a', 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns(expectedList);
+            assertQuery("DECLARE @x := ('a' --c\r, 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns(expectedList);
+            assertQuery("DECLARE @x := ('a' /* a /* b */ ) */ , 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns(expectedList);
+            assertQuery("DECLARE @x := ('a' /* '*/' ) */ , 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns(expectedList);
+            // A comma inside a nested comment is not a separator, so these stay a scalar and a
+            // sub-query.
+            assertQuery("DECLARE @x := (1 /* a /* b */ , */ + 2) SELECT l FROM k WHERE l = @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            3
+                            """);
+            assertQuery("DECLARE @x := (/* a /* b */ c */ SELECT s, l FROM k WHERE l > 1) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tl
+                            b\t2
+                            c\t3
+                            """);
+            // A comment in front of the first member must not hide a nested list, which the
+            // expression parser would otherwise evaluate to its last member and silently drop 'b'.
+            assertQuery("DECLARE @x := (/* a /* b */ c */ ('b','c'), 'a') SELECT s FROM k WHERE s IN @x")
+                    .fails(33, "nested lists are not supported");
+            assertQuery("DECLARE @x := (--c\r('b','c'), 'a') SELECT s FROM k WHERE s IN @x")
+                    .fails(19, "nested lists are not supported");
+            assertQuery("DECLARE @x := (/* '*/' */ ('b','c'), 'a') SELECT s FROM k WHERE s IN @x")
+                    .fails(26, "nested lists are not supported");
+        });
+    }
+
+    @Test
+    public void testDeclaredListLookaheadSkipsCommentsAndQuotes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            execute("INSERT INTO k VALUES ('a'), ('b')");
+            drainWalQueue();
+            // Whether brackets hold a list is decided by looking ahead for a separator, so a comma
+            // that only looks like one has to be skipped. A comma inside a comment or a
+            // string is not a separator, and mistaking it for one turns a scalar into a list of
+            // one - which reads the same but audits as an array instead of a value.
+            assertQuery("DECLARE @x := ('a' /* , */) SELECT s FROM k WHERE s = @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            """);
+            assertQuery("DECLARE @x := ('a' -- ,\n) SELECT s FROM k WHERE s = @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            """);
+            assertQuery("DECLARE @x := ('a,b') SELECT s FROM k WHERE s = @x")
+                    .noLeakCheck()
+                    .returns("s\n");
+            // ...and a real separator still makes a list, comments between members included.
+            assertQuery("DECLARE @x := ('a', /* keep */ 'b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            b
+                            """);
+            assertQuery("DECLARE @x := /* before */ ('a','b') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            b
+                            """);
+            // A member may itself contain the characters the scan is looking for.
+            assertQuery("DECLARE @x := ('a)b', 'a') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            """);
+            assertQuery("DECLARE @x := ('it''s', 'a') SELECT s FROM k WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclaredListMatchesWrittenOutList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(TRADES_DDL);
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('ETH-USD','buy',1,1,'2024-01-01T00:00:00.000000Z'),
+                        ('BTC-USD','sell',2,2,'2024-01-02T00:00:00.000000Z'),
+                        ('SOL-USD','buy',3,3,'2024-01-03T00:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            final String expected = """
+                    symbol
+                    ETH-USD
+                    BTC-USD
+                    """;
+            // Both spellings, and both must agree with the list written out in full.
+            assertQuery("SELECT symbol FROM trades WHERE symbol IN ('ETH-USD','BTC-USD')")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @s := ('ETH-USD','BTC-USD') SELECT symbol FROM trades WHERE symbol IN @s")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @s := ('ETH-USD','BTC-USD') SELECT symbol FROM trades WHERE symbol IN (@s)")
+                    .noLeakCheck()
+                    .returns(expected);
+            // NOT IN has to see the same expansion.
+            assertQuery("DECLARE @s := ('ETH-USD','BTC-USD') SELECT symbol FROM trades WHERE symbol NOT IN @s")
+                    .noLeakCheck()
+                    .returns("""
+                            symbol
+                            SOL-USD
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclaredListOfBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a',1), ('b',2), ('c',3)");
+            drainWalQueue();
+            // Splicing at parse time is what lets a list hold bind variables: each one lands in IN
+            // as its own argument and binds to its own type, which a typed-array literal carrying
+            // the list could not do.
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "a");
+            bindVariableService.setStr(1, "c");
+            assertQuery("DECLARE @s := ($1, $2) SELECT s FROM k WHERE s IN @s ORDER BY s")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            a
+                            c
+                            """);
+            // Re-binding the same plan to different values is the point of leaving them unbound.
+            bindVariableService.setStr(0, "b");
+            bindVariableService.setStr(1, "c");
+            assertQuery("DECLARE @s := ($1, $2) SELECT s FROM k WHERE s IN @s ORDER BY s")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            b
+                            c
+                            """);
+            // A one-member list of a bind variable needs the trailing comma like any other.
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 2L);
+            assertQuery("DECLARE @l := ($1,) SELECT l FROM k WHERE l IN @l")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            2
+                            """);
+            // Bind variables mix with literals on either side of the list.
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 1L);
+            assertQuery("DECLARE @l := ($1, 2) SELECT l FROM k WHERE l IN (@l, 3) ORDER BY l")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            1
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclaredListOfOnePlansLikeTheWrittenOutList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a',1),('b',2),('c',3)");
+            drainWalQueue();
+            // A one-member list is the case where the splice can produce the right rows through the
+            // wrong node: `IN @x` parses as an operator, `IN (2)` as a function, and only the
+            // second reaches the JIT filter. Rows cannot tell the two apart, so assert the plan -
+            // this is the shape that regressed while every row-level test stayed green.
+            final String longPlan = """
+                    Async JIT Filter workers: 1
+                      filter: l in [2]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: k
+                    """;
+            assertQuery("SELECT l FROM k WHERE l IN (2)").noLeakCheck().assertsPlan(longPlan);
+            assertQuery("DECLARE @x := (2,) SELECT l FROM k WHERE l IN @x").noLeakCheck().assertsPlan(longPlan);
+            assertQuery("DECLARE @x := (2,) SELECT l FROM k WHERE l IN (@x)").noLeakCheck().assertsPlan(longPlan);
+
+            final String symbolPlan = """
+                    Async JIT Filter workers: 1
+                      filter: s in [a]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: k
+                    """;
+            assertQuery("SELECT s FROM k WHERE s IN ('a')").noLeakCheck().assertsPlan(symbolPlan);
+            assertQuery("DECLARE @x := ('a',) SELECT s FROM k WHERE s IN @x").noLeakCheck().assertsPlan(symbolPlan);
+        });
+    }
+
+    @Test
+    public void testDeclaredListSplicesInSourceOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(TRADES_DDL);
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('ETH-USD','buy',1,1,'2024-01-01T00:00:00.000000Z'),
+                        ('BTC-USD','sell',2,2,'2024-01-02T00:00:00.000000Z'),
+                        ('SOL-USD','buy',3,3,'2024-01-03T00:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            final String expected = """
+                    symbol
+                    ETH-USD
+                    BTC-USD
+                    SOL-USD
+                    """;
+            // A list mixes with literals on either side of it; IN holds its arguments in reverse,
+            // so getting this wrong silently reorders or drops members.
+            assertQuery("DECLARE @s := ('BTC-USD','SOL-USD') SELECT symbol FROM trades WHERE symbol IN ('ETH-USD', @s)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @s := ('ETH-USD','BTC-USD') SELECT symbol FROM trades WHERE symbol IN (@s, 'SOL-USD')")
+                    .noLeakCheck()
+                    .returns(expected);
+            // One list may stand in for another.
+            assertQuery("DECLARE @a := ('ETH-USD','BTC-USD'), @b := @a SELECT symbol FROM trades WHERE symbol IN @b")
+                    .noLeakCheck()
+                    .returns("""
+                            symbol
+                            ETH-USD
+                            BTC-USD
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclaredListTrailingCommaIsOptional() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            execute("INSERT INTO k VALUES ('a'), ('b'), ('c')");
+            drainWalQueue();
+            final String expected = """
+                    s
+                    a
+                    b
+                    """;
+            // The trailing comma is only needed to say "a list of one", which brackets alone cannot.
+            // On a longer list it is accepted and means nothing, so neither spelling is the one way
+            // to write a list.
+            assertQuery("DECLARE @s := ('a','b') SELECT s FROM k WHERE s IN @s")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @s := ('a','b',) SELECT s FROM k WHERE s IN @s")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableCanBeMarkedAudited() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            execute("INSERT INTO k VALUES ('a'), ('b')");
+            drainWalQueue();
+            // AUDITED only marks the variable here; what a read of an audited view does with the
+            // marking is an Enterprise concern. What OSS owns is that the marking parses, in
+            // either order with OVERRIDABLE and on a list as readily as on a scalar.
+            final String expected = """
+                    s
+                    a
+                    """;
+            assertQuery("DECLARE AUDITED @s := 'a' SELECT s FROM k WHERE s = @s")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE OVERRIDABLE AUDITED @s := 'a' SELECT s FROM k WHERE s = @s")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE AUDITED OVERRIDABLE @s := 'a' SELECT s FROM k WHERE s = @s")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE AUDITED @s := ('a',) SELECT s FROM k WHERE s IN @s")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableMarkedAuditedBesideNestedDeclares() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE audited (x LONG)");
+            execute("INSERT INTO audited VALUES (1), (2), (3)");
+            drainWalQueue();
+            final String expected = """
+                    x
+                    2
+                    3
+                    """;
+            // Only the AUDITED marking is confined to the top-level block. The top-level block keeps
+            // it whatever follows, a set operation or a sub-query with a DECLARE of its own.
+            assertQuery("DECLARE AUDITED @x := 1 SELECT @x a UNION ALL SELECT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            a
+                            1
+                            2
+                            """);
+            assertQuery("""
+                    DECLARE AUDITED @lim := 1
+                    SELECT * FROM (DECLARE OVERRIDABLE @lo := 0 SELECT * FROM audited WHERE x > @lo)
+                    WHERE x > @lim""")
+                    .noLeakCheck()
+                    .returns(expected);
+            // Where no variable follows the word, it names a table in a nested DECLARE too, so
+            // there is no marker to refuse.
+            assertQuery("SELECT * FROM (DECLARE @lim := 1 audited WHERE x > @lim)")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableMarkedAuditedOnlyInTopLevelBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            // A read of an audited view records the AUDITED variables of the DECLARE block that
+            // opens the view body, and no others. A marking in any other DECLARE would parse and
+            // never be recorded, so the parser refuses it at the marker. It does so in every
+            // statement, so a view body is refused on its own exactly when it is refused as a view.
+            final String error = "AUDITED is only allowed in the top-level DECLARE block";
+            // a sub-query in FROM, and a CTE
+            assertQuery("SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a)")
+                    .noLeakCheck()
+                    .fails(23, error);
+            assertQuery("WITH c AS (DECLARE OVERRIDABLE AUDITED @x := 1 SELECT @x a) SELECT * FROM c")
+                    .noLeakCheck()
+                    .fails(31, error);
+            // a set operation branch, which a caller's value for a view's variable still reaches
+            assertQuery("SELECT 1 a UNION ALL DECLARE OVERRIDABLE AUDITED @x := 2 SELECT @x")
+                    .noLeakCheck()
+                    .fails(41, error);
+            assertQuery("SELECT 1 a EXCEPT DECLARE AUDITED @x := 1 SELECT @x")
+                    .noLeakCheck()
+                    .fails(26, error);
+            assertQuery("SELECT 1 a INTERSECT DECLARE AUDITED @x := 1 SELECT @x")
+                    .noLeakCheck()
+                    .fails(29, error);
+            // a sub-query a join reads, lateral or not
+            assertQuery("SELECT * FROM k JOIN (DECLARE AUDITED @x := 'a' SELECT @x s) j ON k.s = j.s")
+                    .noLeakCheck()
+                    .fails(30, error);
+            assertQuery("SELECT * FROM k JOIN LATERAL (DECLARE AUDITED @x := 'a' SELECT count() c FROM k k2 WHERE k2.s = k.s OR k2.s = @x) j ON true")
+                    .noLeakCheck()
+                    .fails(38, error);
+            // a sub-query in a declared value, and one in an expression
+            assertQuery("DECLARE @q := (DECLARE AUDITED @y := 1 SELECT @y) SELECT * FROM @q")
+                    .noLeakCheck()
+                    .fails(23, error);
+            assertQuery("SELECT s FROM k WHERE s IN (DECLARE AUDITED @y := 'b'::STRING SELECT @y)")
+                    .noLeakCheck()
+                    .fails(36, error);
+            // the marker on a later declaration of the block, after OVERRIDABLE
+            assertQuery("SELECT * FROM (DECLARE @a := 1, OVERRIDABLE AUDITED @x := 2 SELECT @a + @x)")
+                    .noLeakCheck()
+                    .fails(44, error);
+            // Brackets around a whole statement make it a sub-query, as they do around a view body
+            // inside the brackets CREATE VIEW takes.
+            assertQuery("(DECLARE AUDITED @x := 1 SELECT @x a)")
+                    .noLeakCheck()
+                    .fails(9, error);
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableMarkedAuditedOnlyInTopLevelBlockOfOtherStatements() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE dest (s SYMBOL, l LONG)");
+            // The refusal belongs to the DECLARE block, not to the statement around it: a nested
+            // AUDITED marker is refused at the marker in every statement that parses a query.
+            final String error = "AUDITED is only allowed in the top-level DECLARE block";
+            // UPDATE: a sub-query in WHERE, and one in FROM
+            assertExceptionNoLeakCheck("UPDATE dest SET l = 1 WHERE l < (DECLARE AUDITED @x := 1 SELECT @x)", 41, error);
+            assertExceptionNoLeakCheck("UPDATE dest SET l = 1 FROM (DECLARE AUDITED @x := 'a' SELECT @x s) v WHERE dest.s = v.s", 36, error);
+            // INSERT ... SELECT
+            assertExceptionNoLeakCheck("INSERT INTO dest SELECT * FROM (DECLARE AUDITED @x := 'a' SELECT @x s, 1L l)", 40, error);
+            // CREATE TABLE AS: a sub-query of the body, and a set operation branch of it
+            assertExceptionNoLeakCheck("CREATE TABLE c_sub AS (SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a))", 46, error);
+            assertExceptionNoLeakCheck("CREATE TABLE c_union AS (SELECT 1 a UNION ALL DECLARE AUDITED @x := 2 SELECT @x)", 54, error);
+            // a materialized view body: a sub-query in FROM, one in WHERE, and a CTE
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv_sub AS (SELECT ts, count() c FROM (DECLARE AUDITED @x := 1 SELECT ts, l FROM k WHERE l > @x) SAMPLE BY 1h) PARTITION BY DAY",
+                    71,
+                    error
+            );
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv_where AS (SELECT ts, count() c FROM k WHERE l > (DECLARE AUDITED @x := 1 SELECT @x) SAMPLE BY 1h) PARTITION BY DAY",
+                    85,
+                    error
+            );
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv_cte AS (WITH c AS (DECLARE AUDITED @x := 1 SELECT ts, l FROM k WHERE l > @x) SELECT ts, count() c FROM c SAMPLE BY 1h) PARTITION BY DAY",
+                    55,
+                    error
+            );
+            // EXPLAIN parses the statement it explains
+            assertExceptionNoLeakCheck("EXPLAIN SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a)", 31, error);
+
+            // None of them created anything.
+            drainWalAndMatViewQueues();
+            Assert.assertNull(engine.getTableTokenIfExists("c_sub"));
+            Assert.assertNull(engine.getTableTokenIfExists("c_union"));
+            Assert.assertNull(engine.getTableTokenIfExists("mv_sub"));
+            Assert.assertNull(engine.getTableTokenIfExists("mv_where"));
+            Assert.assertNull(engine.getTableTokenIfExists("mv_cte"));
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableMarkerLookaheadReadsCommentsLikeTheLexer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE audited (x LONG)");
+            execute("INSERT INTO audited VALUES (1), (2), (3)");
+            drainWalQueue();
+            // Whether AUDITED or OVERRIDABLE marks a declaration or names a table depends on what
+            // follows the word, so the lookahead has to read any comment in between exactly as the
+            // lexer does: a `--` comment ends at a lone '\r' as well as at '\n', block comments
+            // nest, and quoted text inside a block comment does not close it.
+            final String expected = """
+                    y
+                    2
+                    """;
+            assertQuery("DECLARE OVERRIDABLE --c\r@y := 2 SELECT @y AS y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("DECLARE OVERRIDABLE /* a /* b */ c */ @y := 2 SELECT @y AS y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("DECLARE OVERRIDABLE /* '*/' */ @y := 2 SELECT @y AS y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("DECLARE AUDITED --c\r@y := 2 SELECT @y AS y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("DECLARE AUDITED /* a /* b */ c */ @y := 2 SELECT @y AS y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("DECLARE AUDITED /* '*/' */ @y := 2 SELECT @y AS y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("DECLARE @x := 1, OVERRIDABLE --c\r@y := 2 SELECT @x + @y AS y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            y
+                            3
+                            """);
+            // A comment that hides what only looks like a variable leaves the word to the query.
+            assertQuery("DECLARE @lim := 1 audited /* x /* y */ @ */ WHERE x > @lim")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            2
+                            3
+                            """);
+            // The view body is parsed again at every read, and the caller's value shows the
+            // OVERRIDABLE marking taking effect behind the comment.
+            execute("CREATE VIEW v_marked AS (DECLARE OVERRIDABLE /* '*/' */ @lim := 1 SELECT * FROM audited WHERE x > @lim)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_marked")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            2
+                            3
+                            """);
+            assertQuery("DECLARE @lim := 2 SELECT * FROM v_marked")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableMarkerMisuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL)");
+            // A repeated marker is a typo, not a stronger marking, and saying which one repeated
+            // is the whole value of the message.
+            assertQuery("DECLARE AUDITED AUDITED @s := 'a' SELECT s FROM k")
+                    .fails(16, "duplicate AUDITED");
+            assertQuery("DECLARE OVERRIDABLE OVERRIDABLE @s := 'a' SELECT s FROM k")
+                    .fails(20, "duplicate OVERRIDABLE");
+            assertQuery("DECLARE AUDITED OVERRIDABLE AUDITED @s := 'a' SELECT s FROM k")
+                    .fails(28, "duplicate AUDITED");
+            // A marker with nothing to mark names what it was expecting.
+            assertQuery("DECLARE AUDITED := 'a' SELECT s FROM k")
+                    .fails(16, "variable name expected after AUDITED");
+            assertQuery("DECLARE OVERRIDABLE := 'a' SELECT s FROM k")
+                    .fails(20, "variable name expected after OVERRIDABLE");
+            assertQuery("DECLARE OVERRIDABLE AUDITED := 'a' SELECT s FROM k")
+                    .fails(28, "variable name expected after OVERRIDABLE/AUDITED");
+            // A variable that lacks its '@' is still a declaration, not a table named `audited`.
+            assertQuery("DECLARE AUDITED s := 'a' SELECT s FROM k")
+                    .fails(16, "variable name expected after AUDITED");
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableMarkerMisuseOutsideTopLevelBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            // Outside the top-level block AUDITED is refused where it stands, whatever follows it.
+            // So a nested marker that is also malformed reports the refusal at its first AUDITED
+            // rather than the duplicate or the missing variable name further on: the marker has to
+            // go, and mending it would only bring the refusal up next.
+            final String error = "AUDITED is only allowed in the top-level DECLARE block";
+            assertQuery("SELECT * FROM (DECLARE AUDITED AUDITED @x := 1 SELECT @x a)")
+                    .noLeakCheck()
+                    .fails(23, error);
+            assertQuery("SELECT * FROM (DECLARE AUDITED OVERRIDABLE AUDITED @x := 1 SELECT @x a)")
+                    .noLeakCheck()
+                    .fails(23, error);
+            assertQuery("SELECT * FROM (DECLARE AUDITED := 1 SELECT 1 a)")
+                    .noLeakCheck()
+                    .fails(23, error);
+            assertQuery("SELECT * FROM (DECLARE OVERRIDABLE AUDITED := 1 SELECT 1 a)")
+                    .noLeakCheck()
+                    .fails(35, error);
+            assertQuery("SELECT * FROM (DECLARE AUDITED x := 1 SELECT 1 a)")
+                    .noLeakCheck()
+                    .fails(23, error);
+            // in a CTE and in a set operation branch
+            assertQuery("WITH c AS (DECLARE AUDITED AUDITED @x := 1 SELECT @x a) SELECT * FROM c")
+                    .noLeakCheck()
+                    .fails(19, error);
+            assertQuery("SELECT 1 a UNION ALL DECLARE AUDITED := 2 SELECT 2")
+                    .noLeakCheck()
+                    .fails(29, error);
+            // Markers are read left to right, so a mistake ahead of the first AUDITED still wins.
+            assertQuery("SELECT * FROM (DECLARE OVERRIDABLE OVERRIDABLE AUDITED @x := 1 SELECT @x a)")
+                    .noLeakCheck()
+                    .fails(35, "duplicate OVERRIDABLE");
+            // OVERRIDABLE is not confined to the top-level block and keeps its own errors there.
+            assertQuery("SELECT * FROM (DECLARE OVERRIDABLE OVERRIDABLE @x := 1 SELECT @x a)")
+                    .noLeakCheck()
+                    .fails(35, "duplicate OVERRIDABLE");
+            assertQuery("SELECT * FROM (DECLARE OVERRIDABLE := 1 SELECT 1 a)")
+                    .noLeakCheck()
+                    .fails(35, "variable name expected after OVERRIDABLE");
+        });
+    }
+
+    @Test
+    public void testDeclaredVariableMarkerWordNamesTableInImplicitSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE audited (x LONG)");
+            execute("CREATE TABLE overridable (x LONG)");
+            execute("INSERT INTO audited VALUES (1), (2), (3)");
+            execute("INSERT INTO overridable VALUES (1), (2), (3)");
+            // AUDITED and OVERRIDABLE mark a declaration only when a variable follows them. Where
+            // the query begins, the same words are table names in the implicit SELECT * FROM form,
+            // whether or not a comma closes the DECLARE block.
+            final String expected = """
+                    x
+                    2
+                    3
+                    """;
+            assertQuery("DECLARE @lim := 1 audited WHERE x > @lim")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @lim := 1 overridable WHERE x > @lim")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @lim := 1, audited WHERE x > @lim")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @lim := 1, overridable WHERE x > @lim")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @lim := 1 audited overridable WHERE overridable.x > @lim")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @lim := 1, overridable")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            """);
+            // Marked declarations may still precede such a table name. The view below shows the
+            // OVERRIDABLE marking still taking effect there.
+            assertQuery("DECLARE @lo := 1, OVERRIDABLE AUDITED @hi := 3 audited WHERE x > @lo AND x < @hi")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            2
+                            """);
+            execute("CREATE VIEW v_audited AS (DECLARE OVERRIDABLE @lim := 1 audited WHERE x > @lim)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_audited")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("DECLARE @lim := 2 SELECT * FROM v_audited")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLiteralListCannotNestInAnotherList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a',1),('b',2)");
+            drainWalQueue();
+            // The same mistake written out rather than through a variable. It has to be refused for
+            // the same reason, and more sharply: the expression parser reads `('b','c')` as a
+            // parenthesised scalar and evaluates it to its last member, so this silently meant
+            // `('a','c')` and dropped 'b'. Losing members without saying so is the behaviour a
+            // declared list exists to replace, so it cannot be the behaviour a declared list has.
+            assertQuery("DECLARE @x := ('a', ('b','c')) SELECT s FROM k WHERE s IN @x")
+                    .fails(20, "nested lists are not supported");
+            // ...and in first position, where the element start is found differently.
+            assertQuery("DECLARE @x := (('x','y'), 'z') SELECT s FROM k WHERE s IN @x")
+                    .fails(15, "nested lists are not supported");
+            // A bracketed element with no separator is not a nested list. It is a parenthesised
+            // scalar, and it keeps working exactly as it does anywhere else.
+            assertQuery("DECLARE @x := ((1+1), 3) SELECT l FROM k WHERE l IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            2
+                            """);
+            // Nor is a function call, whose commas belong to the call.
+            assertQuery("DECLARE @x := (greatest(1, 2), 9) SELECT l FROM k WHERE l IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testParenthesisedScalarIsNotAList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            drainWalQueue();
+            // Only a comma directly inside the brackets makes a list. Arithmetic, a single value
+            // and a call's own argument commas must all stay scalar.
+            assertQuery("DECLARE @x := (1+2) SELECT l FROM k WHERE l = @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            3
+                            """);
+            // ...but a trailing comma makes it a list of one, which IN treats the same way.
+            assertQuery("DECLARE @x := (2,) SELECT l FROM k WHERE l IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            2
+                            """);
+            assertQuery("DECLARE @x := (2) SELECT l FROM k WHERE l IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            2
+                            """);
+            assertQuery("DECLARE @x := (greatest(1, 3)) SELECT l FROM k WHERE l = @x")
+                    .noLeakCheck()
+                    .returns("""
+                            l
+                            3
+                            """);
+            // A comma inside quoted text is not a separator either.
+            assertQuery("DECLARE @x := ('a,b') SELECT @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a,b
+                            a,b
+                            """);
+        });
+    }
+
+    private static void assertEachClosedOnce(ObjList<CloseCountingRecordCursorFactory> factories, int minFactoryCount) {
+        Assert.assertTrue("instantiated factories: " + factories.size(), factories.size() >= minFactoryCount);
+        for (int i = 0, n = factories.size(); i < n; i++) {
+            Assert.assertEquals("factory " + i + " of " + n, 1, factories.getQuick(i).getCloseCount());
+        }
+    }
+
+    // Writes x = 3, 2, 1 to q.parquet, so that the first row read from the file is not the
+    // first of long_sequence().
+    private static void createParquetFile() throws Exception {
+        execute("CREATE TABLE src AS (SELECT 4 - x x FROM long_sequence(3))");
+        try (
+                Path path = new Path();
+                PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                TableReader reader = engine.getReader("src")
+        ) {
+            path.of(root).concat("q.parquet");
+            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+            PartitionEncoder.encode(partitionDescriptor, path);
+        }
+        inputRoot = root;
     }
 }

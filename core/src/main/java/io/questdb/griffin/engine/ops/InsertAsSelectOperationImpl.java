@@ -182,6 +182,9 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
         @Override
         public long execute(SqlExecutionContext executionContext) throws SqlException {
             executionContext.setUseSimpleCircuitBreaker(true);
+            // The flag is restored even when getCursor() throws, as it does for a plan whose view
+            // was redefined since it compiled. The caller recompiles and retries on this context,
+            // and every statement after it would otherwise run against the simple circuit breaker.
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (timestampIndex == -1) {
@@ -211,9 +214,9 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                         LOG.error().$("could not rollback, writer must be distressed [table=").$(tableToken).I$();
                     }
                     throw e;
-                } finally {
-                    executionContext.setUseSimpleCircuitBreaker(false);
                 }
+            } finally {
+                executionContext.setUseSimpleCircuitBreaker(false);
             }
             return rowCount;
         }
