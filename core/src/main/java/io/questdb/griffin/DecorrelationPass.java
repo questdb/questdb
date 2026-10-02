@@ -53,14 +53,8 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.CorrelationKeys.hasOuterCondition;
-import static io.questdb.griffin.DecorrelationContext.appendMissingColumns;
-import static io.questdb.griffin.DecorrelationContext.collectColumnIds;
-import static io.questdb.griffin.DecorrelationContext.isTrue;
-import static io.questdb.griffin.DecorrelationContext.rebuildJoinOutput;
-import static io.questdb.griffin.ScalarCompensation.OUTER_LIMIT_OVER_COUNT;
-import static io.questdb.griffin.ScalarCompensation.forwardColumns;
-import static io.questdb.griffin.ScalarCompensation.outerLimit;
-import static io.questdb.griffin.ScalarCompensation.rejectsZeroCount;
+import static io.questdb.griffin.DecorrelationContext.*;
+import static io.questdb.griffin.ScalarCompensation.*;
 
 /**
  * Rewrites every dependent join step (a LATERAL body reading the inputs before it through outer columns)
@@ -157,7 +151,8 @@ final class DecorrelationPass implements Mutable {
 
     private static boolean isChainNode(LogicalPlan node, boolean hasProject) {
         return switch (node) {
-            case LimitPlan _, SortPlan _, DistinctPlan _, WindowPlan _, AggregatePlan _, FillPlan _, FilterPlan _, LatestByPlan _ -> true;
+            case LimitPlan _, SortPlan _, DistinctPlan _, WindowPlan _, AggregatePlan _, FillPlan _, FilterPlan _,
+                 LatestByPlan _ -> true;
             case ProjectPlan _ -> !hasProject;
             default -> false;
         };
@@ -611,21 +606,6 @@ final class DecorrelationPass implements Mutable {
         return predicate;
     }
 
-    private CharSequence liftedName(OutputSchema output, CharSequence name) {
-        if (output.getColumnIndexQuiet(name) < 0) {
-            boolean isTaken = false;
-            for (int i = 0, n = output.getColumnCount(); i < n && !isTaken; i++) {
-                isTaken = Chars.equalsIgnoreCase(output.getColumnName(i), name);
-            }
-            if (!isTaken) {
-                return name;
-            }
-        }
-        final CharacterStoreEntry entry = ctx.characterStore.newEntry();
-        entry.put("__qdb_lifted_").put(ctx.carrierSequence++).put('_').put(name);
-        return entry.toImmutable();
-    }
-
     /**
      * Moves the conjuncts of the body's WHERE and the computed columns of its projection that read outer
      * columns no equality satisfies above the step: the conjuncts join its ON, the columns a projection over
@@ -663,6 +643,21 @@ final class DecorrelationPass implements Mutable {
         if (source instanceof JoinPlan join) {
             LogicalPlans.collectOuterColumnIds(join, ctx.chainOuterIds);
         }
+    }
+
+    private CharSequence liftedName(OutputSchema output, CharSequence name) {
+        if (output.getColumnIndexQuiet(name) < 0) {
+            boolean isTaken = false;
+            for (int i = 0, n = output.getColumnCount(); i < n && !isTaken; i++) {
+                isTaken = Chars.equalsIgnoreCase(output.getColumnName(i), name);
+            }
+            if (!isTaken) {
+                return name;
+            }
+        }
+        final CharacterStoreEntry entry = ctx.characterStore.newEntry();
+        entry.put("__qdb_lifted_").put(ctx.carrierSequence++).put('_').put(name);
+        return entry.toImmutable();
     }
 
     /**
