@@ -2447,22 +2447,23 @@ public class HorizonJoinTest extends AbstractCairoTest {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, _, context) -> {
                 // 'B' quotes pass the filter only in the second half, so 'B' trades miss
-                // in the early master frames and must match in the later ones.
+                // in the early master frames and must match in the later ones, in a
+                // later quotes partition than the recorded misses.
                 engine.execute("""
                         CREATE TABLE trades AS (
-                            SELECT timestamp_sequence('2000-01-01T00:00:01Z'::TIMESTAMP, 1_000_000) ts,
+                            SELECT timestamp_sequence('2000-01-01T00:01:00Z'::TIMESTAMP, 60_000_000) ts,
                                    (CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END)::SYMBOL sym
                             FROM long_sequence(256)
                         ) TIMESTAMP(ts)
                         """, context);
                 engine.execute("""
                         CREATE TABLE quotes AS (
-                            SELECT timestamp_sequence('2000-01-01T00:00:00.5Z'::TIMESTAMP, 500_000) ts,
+                            SELECT timestamp_sequence('2000-01-01T00:00:30Z'::TIMESTAMP, 30_000_000) ts,
                                    (CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END)::SYMBOL sym,
                                    (CASE WHEN x % 2 = 1 OR x > 256 THEN 'X' ELSE 'Y' END)::SYMBOL venue,
                                    x::DOUBLE price
                             FROM long_sequence(512)
-                        ) TIMESTAMP(ts)
+                        ) TIMESTAMP(ts) PARTITION BY HOUR
                         """, context);
                 for (boolean isParallel : new boolean[]{false, true}) {
                     context.setParallelHorizonJoinEnabled(isParallel);
@@ -2479,8 +2480,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                     + (hasGroupKeys ? "ORDER BY sym" : "");
                             final String expected = hasGroupKeys
                                     ? (hasMultipleSlaves
-                                    ? "sym\tc\ts\trs\nA\t128\t32640.0\t32640.0\nB\t64\t24704.0\t24704.0\n"
-                                    : "sym\tc\ts\nA\t128\t32640.0\nB\t64\t24704.0\n")
+                                       ? "sym\tc\ts\trs\nA\t128\t32640.0\t32640.0\nB\t64\t24704.0\t24704.0\n"
+                                       : "sym\tc\ts\nA\t128\t32640.0\nB\t64\t24704.0\n")
                                     : (hasMultipleSlaves ? "c\ts\trs\n192\t57344.0\t57344.0\n" : "c\ts\n192\t57344.0\n");
                             final StringSink referenceSink = new StringSink();
                             engine.print(reference, referenceSink, context);
@@ -2590,9 +2591,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
             final String inSubquery = "SELECT avg(q.price) FROM trades t HORIZON JOIN quotes q "
                     + "ON (q.sym IN (SELECT sym FROM trades)) LIST (0s) AS h";
             assertQuery(inSubquery).fails(inSubquery.indexOf("SELECT sym"), "query is not allowed here");
-            final String constantPredicate = "SELECT avg(q.price) FROM trades t HORIZON JOIN quotes q "
-                    + "ON (t.sym = q.sym AND true) LIST (0s) AS h";
-            assertQuery(constantPredicate).fails(constantPredicate.indexOf("true"), "unsupported HORIZON join expression");
             final ObjList<String> rhsValues = new ObjList<>(
                     "(SELECT ts, sym, price AS p FROM quotes WHERE price > 0)",
                     "(SELECT ts, sym, price * 2 AS p FROM quotes WHERE price > 0)",
@@ -2643,6 +2641,34 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("count\tavg\n0\tnull\n");
                     }
+                    final ObjList<String> constantOnValues = new ObjList<>("t.sym = q.sym AND true", "t.sym = q.sym AND 1 = 1", "1 = 1",
+                            "t.sym = q.sym AND false", "t.sym = q.sym AND 1 = 0", "1 = 0");
+                    for (int onIndex = 0; onIndex < constantOnValues.size(); onIndex++) {
+                        final boolean isTrue = onIndex < 3;
+                        final QueryAssertion assertion = assertQuery("SELECT count(q.price), avg(q.price) FROM trades t HORIZON JOIN quotes q ON ("
+                                + constantOnValues.getQuick(onIndex) + ") LIST (0s) AS h")
+                                .inferRandomAccess()
+                                .expectSize();
+                        if (isTrue) {
+                            assertion.withPlanNotContaining("slave filter").returns("count\tavg\n1\t999.0\n");
+                        } else {
+                            assertion.withPlanContaining("slave filter: false").returns("count\tavg\n0\tnull\n");
+                        }
+                    }
+                    for (boolean isTrue : new boolean[]{true, false}) {
+                        bindVariableService.clear();
+                        bindVariableService.setBoolean(0, isTrue);
+                        assertQuery("SELECT count(q.price), avg(q.price) FROM trades t HORIZON JOIN quotes q ON (t.sym = q.sym AND $1) LIST (0s) AS h")
+                                .inferRandomAccess()
+                                .expectSize()
+                                .returns(isTrue ? "count\tavg\n1\t999.0\n" : "count\tavg\n0\tnull\n");
+                    }
+                    // A constant predicate filters only the right-hand table whose ON clause holds it.
+                    assertQuery("SELECT count(q.price), avg(r.price) FROM trades t HORIZON JOIN quotes q ON (t.sym = q.sym AND 1 = 0) "
+                            + "HORIZON JOIN quotes r ON (t.sym = r.sym AND 1 = 1) LIST (0s) AS h")
+                            .inferRandomAccess()
+                            .expectSize()
+                            .returns("count\tavg\n0\t999.0\n");
                 }
             }
         });

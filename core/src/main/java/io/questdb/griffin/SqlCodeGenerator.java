@@ -5009,8 +5009,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model == horizonJoinSlaveModel && factory.supportsTimeFrameCursor()) {
             // HORIZON applies the residual during ASOF lookup. Preserve constant-false
             // filters too, so no-match semantics still have a time-frame-capable source.
+            // A constant-true filter falls through and drops.
             try {
-                return new FilteredRecordCursorFactory(factory, filter, deepClone(expressionNodePool, filterExpr));
+                if (!filter.isConstant() || !filter.getBool(null)) {
+                    return new FilteredRecordCursorFactory(factory, filter, deepClone(expressionNodePool, filterExpr));
+                }
             } catch (Throwable th) {
                 Misc.free(filter, th);
                 Misc.free(factory, th);

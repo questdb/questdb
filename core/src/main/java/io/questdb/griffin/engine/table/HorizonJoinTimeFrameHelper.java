@@ -92,6 +92,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private long forwardWatermark = Long.MIN_VALUE;
     // A keyed lookup found no match at the current ASOF position.
     private boolean hasKeyMiss;
+    private boolean isFilterAlwaysFalse;
     private boolean isForwardScanMode;
     private long prevAsOfRowId = Long.MIN_VALUE;
     private Record record;
@@ -318,6 +319,9 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
      * @return rowId if found, Long.MIN_VALUE otherwise
      */
     public long findAsOfRow(long targetTimestamp, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (isFilterAlwaysFalse) {
+            return Long.MIN_VALUE;
+        }
         if (cachedAsOfRowId != Long.MIN_VALUE && targetTimestamp < cachedNextRowTs) {
             return cachedAsOfRowId;
         }
@@ -560,12 +564,19 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 long bwdScanCost = backwardScanRows - bwdScanRowsAtPositionStart;
                 if (prevAsOfRowId != Long.MIN_VALUE) {
                     long gap = asOfRowId - prevAsOfRowId;
-                    // A filter-rejected key repeats its miss scan at every position; the map
-                    // is valid up to prevAsOfRowId, so extend it forward even across a small gap.
+                    long minGap = bwdScanMinGap;
+                    if (filter != null) {
+                        // A filter repeats a deep scan at every position, so a small gap also
+                        // switches: a miss at any cost, a hit at the cost the minimum gap implies.
+                        minGap = 0;
+                        if (!hasKeyMiss && gap > 0) {
+                            gap = Math.max(gap, bwdScanMinGap);
+                        }
+                    }
                     if (shouldSwitchToForwardScan(
                             bwdScanCost,
                             gap,
-                            filter != null && hasKeyMiss ? 0 : bwdScanMinGap,
+                            minGap,
                             bwdScanSwitchFactor,
                             bwdScanAbsoluteThreshold
                     )) {
@@ -772,6 +783,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         this.record = timeFrameCursor.getRecord();
         this.timeFrame = timeFrameCursor.getTimeFrame();
         this.timestampIndex = timeFrameCursor.getTimestampIndex();
+        // The owner initializes the filter before this call.
+        isFilterAlwaysFalse = filter != null && filter.isConstantOrRuntimeConstant() && !filter.getBool(null);
         filterMissWatermark = Long.MIN_VALUE;
         filteredAsOfRowId = Long.MIN_VALUE;
         filteredMatchRowId = Long.MIN_VALUE;

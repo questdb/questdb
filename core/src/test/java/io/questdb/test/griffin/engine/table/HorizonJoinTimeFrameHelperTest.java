@@ -47,6 +47,7 @@ import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.table.HorizonJoinTimeFrameHelper;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -179,6 +180,19 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     @Test
+    public void testConstantFalseFilterScansNothing() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Trace trace = new Trace();
+            trace.isTimestampTrace = true;
+            Cursor cursor = new Cursor(trace, 256);
+            HorizonJoinTimeFrameHelper helper = helper(cursor, BooleanConstant.FALSE, 64);
+            Assert.assertEquals(Long.MIN_VALUE, helper.findAsOfRow(100, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            Assert.assertEquals(0, trace.opens);
+            Assert.assertEquals(0, trace.visits);
+        });
+    }
+
+    @Test
     public void testFastReturnsDoNotPoll() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             State state = new State();
@@ -205,6 +219,44 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                 Assert.assertEquals(256, trace.visits);
                 Assert.assertEquals(polls, trace.pollAtVisits.size());
                 Assert.assertEquals(reads, state.millisReads);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredDeepHitSwitchesToForwardScan() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Trace trace = new Trace();
+            Cursor cursor = new Cursor(trace, 16_384);
+            SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            Function filter = new BooleanFunction() {
+                @Override
+                public boolean getBool(Record record) {
+                    trace.visit();
+                    return record.getRowId() == 10;
+                }
+            };
+            try (PollingEngine engine = new PollingEngine(root, new State());
+                 Map map = newMap(engine);
+                 HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter, new ArrayColumnTypes().add(ColumnType.INT)
+                 )) {
+                // A hit below the cost floor rescans at the next position.
+                helper.of(cursor, null);
+                Assert.assertEquals(10, helper.findKeyedAsOfMatch(100, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(91, trace.visits);
+                Assert.assertEquals(10, helper.findKeyedAsOfMatch(110, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(192, trace.visits);
+
+                // A hit above it scans only the gap from then on.
+                helper.of(cursor, null);
+                map.clear();
+                Assert.assertEquals(10, helper.findKeyedAsOfMatch(9_000, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(9_183, trace.visits);
+                Assert.assertEquals(10, helper.findKeyedAsOfMatch(9_010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(9_193, trace.visits);
+                Assert.assertEquals(10, helper.findKeyedAsOfMatch(9_020, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(9_203, trace.visits);
             }
         });
     }

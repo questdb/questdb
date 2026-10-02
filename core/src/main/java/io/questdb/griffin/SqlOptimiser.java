@@ -7924,7 +7924,7 @@ public class SqlOptimiser implements Mutable {
                     literalCollector.withModel(parent);
                     literalCollector.resetCounts();
                     traversalAlgo.traverse(n, literalCollector.to(tempIntHashSet));
-                    if (tempIntHashSet.size() == 1 && tempIntHashSet.get(0) == joinIndex) {
+                    if (tempIntHashSet.size() == 0 || (tempIntHashSet.size() == 1 && tempIntHashSet.get(0) == joinIndex)) {
                         addWhereNode(parent, joinIndex, n);
                         n = null;
                         continue;
