@@ -562,7 +562,7 @@ anchor across either. A `||` written there therefore stays an `OPERATION` node o
 text in `LvAnchorSpec.anchorExpressionSql`. Both consumers - `CairoEngine`'s CREATE-time pass-2
 anchor validator and `LiveViewRefreshJob.ensureAnchorFunction` - re-parse that text through
 `SqlCompilerImpl.parseExpression`, which calls the rewriting
-`parser.expr(lexer, (IQueryModel) null, this)` overload, and only then hand the result to
+`parser.expr(lexer, (QueryModel) null, this)` overload, and only then hand the result to
 `FunctionParser.parseFunction`. Nothing hands the raw anchor node to `FunctionParser`:
 `SqlParser`'s other read of `getAnchorExpression()` drives AST-level validation alone. A
 maintainer who deletes the round-trip and passes `w.getAnchorExpression()` straight to
@@ -578,7 +578,7 @@ Two `parseExpr` callers skip the rewrites. `ExpressionParser.parseWindowExpr` is
 That distinction matters to the tests. `ConstantReassociationTest.assertReassociation` uses the
 `@TestOnly` overload, so it is faithful only for the operators no rewrite touches - the arithmetic
 and boolean ones. The concatenation cases use `assertPostRewriteReassociation`, which routes
-through `testParseExpression(CharSequence, IQueryModel)` and therefore asserts against the same
+through `testParseExpression(CharSequence, QueryModel)` and therefore asserts against the same
 `concat` tree production builds.
 
 ## NULL Sentinels by Type
