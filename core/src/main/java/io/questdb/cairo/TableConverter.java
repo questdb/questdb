@@ -24,13 +24,17 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -46,6 +50,10 @@ import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
 public class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
+    // Exists only while a WAL replay before conversion is running. If startup finds it, the previous replay
+    // killed the process, so this time the table converts without a replay instead of crashing again.
+    private static final String REPLAY_FILE_NAME = "_convert.replay";
+    private static final String REPLAY_LOCK_REASON = "convertReplay";
 
     public static ObjList<TableToken> convertTables(
             CairoEngine engine,
@@ -83,12 +91,34 @@ public class TableConverter {
                                 .$(", walEnabled=").$(walEnabled)
                                 .I$();
 
+                        final String dirName = dirNameSink.toString();
+                        TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
+                        if (!walEnabled
+                                && existingToken != null
+                                && existingToken.isWal()
+                                && !tableNameRegistry.isWalTableDropped(dirName)
+                                && isEnrolledAdaptive(ff, path.trimTo(rootLen).concat(dirName))) {
+                            // Startup recovery has just rewound this adaptive table to its last durable
+                            // epoch. Every transaction after the epoch now exists only in the WAL, and the
+                            // conversion below deletes the WAL, so replay it first.
+                            //
+                            // The WAL apply code uses the same thread-local Path and sink as this method,
+                            // so reset both afterwards, even when the replay throws: the directory scan
+                            // continues with them.
+                            try {
+                                replayWalBeforeConversion(engine, existingToken);
+                            } finally {
+                                path.of(configuration.getDbRoot());
+                                metaPath.of(configuration.getDbRoot());
+                                dirNameSink.clear();
+                                dirNameSink.put(dirName);
+                            }
+                        }
+
                         path.trimTo(rootLen).concat(dirNameSink);
                         metaPath.trimTo(rootLen).concat(dirNameSink);
                         try (final MemoryMARW metaMem = Vm.getCMARWInstance()) {
                             openSmallFile(ff, metaPath, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-                            final String dirName = dirNameSink.toString();
-                            TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
 
                             if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled && existingToken != null && existingToken.isWal() == walEnabled) {
                                 LOG.info().$("skipping conversion, table already has the expected type [dirName=").$(dirNameSink)
@@ -230,6 +260,85 @@ public class TableConverter {
         return convertedTables;
     }
 
+    private static void applyOutstandingWal(CairoEngine engine, TableToken token, long lastSeqTxn) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
+            long previousSeqTxn = -1;
+            while (true) {
+                // applyWalDirect() never throws. When a transaction fails to apply, it suspends the table and
+                // returns. It can also return before the end of the WAL, when it runs out of its time quota or
+                // backs off under memory pressure. So call it again while it makes progress, and stop at the
+                // end of the WAL, when the table is suspended, or after a call that applied nothing.
+                job.applyWalDirect(token, Job.RUNNING_STATUS);
+                try (TableWriter writer = engine.getWriterUnsafe(token, REPLAY_LOCK_REASON)) {
+                    final long seqTxn = writer.getSeqTxn();
+                    if (seqTxn < lastSeqTxn && seqTxn != previousSeqTxn && !tracker.isSuspended()) {
+                        previousSeqTxn = seqTxn;
+                        continue;
+                    }
+                    // After the conversion the WAL is gone, so the replayed rows must be on disk first.
+                    // advanceDurableEpoch() flushes the table and then may decline to publish the epoch, for
+                    // example when its pin slot is busy. Only the flush matters here, so check that.
+                    if (writer.getEffectiveCommitMode() == CommitMode.ADAPTIVE && seqTxn > 0 && seqTxn > tracker.getLocalDurableSeqTxn()) {
+                        writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                        if (tracker.getLocalDurableSeqTxn() < seqTxn) {
+                            throw CairoException.critical(0)
+                                    .put("could not make replayed WAL durable before conversion [table=").put(token.getTableName())
+                                    .put(", seqTxn=").put(seqTxn)
+                                    .put(']');
+                        }
+                    }
+                    LOG.info().$("replayed WAL before conversion [table=").$(token)
+                            .$(", seqTxn=").$(seqTxn)
+                            .$(", lastSeqTxn=").$(lastSeqTxn)
+                            .I$();
+                    break;
+                }
+            }
+        }
+        // The conversion rewrites _txn and _meta directly. Close the writer and readers the replay left in
+        // the pools, or they would keep serving the table's state from before the conversion.
+        final String lockedReason = engine.lockAll(token, REPLAY_LOCK_REASON, true);
+        if (lockedReason != null) {
+            throw CairoException.critical(0)
+                    .put("could not release table after WAL replay [table=").put(token.getTableName())
+                    .put(", reason=").put(lockedReason)
+                    .put(']');
+        }
+        engine.unlock(AllowAllSecurityContext.INSTANCE, token, null, false);
+    }
+
+    private static boolean isEnrolledAdaptive(FilesFacade ff, Path path) {
+        final int tableRootLen = path.size();
+        try {
+            path.concat(META_FILE_NAME);
+            final long size = ff.length(path.$());
+            if (size <= 0) {
+                return false;
+            }
+            try (MemoryCMR metaMem = Vm.getCMRInstance(ff, path.$(), size, MemoryTag.MMAP_DEFAULT)) {
+                return TableUtils.getEnrolledCommitMode(metaMem) == CommitMode.ADAPTIVE;
+            }
+        } finally {
+            path.trimTo(tableRootLen);
+        }
+    }
+
+    // The seqTxn in the table's _txn file. Returns Long.MAX_VALUE when the file does not load, so that the
+    // caller skips the replay and the table converts as it did before the replay existed.
+    private static long readSeqTxn(FilesFacade ff, Path path, int tableRootLen) {
+        path.trimTo(tableRootLen).concat(TXN_FILE_NAME);
+        try (TxReader txReader = new TxReader(ff)) {
+            txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.NONE);
+            return txReader.unsafeLoadAll() ? txReader.getSeqTxn() : Long.MAX_VALUE;
+        } catch (CairoException e) {
+            return Long.MAX_VALUE;
+        } finally {
+            path.trimTo(tableRootLen);
+        }
+    }
+
     private static boolean readWalEnabled(LPSZ path, FilesFacade ff) {
         long fd = -1;
         try {
@@ -247,6 +356,74 @@ public class TableConverter {
             };
         } finally {
             ff.close(fd);
+        }
+    }
+
+    /**
+     * Applies the table's outstanding WAL before the conversion to non-WAL deletes it.
+     * <p>
+     * Under ADAPTIVE, startup recovery rewinds a table to its last durable epoch and expects WAL replay to
+     * restore everything after it. The conversion runs before any WAL apply job starts, so without this
+     * replay every row committed after the epoch would be lost. The caller runs it only for tables enrolled
+     * in ADAPTIVE, and this method returns early when {@code _txn} has already caught up with the sequencer,
+     * so every other conversion behaves exactly as before.
+     * <p>
+     * The replay is best effort, and the conversion always goes ahead afterwards:
+     * <ul>
+     *   <li>It stops at the first transaction that fails to apply, and the conversion drops that
+     *   transaction and everything after it, as it always dropped unapplied WAL. This keeps
+     *   {@code SET TYPE BYPASS WAL} working as the way to get rid of a transaction that keeps failing.</li>
+     *   <li>Limitation: the WAL apply job applies transactions in batches, and a failure discards its whole
+     *   batch. Good transactions that share a batch with the failing one are therefore lost too. Fixing this
+     *   needs a change to the apply job, which this replay does not attempt.</li>
+     *   <li>If a transaction crashes the process rather than failing, the marker file stays behind. The next
+     *   startup sees it and converts without a replay, so the instance cannot end up in a crash loop.</li>
+     * </ul>
+     * The replay also applies transactions the apply job had not reached before the restart. The conversion
+     * used to drop those, so the converted table can now contain more rows than before this replay existed.
+     */
+    private static void replayWalBeforeConversion(CairoEngine engine, TableToken token) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long lastSeqTxn;
+        try {
+            lastSeqTxn = engine.getTableSequencerAPI().lastTxn(token);
+        } catch (CairoException e) {
+            // No readable sequencer, so no WAL to replay. The conversion already handles a missing sequencer.
+            LOG.info().$("cannot read sequencer, converting without WAL replay [table=").$(token)
+                    .$(", error=").$((Throwable) e)
+                    .I$();
+            return;
+        }
+        try (Path markerPath = new Path()) {
+            markerPath.of(configuration.getDbRoot()).concat(token);
+            final int tableRootLen = markerPath.size();
+            if (readSeqTxn(ff, markerPath, tableRootLen) >= lastSeqTxn) {
+                return;
+            }
+            markerPath.trimTo(tableRootLen).concat(REPLAY_FILE_NAME);
+            if (ff.exists(markerPath.$())) {
+                LOG.critical().$("previous WAL replay before conversion did not finish, converting without replay [table=")
+                        .$(token)
+                        .I$();
+                ff.removeQuiet(markerPath.$());
+                return;
+            }
+            if (!ff.touch(markerPath.$())) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not create WAL replay marker [path=").put(markerPath)
+                        .put(']');
+            }
+            DurableEpochManifest.fsyncDirectory(configuration, markerPath, tableRootLen);
+            try {
+                applyOutstandingWal(engine, token, lastSeqTxn);
+            } finally {
+                // Remove the marker on every outcome that returns here, an exception included. The table then
+                // stays a WAL table, and the next startup retries both the replay and the conversion. Only a
+                // crash leaves the marker behind.
+                markerPath.trimTo(tableRootLen).concat(REPLAY_FILE_NAME);
+                ff.removeQuiet(markerPath.$());
+            }
         }
     }
 

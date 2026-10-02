@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.SnapshotMarker;
@@ -952,6 +953,80 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * Startup recovery rewinds an adaptive table to its durable epoch and relies on WAL replay for every
+     * transaction after it. A pending {@code SET TYPE BYPASS WAL} deletes that WAL on the same startup, so
+     * {@code TableConverter} must replay it first, or the rows committed since the epoch are lost.
+     */
+    @Test
+    public void testConversionToNonWalReplaysWalRewoundByRecovery() throws Exception {
+        assertConversionAfterRewind(false, 7);
+    }
+
+    /**
+     * A replay that killed the process leaves its marker behind. The next startup must convert without
+     * replaying, so that a transaction that crashes the apply cannot stop the instance from starting.
+     */
+    @Test
+    public void testConversionToNonWalSkipsReplayAfterReplayCrash() throws Exception {
+        assertConversionAfterRewind(true, 3);
+    }
+
+    /**
+     * A transaction that fails to apply ends the replay, and the table converts anyway, so the conversion
+     * still works as the way to get rid of a transaction that keeps failing.
+     * <p>
+     * The row count pins a known limitation. The four good transactions after the epoch and the broken one
+     * fall into one apply batch, the failure discards the whole batch, and only the epoch's three rows
+     * remain. If the replay learns to keep the good transactions, this count becomes 7.
+     */
+    @Test
+    public void testConversionToNonWalReplayStopsAtFailingTransaction() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(() -> {
+                buildAdaptiveLazyGapTable("conv");
+                final TableToken tt = engine.verifyTableName("conv");
+                // One more transaction, in a WAL of its own, which the test then breaks.
+                final String brokenWal;
+                try (
+                        io.questdb.cairo.wal.WalWriter held = engine.getWalWriter(tt);
+                        io.questdb.cairo.wal.WalWriter broken = engine.getWalWriter(tt)
+                ) {
+                    Assert.assertNotEquals(held.getWalName(), broken.getWalName());
+                    brokenWal = broken.getWalName();
+                    final io.questdb.cairo.TableWriter.Row row = broken.newRow(MicrosTimestampDriver.floor("2024-09-01T08:00:00.000000Z"));
+                    row.putLong(1, 7);
+                    row.append();
+                    broken.commit();
+                }
+                drainWalQueue();
+                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n8\n");
+
+                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.releaseInactiveTableSequencers();
+                try (Path path = new Path()) {
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(brokenWal);
+                    Assert.assertTrue(engine.getConfiguration().getFilesFacade().rmdir(path));
+                }
+
+                rebootAndConvert(tt);
+
+                final TableToken converted = engine.verifyTableName("conv");
+                Assert.assertFalse("the table must be converted", converted.isWal());
+                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n3\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
+    /**
      * A WAL table dropped while a {@code SET TYPE WAL} request is still pending is resurrected by
      * {@code TableConverter} on the next boot (questdb/questdb#7649, an OSS bug that predates adaptive
      * commit). The resurrection re-seeds the lineage exactly as any other conversion does, so recovery must
@@ -1528,6 +1603,40 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * then applies M more rows LAZILY so the live {@code _txn} sits ahead of the epoch. Returns the epoch
      * cut's seqTxn. The caller drives recovery.
      */
+    private void assertConversionAfterRewind(boolean hasReplayCrashed, int expectedRowCount) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        // A clean close must not take the epoch, or there is nothing left to rewind.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        try {
+            assertMemoryLeak(() -> {
+                buildAdaptiveLazyGapTable("conv");
+                final TableToken tt = engine.verifyTableName("conv");
+                execute("ALTER TABLE conv SET TYPE BYPASS WAL");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path marker = new Path()) {
+                    marker.of(engine.getConfiguration().getDbRoot()).concat(tt).concat("_convert.replay");
+                    if (hasReplayCrashed) {
+                        Assert.assertTrue(ff.touch(marker.$()));
+                    }
+                    rebootAndConvert(tt);
+                    Assert.assertFalse("the replay marker must not outlive the startup", ff.exists(marker.$()));
+                }
+
+                final TableToken converted = engine.verifyTableName("conv");
+                Assert.assertFalse("the table must be converted", converted.isWal());
+                assertQuery("SELECT count() FROM conv").noRandomAccess().expectSize().returns("count\n" + expectedRowCount + "\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        }
+    }
+
     private long buildAdaptiveLazyGapTable(String name) throws Exception {
         execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
         for (int i = 0; i < 3; i++) {
@@ -1675,6 +1784,15 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             metadata.loadMetadata();
             return metadata.getColumnCount();
         }
+    }
+
+    // Runs the two startup steps in the order ServerMain runs them: recovery rewinds the table to its epoch,
+    // then load() performs the pending conversion.
+    private void rebootAndConvert(TableToken tt) {
+        engine.getTableSequencerAPI().resetForReboot(tt);
+        new RecoveryCoordinator(engine).recover();
+        Assert.assertEquals("precondition: recovery rewound the table to its epoch", 3L, readTxnSeqTxn(tt));
+        engine.load();
     }
 
     private long readTxnSeqTxn(TableToken tt) {
