@@ -755,6 +755,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionMergeAppendFrameCacheSize() {
+        return 2;
+    }
+
+    @Override
     public long getO3MaxLag() {
         // 5 min
         return 300_000_000L;

@@ -32,6 +32,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
+import io.questdb.cairo.frm.file.CompositeFrameCache;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
@@ -249,6 +250,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Scratch for foldContiguousPieces: 4 longs per piece (tsLo, tsHi, rowOffset, rowCount), snapshotted
     // once per fold so the plan and the rebuild below it cannot observe each other's half-finished state.
     private final LongList compactionPieceScratch = new LongList();
+    // The merge-append frames of the partitions inserts keep landing on, kept open across commits; null when
+    // the cache is sized 0. Emptied by every operation that is not a plain insert - see evictCompositeFrames.
+    private final CompositeFrameCache compositeFrameCache;
     private final CairoConfiguration configuration;
     private final ParquetCoveredColumnAccumulator coveredColumnAccumulator = new ParquetCoveredColumnAccumulator();
     private final LongList coveringAddrs = new LongList();
@@ -547,6 +551,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.engine = cairoEngine;
+        final int frameCacheSize = configuration.getO3PartitionMergeAppendFrameCacheSize();
+        this.compositeFrameCache = frameCacheSize > 0 ? new CompositeFrameCache(frameCacheSize) : null;
         this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         this.isInCtorRecovery = true;
         try {
@@ -1776,6 +1782,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setLagOrdered(true);
 
             commit00();
+            if (compositeFrameCache != null) {
+                // Before housekeeping, which commits on its own and so leaves whatever it touches uncertified. An
+                // indexed column's files have writers other than the plans in this very txn - the posting seal, the
+                // writer's own indexers - so a table with any index keeps nothing.
+                compositeFrameCache.certify(txWriter, txWriter.getTxn(), !hasIndexedColumn());
+            }
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
             shrinkO3Mem();
@@ -2732,6 +2744,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public FilesFacade getFilesFacade() {
         return ff;
+    }
+
+    /**
+     * The merge-append frames this writer keeps open across commits, or null when that cache is off.
+     */
+    public CompositeFrameCache getCompositeFrameCache() {
+        return compositeFrameCache;
     }
 
     public FrameFactory getFrameFactory() {
@@ -3880,6 +3899,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
+            // Only a rollback that rolls something back: the pool calls this on every return, with nothing in
+            // flight, and the cache is meant to live across exactly those returns.
+            evictCompositeFrames();
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
@@ -8132,6 +8154,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
+        Misc.free(compositeFrameCache);
         partitionGeometry = Misc.free(partitionGeometry);
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
@@ -8454,6 +8477,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // over rows the applied base no longer holds.
             hasTtlEvictedPartitionsSinceLastCommit = true;
             commitRemovePartitionOperation();
+        }
+    }
+
+    /**
+     * Closes every merge-append frame the writer kept open across commits. Commits need no call - a frame is reused
+     * only by the commit right after the one that certified it, see CompositeFrameCache - so this is for what can
+     * write a partition's files before the txn moves: a failed commit, a rollback, compaction and squash.
+     */
+    private void evictCompositeFrames() {
+        if (compositeFrameCache != null) {
+            compositeFrameCache.evictAll();
         }
     }
 
@@ -9220,6 +9254,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    private boolean hasIndexedColumn() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasPostingIndex() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
@@ -9975,6 +10018,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isCheckpointInProgress()) {
             return false;
         }
+        // MAKE-PLAIN clamps column tops and TRIM-FILES shortens the files: no merge-append frame stays open across it.
+        evictCompositeFrames();
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
         final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long liveRows = txWriter.getPartitionSize(partitionIndex);
@@ -10042,6 +10087,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return false if a file could not be shortened, for example because Windows still has it mapped
      */
     private boolean trimPartitionFiles(long partitionTs, long partitionNameTxn, long liveRows) {
+        // A cached frame knows its files' lengths; these are about to shrink.
+        evictCompositeFrames();
         path.trimTo(pathSize);
         setPathForNativePartition(path, timestampType, partitionBy, partitionTs, partitionNameTxn);
         final int plen = path.size();
@@ -10376,6 +10423,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (cut < 1) {
             return COMPACTION_NONE;
         }
+        // From here on the partition's tail moves out of these files; no merge-append frame stays open across it.
+        evictCompositeFrames();
         long prefixRows = 0;
         for (int p = 0; p < cut; p++) {
             prefixRows += geometry.getPieceRowCount(partitionIndex, p);
@@ -12490,6 +12539,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3DoneLatch.await(latchCount);
 
             o3InError = !success || o3ErrorCount.get() > 0;
+            if (o3InError) {
+                // A plan that failed part-way leaves its frames in a state nothing describes; the retry opens anew.
+                evictCompositeFrames();
+            }
             if (success && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
                 throw CairoException.critical(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
@@ -16783,6 +16836,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashPartitionForce(int partitionIndex) {
+        evictCompositeFrames();
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
@@ -16887,6 +16941,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Nothing to do
             return;
         }
+        evictCompositeFrames();
 
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
 

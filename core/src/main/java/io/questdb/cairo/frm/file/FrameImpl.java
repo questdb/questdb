@@ -26,6 +26,8 @@ package io.questdb.cairo.frm.file;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.TableWriter;
@@ -70,6 +72,7 @@ public class FrameImpl implements Frame {
     // Pre-bound so publishing a task allocates nothing.
     private final TableWriter.ColumnTaskHandler cthAppendColumnRef = this::cthAppendColumn;
     private final TableWriter.ColumnTaskHandler cthMergeColumnRef = this::cthMergeColumn;
+    private final TableWriter.ColumnTaskHandler cthReserveColumnRef = this::cthReserveColumn;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger errorCount = new AtomicInteger();
     private boolean canWrite = false;
@@ -83,6 +86,12 @@ public class FrameImpl implements Frame {
     // than in each task. Everything that varies per column travels in the task's own slots.
     private int commitMode;
     private long mergeIndexRows;
+    // Set while a reserve() runs against a second source that keeps its columns open: its column tasks map that
+    // source's columns, in parallel, for every action of the plan to read through.
+    private boolean isReserveMappingSource2;
+    // The source rows a reserve() sizes var-size columns off; see Frame#reserve.
+    private LongList reserveSource1Ranges;
+    private LongList reserveSource2Ranges;
     private long upcomingTableTxn;
     private boolean create = false;
     private volatile Throwable error;
@@ -120,7 +129,7 @@ public class FrameImpl implements Frame {
         assert source.getWindowLo() <= sourceLo && sourceHi <= source.getWindowHi();
         this.upcomingTableTxn = upcomingTableTxn;
         this.commitMode = commitMode;
-        execute(source, null, cthAppendColumnRef, sourceLo, sourceHi, IGNORE, IGNORE, IGNORE);
+        execute(source, null, cthAppendColumnRef, true, sourceLo, sourceHi, IGNORE, IGNORE, IGNORE);
     }
 
     @Override
@@ -277,7 +286,7 @@ public class FrameImpl implements Frame {
         this.commitMode = commitMode;
         // Five task slots against a merge's six bounds, so the row count travels as a field.
         this.mergeIndexRows = mergeIndexRows;
-        execute(source1, source2, cthMergeColumnRef, source1Lo, source1Hi, source2Lo, source2Hi, mergeIndexAddr);
+        execute(source1, source2, cthMergeColumnRef, true, source1Lo, source1Hi, source2Lo, source2Hi, mergeIndexAddr);
     }
 
     @Override
@@ -394,6 +403,69 @@ public class FrameImpl implements Frame {
         }
     }
 
+    /**
+     * Points a kept-open read-only frame at the same partition again for another operation - the next commit's
+     * merges, typically - without reopening or remapping anything: its columns and their mappings stay, and only
+     * what the previous operation set is reset. Valid only while the partition's directory and column files are
+     * the ones this frame opened; see CompositeFrameCache for what guards that.
+     */
+    public void reopenRO(RecordMetadata metadata, ColumnVersionReader cvr, long partitionRowCount) {
+        assert frameType == COLUMN_CONTIGUOUS_FILE && !canWrite;
+        // A column the previous open found EMPTY - its top at or above the extent of the time, so no file was
+        // opened - may have data now: the plans since have written rows for it at the tail. Its top is the old
+        // extent and it has nothing to map, so it goes, and the next openColumn resolves it afresh. A column that
+        // has a file keeps its top for good: every write lands above it.
+        for (int i = 0, n = keptColumns.size(); i < n; i++) {
+            final FrameColumn column = keptColumns.getQuick(i);
+            if (column != null && column != DeletedFrameColumn.INSTANCE && column.getPrimaryFd() == -1) {
+                column.close();
+                keptColumns.setQuick(i, null);
+            }
+        }
+        this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
+        this.crv = cvr;
+        this.rowCount = partitionRowCount;
+        this.deadRowCount = 0;
+        this.windowLo = 0;
+        this.windowHi = Long.MAX_VALUE;
+    }
+
+    /**
+     * The writable counterpart of {@link #reopenRO}: points a kept-open writable frame at the same partition again
+     * for another plan, with the plan's own column-version view and column-top sink, keeping every column file open.
+     */
+    public void reopenRW(RecordMetadata metadata, ColumnVersionReader cvr, ColumnTopSink columnTopSink, long size) {
+        assert frameType == COLUMN_CONTIGUOUS_FILE && canWrite;
+        this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
+        this.crv = cvr;
+        this.columnTopSink = columnTopSink;
+        columnTopSink.ofColumnCount(metadata.getColumnCount());
+        this.rowCount = size;
+        this.deadRowCount = 0;
+        this.windowLo = 0;
+        this.windowHi = Long.MAX_VALUE;
+    }
+
+    @Override
+    public void reserve(long rowHi, Frame source1, LongList source1Ranges, @Nullable Frame source2, @Nullable LongList source2Ranges) {
+        if (rowHi <= rowCount) {
+            return;
+        }
+        this.reserveSource1Ranges = source1Ranges;
+        this.reserveSource2Ranges = source2 != null ? source2Ranges : null;
+        this.isReserveMappingSource2 = source2 instanceof FrameImpl f && f.isKeepingColumnsOpen;
+        try {
+            // No tops are saved: nothing is written, so no column's top moves.
+            execute(source1, source2, cthReserveColumnRef, false, rowHi, IGNORE, IGNORE, IGNORE, IGNORE);
+        } finally {
+            this.reserveSource1Ranges = null;
+            this.reserveSource2Ranges = null;
+            this.isReserveMappingSource2 = false;
+        }
+    }
+
     public void saveChanges(FrameColumn frameColumn) {
         if (!canWrite) {
             throw CairoException.critical(0).put("cannot save column top, partition frame is read-only [path=").put(partitionPath).put(']');
@@ -440,6 +512,33 @@ public class FrameImpl implements Frame {
         assert 0 <= rowLo && rowLo <= rowHi && rowHi <= rowCount;
         this.windowLo = rowLo;
         this.windowHi = rowHi;
+    }
+
+    /**
+     * The data bytes rows {@code [lo, hi)} of a var-size source column take, summed over every range. A row under
+     * the column's top has no bytes of its own and is written as this type's NULL, which has a size too.
+     */
+    private static long varDataBytes(FrameColumn column, ColumnTypeDriver driver, LongList ranges) {
+        long bytes = 0;
+        for (int i = 0, n = ranges.size(); i < n; i += 2) {
+            long lo = ranges.getQuick(i);
+            final long hi = ranges.getQuick(i + 1);
+            if (lo >= hi) {
+                continue;
+            }
+            final long top = column.getColumnTop();
+            if (lo < top) {
+                bytes += (Math.min(hi, top) - lo) * driver.getDataVectorMinEntrySize();
+                lo = top;
+                if (lo >= hi) {
+                    continue;
+                }
+            }
+            // The aux vector is addressed from the column's row 0, which is the top's row.
+            final long auxAddr = column.getContiguousAuxAddr(hi);
+            bytes += driver.getDataVectorSize(auxAddr, lo - top, hi - 1 - top);
+        }
+        return bytes;
     }
 
     private void closeColumns(Frame source1, @Nullable Frame source2, int columnLo, int columnHi) {
@@ -520,6 +619,46 @@ public class FrameImpl implements Frame {
         }
     }
 
+    /**
+     * One column's share of {@link #reserve}.
+     */
+    private void cthReserveColumn(
+            int columnIndex,
+            int columnType,
+            long timestampColumnIndex,
+            long rowHi,
+            long ignore1,
+            long ignore2,
+            long ignore3,
+            long ignore4
+    ) {
+        if (errorCount.get() > 0) {
+            return;
+        }
+        try {
+            long dataBytes = 0;
+            if (ColumnType.isVarSize(columnType)) {
+                final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                dataBytes = varDataBytes(source1Columns.getQuick(columnIndex), driver, reserveSource1Ranges);
+                if (reserveSource2Ranges != null) {
+                    // Maps the source's column on the way, which is all the fixed-size branch below does.
+                    dataBytes += varDataBytes(source2Columns.getQuick(columnIndex), driver, reserveSource2Ranges);
+                }
+            } else if (isReserveMappingSource2 && reserveSource2Ranges != null) {
+                // A kept-open column maps the source's whole extent on its first use, so any row it holds will do.
+                long hi = 0;
+                for (int i = 1, n = reserveSource2Ranges.size(); i < n; i += 2) {
+                    hi = Math.max(hi, reserveSource2Ranges.getQuick(i));
+                }
+                source2Columns.getQuick(columnIndex).getContiguousDataAddr(hi);
+            }
+            // One allocation and one (re)map per file of the target column, for every write of the plan.
+            targetColumns.getQuick(columnIndex).reserve(rowCount, rowHi, dataBytes);
+        } catch (Throwable th) {
+            onError(columnIndex, th);
+        }
+    }
+
     private void dispatchColumns(
             TableWriter.ColumnTaskHandler taskHandler,
             boolean isParallel,
@@ -583,10 +722,15 @@ public class FrameImpl implements Frame {
         TableWriter.consumeColumnTasks0(queue, queuedCount, messageBus.getColumnTaskSubSeq(), doneLatch);
     }
 
+    /**
+     * @param saveTops whether every live column's top is saved once its task is done - what every operation that
+     *                 writes rows wants, and what one that writes none has no business doing
+     */
     private void execute(
             Frame source1,
             @Nullable Frame source2,
             TableWriter.ColumnTaskHandler taskHandler,
+            boolean saveTops,
             long long0,
             long long1,
             long long2,
@@ -609,9 +753,11 @@ public class FrameImpl implements Frame {
                     openColumns(source1, source2, columnLo, columnHi);
                     dispatchColumns(taskHandler, isParallel, columnLo, columnHi, long0, long1, long2, long3, long4);
                     throwOnError();
-                    for (int i = columnLo; i < columnHi; i++) {
-                        if (isLiveColumn(i)) {
-                            saveChanges(targetColumns.getQuick(i));
+                    if (saveTops) {
+                        for (int i = columnLo; i < columnHi; i++) {
+                            if (isLiveColumn(i)) {
+                                saveChanges(targetColumns.getQuick(i));
+                            }
                         }
                     }
                 } finally {

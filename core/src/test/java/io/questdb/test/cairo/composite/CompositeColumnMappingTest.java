@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexType;
@@ -555,21 +556,45 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
 
     /**
      * @param failOnWrite 1 fails the commit's first write to v.d by failing the file's open. 2 lets the first action
-     *                    write and fails the second one's: a composite plan opens v.d once for all its actions, so
-     *                    that failure is the second writable mapping of the one open file.
+     *                    write and fails the second one's: a composite plan opens and maps v.d once for all its
+     *                    actions, so under a SYNC commit that failure is the second msync of the one mapping.
      */
     private void checkFailedMergeAppendThenWriterClose(int failOnWrite, boolean twoActions) throws Exception {
         final AtomicBoolean armed = new AtomicBoolean();
         final AtomicInteger opens = new AtomicInteger();
         final AtomicInteger writeMaps = new AtomicInteger();
         final AtomicLong vFd = new AtomicLong(-1);
+        // The writable mapping of v.d, [vMapLo, vMapHi): every write of the plan goes through it.
+        final AtomicLong vMapLo = new AtomicLong();
+        final AtomicLong vMapHi = new AtomicLong();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (armed.get() && fd == vFd.get() && flags == Files.MAP_RW && writeMaps.incrementAndGet() >= failOnWrite) {
-                    return FilesFacade.MAP_FAILED;
+                final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                trackWritableMapping(fd, flags, addr, len);
+                return addr;
+            }
+
+            @Override
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+                trackWritableMapping(fd, mode, newAddr, newSize);
+                return newAddr;
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (armed.get() && addr >= vMapLo.get() && addr < vMapHi.get() && writeMaps.incrementAndGet() >= failOnWrite) {
+                    throw CairoException.critical(0).put("injected msync failure [writes=").put(writeMaps.get()).put(']');
                 }
-                return super.mmap(fd, len, offset, flags, memoryTag);
+                super.msync(addr, len, async);
+            }
+
+            private void trackWritableMapping(long fd, int flags, long addr, long len) {
+                if (armed.get() && fd == vFd.get() && flags == Files.MAP_RW && addr != FilesFacade.MAP_FAILED) {
+                    vMapLo.set(addr);
+                    vMapHi.set(addr + len);
+                }
             }
 
             @Override
@@ -590,6 +615,10 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
             // Pooled frame columns capture the FilesFacade they were built with; start from a fresh pool.
             engine.resetFrameFactory();
             enableMergeAppend();
+            if (failOnWrite > 1) {
+                // Every action syncs what it wrote, which is the one per-action call left on v.d to fail.
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+            }
             execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // 2024-01-01 full, 2024-01-02 up to 11:59 when twoActions, so a batch after that founds a NEW piece.
             final int baseRows = twoActions ? 2160 : 2880;

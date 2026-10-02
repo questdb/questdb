@@ -175,26 +175,23 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             return;
         }
 
-        final long fd = super.getPrimaryFd();
         final int shl = ColumnType.pow2SizeOf(getColumnType());
         final long offset = (appendOffsetRowCount - getColumnTop()) << shl;
         final long size = rowCount << shl;
-        final long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset, size, false, MEMORY_TAG);
-        try {
-            // Must come BEFORE rollbackConditionally: that call publishes when the index still holds rowids at or above
-            // the append offset (an O3 split shrank the partition without resealing the parent), and ofRW's of() has.
-            if (upcomingTableTxn >= 0) {
-                indexWriter.setNextTxnAtSeal(upcomingTableTxn);
-            }
-            indexWriter.rollbackConditionally(appendOffsetRowCount);
-            for (long i = 0; i < rowCount; i++) {
-                indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
-            }
-            indexWriter.setMaxValue(appendOffsetRowCount + rowCount - 1);
-            indexWriter.commit();
-        } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset, size, MEMORY_TAG);
+        // The keys are read back through the column's own writable mapping, which the write just went through (or,
+        // after an fd-to-fd copy, which maps the same page cache) - no mapping of their own.
+        final long mappedAddress = mapWritable(offset + size) + offset;
+        // Must come BEFORE rollbackConditionally: that call publishes when the index still holds rowids at or above
+        // the append offset (an O3 split shrank the partition without resealing the parent), and ofRW's of() has.
+        if (upcomingTableTxn >= 0) {
+            indexWriter.setNextTxnAtSeal(upcomingTableTxn);
         }
+        indexWriter.rollbackConditionally(appendOffsetRowCount);
+        for (long i = 0; i < rowCount; i++) {
+            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
+        }
+        indexWriter.setMaxValue(appendOffsetRowCount + rowCount - 1);
+        indexWriter.commit();
     }
 
     // Useful for debugging

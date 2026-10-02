@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.FrameColumn;
+import io.questdb.cairo.frm.file.CompositeFrameCache;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.WalTxnClusterer;
@@ -460,7 +461,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ctx.pieces,
                 ctx.transientVersions,
                 ctx,
-                ctx.srcPath
+                ctx.srcPath,
+                ctx.o3Ranges,
+                ctx.pieceRanges
         );
         // JOIN, automatically: fold whatever this plan left list-and-file-adjacent before publishing,
         // rather than leaving it for a later housekeeping commit.
@@ -771,7 +774,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LongList piecesOut,
             TransientColumnVersions transientVersions,
             ColumnTopSink columnTopSink,
-            Path partitionPath
+            Path partitionPath,
+            LongList o3RangesScratch,
+            LongList pieceRangesScratch
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
@@ -796,21 +801,77 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // out here so the loop below can just record them when it reaches that action's position.
         long appendTsHi = 0;
         long appendRowCount = 0;
-        try (
-                Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, transientVersions, columnTopSink, partitionE);
-                Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr);
-                // ONE read-only view of the partition for every MERGE below, opened at the extent this plan starts
-                // from: every piece a MERGE reads lies below it. Each MERGE shifts it onto its piece rather than
-                // opening a frame of its own.
-                Frame source = frameFactory.openRO(partitionPath, partitionTimestamp, metadata, transientVersions, partitionE)
-        ) {
-            // Covering posting columns are indexed afterwards by the caller, once every column of the
-            // partition is on disk - see publishCoveredIndexesForAppend.
-            target.setDeferCoveredIndexing(true);
-            // Every action below writes the same column files: open each one once for the whole plan, not once
-            // per action. The source's columns open at the first MERGE and are mapped once, over the extent.
-            target.setKeepColumnsOpen(true);
-            source.setKeepColumnsOpen(true);
+
+        // What the plan writes, worked out before it writes anything: the extent it reaches at most - exact unless
+        // a dedup drops rows - and the source rows it reads, so every column file can be grown once, up front,
+        // instead of once per action per column.
+        long eMax = partitionE;
+        o3RangesScratch.clear();
+        pieceRangesScratch.clear();
+        for (int i = 0; i < actionCount; i++) {
+            final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
+            switch (action.type) {
+                case APPEND, NEW_PIECE -> {
+                    eMax += action.getO3RowCount();
+                    o3RangesScratch.add(action.o3Lo, action.o3Hi + 1);
+                }
+                case MERGE -> {
+                    final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
+                    final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                    eMax += pieceRows + action.getO3RowCount();
+                    o3RangesScratch.add(action.o3Lo, action.o3Hi + 1);
+                    pieceRangesScratch.add(pieceLo, pieceLo + pieceRows);
+                }
+                case KEEP, DROP -> {
+                    // Nothing is written.
+                }
+            }
+        }
+
+        // The writer keeps the frames of the partitions inserts keep landing on open across commits; a plan that
+        // finds its partition there, certified by the commit right before this one, starts with every column file
+        // open and mapped. Null: the cache is off, or every slot is busy with another partition's plan, and this one
+        // runs on frames of its own.
+        final CompositeFrameCache frameCache = tableWriter.getCompositeFrameCache();
+        final CompositeFrameCache.Entry cacheEntry = frameCache != null
+                ? frameCache.acquire(partitionTimestamp, srcNameTxn, tableWriter.getMetadataVersion(), partitionE, tableWriter.getTxn())
+                : null;
+        Frame target = null;
+        // ONE read-only view of the partition for every MERGE below, opened at the extent this plan starts
+        // from: every piece a MERGE reads lies below it. Each MERGE shifts it onto its piece rather than
+        // opening a frame of its own.
+        Frame source = null;
+        boolean success = false;
+        try (Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)) {
+            if (cacheEntry != null && cacheEntry.isPopulated()) {
+                cacheEntry.getTarget().reopenRW(metadata, transientVersions, columnTopSink, partitionE);
+                cacheEntry.getSource().reopenRO(metadata, transientVersions, partitionE);
+                target = cacheEntry.getTarget();
+                source = cacheEntry.getSource();
+            } else {
+                target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, transientVersions, columnTopSink, partitionE);
+                // Covering posting columns are indexed afterwards by the caller, once every column of the
+                // partition is on disk - see publishCoveredIndexesForAppend.
+                target.setDeferCoveredIndexing(true);
+                // Every action below writes the same column files: open each one once for the whole plan, not once
+                // per action. The source's columns open at the first MERGE and are mapped once, over the extent.
+                target.setKeepColumnsOpen(true);
+                source = frameFactory.openRO(partitionPath, partitionTimestamp, metadata, transientVersions, partitionE);
+                source.setKeepColumnsOpen(true);
+                if (cacheEntry != null) {
+                    // The cache owns both frames from here on, and closes them when it lets the partition go.
+                    frameCache.fill(cacheEntry, target, source);
+                }
+            }
+            if (eMax > partitionE) {
+                target.reserve(
+                        eMax,
+                        o3,
+                        o3RangesScratch,
+                        pieceRangesScratch.size() > 0 ? source : null,
+                        pieceRangesScratch
+                );
+            }
             if (plan.appendActionIndex > -1) {
                 final O3CompositeMergeStrategy.Action append = actions.getQuick(plan.appendActionIndex);
                 final long o3Rows = append.getO3RowCount();
@@ -1002,6 +1063,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
                     }
                 }
+            }
+            success = true;
+        } finally {
+            if (cacheEntry != null) {
+                if (!cacheEntry.isPopulated()) {
+                    // The open failed before the frames were handed to the cache: they are still this plan's own.
+                    Misc.free(source);
+                    Misc.free(target);
+                }
+                // Kept for the next commit when the plan went through; a plan that failed part-way leaves frames
+                // nothing describes, and those close.
+                frameCache.release(cacheEntry, success, e);
+            } else {
+                Misc.free(source);
+                Misc.free(target);
             }
         }
         return e;
@@ -1466,15 +1542,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * Resolves {@code cutTs} to a row of the piece by searching its own slice of the designated-timestamp column, then
      * cuts there.
      *
-     * @param minRowsBelow        drop the cut when fewer real rows than this sit below it, whatever the estimate promised
-     * @param minRowsAbove        drop the cut when fewer real rows than this sit above it
+     * @param minRowsBelow         drop the cut when fewer real rows than this sit below it, whatever the estimate promised
+     * @param minRowsAbove         drop the cut when fewer real rows than this sit above it
      * @param isSparingTouchedTail drop the cut when its upper half would start on the next piece's tsLo. Pieces may
-     *                            TOUCH - the dedup-free tie rule founds a piece at the very timestamp the piece below
-     *                            it ends on - but the geometry orders them by tsLo and refuses two founded at one
-     *                            timestamp. A pre-split gains nothing from carving off that tie tail: a batch at the
-     *                            shared timestamp is spared by the lower piece and merges into the one above. A
-     *                            replace-range cut passes false: it has to carve the tail out to drop it, and the
-     *                            rows it carves never reach the geometry.
+     *                             TOUCH - the dedup-free tie rule founds a piece at the very timestamp the piece below
+     *                             it ends on - but the geometry orders them by tsLo and refuses two founded at one
+     *                             timestamp. A pre-split gains nothing from carving off that tie tail: a batch at the
+     *                             shared timestamp is spared by the lower piece and merges into the one above. A
+     *                             replace-range cut passes false: it has to carve the tail out to drop it, and the
+     *                             rows it carves never reach the geometry.
      * @return true when the cut was applied
      */
     private static boolean applyCutResolved(
@@ -5853,6 +5929,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         private final LongList coverTops = new LongList();
         private final IntList coverTypes = new IntList();
         private final LongList cuts = new LongList();
+        // The source rows a plan writes, as lo/hi pairs, for executeCompositePlan to size its reservation off.
+        private final LongList o3Ranges = new LongList();
+        private final LongList pieceRanges = new LongList();
         // Own Path buffers rather than Path.getThreadLocal(): the composite executors hold their
         // partition path ACROSS a FrameAlgebra call, which work-steals arbitrary other tasks onto this
         // thread mid-call - any one of which would rewrite the shared thread-local path.

@@ -95,6 +95,20 @@ public interface FrameColumn extends Closeable {
     }
 
     /**
+     * Writable file columns only, a no-op for every other kind. Grows this column's files, in one allocation each,
+     * to the size the writes about to land on them need, so that none of those writes has to allocate itself. A plan
+     * of several appends and merges against one partition calls this once, ahead of its first action, with the
+     * extent the whole plan reaches. An estimate is fine: a write past it still allocates for itself, and a file
+     * grown further than its rows need is what every writer-sized column file looks like.
+     *
+     * @param rowLo     the partition row the first write starts at, i.e. the extent the column holds now
+     * @param rowHi     the partition row the last write ends at, exclusive
+     * @param dataBytes the data bytes the writes bring, for a var-size column; ignored by a fixed-size one
+     */
+    default void reserve(long rowLo, long rowHi, long dataBytes) {
+    }
+
+    /**
      * Read-only file columns only, a no-op for every other kind. Lets one column serve several operations of a
      * frame opened once over a whole partition, each reading one piece of it.
      *

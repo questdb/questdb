@@ -603,6 +603,12 @@ public interface CairoConfiguration {
     int getO3LastPartitionMaxSplits();
 
     /**
+     * How many partitions a writer keeps merge-append frames open for across commits - see
+     * {@link io.questdb.cairo.frm.file.CompositeFrameCache}. 0 disables the cache.
+     */
+    int getO3PartitionMergeAppendFrameCacheSize();
+
+    /**
      * Default commit lag in microseconds for new tables. This value
      * can be overridden with 'create table' statement.
      *
