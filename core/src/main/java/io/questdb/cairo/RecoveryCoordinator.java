@@ -227,6 +227,11 @@ public class RecoveryCoordinator {
         // must not mutate checkpoint state before the caller's configured recovery jobs run.
         for (int i = 0, n = checkpointEnrollments.size(); i < n; i++) {
             final TableToken token = checkpointEnrollments.getQuick(i);
+            if (isLiveCutLeftToWriter(token)) {
+                LOG.info().$("live cut of a table marked for adaptive enrolment needs repair, deferring its baseline to the table writer [table=")
+                        .$(token).I$();
+                continue;
+            }
             try (TableMetadata metadata = engine.getTableMetadata(token);
                  Path markerPath = new Path();
                  SnapshotMarker marker = new SnapshotMarker(configuration)) {
@@ -298,6 +303,23 @@ public class RecoveryCoordinator {
     private boolean hasNonEmptyMetadataFile(TableToken token, Path metaPath) {
         tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
         return ff.length(metaPath.$()) > 0;
+    }
+
+    /**
+     * Whether startup must leave a table's baseline to its writer. A marked table has no durable cut to protect:
+     * its live state is whatever grade the tenure that marked it kept, NOSYNC on a replica, and a crash there can
+     * leave {@code _cv} a version ahead of {@code _txn}, or either live area torn. The writer repairs each shape
+     * as it does for any NOSYNC table and replays the lost WAL; adopting the cut here would refuse the boot, or
+     * anchor the tear and with it forbid that repair. The marker stays: the writer publishes the baseline once
+     * the table is repaired ({@code TableWriter.reconcileDurableEpochAnchor}), or the next startup does.
+     *
+     * <p>A restore that left no marker is not covered: it lays down a consistent cut, so one that fails the
+     * check still fails the startup when its baseline is published.
+     */
+    private boolean isLiveCutLeftToWriter(TableToken token) {
+        try (Path dir = new Path()) {
+            return isMarkedForRestoreEnrolment(token, dir) && !DurableEpochManifest.isLiveCutIntact(configuration, token);
+        }
     }
 
     private boolean isMarkedForRestoreEnrolment(TableToken token, Path dir) {

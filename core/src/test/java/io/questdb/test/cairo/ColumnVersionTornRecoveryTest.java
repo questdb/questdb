@@ -30,11 +30,13 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
@@ -167,6 +169,28 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
             installTornColumnVersion(dir, commits.cv(n), commits.cv(n - 1));
             assertNonWalRollsBackOnFirstRead(ff, dir, commits, n);
         });
+    }
+
+    @Test
+    public void testReplicaTableRepairsColumnVersionAheadOfTxn() throws Exception {
+        // A kill between the _cv and _txn commits of an UPDATE, or a power loss that wrote back only _cv. Startup
+        // used to refuse to publish the table's baseline from it, and took the instance down on every restart.
+        assertReplicaTableRepairs(false, (dir, commits) -> writeFile(dir + TXN_FILE_NAME, commits.txn(commits.size() - 2)));
+    }
+
+    @Test
+    public void testReplicaTableRepairsTornColumnVersion() throws Exception {
+        assertReplicaTableRepairs(false, (dir, commits) -> {
+            final int n = commits.size() - 1;
+            installTornColumnVersion(dir, commits.cv(n), commits.cv(n - 1));
+        });
+    }
+
+    @Test
+    public void testReplicaTableRepairsTornTxn() throws Exception {
+        // The torn commit is an UPDATE, so _cv also holds a version the previous _txn record does not name.
+        // TxnTornLiveAreaRollbackTest covers a torn append, which leaves _cv alone.
+        assertReplicaTableRepairs(true, ColumnVersionTornRecoveryTest::installTornTxn);
     }
 
     @Test
@@ -541,6 +565,80 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
         }
     }
 
+    // A replica enrols a table without an anchor and applies at NOSYNC grade, so a crash can leave its _txn and
+    // _cv in any shape it leaves a NOSYNC table in. Startup leaves the repair to the table writer, as for a NOSYNC
+    // table, and the baseline is published only from the repaired state, once the node is promoted.
+    private void assertReplicaTableRepairs(boolean isLastPartitions, CrashImage crash) throws Exception {
+        Assume.assumeTrue("only an adaptive table is enrolled without an anchor", "adaptive".equals(commitMode));
+        assertMemoryLeak(() -> {
+            configureCommitMode();
+            final String dir;
+            final Commits commits;
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            try {
+                dir = createTable(true);
+                commits = new Commits(dir);
+                // A reader keeps the column versions each UPDATE replaces, so the lost commit can be replayed.
+                try (TableReader ignore = engine.getReader("x")) {
+                    if (isLastPartitions) {
+                        commits.updateLastPartitions(true, 6);
+                    } else {
+                        commits.updateColumnC(true, 3);
+                    }
+                }
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+            final String expected = selectAll(engine, sqlExecutionContext, "x");
+            engine.clear();
+            final File anchor = new File(dir + SNAPSHOT_FILE_NAME);
+            final File marker = new File(dir + RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
+            Assert.assertFalse("a replica keeps no anchor", anchor.exists());
+            Assert.assertTrue("a replica marks the table for enrolment", marker.exists());
+            crash.install(dir, commits);
+
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                Assert.assertFalse("startup must not adopt a cut the writer repairs", anchor.exists());
+                restarted.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                try {
+                    TestUtils.drainWalQueue(restarted);
+                    // With only _cv torn nothing is pending in the WAL, so the read opens the writer that repairs
+                    // the table, and WAL apply then replays the lost commit.
+                    TestUtils.printSql(restarted, ctx, "select count() from x", new StringSink());
+                    TestUtils.drainWalQueue(restarted);
+                    assertQuery("x").withEngine(restarted).withContext(ctx).noLeakCheck().timestamp("ts").expectSize()
+                            .returns(expected);
+                    assertWalTableCaughtUp(restarted, ctx);
+                    Assert.assertFalse(anchor.exists());
+                    Assert.assertTrue(marker.exists());
+                } finally {
+                    // Promotion: the next apply batch publishes the baseline from the repaired state.
+                    restarted.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+                }
+                restarted.execute("insert into x values (" + NEW_ROW_TS + "::timestamp, 's9', 777, 777)", ctx);
+                TestUtils.drainWalQueue(restarted);
+                Assert.assertTrue(anchor.exists());
+                Assert.assertFalse(marker.exists());
+                restarted.clear();
+            }
+
+            // The next startup validates the baseline and rolls the table forward from it.
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                TestUtils.drainWalQueue(restarted);
+                assertQuery("x where ts <> " + NEW_ROW_TS).withEngine(restarted).withContext(ctx).noLeakCheck()
+                        .timestamp("ts")
+                        .returns(expected);
+                assertQuery("select s, v, c from x where ts = " + NEW_ROW_TS).withEngine(restarted).withContext(ctx)
+                        .noLeakCheck()
+                        .returns("s\tv\tc\ns9\t777\t777\n");
+                assertWalTableCaughtUp(restarted, ctx);
+                restarted.clear();
+            }
+        });
+    }
+
     private void assertWalTableCaughtUp(CairoEngine restarted, SqlExecutionContext ctx) throws Exception {
         assertQuery("select suspended, writerTxn = sequencerTxn caught_up from wal_tables()")
                 .withEngine(restarted).withContext(ctx).noLeakCheck().noRandomAccess()
@@ -577,6 +675,11 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
         if (isWal) {
             drainWalQueue();
         }
+    }
+
+    @FunctionalInterface
+    private interface CrashImage {
+        void install(String dir, Commits commits) throws IOException;
     }
 
     private static final class TxnFsyncCountingFacade extends TestFilesFacadeImpl {

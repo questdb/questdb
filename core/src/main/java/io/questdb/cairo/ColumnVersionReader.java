@@ -269,6 +269,14 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     /**
+     * Whether the last {@link #readSafe()} found the live area torn and fell back to the previous one, so that
+     * {@link #getVersion()} is one behind the version the file names.
+     */
+    public boolean hasTornLiveArea() {
+        return tornLiveVersion != -1;
+    }
+
+    /**
      * Whether the area holding column version {@code areaVersion}, the live one or its predecessor in the
      * other slot, can be loaded: it lies within the file, and its trailer checksum matches when the trailer
      * names that version. An area whose trailer names no version passes unverified, as on every load path.

@@ -102,6 +102,43 @@ public final class DurableEpochManifest {
         }
     }
 
+    /**
+     * Whether the table's live {@code _txn} and {@code _cv} form a cut the {@code TableWriter} constructor
+     * would open unchanged: neither live area is torn, and {@code _cv} is at the column version {@code _txn}
+     * names. Startup may adopt only such a cut as a generation-zero baseline.
+     *
+     * <p>A table marked for enrolment by a replica tenure fails this after a crash: the replica applies at
+     * NOSYNC grade, so a kill or power loss can leave {@code _cv} one version ahead of {@code _txn}, or tear the
+     * live {@code _txn} area. Both readers fall back to the previous area silently, so a successful load alone
+     * would let startup copy a torn file into the anchor. The writer repairs either shape, as it does for any
+     * NOSYNC table, and publishes the baseline itself afterwards.
+     *
+     * <p>Reads only, and needs no metadata: a pooled metadata reader opened on a torn {@code _txn} keeps the
+     * fallback record and refuses to refresh past it, which would hide the table from WAL apply. Any failure to
+     * read reports the cut as not intact; the caller then writes nothing.
+     */
+    public static boolean isLiveCutIntact(CairoConfiguration configuration, TableToken tableToken) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (
+                Path path = new Path();
+                TxReader txReader = new TxReader(ff);
+                ColumnVersionReader cvReader = new ColumnVersionReader()
+        ) {
+            final int rootLen = path.of(configuration.getDbRoot()).concat(tableToken).size();
+            // Neither the column version nor the area geometry depends on the partitioning or the timestamp type.
+            txReader.ofRO(path.concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.NONE);
+            if (!txReader.unsafeLoadAll() || txReader.unsafeIsLiveAreaTorn()) {
+                return false;
+            }
+            cvReader.ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+            return cvReader.readSafe()
+                    && !cvReader.hasTornLiveArea()
+                    && cvReader.getVersion() == txReader.getColumnVersion();
+        } catch (CairoException e) {
+            return false;
+        }
+    }
+
     public static void publishCheckpointRestored(
             CairoConfiguration configuration,
             TableToken tableToken,
@@ -144,12 +181,14 @@ public final class DurableEpochManifest {
             try (TxReader txReader = new TxReader(ff); ColumnVersionReader cvReader = new ColumnVersionReader()) {
                 src.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
                 txReader.ofRO(src.$(), timestampType, partitionBy);
-                if (!txReader.unsafeLoadAll()) {
+                // A torn live area loads its predecessor silently; adopting the copy would make the tear the
+                // durable cut, and the writer refuses to roll back an anchored table.
+                if (!txReader.unsafeLoadAll() || txReader.unsafeIsLiveAreaTorn()) {
                     throw CairoException.critical(0).put("could not validate initial adaptive _txn baseline [table=").put(tableToken.getTableName()).put(']');
                 }
                 src.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
                 cvReader.ofRO(ff, src.$());
-                if (!cvReader.readSafe() || txReader.getColumnVersion() != cvReader.getVersion()) {
+                if (!cvReader.readSafe() || cvReader.hasTornLiveArea() || txReader.getColumnVersion() != cvReader.getVersion()) {
                     throw CairoException.critical(0).put("could not validate initial adaptive _cv baseline [table=").put(tableToken.getTableName()).put(']');
                 }
                 seqTxn = txReader.getSeqTxn();

@@ -29,11 +29,13 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
@@ -53,6 +55,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
@@ -201,6 +204,68 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
         // version. A reader holds the versions commit N-1 reads, so they are still on disk; the lost commit's
         // version is not attached to commit N-1, so the writer drops it, and the replay merges again.
         assertWalReplaysTornCommit(12 * HOUR, 400, 4, k -> T0 + (150 + k) * DAY + 6 * HOUR, true, true);
+    }
+
+    @Test
+    public void testWalReplicaTableReplaysTornCommit() throws Exception {
+        // A replica enrols the table without an anchor and applies at NOSYNC grade. Startup used to adopt the torn
+        // _txn as the table's baseline, and the writer then refused to roll back an enrolled table: reads failed
+        // and WAL apply suspended for good, across restarts.
+        Assume.assumeTrue("only an adaptive table is enrolled without an anchor", "adaptive".equals(commitMode));
+        assertMemoryLeak(() -> {
+            configureCommitMode();
+            final long lastDay = T0 + 199 * DAY;
+            final String txnPath;
+            final ObjList<byte[]> snapshots;
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            try {
+                txnPath = createTable(true, DAY, 200);
+                snapshots = commitRows(txnPath, true, 4, k -> lastDay + k * HOUR, null);
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+            final String expected = selectAll();
+            engine.clear();
+            final File tableDir = new File(txnPath).getParentFile();
+            final File anchor = new File(tableDir, SNAPSHOT_FILE_NAME);
+            final File marker = new File(tableDir, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
+            Assert.assertFalse("a replica keeps no anchor", anchor.exists());
+            Assert.assertTrue("a replica marks the table for enrolment", marker.exists());
+            installTornImage(txnPath, snapshots);
+
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                Assert.assertFalse("startup must not adopt a torn _txn", anchor.exists());
+                restarted.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                try {
+                    TestUtils.drainWalQueue(restarted);
+                    // The writer rolled back to commit N-1 and WAL apply replayed commit N: nothing is lost.
+                    assertQuery("x").withEngine(restarted).withContext(ctx).noLeakCheck().timestamp("ts").expectSize()
+                            .returns(expected);
+                    Assert.assertFalse(anchor.exists());
+                } finally {
+                    // Promotion: the next apply batch publishes the baseline from the repaired state.
+                    restarted.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+                }
+                restarted.execute("insert into x values (" + (T0 + 220 * DAY) + "::timestamp, 777)", ctx);
+                TestUtils.drainWalQueue(restarted);
+                Assert.assertTrue(anchor.exists());
+                Assert.assertFalse(marker.exists());
+                restarted.clear();
+            }
+
+            // The next startup validates the baseline and rolls the table forward from it.
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                TestUtils.drainWalQueue(restarted);
+                assertQuery("select count() c, sum(v) s from x").withEngine(restarted).withContext(ctx).noLeakCheck().noRandomAccess().expectSize()
+                        .returns("c\ts\n" + (200 + 4 + 1) + "\t" + (sumOfFirst(200) + sumOfCommits(4) + 777) + "\n");
+                assertQuery("select suspended, writerTxn = sequencerTxn caught_up from wal_tables()")
+                        .withEngine(restarted).withContext(ctx).noLeakCheck().noRandomAccess()
+                        .returns("suspended\tcaught_up\nfalse\ttrue\n");
+                restarted.clear();
+            }
+        });
     }
 
     @Test

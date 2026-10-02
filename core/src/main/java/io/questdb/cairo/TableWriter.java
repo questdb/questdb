@@ -9006,6 +9006,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return (cvVersion == columnVersion || cvVersion - 1 == columnVersion) && columnVersionWriter.isAreaIntact(columnVersion);
     }
 
+    private boolean isDurableEpochAnchored() {
+        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        return ff.exists(durableEpochSnapshotPath.$());
+    }
+
     private boolean isEmptyTable() {
         return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
     }
@@ -14908,9 +14913,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void rollbackToPreviousTxn(boolean isTxnTorn) {
         final long txn = txWriter.getTornLiveVersion();
-        if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE) {
-            // Startup recovery restores an enrolled table's _txn and _cv from its durable epoch before anything
-            // opens the table, so it has no torn area to find; do not second-guess that cut from here.
+        if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE && isDurableEpochAnchored()) {
+            // Startup recovery restores an anchored table's _txn and _cv from its durable epoch before anything
+            // opens the table, so it has no torn area to find; do not second-guess that cut from here. A table
+            // enrolled without an anchor (a replica's, marked for enrolment) has no such cut: its live state is
+            // NOSYNC grade, startup leaves a torn one to this writer, and rolling back is the repair.
             throw previousTxnException(isTxnTorn, txn, "the table is enrolled in adaptive commit mode").put(']');
         }
         if (txWriter.getMetadataVersion() != metadata.getMetadataVersion()) {
