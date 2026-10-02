@@ -47,6 +47,11 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.allocate(fd, size);
     }
 
+    @Override
+    public boolean allocate(long fd, long allocatedSize, long size) {
+        return Files.allocate(fd, allocatedSize, size);
+    }
+
     /**
      * Returns a flag whether it's ok to mix concurrent mmap-based writes with pwrite().
      * <p>

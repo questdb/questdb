@@ -250,6 +250,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Scratch for foldContiguousPieces: 4 longs per piece (tsLo, tsHi, rowOffset, rowCount), snapshotted
     // once per fold so the plan and the rebuild below it cannot observe each other's half-finished state.
     private final LongList compactionPieceScratch = new LongList();
+    // Scratch for compactPartition0: the (lo, hi) file rows of every piece a REWRITE copies, sized off once up front.
+    private final LongList compactionRewriteRanges = new LongList();
     // The merge-append frames of the partitions inserts keep landing on, kept open across commits; null when
     // the cache is sized 0. Emptied by every operation that is not a plain insert - see evictCompositeFrames.
     private final CompositeFrameCache compositeFrameCache;
@@ -6635,12 +6637,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // With no external ColumnTopSink the frame tracks its own tops and publishes them below, so
             // the source's lookups keep seeing the old directory's untouched state until then.
             targetFrame = frameFactory.openRW(other, partitionTs, metadata, columnVersionWriter, 0);
+            // Every piece below appends to the same column files: open each once for the whole REWRITE rather than
+            // once per piece, so what a column learnt about its file - its length, its mapping - carries over.
+            targetFrame.setKeepColumnsOpen(true);
 
             path.trimTo(pathSize);
             setPathForNativePartition(path, timestampType, partitionBy, partitionTs, srcNameTxn);
             // One source frame for the whole directory, reaching E: FrameAlgebra.append takes each
             // piece's row range as explicit bounds.
             try (Frame sourceFrame = frameFactory.openRO(path, partitionTs, metadata, columnVersionWriter, e)) {
+                // ...and each source column is mapped once, over the whole extent, for every piece to read from.
+                sourceFrame.setKeepColumnsOpen(true);
+                // The final size is known before anything is copied: the live rows, from exactly these pieces. Grow
+                // every target file to it once, up front, in the parallel column tasks, instead of once per piece per
+                // column - see Frame#reserve. With mixed I/O the copies grow the files themselves and this reserves
+                // nothing.
+                compactionRewriteRanges.clear();
+                for (int p = 0; p < pieceCount; p++) {
+                    final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
+                    if (rowCount > 0) {
+                        final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
+                        compactionRewriteRanges.add(rowOffset, rowOffset + rowCount);
+                    }
+                }
+                targetFrame.reserve(liveRows, sourceFrame, compactionRewriteRanges, null, null);
                 for (int p = 0; p < pieceCount; p++) {
                     final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
                     if (rowCount == 0) {
@@ -8068,10 +8088,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastErrno = 0;
         int queuedCount = 0;
 
+        // The last column runs here rather than through the queue: this thread would otherwise only wait for it.
+        int inlineColumnIndex = columnCount - 1;
+        while (inlineColumnIndex > -1 && metadata.getColumnType(inlineColumnIndex) <= 0) {
+            inlineColumnIndex--;
+        }
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) {
-                long cursor = pubSeq.next();
+                long cursor = columnIndex == inlineColumnIndex ? -1 : pubSeq.next();
 
                 // Pass column index as -1 when it's a designated timestamp column to o3 move method
                 if (cursor > -1) {
@@ -10787,11 +10812,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long dedupColSinkAddr,
             boolean isParquet,
             long o3TimestampLo,
-            long o3TimestampHi
+            long o3TimestampHi,
+            boolean isRunInline
     ) {
         // _pm seqTxn for an in-place parquet rewrite: the apply seqTxn (high-water off the data-apply path).
         long partitionSeqTxn = walApplySeqTxn > 0 ? walApplySeqTxn : getSeqTxn();
-        long cursor = messageBus.getO3PartitionPubSeq().next();
+        // The last partition of a commit runs here rather than through the queue: this thread would otherwise only
+        // wait for it. Running a task here is what a full queue makes it do anyway.
+        long cursor = isRunInline ? -1 : messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
             O3PartitionTask task = messageBus.getO3PartitionQueue().get(cursor);
             task.of(
@@ -12478,7 +12506,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 dedupColSinkAddr,
                                 isParquet,
                                 o3TimestampLo,
-                                o3TimestampHi
+                                o3TimestampHi,
+                                // No partition is dispatched after this one: the batch ends in it. A replace commit
+                                // can still visit partitions past its last row, so it always goes through the queue.
+                                srcOooHi >= srcOooMax - 1 && !isCommitReplaceMode()
                         );
                     }
                 } catch (CairoException | CairoError e) {
@@ -13413,6 +13444,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int queuedCount = 0;
 
         long totalSegmentAddressesBytes = totalSegmentAddresses * Long.BYTES;
+        // The last column this pass handles runs here rather than through the queue: this thread would otherwise only
+        // wait for it.
+        int inlineColumnIndex = columnCount - 1;
+        while (inlineColumnIndex > -1) {
+            final int columnType = metadata.getColumnType(inlineColumnIndex);
+            if (inlineColumnIndex != timestampColumnIndex && columnType > 0
+                    && (!symbolColumnsOnly || ColumnType.isSymbol(columnType))
+                    && (!dedupColumnOnly || metadata.isDedupKey(inlineColumnIndex))) {
+                break;
+            }
+            inlineColumnIndex--;
+        }
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = metadata.getColumnType(columnIndex);
             if (columnIndex != timestampColumnIndex && columnType > 0) {
@@ -13430,7 +13473,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if ((!symbolColumnsOnly || ColumnType.isSymbol(columnType)) && (!dedupColumnOnly || metadata.isDedupKey(columnIndex))) {
-                    long cursor = pubSeq.next();
+                    long cursor = columnIndex == inlineColumnIndex ? -1 : pubSeq.next();
 
                     if (cursor > -1) {
                         try {

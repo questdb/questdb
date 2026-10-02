@@ -221,6 +221,14 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
                 }
                 return super.allocate(fd, size);
             }
+
+            @Override
+            public boolean allocate(long fd, long allocatedSize, long size) {
+                if (failAllocate.get()) {
+                    return false;
+                }
+                return super.allocate(fd, allocatedSize, size);
+            }
         };
         assertMemoryLeak(ff, () -> {
             engine.resetFrameFactory();
@@ -262,6 +270,15 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
                     allocations.computeIfAbsent(name, k -> new AtomicInteger()).incrementAndGet();
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean allocate(long fd, long allocatedSize, long size) {
+                final String name = fdNames.get(fd);
+                if (armed.get() && name != null) {
+                    allocations.computeIfAbsent(name, k -> new AtomicInteger()).incrementAndGet();
+                }
+                return super.allocate(fd, allocatedSize, size);
             }
 
             @Override

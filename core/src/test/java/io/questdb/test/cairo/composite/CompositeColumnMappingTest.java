@@ -557,7 +557,8 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
     /**
      * @param failOnWrite 1 fails the commit's first write to v.d by failing the file's open. 2 lets the first action
      *                    write and fails the second one's: a composite plan opens and maps v.d once for all its
-     *                    actions, so under a SYNC commit that failure is the second msync of the one mapping.
+     *                    actions, so under a SYNC commit that failure is the second sync of v.d - an msync of the
+     *                    one mapping for a merge, an fsync of the file for an append written with mixed I/O.
      */
     private void checkFailedMergeAppendThenWriterClose(int failOnWrite, boolean twoActions) throws Exception {
         final AtomicBoolean armed = new AtomicBoolean();
@@ -580,6 +581,14 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
                 final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
                 trackWritableMapping(fd, mode, newAddr, newSize);
                 return newAddr;
+            }
+
+            @Override
+            public void fsync(long fd) {
+                if (armed.get() && fd == vFd.get() && writeMaps.incrementAndGet() >= failOnWrite) {
+                    throw CairoException.critical(0).put("injected fsync failure [writes=").put(writeMaps.get()).put(']');
+                }
+                super.fsync(fd);
             }
 
             @Override

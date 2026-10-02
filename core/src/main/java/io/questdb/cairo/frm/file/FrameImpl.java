@@ -653,7 +653,12 @@ public class FrameImpl implements Frame {
                 source2Columns.getQuick(columnIndex).getContiguousDataAddr(hi);
             }
             // One allocation and one (re)map per file of the target column, for every write of the plan.
-            targetColumns.getQuick(columnIndex).reserve(rowCount, rowHi, dataBytes);
+            targetColumns.getQuick(columnIndex).reserve(
+                    rowCount,
+                    rowHi,
+                    dataBytes,
+                    reserveSource2Ranges != null && reserveSource2Ranges.size() > 0
+            );
         } catch (Throwable th) {
             onError(columnIndex, th);
         }
@@ -685,11 +690,16 @@ public class FrameImpl implements Frame {
         final RingQueue<ColumnTask> queue = messageBus.getColumnTaskQueue();
         doneLatch.reset();
         int queuedCount = 0;
+        // The last live column runs here rather than through the queue: this thread would otherwise only wait for it.
+        int inlineColumn = columnHi - 1;
+        while (inlineColumn >= columnLo && !isLiveColumn(inlineColumn)) {
+            inlineColumn--;
+        }
         for (int i = columnLo; i < columnHi; i++) {
             if (!isLiveColumn(i)) {
                 continue;
             }
-            final long cursor = pubSeq.next();
+            final long cursor = i == inlineColumn ? -1 : pubSeq.next();
             if (cursor > -1) {
                 try {
                     // Only the column index and the bounds travel in the task: the open columns and the
@@ -711,9 +721,9 @@ public class FrameImpl implements Frame {
                     pubSeq.done(cursor);
                 }
             } else {
-                // Queue full. Run the column here rather than wait for room, the same way
-                // TableWriter#dispatchColumnTasks does - and this is also what makes progress
-                // guaranteed when nothing else is draining the queue.
+                // The inline column, or the queue is full. Run the column here rather than wait for room, the same
+                // way TableWriter#dispatchColumnTasks does - and this is also what makes progress guaranteed when
+                // nothing else is draining the queue.
                 taskHandler.run(i, source1Columns.getQuick(i).getColumnType(), timestampColumnIndex, long0, long1, long2, long3, long4);
             }
         }

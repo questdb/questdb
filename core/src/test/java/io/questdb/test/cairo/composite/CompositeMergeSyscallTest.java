@@ -34,17 +34,21 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.regex.Pattern;
 
 /**
  * Counts the file-system calls - mmap, munmap, fallocate and friends - that WAL apply makes with a real worker pool
@@ -65,37 +69,84 @@ import java.util.concurrent.atomic.AtomicLongArray;
  * kept across MERGEs and across blocks.
  */
 public class CompositeMergeSyscallTest extends AbstractCairoTest {
+    private static final int APPEND_ROWS = 9;
+    private static final int APPEND_TEST_PIECES = 20;
+    private static final int BATCH_ROWS = 20;
+    private static final int DAY_ROWS = 8640;
     private static final int DOUBLE_COLUMNS = 10;
     // s SYMBOL, d0..d9 DOUBLE, ts TIMESTAMP: the shape of TSBS cpu-only, give or take its tag columns.
     private static final int COLUMN_COUNT = DOUBLE_COLUMNS + 2;
     private static final int MERGE_ROWS_PER_PIECE = 3;
     private static final long MINUTE = 60_000_000L;
+    private static final int REWRITE_TEST_PIECES = 30;
     private static final int TARGET_PIECES = 200;
     private static final int WAL_ROUNDS = 10;
     private static final int WAL_ROWS_PER_COMMIT = 500;
     private static final int WORKER_COUNT = 4;
 
     @Test
+    public void testAppendToManyPieceCompositePartitionWithMixedIoNeitherMapsNorAllocates() throws Exception {
+        final SyscallCountingFilesFacade ff = new SyscallCountingFilesFacade();
+        ff.setPartitionDir("2024-01-01");
+        assertMemoryLeak(ff, () -> {
+            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, true);
+            createDayTable();
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long day = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
+            final WorkerPool pool = new TestWorkerPool(WORKER_COUNT, node1.getMetrics());
+            WorkerPoolUtils.setupWriterJobs(pool, engine);
+            pool.start(LOG);
+            final LongList pieces = new LongList();
+            int batches = 0;
+            try {
+                batches = cutDayIntoPieces(tableToken, day, APPEND_TEST_PIECES, pieces);
+                final long eBefore = readE(tableToken, day);
+
+                // Rows above the day's last one and below the next day: appends only, no MERGE.
+                ff.arm();
+                execute("INSERT INTO x SELECT " + valuesSelect("x + 8_000") + ", "
+                        + "timestamp_sequence('2024-01-01T23:59:51', 1_000_000L) ts FROM long_sequence(" + APPEND_ROWS + ")");
+                drainWalQueue();
+                ff.disarm();
+
+                Assert.assertFalse("table suspended by the append", engine.getTableSequencerAPI().isSuspended(tableToken));
+                final long eAfter = readE(tableToken, day);
+                final String report = "append to a composite partition with mixed I/O [pieces=" + pieces.size() / 4
+                        + ", rows=" + APPEND_ROWS
+                        + ", eBefore=" + eBefore
+                        + ", eAfter=" + eAfter
+                        + ", columns=" + COLUMN_COUNT
+                        + ", workers=" + WORKER_COUNT
+                        + "] " + ff.report();
+                LOG.info().$(report).$();
+
+                Assert.assertEquals("the commit did not append to the composite partition: " + report, eBefore + APPEND_ROWS, eAfter);
+                // A positioned write grows the file itself: the partition's column files are written without being
+                // allocated, mapped or remapped first. The one mapping left is the planner's: it reads the designated
+                // timestamp column to place the batch among the pieces, read-only, once per commit.
+                Assert.assertEquals("partition column files allocated: " + report, 0, ff.partition(SyscallCountingFilesFacade.ALLOCATE));
+                Assert.assertTrue("partition column files mapped: " + report, ff.partition(SyscallCountingFilesFacade.MMAP) <= 1);
+                Assert.assertEquals("partition column files remapped: " + report, 0, ff.partition(SyscallCountingFilesFacade.MREMAP));
+                Assert.assertTrue("partition column files unmapped: " + report, ff.partition(SyscallCountingFilesFacade.MUNMAP) <= 1);
+                Assert.assertTrue("partition column files not written: " + report, ff.partition(SyscallCountingFilesFacade.WRITE) >= COLUMN_COUNT);
+            } finally {
+                pool.halt();
+            }
+
+            assertQuery("SELECT count() c FROM x").noRandomAccess().expectSize().returns(
+                    "c\n" + (DAY_ROWS + 1 + BATCH_ROWS * batches + APPEND_ROWS) + "\n"
+            );
+            assertQuery("SELECT count() c, sum(d0) s FROM x WHERE ts >= '2024-01-01T23:59:51' AND ts < '2024-01-02'")
+                    .noRandomAccess().expectSize()
+                    .returns("c\ts\n" + APPEND_ROWS + "\t" + (APPEND_ROWS * 8_000L + (long) APPEND_ROWS * (APPEND_ROWS + 1) / 2) + ".0\n");
+        });
+    }
+
+    @Test
     public void testMergeIntoEveryPieceOfManyPieceCompositePartition() throws Exception {
         final SyscallCountingFilesFacade ff = new SyscallCountingFilesFacade();
         assertMemoryLeak(ff, () -> {
-            // Pooled frame columns capture the FilesFacade they were built with; start from a fresh pool.
-            engine.resetFrameFactory();
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
-            // Small piece floor, so each backdated batch below founds pieces of its own instead of merging into one
-            // big piece, and a piece-count cap well above the target, so nothing compacts the pieces back together.
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 64);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
-
-            execute("CREATE TABLE x (" + columnsDdl() + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // 2024-01-01 a row every 10 seconds, plus a later day so 2024-01-01 is never the active partition and
-            // every batch below goes through the O3 path.
-            execute("INSERT INTO x SELECT " + valuesSelect("x") + ", timestamp_sequence('2024-01-01', 10_000_000L) ts" +
-                    " FROM long_sequence(8640)");
-            execute("INSERT INTO x SELECT " + valuesSelect("x") + ", '2024-01-02T00:00:00'::TIMESTAMP ts FROM long_sequence(1)");
-            drainWalQueue();
-
+            createDayTable();
             final TableToken tableToken = engine.verifyTableName("x");
             final long day = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
             final WorkerPool pool = new TestWorkerPool(WORKER_COUNT, node1.getMetrics());
@@ -105,21 +156,10 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             final LongList after = new LongList();
             final StringBuilder mergeSql = new StringBuilder();
             int mergeRows = 0;
-            int batch = 0;
+            int batches = 0;
             int targetedPieces = 0;
             try {
-                // Backdated batches, each in a slot of the day no earlier batch touched, one commit apiece: every
-                // batch cuts the piece it lands in and founds a piece of its own.
-                while (snapshotPieces(tableToken, day, before) < TARGET_PIECES) {
-                    Assert.assertTrue("could not cut the day into " + TARGET_PIECES + " pieces, got "
-                            + before.size() / 4 + " after " + batch + " batches", batch < 1440 / 7);
-                    final long start = day + batch * 7 * MINUTE + 3 * MINUTE + 3_000_000L;
-                    execute("INSERT INTO x SELECT " + valuesSelect("x + " + (100_000 * (batch + 1))) + ", "
-                            + "timestamp_sequence(" + start + "::TIMESTAMP, 2_000_000L) ts FROM long_sequence(20)");
-                    drainWalQueue();
-                    batch++;
-                }
-                Assert.assertFalse("table suspended while cutting pieces", engine.getTableSequencerAPI().isSuspended(tableToken));
+                batches = cutDayIntoPieces(tableToken, day, TARGET_PIECES, before);
                 final long eBefore = readE(tableToken, day);
 
                 // One commit that lands rows strictly inside every piece: a plan of one MERGE per piece.
@@ -187,9 +227,19 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             }
 
             assertQuery("SELECT count() c FROM x").noRandomAccess().expectSize().returns(
-                    "c\n" + (8641 + 20 * batch + mergeRows) + "\n"
+                    "c\n" + (DAY_ROWS + 1 + BATCH_ROWS * batches + mergeRows) + "\n"
             );
         });
+    }
+
+    @Test
+    public void testRewriteAllocatesOncePerColumnFile() throws Exception {
+        assertRewriteAllocations(false);
+    }
+
+    @Test
+    public void testRewriteWithMixedIoAllocatesNothing() throws Exception {
+        assertRewriteAllocations(true);
     }
 
     @Test
@@ -235,6 +285,55 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         return sink.append(", ts TIMESTAMP").toString();
     }
 
+    /**
+     * Cuts 2024-01-01 into at least {@code targetPieces} pieces with backdated batches, each in a slot of the day no
+     * earlier batch touched, one commit apiece: every batch cuts the piece it lands in and founds a piece of its own.
+     * Leaves the pieces in {@code pieces} and returns how many batches it took.
+     */
+    private static int cutDayIntoPieces(TableToken tableToken, long day, int targetPieces, LongList pieces) throws Exception {
+        int batch = 0;
+        while (snapshotPieces(tableToken, day, pieces) < targetPieces) {
+            Assert.assertTrue("could not cut the day into " + targetPieces + " pieces, got "
+                    + pieces.size() / 4 + " after " + batch + " batches", batch < 1440 / 7);
+            final long start = day + batch * 7 * MINUTE + 3 * MINUTE + 3_000_000L;
+            execute("INSERT INTO x SELECT " + valuesSelect("x + " + (100_000 * (batch + 1))) + ", "
+                    + "timestamp_sequence(" + start + "::TIMESTAMP, 2_000_000L) ts FROM long_sequence(" + BATCH_ROWS + ")");
+            drainWalQueue();
+            batch++;
+        }
+        Assert.assertFalse("table suspended while cutting pieces", engine.getTableSequencerAPI().isSuspended(tableToken));
+        return batch;
+    }
+
+    /**
+     * Table x, merge-append on, with 2024-01-01 a row every 10 seconds, plus a later day so 2024-01-01 is never the
+     * active partition and every backdated batch goes through the O3 path.
+     */
+    private static void createDayTable() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+        // Small piece floor, so each backdated batch founds pieces of its own instead of merging into one big piece,
+        // and a piece-count cap well above the target, so nothing compacts the pieces back together.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 64);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 100_000);
+        // Pooled frame columns capture the FilesFacade and the mixed I/O flag they were built with; start from a
+        // fresh pool.
+        engine.resetFrameFactory();
+
+        execute("CREATE TABLE x (" + columnsDdl() + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO x SELECT " + valuesSelect("x") + ", timestamp_sequence('2024-01-01', 10_000_000L) ts" +
+                " FROM long_sequence(" + DAY_ROWS + ")");
+        execute("INSERT INTO x SELECT " + valuesSelect("x") + ", '2024-01-02T00:00:00'::TIMESTAMP ts FROM long_sequence(1)");
+        drainWalQueue();
+    }
+
+    private static boolean isComposite(TableToken tableToken, long partitionTimestamp) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
+            return reader.getGeometry().isComposite(partitionIndex);
+        }
+    }
+
     private static long readE(TableToken tableToken, long partitionTimestamp) {
         try (TableReader reader = engine.getReader(tableToken)) {
             return reader.getGeometry().getE(reader.getTxFile().getPartitionIndex(partitionTimestamp));
@@ -268,6 +367,92 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             sink.append(", (").append(idExpr).append(") + ").append(d).append(".0 d").append(d);
         }
         return sink.toString();
+    }
+
+    /**
+     * Cuts 2024-01-01 into pieces, moves every piece to the tail with a MERGE so the day is mostly dead space, then
+     * makes the day a waste-ratio candidate whose only way out is a REWRITE, and counts what the REWRITE does to the
+     * partition's column files: it copies piece after piece into a fresh directory, and the final size is known
+     * before the first copy.
+     */
+    private void assertRewriteAllocations(boolean mixedIo) throws Exception {
+        final SyscallCountingFilesFacade ff = new SyscallCountingFilesFacade();
+        ff.setPartitionDir("2024-01-01");
+        assertMemoryLeak(ff, () -> {
+            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, mixedIo);
+            createDayTable();
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long day = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
+            final WorkerPool pool = new TestWorkerPool(WORKER_COUNT, node1.getMetrics());
+            WorkerPoolUtils.setupWriterJobs(pool, engine);
+            pool.start(LOG);
+            final LongList pieces = new LongList();
+            int batches = 0;
+            int mergeRows = 0;
+            int passes = 0;
+            try {
+                batches = cutDayIntoPieces(tableToken, day, REWRITE_TEST_PIECES, pieces);
+                final StringBuilder mergeSql = new StringBuilder("INSERT INTO x VALUES ");
+                for (int p = 0, n = pieces.size() / 4; p < n; p++) {
+                    final long tsLo = pieces.getQuick(p * 4);
+                    final long tsHi = pieces.getQuick(p * 4 + 1);
+                    if (tsHi - tsLo > 2) {
+                        if (mergeRows++ > 0) {
+                            mergeSql.append(", ");
+                        }
+                        appendValuesRow(mergeSql, 9_000_000 + mergeRows, (tsLo + (tsHi - tsLo) / 2) | 1);
+                    }
+                }
+                execute(mergeSql);
+                drainWalQueue();
+                Assert.assertTrue("the day is not composite before the REWRITE", isComposite(tableToken, day));
+
+                // Any dead space at all makes the day a candidate, nothing counts as hot, and MOVE-TAIL never gains
+                // enough: the policy is left with REWRITE.
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "0.01");
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, Integer.MAX_VALUE);
+
+                // Compaction runs after a commit; each of these lands on a day of its own, never on 2024-01-01.
+                ff.arm();
+                while (isComposite(tableToken, day) && passes < 10) {
+                    passes++;
+                    execute("INSERT INTO x SELECT " + valuesSelect("x + 7_000_000") + ", "
+                            + (day + (2 + passes) * 24 * 60 * MINUTE) + "::TIMESTAMP ts FROM long_sequence(1)");
+                    drainWalQueue();
+                }
+                ff.disarm();
+
+                Assert.assertFalse("table suspended by compaction", engine.getTableSequencerAPI().isSuspended(tableToken));
+                final String report = "REWRITE of a composite partition [mixedIo=" + mixedIo
+                        + ", pieces=" + pieces.size() / 4
+                        + ", passes=" + passes
+                        + ", columns=" + COLUMN_COUNT
+                        + ", workers=" + WORKER_COUNT
+                        + "] " + ff.report();
+                LOG.info().$(report).$();
+                Assert.assertFalse("compaction did not rewrite the day: " + report, isComposite(tableToken, day));
+                // The REWRITE knows its final size before the first copy: one allocation per column file, up front.
+                // With mixed I/O the copies grow the files themselves, and nothing is allocated at all.
+                final long allocations = ff.partition(SyscallCountingFilesFacade.ALLOCATE);
+                if (mixedIo) {
+                    Assert.assertEquals("REWRITE allocated: " + report, 0, allocations);
+                } else {
+                    Assert.assertTrue("REWRITE allocated per piece: " + report, allocations <= COLUMN_COUNT);
+                }
+                // Each target column file opens once for the whole REWRITE, not once per piece.
+                Assert.assertTrue("REWRITE reopened its files per piece: " + report,
+                        ff.partition(SyscallCountingFilesFacade.OPEN) <= 3L * COLUMN_COUNT);
+            } finally {
+                pool.halt();
+            }
+
+            assertQuery("SELECT count() c FROM x").noRandomAccess().expectSize().returns(
+                    "c\n" + (DAY_ROWS + 1 + BATCH_ROWS * batches + mergeRows + passes) + "\n"
+            );
+        });
     }
 
     /**
@@ -336,7 +521,9 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
 
     /**
      * Counts calls into the facade while armed, split by whether the calling thread is the one that armed it (the
-     * test thread, which runs the WAL apply job and steals tasks) or another one (the pool's workers).
+     * test thread, which runs the WAL apply job and steals tasks) or another one (the pool's workers). Calls on the
+     * column files of one partition directory - fds opened on them, and the mappings made of those - are also counted
+     * on their own, see {@link #partition}.
      */
     private static class SyscallCountingFilesFacade extends TestFilesFacadeImpl {
         static final int ALLOCATE = 0;
@@ -348,109 +535,132 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         static final int MUNMAP = 6;
         static final int OPEN = 7;
         static final int TRUNCATE = 8;
-        private static final String[] NAMES = {"fallocate", "close", "copyData", "madvise", "mmap", "mremap", "munmap", "open", "truncate"};
+        static final int WRITE = 9;
+        // A column's data or aux file, with or without a column name txn: s.d, d0.d.3, v.i.
+        private static final Pattern COLUMN_FILE = Pattern.compile("[^/\\\\]+\\.[di](\\.\\d+)?$");
+        private static final String[] NAMES = {"fallocate", "close", "copyData", "madvise", "mmap", "mremap", "munmap", "open", "truncate", "write"};
         private final AtomicLongArray counts = new AtomicLongArray(NAMES.length * 2);
+        private final AtomicLongArray partitionCounts = new AtomicLongArray(NAMES.length);
+        // Tracked whether armed or not: a cached frame opens and maps its files on one commit and writes them on the next.
+        private final ConcurrentHashMap<Long, Boolean> partitionFds = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Long, Boolean> partitionMappings = new ConcurrentHashMap<>();
         private volatile boolean armed;
         private volatile Thread armingThread;
         private long mmapReuseCountAtArm;
         private long mmapReuseCountAtDisarm;
+        private volatile String partitionDir;
 
         @Override
         public boolean allocate(long fd, long size) {
-            count(ALLOCATE);
+            count(ALLOCATE, fd);
             return super.allocate(fd, size);
+        }
+
+        @Override
+        public boolean allocate(long fd, long allocatedSize, long size) {
+            count(ALLOCATE, fd);
+            return super.allocate(fd, allocatedSize, size);
         }
 
         @Override
         public boolean close(long fd) {
             // Files.close() makes no call for an fd that was never opened, and callers close -1 freely.
             if (fd > 0) {
-                count(CLOSE);
+                count(CLOSE, fd);
+                partitionFds.remove(fd);
             }
             return super.close(fd);
         }
 
         @Override
         public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
-            count(COPY_DATA);
+            count(COPY_DATA, destFd);
             return super.copyData(srcFd, destFd, offsetSrc, length);
         }
 
         @Override
         public long copyData(long srcFd, long destFd, long offsetSrc, long destOffset, long length) {
-            count(COPY_DATA);
+            count(COPY_DATA, destFd);
             return super.copyData(srcFd, destFd, offsetSrc, destOffset, length);
         }
 
         @Override
         public void madvise(long address, long len, int advise) {
-            count(MADVISE);
+            count(MADVISE, -1);
             super.madvise(address, len, advise);
         }
 
         @Override
         public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-            count(MMAP);
-            return super.mmap(fd, len, offset, flags, memoryTag);
+            count(MMAP, fd);
+            return trackMapping(fd, super.mmap(fd, len, offset, flags, memoryTag));
         }
 
         @Override
         public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
-            count(MMAP);
-            return super.mmapNoCache(fd, len, offset, flags, memoryTag);
+            count(MMAP, fd);
+            return trackMapping(fd, super.mmapNoCache(fd, len, offset, flags, memoryTag));
         }
 
         @Override
         public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-            count(MREMAP);
-            return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            count(MREMAP, fd);
+            partitionMappings.remove(addr);
+            return trackMapping(fd, super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag));
         }
 
         @Override
         public long mremapNoCache(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-            count(MREMAP);
-            return super.mremapNoCache(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            count(MREMAP, fd);
+            partitionMappings.remove(addr);
+            return trackMapping(fd, super.mremapNoCache(fd, addr, previousSize, newSize, offset, mode, memoryTag));
         }
 
         @Override
         public void munmap(long address, long size, int memoryTag) {
-            count(MUNMAP);
+            final boolean isPartition = partitionMappings.remove(address) != null;
+            count(MUNMAP, isPartition);
             super.munmap(address, size, memoryTag);
         }
 
         @Override
         public long openRO(LPSZ name) {
-            count(OPEN);
-            return super.openRO(name);
+            return trackOpen(name, super.openRO(name));
         }
 
         @Override
         public long openRONoCache(LPSZ path) {
-            count(OPEN);
-            return super.openRONoCache(path);
+            return trackOpen(path, super.openRONoCache(path));
         }
 
         @Override
         public long openRW(LPSZ name, int opts) {
-            count(OPEN);
-            return super.openRW(name, opts);
+            return trackOpen(name, super.openRW(name, opts));
         }
 
         @Override
         public long openRWNoCache(LPSZ name, int opts) {
-            count(OPEN);
-            return super.openRWNoCache(name, opts);
+            return trackOpen(name, super.openRWNoCache(name, opts));
         }
 
         @Override
         public boolean truncate(long fd, long size) {
-            count(TRUNCATE);
+            count(TRUNCATE, fd);
             return super.truncate(fd, size);
+        }
+
+        @Override
+        public long write(long fd, long address, long len, long offset) {
+            count(WRITE, fd);
+            return super.write(fd, address, len, offset);
         }
 
         void arm() {
             for (int i = 0, n = counts.length(); i < n; i++) {
                 counts.set(i, 0);
+            }
+            for (int i = 0, n = partitionCounts.length(); i < n; i++) {
+                partitionCounts.set(i, 0);
             }
             armingThread = Thread.currentThread();
             mmapReuseCountAtArm = Files.getMmapReuseCount();
@@ -462,6 +672,10 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             mmapReuseCountAtDisarm = Files.getMmapReuseCount();
         }
 
+        long partition(int op) {
+            return partitionCounts.get(op);
+        }
+
         String report() {
             final StringBuilder sink = new StringBuilder("[");
             for (int i = 0; i < NAMES.length; i++) {
@@ -469,19 +683,56 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
                     sink.append(", ");
                 }
                 sink.append(NAMES[i]).append('=').append(total(i))
-                        .append(" (workers=").append(counts.get(i * 2 + 1)).append(')');
+                        .append(" (workers=").append(counts.get(i * 2 + 1));
+                if (partitionDir != null) {
+                    sink.append(", partition=").append(partitionCounts.get(i));
+                }
+                sink.append(')');
             }
             return sink.append(", mmapCacheReuse=").append(mmapReuseCountAtDisarm - mmapReuseCountAtArm).append(']').toString();
+        }
+
+        /**
+         * Counts the calls on the column files under the partition directory named {@code partitionDir} on their own
+         * as well. Set before the files open: an fd is attributed when it is opened.
+         */
+        void setPartitionDir(String partitionDir) {
+            this.partitionDir = Files.SEPARATOR + partitionDir;
         }
 
         long total(int op) {
             return counts.get(op * 2) + counts.get(op * 2 + 1);
         }
 
-        private void count(int op) {
+        private void count(int op, long fd) {
+            count(op, fd > 0 && partitionFds.containsKey(fd));
+        }
+
+        private void count(int op, boolean isPartition) {
             if (armed) {
                 counts.incrementAndGet(op * 2 + (Thread.currentThread() == armingThread ? 0 : 1));
+                if (isPartition) {
+                    partitionCounts.incrementAndGet(op);
+                }
             }
+        }
+
+        private long trackMapping(long fd, long address) {
+            if (address != FilesFacade.MAP_FAILED && fd > 0 && partitionFds.containsKey(fd)) {
+                partitionMappings.put(address, Boolean.TRUE);
+            }
+            return address;
+        }
+
+        private long trackOpen(LPSZ name, long fd) {
+            final String dir = partitionDir;
+            final boolean isPartition = fd > 0 && dir != null && Utf8s.containsAscii(name, dir)
+                    && COLUMN_FILE.matcher(Utf8s.stringFromUtf8Bytes(name)).find();
+            if (isPartition) {
+                partitionFds.put(fd, Boolean.TRUE);
+            }
+            count(OPEN, isPartition);
+            return fd;
         }
     }
 }

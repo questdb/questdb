@@ -50,6 +50,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private final FilesFacade ff;
     private final int fileOpts;
     private final boolean mixedIOFlag;
+    private final ColumnWriteBuffer writeBuffer = new ColumnWriteBuffer();
     // The least lengths this column knows its two files to have, learnt from the files once per open.
     // See ContiguousFileFixFrameColumn#allocatedBytes.
     private long allocatedAuxBytes;
@@ -126,17 +127,25 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
         final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
         final long dstAuxSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
-        final long dstAuxAddr = mapAuxWritable(dstAuxOffset + dstAuxSize) + dstAuxOffset;
-        columnTypeDriver.shiftCopyAuxVector(
-                srcDataOffset - targetDataOffset,
-                srcAuxAddr,
-                sourceLo,
-                sourceHi - 1, // inclusive
-                dstAuxAddr,
-                dstAuxSize
-        );
-        if (commitMode != CommitMode.NOSYNC) {
-            TableUtils.msync(ff, dstAuxAddr, dstAuxSize, commitMode == CommitMode.ASYNC);
+        if (mixedIOFlag) {
+            writeShiftedAux(srcDataOffset - targetDataOffset, srcAuxAddr, sourceLo, sourceHi, appendOffsetRowCount);
+            allocatedAuxBytes = Math.max(allocatedAuxBytes, dstAuxOffset + dstAuxSize);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(auxFd);
+            }
+        } else {
+            final long dstAuxAddr = mapAuxWritable(dstAuxOffset + dstAuxSize) + dstAuxOffset;
+            columnTypeDriver.shiftCopyAuxVector(
+                    srcDataOffset - targetDataOffset,
+                    srcAuxAddr,
+                    sourceLo,
+                    sourceHi - 1, // inclusive
+                    dstAuxAddr,
+                    dstAuxSize
+            );
+            if (commitMode != CommitMode.NOSYNC) {
+                TableUtils.msync(ff, dstAuxAddr, dstAuxSize, commitMode == CommitMode.ASYNC);
+            }
         }
 
         this.appendOffsetRowCount = appendOffsetRowCount + (sourceHi - sourceLo);
@@ -157,19 +166,25 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             long targetDataOffset,
             int commitMode
     ) {
-        final long sourceFd = sourceColumn.getPrimaryFd();
-        if (isFileSource && mixedIOFlag) {
-            ensureDataAllocated(targetDataOffset + srcDataSize);
-            if (ff.copyData(sourceFd, dataFd, srcDataOffset, targetDataOffset, srcDataSize) != srcDataSize) {
-                throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(dataFd)
-                        .put(", destOffset=").put(targetDataOffset)
-                        .put(", size=").put(srcDataSize)
-                        .put(", fileSize=").put(ff.length(dataFd))
-                        .put(", srcFd=").put(sourceFd)
-                        .put(", srcOffset=").put(srcDataOffset)
-                        .put(", srcFileSize=").put(ff.length(sourceFd))
-                        .put(']');
+        if (mixedIOFlag) {
+            // Positioned writes, which grow the file as they go: no allocation and no mapping of the target. Only a
+            // file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            if (isFileSource) {
+                final long sourceFd = sourceColumn.getPrimaryFd();
+                if (ff.copyData(sourceFd, dataFd, srcDataOffset, targetDataOffset, srcDataSize) != srcDataSize) {
+                    throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(dataFd)
+                            .put(", destOffset=").put(targetDataOffset)
+                            .put(", size=").put(srcDataSize)
+                            .put(", fileSize=").put(ff.length(dataFd))
+                            .put(", srcFd=").put(sourceFd)
+                            .put(", srcOffset=").put(srcDataOffset)
+                            .put(", srcFileSize=").put(ff.length(sourceFd))
+                            .put(']');
+                }
+            } else {
+                ColumnWriteBuffer.write(ff, dataFd, sourceColumn.getContiguousDataAddr(sourceRowHi) + srcDataOffset, srcDataSize, targetDataOffset);
             }
+            allocatedDataBytes = Math.max(allocatedDataBytes, targetDataOffset + srcDataSize);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsync(dataFd);
             }
@@ -247,6 +262,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 ff.close(dataFd);
                 dataFd = -1;
             }
+            writeBuffer.close();
             closed = true;
 
             if (recycleBin != null && !recycleBin.isClosed()) {
@@ -482,7 +498,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void reserve(long rowLo, long rowHi, long dataBytes) {
+    public void reserve(long rowLo, long rowHi, long dataBytes, boolean isMerging) {
+        if (mixedIOFlag && !isMerging) {
+            // Every write is a positioned append, which grows the files itself and maps nothing.
+            return;
+        }
         final long rows = rowHi - columnTop;
         if (rows > 0) {
             mapAuxWritable(columnTypeDriver.getAuxVectorSize(rows));
@@ -542,19 +562,24 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private void ensureDataAllocated(long size) {
         if (size > allocatedDataBytes) {
             if (!isAllocatedDataBytesKnown) {
-                allocatedDataBytes = Math.max(0, ff.length(dataFd));
+                // Positioned writes may have grown the file past what was asked for so far.
+                allocatedDataBytes = Math.max(allocatedDataBytes, ff.length(dataFd));
                 isAllocatedDataBytesKnown = true;
                 if (size <= allocatedDataBytes) {
                     return;
                 }
             }
-            allocatedDataBytes = allocate(dataFd, size);
+            allocatedDataBytes = allocate(dataFd, allocatedDataBytes, size);
         }
     }
 
-    private long allocate(long fd, long size) {
+    /**
+     * Grows the file to {@code size}, page-aligned, allocating only past {@code allocatedSize}, the length the file is
+     * known to have - see ContiguousFileFixFrameColumn#ensureAllocated.
+     */
+    private long allocate(long fd, long allocatedSize, long size) {
         size = Files.ceilPageSize(size);
-        if (!ff.allocate(fd, size)) {
+        if (!ff.allocate(fd, allocatedSize, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
         return size;
@@ -568,11 +593,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         assert !isReadOnly;
         if (size > allocatedAuxBytes) {
             if (!isAllocatedAuxBytesKnown) {
-                allocatedAuxBytes = Math.max(0, ff.length(auxFd));
+                allocatedAuxBytes = Math.max(allocatedAuxBytes, ff.length(auxFd));
                 isAllocatedAuxBytesKnown = true;
             }
             if (size > allocatedAuxBytes) {
-                allocatedAuxBytes = allocate(auxFd, size);
+                allocatedAuxBytes = allocate(auxFd, allocatedAuxBytes, size);
             }
         }
         if (auxMapSize < allocatedAuxBytes) {
@@ -654,6 +679,32 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     .put(']');
         }
         return column.getContiguousAuxAddr(hi) - columnTypeDriver.getAuxVectorOffset(top);
+    }
+
+    /**
+     * Writes the aux entries of source rows {@code [lo, hi)}, shifted by {@code shift} onto this column's data offsets,
+     * at the aux offset of target row {@code appendOffsetRowCount}: shifted into the write buffer and written from
+     * there, a buffer's worth of rows at a time. A chunk's aux size counts every entry the chunk needs, so with an N+1
+     * aux vector consecutive chunks write their shared boundary entry twice, with the same value.
+     */
+    private void writeShiftedAux(long shift, long srcAuxAddr, long lo, long hi, long appendOffsetRowCount) {
+        long rowsPerChunk = ColumnWriteBuffer.MAX_SIZE >> 3;
+        while (rowsPerChunk > 1 && columnTypeDriver.getAuxVectorSize(rowsPerChunk) > ColumnWriteBuffer.MAX_SIZE) {
+            rowsPerChunk >>= 1;
+        }
+        final long buffer = writeBuffer.reserve(columnTypeDriver.getAuxVectorSize(Math.min(hi - lo, rowsPerChunk)));
+        for (long chunkLo = lo; chunkLo < hi; chunkLo += rowsPerChunk) {
+            final long chunkHi = Math.min(chunkLo + rowsPerChunk, hi);
+            final long chunkAuxSize = columnTypeDriver.getAuxVectorSize(chunkHi - chunkLo);
+            columnTypeDriver.shiftCopyAuxVector(shift, srcAuxAddr, chunkLo, chunkHi - 1, buffer, chunkAuxSize);
+            ColumnWriteBuffer.write(
+                    ff,
+                    auxFd,
+                    buffer,
+                    chunkAuxSize,
+                    columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount + (chunkLo - lo))
+            );
+        }
     }
 
     private long sourceDataSize(long auxAddr, long lo, long hi) {

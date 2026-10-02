@@ -98,6 +98,16 @@ public final class Files {
         return allocate(toOsFd(fd), size);
     }
 
+    /**
+     * Grows the file to {@code size} bytes, allocating only from {@code allocatedSize}: the caller knows the file
+     * already holds that many bytes. Growing a file from offset 0 is not free over the part already allocated - XFS
+     * opens a transaction for every extent in the range - so a caller that tracks its file's length should grow it
+     * this way rather than with {@link #allocate(long, long)}.
+     */
+    public static boolean allocate(long fd, long allocatedSize, long size) {
+        return allocateRange(toOsFd(fd), allocatedSize, size);
+    }
+
     public static long append(long fd, long address, long len) {
         return append(toOsFd(fd), address, len);
     }
@@ -622,6 +632,8 @@ public final class Files {
     }
 
     private native static boolean allocate(int fd, long size);
+
+    private native static boolean allocateRange(int fd, long offset, long size);
 
     private native static long append(int fd, long address, long len);
 

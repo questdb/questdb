@@ -47,6 +47,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     protected final FilesFacade ff;
     private final int fileOpts;
     private final boolean mixedIOFlag;
+    private final ColumnWriteBuffer writeBuffer = new ColumnWriteBuffer();
     // Introduce a flag to avoid double close, which will lead to very serious consequences.
     protected boolean closed;
     // The least length this column knows its file to have. Every write checks its end against this number instead of
@@ -109,24 +110,17 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         final long srcOffset = sourceLo << shl;
         final long dstOffset = appendOffsetRowCount << shl;
 
-        // Only a file source has an fd to copy from, so only it can take the kernel's fd-to-fd path and
-        // skip both mappings.
-        if (sourceStorageType == COLUMN_CONTIGUOUS_FILE && mixedIOFlag) {
-            ensureAllocated(dstOffset + size);
-            final long sourceFd = sourceColumn.getPrimaryFd();
-            if (ff.copyData(sourceFd, fd, srcOffset, dstOffset, size) != size) {
-                throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
-                        .put(", destOffset=").put(dstOffset)
-                        .put(", size=").put(size)
-                        .put(", fileSize=").put(ff.length(fd))
-                        .put(", srcFd=").put(sourceFd)
-                        .put(", srcOffset=").put(srcOffset)
-                        .put(", srcFileSize=").put(ff.length(sourceFd))
-                        .put(", columnIndex=").put(columnIndex)
-                        .put(", dstColumnTop=").put(columnTop)
-                        .put(", srcColumnTop=").put(sourceColumn.getColumnTop())
-                        .put(']');
+        if (mixedIOFlag) {
+            // Positioned writes, which grow the file as they go: no allocation and no mapping of the target. Only a
+            // file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            if (sourceStorageType == COLUMN_CONTIGUOUS_FILE) {
+                copyFromFile(sourceColumn, srcOffset, dstOffset, size);
+            } else if (sourceColumn.isTimestampIndex()) {
+                writeFromTimestampIndex(sourceColumn.getContiguousDataAddr(sourceHi), sourceLo, sourceHi, dstOffset);
+            } else {
+                ColumnWriteBuffer.write(ff, fd, sourceColumn.getContiguousDataAddr(sourceHi) + srcOffset, size, dstOffset);
             }
+            noteWritten(dstOffset + size);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsync(fd);
             }
@@ -304,6 +298,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 ff.close(fd);
                 fd = -1;
             }
+            writeBuffer.close();
             closed = true;
 
             if (recycleBin != null && !recycleBin.isClosed()) {
@@ -406,7 +401,11 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void reserve(long rowLo, long rowHi, long dataBytes) {
+    public void reserve(long rowLo, long rowHi, long dataBytes, boolean isMerging) {
+        if (mixedIOFlag && !isMerging) {
+            // Every write is a positioned append, which grows the file itself and maps nothing.
+            return;
+        }
         // Fixed width: the rows alone say how long the file gets, whatever is written into them.
         final long rows = rowHi - columnTop;
         if (rows > 0) {
@@ -443,25 +442,67 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         return mapAddr;
     }
 
+    private void copyFromFile(FrameColumn sourceColumn, long srcOffset, long dstOffset, long size) {
+        final long sourceFd = sourceColumn.getPrimaryFd();
+        if (ff.copyData(sourceFd, fd, srcOffset, dstOffset, size) != size) {
+            throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
+                    .put(", destOffset=").put(dstOffset)
+                    .put(", size=").put(size)
+                    .put(", fileSize=").put(ff.length(fd))
+                    .put(", srcFd=").put(sourceFd)
+                    .put(", srcOffset=").put(srcOffset)
+                    .put(", srcFileSize=").put(ff.length(sourceFd))
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(", dstColumnTop=").put(columnTop)
+                    .put(", srcColumnTop=").put(sourceColumn.getColumnTop())
+                    .put(']');
+        }
+    }
+
     /**
      * Makes the file at least {@code size} bytes long. A no-op when a previous call already grew it that far: the file
      * only ever grows, and only through this column, so the length it reached is the length it still has. The first
-     * call of an open asks the file its length, so a file already long enough is not allocated again.
+     * call of an open asks the file its length, so a file already long enough is not allocated again, and every call
+     * after allocates only past that length.
      */
     private void ensureAllocated(long size) {
         if (size > allocatedBytes) {
             if (!isAllocatedBytesKnown) {
-                allocatedBytes = Math.max(0, ff.length(fd));
+                // Positioned writes may have grown the file past what was asked for so far.
+                allocatedBytes = Math.max(allocatedBytes, ff.length(fd));
                 isAllocatedBytesKnown = true;
                 if (size <= allocatedBytes) {
                     return;
                 }
             }
             size = Files.ceilPageSize(size);
-            if (!ff.allocate(fd, size)) {
+            // Only the growth: the file already holds allocatedBytes, and allocating from 0 would cost every extent
+            // the file has, not just the new ones.
+            if (!ff.allocate(fd, allocatedBytes, size)) {
                 throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
             }
             allocatedBytes = size;
+        }
+    }
+
+    /**
+     * A positioned write grows the file to its own end, so the file is at least that long now.
+     */
+    private void noteWritten(long fileOffsetHi) {
+        allocatedBytes = Math.max(allocatedBytes, fileOffsetHi);
+    }
+
+    /**
+     * De-interleaves the timestamps of rows {@code [lo, hi)} out of an O3 sort index into the write buffer and writes
+     * them at {@code dstOffset}, a buffer's worth at a time.
+     */
+    private void writeFromTimestampIndex(long indexAddr, long lo, long hi, long dstOffset) {
+        final long rowsPerChunk = ColumnWriteBuffer.MAX_SIZE >> shl;
+        final long buffer = writeBuffer.reserve((hi - lo) << shl);
+        for (long chunkLo = lo; chunkLo < hi; chunkLo += rowsPerChunk) {
+            final long chunkHi = Math.min(chunkLo + rowsPerChunk, hi);
+            Vect.copyFromTimestampIndex(indexAddr, chunkLo, chunkHi - 1, buffer);
+            ColumnWriteBuffer.write(ff, fd, buffer, (chunkHi - chunkLo) << shl, dstOffset + ((chunkLo - lo) << shl));
         }
     }
 
