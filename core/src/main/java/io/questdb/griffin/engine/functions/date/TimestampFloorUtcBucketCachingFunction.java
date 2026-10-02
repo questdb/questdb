@@ -34,7 +34,8 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
 
 /**
- * Base for timestamp_floor_utc() with a constant named time zone, the function that calendar-aligned
+ * Base for timestamp_floor_utc() and timestamp_floor() with a constant named time zone.
+ * timestamp_floor() stays uncached. timestamp_floor_utc() is the function that calendar-aligned
  * SAMPLE BY with a TIME ZONE clause groups by. It remembers the bucket of the last floored
  * timestamp along with the range of timestamps known to floor to it. SAMPLE BY feeds timestamps
  * in order, so most rows land in the bucket of the previous row. A subclass checks the range
@@ -154,7 +155,7 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
     /**
      * Returns the width of the floor's buckets when all of them have the same width and
      * {@code add()} steps from one bucket boundary to the next one, zero otherwise. Calendar
-     * units and sub-resolution strides (e.g. nanoseconds on a micro column) yield zero.
+     * units and nanosecond strides on a microsecond column yield zero.
      */
     private static long computeFixedBucketWidth(
             TimestampDriver timestampDriver,
