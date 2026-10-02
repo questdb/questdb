@@ -87,9 +87,11 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
         }
         this.nearMissDistance = width / 8;
         // The near-miss distance of a bucket narrower than 8 units is zero, so no two misses
-        // count as near each other and the function has no bucket to store. Such a function
-        // stays uncached and thread-safe: a positive bucketWidth implies a positive
-        // nearMissDistance.
+        // count as near each other and a cache has nothing to gain. Such a function stays
+        // uncached and thread-safe: a positive bucketWidth implies a positive nearMissDistance.
+        // Zeroing the width also rules out the one bucket that a zero distance would still let
+        // the function store: isNearLastMiss() takes a first miss at timestamp 0 for a near
+        // one, because the distance to the initial lastMissTimestamp overflows.
         this.bucketWidth = nearMissDistance > 0 ? width : 0;
     }
 

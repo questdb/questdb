@@ -100,12 +100,13 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
     };
     private static final String[] STRIDES = {
             "250T", "1s", "5s", "1m", "15m", "17m", "1h", "7h", "1d", "3d",
-            // never cached: a bucket too narrow to hold several timestamps, calendar units and
-            // nanosecond strides on a micro column. The micro driver floors the latter in a
+            // not cached on a micro column: a bucket too narrow to hold several timestamps,
+            // calendar units and nanosecond strides. The micro driver floors the latter in a
             // nanosecond domain, where a non-zero offset moves the buckets of a whole-micro
             // stride (7000n and 11_000n are 7 and 11 micros wide) off the grid that the cache's
-            // fixed-width arithmetic assumes.
-            "1U", "1w", "1M", "1y", "500n", "7000n", "11_000n",
+            // fixed-width arithmetic assumes. A nano column caches all of them except the
+            // calendar units and 5n, which is too narrow there as well.
+            "1U", "1w", "1M", "1y", "5n", "500n", "7000n", "11_000n",
     };
 
     @Test
@@ -170,116 +171,44 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
 
     @Test
     public void testParallelSampleByWithNamedTimeZone() throws Exception {
-        // Workers must floor through their own clones of the caching function. A function shared
-        // by workers that scan different page frames serves one worker the bucket another worker
-        // cached, which moves rows to wrong buckets. The table is large and the page frames are
-        // small, so that several workers floor timestamps of different buckets at the same time.
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
-        assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(
-                    pool,
-                    (engine, _, sqlExecutionContext) -> {
-                        // one row per second, 1,000 hours starting at MICROS_2026
-                        engine.execute(
-                                """
-                                        CREATE TABLE x AS (
-                                            SELECT timestamp_sequence('2026-01-01', 1_000_000) ts
-                                            FROM long_sequence(3_600_000)
-                                        ) TIMESTAMP(ts) PARTITION BY DAY
-                                        """,
-                                sqlExecutionContext
-                        );
-
-                        final StringSink expected = new StringSink();
-                        expected.put("ts\tcount\n");
-                        for (int i = 0; i < 1_000; i++) {
-                            MicrosFormatUtils.appendDateTimeUSec(expected, MICROS_2026 + i * Micros.HOUR_MICROS);
-                            expected.put("\t3600\n");
-                        }
-
-                        assertQuery("SELECT ts, count() FROM x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
-                                .withEngine(engine)
-                                .withContext(sqlExecutionContext)
-                                .noLeakCheck()
-                                .timestamp("ts")
-                                .expectSize()
-                                .withPlan("""
-                                        Encode sort light
-                                          keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
-                                              values: [count(*)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                        """)
-                                .returns(expected);
-                    },
-                    configuration,
-                    LOG
-            );
-        });
+        // Workers must floor through their own clones of the caching function. With a function
+        // shared by workers that scan different page frames, one worker reads the cached bucket
+        // while another worker replaces it, which pairs the range of one bucket with the result
+        // of another and moves rows to wrong buckets. The table is large and the page frames
+        // are small, so that several workers floor timestamps of different buckets at the same
+        // time. The table holds one row per second, 1,000 hours starting at MICROS_2026.
+        assertParallelSampleBy(
+                """
+                        CREATE TABLE x AS (
+                            SELECT timestamp_sequence('2026-01-01', 1_000_000) ts
+                            FROM long_sequence(3_600_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """,
+                "1h",
+                Micros.HOUR_MICROS
+        );
     }
 
     @Test
     public void testParallelSampleByWithNarrowStride() throws Exception {
         // A bucket narrower than 8 units is not cached, so workers share a single function
-        // instance. That instance must not hold a bucket: a bucket stored by one worker would
-        // serve the other workers, which moves rows to wrong buckets. Many rows share each
-        // timestamp, the input most likely to make a function store such a narrow bucket.
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
-        assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(
-                    pool,
-                    (engine, _, sqlExecutionContext) -> {
-                        // 720 rows per microsecond, 5,000 microseconds starting at MICROS_2026
-                        engine.execute(
-                                """
-                                        CREATE TABLE x AS (
-                                            SELECT (1_767_225_600_000_000 + (x - 1) / 720)::TIMESTAMP ts
-                                            FROM long_sequence(3_600_000)
-                                        ) TIMESTAMP(ts) PARTITION BY DAY
-                                        """,
-                                sqlExecutionContext
-                        );
-
-                        // The first timestamp and the standard offset of the time zone are
-                        // multiples of 5 microseconds, so the buckets start at MICROS_2026.
-                        final StringSink expected = new StringSink();
-                        expected.put("ts\tcount\n");
-                        for (int i = 0; i < 1_000; i++) {
-                            MicrosFormatUtils.appendDateTimeUSec(expected, MICROS_2026 + i * 5);
-                            expected.put("\t3600\n");
-                        }
-
-                        assertQuery("SELECT ts, count() FROM x SAMPLE BY 5U ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
-                                .withEngine(engine)
-                                .withContext(sqlExecutionContext)
-                                .noLeakCheck()
-                                .timestamp("ts")
-                                .expectSize()
-                                .withPlan("""
-                                        Encode sort light
-                                          keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('5U',ts,null,'00:00','Europe/Berlin')]
-                                              values: [count(*)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                        """)
-                                .returns(expected);
-                    },
-                    configuration,
-                    LOG
-            );
-        });
+        // instance. This test floors through that shared instance on several workers and checks
+        // every bucket. Cloned functions return the same rows, so it does not tell whether the
+        // workers share the instance: testThreadSafety pins that, and
+        // testThreadSafeFunctionKeepsNoState pins that the shared instance holds no bucket.
+        // The table holds 720 rows per microsecond, 5,000 microseconds starting at MICROS_2026.
+        // That timestamp and the standard offset of the time zone are multiples of 5
+        // microseconds, so the buckets start at MICROS_2026.
+        assertParallelSampleBy(
+                """
+                        CREATE TABLE x AS (
+                            SELECT (1_767_225_600_000_000 + (x - 1) / 720)::TIMESTAMP ts
+                            FROM long_sequence(3_600_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """,
+                "5U",
+                5
+        );
     }
 
     @Test
@@ -333,8 +262,8 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
 
             // A function stores a bucket on the second of two misses that are closer to each
             // other than 1/8 of the bucket width. A bucket narrower than 8 units of the timestamp
-            // resolution rounds that distance down to zero, so the function could never store it
-            // and stays uncached. A bucket of 8 units is the narrowest cached one.
+            // resolution rounds that distance down to zero, so a cache has nothing to gain and the
+            // function stays uncached. A bucket of 8 units is the narrowest cached one.
             assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "1U", "Europe/Berlin");
             assertThreadSafety(true, utcFactory, ColumnType.TIMESTAMP_MICRO, "7U", "Europe/Berlin");
             assertThreadSafety(false, utcFactory, ColumnType.TIMESTAMP_MICRO, "8U", "Europe/Berlin");
@@ -506,14 +435,23 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
         return shuffled;
     }
 
-    // the values of the function's primitive instance fields, the inherited ones included
+    // The values of the function's primitive instance fields and the identities of the objects
+    // that its other instance fields refer to, the inherited ones included. The state of those
+    // objects is out of reach.
     private static String stateOf(Function func) throws IllegalAccessException {
         final StringSink sink = new StringSink();
         for (Class<?> c = func.getClass(); c != Object.class; c = c.getSuperclass()) {
             for (Field field : c.getDeclaredFields()) {
-                if (field.getType().isPrimitive() && !Modifier.isStatic(field.getModifiers())) {
+                if (!Modifier.isStatic(field.getModifiers())) {
                     field.setAccessible(true);
-                    sink.put(field.getName()).put('=').put(String.valueOf(field.get(func))).put(';');
+                    final Object value = field.get(func);
+                    sink.put(field.getName()).put('=');
+                    if (field.getType().isPrimitive()) {
+                        sink.put(String.valueOf(value));
+                    } else {
+                        sink.put(System.identityHashCode(value));
+                    }
+                    sink.put(';');
                 }
             }
         }
@@ -607,6 +545,50 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
                 }
             }
         }
+    }
+
+    // Runs SAMPLE BY with the stride and a named time zone on 4 workers over small page frames.
+    // The table must hold 3,600 rows for each of 1,000 buckets, the first one at MICROS_2026.
+    private void assertParallelSampleBy(String ddl, String stride, long bucketWidth) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(ddl, sqlExecutionContext);
+
+                        final StringSink expected = new StringSink();
+                        expected.put("ts\tcount\n");
+                        for (int i = 0; i < 1_000; i++) {
+                            MicrosFormatUtils.appendDateTimeUSec(expected, MICROS_2026 + i * bucketWidth);
+                            expected.put("\t3600\n");
+                        }
+
+                        assertQuery("SELECT ts, count() FROM x SAMPLE BY " + stride + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .expectSize()
+                                .withPlan("""
+                                        Encode sort light
+                                          keys: [ts]
+                                            Async Group By workers: 4
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('%s',ts,null,'00:00','Europe/Berlin')]
+                                              values: [count(*)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                                        """.formatted(stride))
+                                .returns(expected);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private static class TimestampHolder extends TimestampFunction {
