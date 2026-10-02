@@ -43,6 +43,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
@@ -68,6 +69,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     // groups bind are owned as they always were.
     @Nullable
     private final CachedWindowMapGroups windowMapGroups;
+    @Nullable
+    private final ObjList<SymbolFunction> windowSymbolFunctions;
     private ObjList<WindowFunction> allFunctions;
     private RecordCursorFactory base;
     private CachedWindowRecordCursor cursor;
@@ -85,7 +88,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull IntList columnIndexes,
             @NotNull final ObjList<IntList> sortKeys,
             @NotNull GenericRecordMetadata chainMetadata,
-            @Nullable CachedWindowMapGroups windowMapGroups
+            @Nullable CachedWindowMapGroups windowMapGroups,
+            @Nullable ObjList<SymbolFunction> windowSymbolFunctions
     ) {
         super(metadata);
         RecordArray recordChain = null;
@@ -95,6 +99,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         this.windowMapGroups = windowMapGroups;
         try {
             this.base = base;
+            this.windowSymbolFunctions = windowSymbolFunctions;
             this.orderedGroupCount = comparators.size();
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
@@ -309,6 +314,16 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    // Symmetric with the streaming WindowRecordCursor, whose AbstractVirtualFunctionRecordCursor
+    // base notifies every function on cursor close. Window function args cache cursor-scoped
+    // native state (e.g. json_extract's UTF-8 sink); cursorClosed() releases it and the next
+    // execution's init() re-inflates it.
+    private void cursorClosedFunctions() {
+        for (int i = 0, n = allFunctions.size(); i < n; i++) {
+            allFunctions.getQuick(i).cursorClosed();
+        }
+    }
+
     private void resetFunctions() {
         for (int i = 0, n = allFunctions.size(); i < n; i++) {
             allFunctions.getQuick(i).reset();
@@ -375,6 +390,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     Misc.free(sortBuffers.getQuick(i));
                 }
                 resetFunctions();
+                cursorClosedFunctions();
                 // Symmetric with the reopen in of(): each group hands its map backing back to
                 // the tracker that was bound when it was allocated. Reached on a failed open
                 // too, where a group that never got as far as reopen() frees a closed map.
@@ -397,6 +413,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
+            if (windowSymbolFunctions != null) {
+                final SymbolFunction function = windowSymbolFunctions.getQuiet(columnIndex);
+                if (function != null) {
+                    return function;
+                }
+            }
             return baseCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
@@ -411,6 +433,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
+            if (windowSymbolFunctions != null) {
+                final SymbolFunction function = windowSymbolFunctions.getQuiet(columnIndex);
+                if (function != null) {
+                    return function.newSymbolTable();
+                }
+            }
             return baseCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 

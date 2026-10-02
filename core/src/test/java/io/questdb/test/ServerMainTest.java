@@ -1029,6 +1029,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.join.context.pool.capacity\tQDB_CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.join.metadata.max.resizes\tQDB_CAIRO_SQL_JOIN_METADATA_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.join.metadata.page.size\tQDB_CAIRO_SQL_JOIN_METADATA_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.join.symbol.translation.cache.capacity\tQDB_CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.sql.latest.by.row.count\tQDB_CAIRO_SQL_LATEST_BY_ROW_COUNT\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.map.max.pages\tQDB_CAIRO_SQL_MAP_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.map.max.resizes\tQDB_CAIRO_SQL_MAP_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
@@ -1084,6 +1085,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.sort.value.max.pages\tQDB_CAIRO_SQL_SORT_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.value.page.size\tQDB_CAIRO_SQL_SORT_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.string.function.buffer.max.size\tQDB_CAIRO_SQL_STRING_FUNCTION_BUFFER_MAX_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.subsample.max.rows\tQDB_CAIRO_SQL_SUBSAMPLE_MAX_ROWS\t100000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.cached.light.enabled\tQDB_CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.map.fusion.enabled\tQDB_CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED\ttrue\tdefault\tfalse\ttrue\n" +
                                     "cairo.sql.window.column.pool.capacity\tQDB_CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
@@ -1537,6 +1539,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.apply.suspended.tables\tQDB_CAIRO_WAL_APPLY_SUSPENDED_TABLES\t\tdefault\tfalse\ttrue\n" +
                                     "cairo.sql.symbol.pattern.index.enabled\tQDB_CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.symbol.pattern.index.threshold\tQDB_CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.all.partition.operations.allowed\tQDB_CAIRO_SQL_ALL_PARTITION_OPERATIONS_ALLOWED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "griffin.query.continuation.wake.interval\tQDB_GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL\t1000\tdefault\tfalse\tfalse"
                     )
                             .split("\n");

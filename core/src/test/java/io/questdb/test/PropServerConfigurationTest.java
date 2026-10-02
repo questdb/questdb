@@ -267,6 +267,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlJoinSymbolTranslationCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortValueMaxBytes());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
@@ -3249,6 +3250,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(42, configuration.getSqlAsOfJoinLookAhead());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinMapEvacuationThreshold());
+        Assert.assertEquals(2000, configuration.getSqlJoinSymbolTranslationCacheCapacity());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getSqlSortValuePageSize());
         Assert.assertEquals(678L * 1024 * 1024, configuration.getSqlSortValueMaxBytes());
         Assert.assertEquals(1000000, configuration.getWorkStealTimeoutNanos());
@@ -3382,6 +3384,51 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(10 * Numbers.SIZE_1MB, configuration.getWalMaxLagSize());
         Assert.assertEquals(50, configuration.getWalMaxSegmentFileDescriptorsCache());
+    }
+
+    @Test
+    public void testSubsampleMaxRowsDefaultAndOverride() throws Exception {
+        Properties properties = new Properties();
+        Assert.assertEquals(100_000_000L, newPropServerConfiguration(properties).getCairoConfiguration().getSubsampleMaxRows());
+
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "42");
+        Assert.assertEquals(42L, newPropServerConfiguration(properties).getCairoConfiguration().getSubsampleMaxRows());
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsAboveIntMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "2147483648");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
     }
 
     private PropServerConfiguration.ValidationResult validate(Properties properties) {

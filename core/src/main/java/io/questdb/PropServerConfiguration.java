@@ -506,6 +506,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropWorkerPoolConfiguration sharedWorkerPoolWriteConfiguration = new PropWorkerPoolConfiguration("shared-write");
     private final String snapshotInstanceId;
     private final long spinLockTimeout;
+    private final boolean sqlAllPartitionOperationsAllowed;
     private final int sqlAsOfJoinEvacuationThreshold;
     private final int sqlAsOfJoinLookahead;
     private final int sqlAsOfJoinShortCircuitCacheCapacity;
@@ -553,6 +554,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinContextPoolCapacity;
     private final int sqlJoinMetadataMaxResizes;
     private final int sqlJoinMetadataPageSize;
+    private final int sqlJoinSymbolTranslationCacheCapacity;
     private final long sqlLatestByRowCount;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
@@ -599,6 +601,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlStrFunctionBufferMaxSize;
     private final boolean sqlSymbolPatternIndexEnabled;
     private final int sqlSymbolPatternIndexThreshold;
+    private final long subsampleMaxRows;
     private final int sqlTimerShardCount;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
@@ -1711,6 +1714,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 64);
             this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
             this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
+            this.sqlJoinSymbolTranslationCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 1_000_000);
             // divisor-only RecordChain page: clamp at 1 (no fixed block to enforce; 1 byte is safe).
             this.sqlSortValuePageSize = Math.max(1, getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216));
             this.sqlSortValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES,
@@ -1803,6 +1807,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
             this.sqlSymbolPatternIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED, true);
             this.sqlSymbolPatternIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, 100);
+            this.sqlAllPartitionOperationsAllowed = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ALL_PARTITION_OPERATIONS_ALLOWED, false);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
             this.sqlQueryRegistryPoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE, 256);
             this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 3);
@@ -1903,6 +1908,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
+            this.subsampleMaxRows = getLong(properties, env, PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS, 100_000_000L);
+            if (this.subsampleMaxRows < 1 || this.subsampleMaxRows > Integer.MAX_VALUE) {
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath()
+                                + " must be between 1 and " + Integer.MAX_VALUE
+                );
+            }
             this.sqlWindowCachedLightEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
             this.sqlWindowMapFusionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, true);
             this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
@@ -5200,6 +5212,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlJoinSymbolTranslationCacheCapacity() {
+            return sqlJoinSymbolTranslationCacheCapacity;
+        }
+
+        @Override
         public long getSqlLatestByRowCount() {
             return sqlLatestByRowCount;
         }
@@ -5392,6 +5409,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getStrFunctionMaxBufferLength() {
             return sqlStrFunctionBufferMaxSize;
+        }
+
+        @Override
+        public long getSubsampleMaxRows() {
+            return subsampleMaxRows;
         }
 
         @Override
@@ -5637,6 +5659,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
+        }
+
+        @Override
+        public boolean isAllPartitionOperationsAllowed() {
+            return sqlAllPartitionOperationsAllowed;
         }
 
         @Override

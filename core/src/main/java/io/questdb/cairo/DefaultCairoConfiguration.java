@@ -1216,6 +1216,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJoinSymbolTranslationCacheCapacity() {
+        return 1_000_000;
+    }
+
+    @Override
     public long getSqlLatestByRowCount() {
         return 1000;
     }
@@ -1409,6 +1414,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getStrFunctionMaxBufferLength() {
         return 1024 * 1024;
+    }
+
+    @Override
+    public long getSubsampleMaxRows() {
+        return 100_000_000L;
     }
 
     @Override
@@ -1648,6 +1658,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
+    }
+
+    @Override
+    public boolean isAllPartitionOperationsAllowed() {
+        return false;
     }
 
     @Override

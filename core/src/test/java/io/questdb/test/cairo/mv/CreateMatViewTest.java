@@ -40,13 +40,17 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TableFunctionTestUtils;
+import io.questdb.test.tools.TableFunctionTestUtils.CloseCountingRecordCursorFactory;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -447,6 +451,82 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("column\tsymbolCapacity\nin\t2048\n");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewCursorFunctionClosedOnPostOptimiseRejection() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "ent_admin_cursor";
+            TableFunctionTestUtils.register(
+                    engine,
+                    functionName,
+                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    factories
+            );
+            try {
+                final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join " + functionName + "() sample by 30s) partition by day";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(
+                                sql.indexOf(functionName + "()"),
+                                "administrative function cannot be used in materialized view: " + functionName
+                        );
+                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
+                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
+                // newInstance() - cannot fire here. A constructed factory therefore pins the rejection on the
+                // post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the function name in the
+                // message can only come from SqlExecutionRequirements.getFunctionName(). That backstop throws
+                // after optimise() returned and before generation takes ownership of the factory, so the
+                // compile path itself has to close it - exactly once, since a second close would be a
+                // use-after-free.
+                assertEquals(1, factories.size());
+                assertEquals(1, factories.getQuick(0).getCloseCount());
+                assertNull(getMatViewDefinition("test"));
+
+                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // reference left behind in that state must not close the factory a second time.
+                execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
+                assertEquals(1, factories.getQuick(0).getCloseCount());
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewCursorFunctionClosedOnSuccess() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "plain_cursor";
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, factories);
+            try {
+                execute("create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join " + functionName + "() sample by 30s) partition by day");
+                assertNotNull(getMatViewDefinition("test"));
+
+                // Code generation took ownership of every instantiated cursor factory, so the compiled
+                // factory tree - and nothing else - closes each of them, exactly once.
+                assertTrue(factories.size() > 0);
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).getCloseCount());
+                }
+
+                // Clearing the pooled compiler's optimiser state on the next compile must not close the
+                // factories the compiled tree already owned and released.
+                execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).getCloseCount());
+                }
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
         });
     }
 
@@ -1227,6 +1307,42 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
             }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSubsample() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // The query carries the sampling interval a materialized view requires, so the SUBSAMPLE
+            // clause is the only thing the validator can refuse. Value-inspecting methods name the
+            // completed projection's alias: the base column is not visible above the aggregation.
+            final ObjList<String> methods = new ObjList<>(
+                    "uniform(2)",
+                    "cadence(2)",
+                    "cadence(2, 7)",
+                    "lttb(av, 2)",
+                    "lttb(av, 2, '2h')",
+                    "m4(av, 2)",
+                    "minmax(av, 2)",
+                    "sdt(av, 0.5)"
+            );
+            for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                final String method = methods.getQuick(methodIndex);
+                assertQuery("create materialized view test as (select ts, avg(v) av from " + TABLE1 + " sample by 1h subsample " + method + ") partition by day")
+                        .noLeakCheck()
+                        .fails(80, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            }
+            // SUBSAMPLE one level above the base-table aggregation: sub-query, CTE, and inside the sub-query
+            assertQuery("create materialized view test as (select ts, av from (select ts, avg(v) av from " + TABLE1 + " sample by 1h) subsample uniform(2)) partition by day")
+                    .noLeakCheck()
+                    .fails(101, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            assertQuery("create materialized view test as (with d as (select ts, avg(v) av from " + TABLE1 + " sample by 1h) select ts, av from d subsample uniform(2)) partition by day")
+                    .noLeakCheck()
+                    .fails(113, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            assertQuery("create materialized view test as (select ts, av from (select ts, avg(v) av from " + TABLE1 + " sample by 1h subsample uniform(2))) partition by day")
+                    .noLeakCheck()
+                    .fails(100, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
         });
     }
 

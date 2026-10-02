@@ -585,6 +585,17 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table timer_commit (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=1000, o3MaxLag=1s");
 
+            // Freeze the engine clock so the commit-interval timer is driven
+            // explicitly by the test rather than by wall-clock time. Both the
+            // receiver and the per-table commit deadline read this same clock,
+            // so while it is frozen the interval-based commit provably cannot
+            // fire. This removes the race where a slow agent lets the short
+            // commit interval elapse inside the very runSerially() call that
+            // first processes the datagram, committing the row before the test
+            // can observe it still buffered.
+            final long baseMicros = 1_700_000_000_000_000L;
+            setCurrentMicros(baseMicros);
+
             try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("timer_commit")
@@ -595,10 +606,8 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
                 // UDP loopback delivery is not synchronous with send(): the datagram may
                 // still be in flight through the kernel after the sender has closed. Spin
-                // until the receiver observes it. This is safe even under the short commit
-                // interval configured here because nextCommitTime stays at Long.MAX_VALUE
-                // until the first datagram is processed, so the interval-based commit
-                // cannot fire during the wait.
+                // until the receiver observes it. The clock is frozen, so no interval-based
+                // commit can fire during this wait.
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
                 boolean received = false;
                 while (System.nanoTime() < deadline) {
@@ -614,13 +623,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returnsOnce("count\n0\n");
 
-                TestUtils.assertEventually(() -> {
-                    receiver.runSerially();
-                    drainWalQueue();
-                    assertQuery("SELECT count() FROM timer_commit")
-                            .noLeakCheck()
-                            .returnsOnce("count\n1\n");
-                }, 5);
+                // Advance the clock past the commit interval; the next serial run
+                // fires the interval-based commit and the row becomes visible.
+                setCurrentMicros(baseMicros + TimeUnit.SECONDS.toMicros(1));
+                receiver.runSerially();
+                drainWalQueue();
+                assertQuery("SELECT count() FROM timer_commit")
+                        .noLeakCheck()
+                        .returnsOnce("count\n1\n");
             }
         });
     }
