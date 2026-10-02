@@ -115,19 +115,6 @@ public class Decimal128Test {
         Assert.assertThrows(NumericException.class, () -> max.add(new Decimal128(0, 0, 1)));
     }
 
-    @Test
-    public void testAdditionZeroOperandRejectsOutOfRangeValue() {
-        // Adding zero must not let an out-of-range accumulator through unchecked.
-        // The first value comes from a CI fuzz failure: its magnitude is close to 2^127.
-        // of() skips range validation, the same way Rnd.nextDecimal128() builds its values.
-        Decimal128 value = new Decimal128();
-        value.of(-9_223_372_035_656_489_587L, -8_707_179_752_654_087_226L, 0);
-        assertZeroOperandRejects(value);
-        value = new Decimal128();
-        value.of(Long.MAX_VALUE, -1L, 0);
-        assertZeroOperandRejects(value);
-    }
-
     @Test(expected = NumericException.class)
     public void testBigDecimalOverflow() {
         BigDecimal bd = new BigDecimal("1e100");
@@ -2110,6 +2097,19 @@ public class Decimal128Test {
         Decimal128 mod = Decimal128.fromLong(1000, 2); // 10.00 with scale 2
         accumulator.modulo(mod);
         Assert.assertEquals(5.0, accumulator.toDouble(), 0.01);
+    }
+
+    @Test
+    public void testZeroOperandRejectsOutOfRangeValue() {
+        // Adding or subtracting zero must not let an out-of-range accumulator through unchecked.
+        // The first value comes from a CI fuzz failure: its magnitude is close to 2^127.
+        // of() skips range validation, the same way Rnd.nextDecimal128() builds its values.
+        Decimal128 value = new Decimal128();
+        value.of(-9_223_372_035_656_489_587L, -8_707_179_752_654_087_226L, 0);
+        assertZeroOperandRejects(value);
+        value = new Decimal128();
+        value.of(Long.MAX_VALUE, -1L, 0);
+        assertZeroOperandRejects(value);
     }
 
     private static void assertZeroOperandRejects(Decimal128 value) {

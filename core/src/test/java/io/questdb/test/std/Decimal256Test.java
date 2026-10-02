@@ -144,18 +144,6 @@ public class Decimal256Test {
         Assert.assertThrows(NumericException.class, () -> max.add(new Decimal256(0, 0, 0, 0, 1)));
     }
 
-    @Test
-    public void testAdditionZeroOperandRejectsOutOfRangeValue() {
-        // Adding zero must not let an out-of-range accumulator through unchecked.
-        // of() skips range validation.
-        Decimal256 value = new Decimal256();
-        value.of(Decimal256.MIN_VALUE.getHh() - 1, 0, 0, 0, 0);
-        assertZeroOperandRejects(value);
-        value = new Decimal256();
-        value.of(Decimal256.MAX_VALUE.getHh() + 1, 0, 0, 0, 0);
-        assertZeroOperandRejects(value);
-    }
-
     @Test(expected = NumericException.class)
     public void testBigDecimalOverflow() {
         BigDecimal bd = new BigDecimal("1e100");
@@ -3195,6 +3183,18 @@ public class Decimal256Test {
         Assert.assertEquals(0L, result.getLl());
     }
 
+    @Test
+    public void testZeroOperandRejectsOutOfRangeValue() {
+        // Adding or subtracting zero must not let an out-of-range accumulator through unchecked.
+        // of() skips range validation.
+        Decimal256 value = new Decimal256();
+        value.of(Decimal256.MIN_VALUE.getHh() - 1, 0, 0, 0, 0);
+        assertZeroOperandRejects(value);
+        value = new Decimal256();
+        value.of(Decimal256.MAX_VALUE.getHh() + 1, 0, 0, 0, 0);
+        assertZeroOperandRejects(value);
+    }
+
     private static void assertParsedZero(
             String value,
             int precision,
@@ -3213,8 +3213,6 @@ public class Decimal256Test {
         Assert.assertEquals(value + " scale", expectedScale, Numbers.decodeHighInt(metadata));
     }
 
-    // Reconstructs the unsigned 256-bit value the four raw limbs encode, so a BigInteger oracle can
-    // mirror uncheckedSubtract's two's-complement (mod 2^256) arithmetic regardless of sign.
     private static void assertZeroOperandRejects(Decimal256 value) {
         Assert.assertTrue(value.hasOverflowed());
         for (int zeroScale = 0; zeroScale <= 3; zeroScale += 3) {
@@ -3232,6 +3230,8 @@ public class Decimal256Test {
         }
     }
 
+    // Reconstructs the unsigned 256-bit value the four raw limbs encode, so a BigInteger oracle can
+    // mirror uncheckedSubtract's two's-complement (mod 2^256) arithmetic regardless of sign.
     private static BigInteger unsigned256(Decimal256 d) {
         return unsigned64(d.getHh()).shiftLeft(192)
                 .or(unsigned64(d.getHl()).shiftLeft(128))
