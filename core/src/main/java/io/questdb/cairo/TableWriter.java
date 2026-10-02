@@ -324,6 +324,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
+    private final boolean walApplySortPlanEnabled;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -479,6 +480,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
+        this.walApplySortPlanEnabled = configuration.isWalApplySortPlanEnabled();
         this.engine = cairoEngine;
         this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         this.isInCtorRecovery = true;
@@ -11093,21 +11095,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", maxTs=").$ts(timestampDriver, maxTs)
                     .I$();
 
-            long indexFormat = Vect.radixSortManySegmentsIndexAsc(
-                    timestampAddr,
-                    o3TimestampMemCpy.addressOf(0),
-                    tsAddresses.getAddress(),
-                    (int) tsAddresses.size(),
-                    segmentCopyInfo.getTxnInfoAddress(),
-                    segmentCopyInfo.getTxnCount(),
-                    segmentCopyInfo.getMaxTxRowCount(),
-                    0,
-                    0,
-                    minTs,
-                    maxTs,
-                    totalRows,
-                    needsDedup ? Vect.DEDUP_INDEX_FORMAT : Vect.SHUFFLE_INDEX_FORMAT
-            );
+            long indexFormat = needsDedup || !walApplySortPlanEnabled
+                    ? -1
+                    : processWalCommitBlock_sortWalSegmentTimestamps_sortByPlan(timestampAddr, tsAddresses.getAddress());
+
+            if (!Vect.isIndexSuccess(indexFormat)) {
+                indexFormat = Vect.radixSortManySegmentsIndexAsc(
+                        timestampAddr,
+                        o3TimestampMemCpy.addressOf(0),
+                        tsAddresses.getAddress(),
+                        (int) tsAddresses.size(),
+                        segmentCopyInfo.getTxnInfoAddress(),
+                        segmentCopyInfo.getTxnCount(),
+                        segmentCopyInfo.getMaxTxRowCount(),
+                        0,
+                        0,
+                        minTs,
+                        maxTs,
+                        totalRows,
+                        needsDedup ? Vect.DEDUP_INDEX_FORMAT : Vect.SHUFFLE_INDEX_FORMAT
+                );
+            }
 
             // the result of the sort is sort index. The format of the index is different
             // if the dedup is needed. See comments on Vect.DEDUP_INDEX_FORMAT and Vect.SHUFFLE_INDEX_FORMAT
@@ -11583,6 +11591,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     th
             );
         }
+    }
+
+    // Builds the shuffle index by copying the sorted, non-overlapping transactions and sorting only the
+    // overlapping ones. Returns a failed index format when the plan is not worth it or cannot be used,
+    // the caller sorts all the rows then.
+    private long processWalCommitBlock_sortWalSegmentTimestamps_sortByPlan(long timestampAddr, long tsAddresses) {
+        if (!segmentCopyInfo.buildSortPlan()) {
+            return -1;
+        }
+        final long totalRows = segmentCopyInfo.getTotalRows();
+        final long indexFormat = Vect.sortManySegmentsIndexByPlan(
+                timestampAddr,
+                o3TimestampMemCpy.addressOf(0),
+                tsAddresses,
+                segmentCopyInfo.getSegmentsAddress(),
+                segmentCopyInfo.getSegmentCount(),
+                segmentCopyInfo.getTxnInfoAddress(),
+                segmentCopyInfo.getTxnCount(),
+                segmentCopyInfo.getMaxTxRowCount(),
+                segmentCopyInfo.getSortPlanItemsAddress(),
+                segmentCopyInfo.getSortPlanItemCount(),
+                segmentCopyInfo.getSortPlanTxnsAddress(),
+                segmentCopyInfo.getSortPlanTxnCount(),
+                totalRows
+        );
+        if (Vect.isIndexSuccess(indexFormat)) {
+            LOG.info().$("sorted by plan [table=").$(tableToken)
+                    .$(", rows=").$(totalRows)
+                    .$(", copiedRows=").$(segmentCopyInfo.getSortPlanCopyRows())
+                    .$(", planItems=").$(segmentCopyInfo.getSortPlanItemCount())
+                    .I$();
+        } else {
+            LOG.info().$("could not sort by plan, sorting all rows [table=").$(tableToken)
+                    .$(", rows=").$(totalRows)
+                    .$(", indexFormat=").$(indexFormat)
+                    .I$();
+        }
+        return indexFormat;
     }
 
     private void processWalCommitDedupReplace(

@@ -633,6 +633,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED("cairo.wal.apply.parallel.sql.enabled"),
     CAIRO_WAL_APPLY_SUSPENDED_TABLES("cairo.wal.apply.suspended.tables"),
     CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED("cairo.wal.apply.suspended.write.denied"),
+    CAIRO_WAL_APPLY_SORT_PLAN_ENABLED("cairo.wal.apply.sort.plan.enabled"),
     GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL("griffin.query.continuation.wake.interval"),
     CAIRO_TIMER_SHARDS("cairo.timer.shards"),
     READ_ONLY_INSTANCE("readonly"),

@@ -1390,6 +1390,15 @@ public interface CairoConfiguration {
 
     boolean isWalApplyParallelSqlEnabled();
 
+    /**
+     * When true, a block of WAL transactions is not radix sorted as a whole. Transactions which are already
+     * sorted and do not overlap with other transactions are copied in order, only the overlapping ones are
+     * sorted. Configured via {@code cairo.wal.apply.sort.plan.enabled}.
+     */
+    default boolean isWalApplySortPlanEnabled() {
+        return true;
+    }
+
     boolean isWalSupported();
 
     boolean isWriterMixedIOEnabled();

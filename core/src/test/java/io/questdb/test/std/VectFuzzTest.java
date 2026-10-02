@@ -2001,7 +2001,7 @@ public class VectFuzzTest {
                             Unsafe.putLong(segmentAddr + (c * rowsPerCommit + r) * 2L * Long.BYTES, ts);
                             ts += tsIncrement;
                         }
-                        segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s, startTs, ts - tsIncrement);
+                        segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s, startTs, ts - tsIncrement, true);
                     }
                     segmentCopyInfo.addSegment(1, s, 0, commits * rowsPerCommit, false);
                 }
