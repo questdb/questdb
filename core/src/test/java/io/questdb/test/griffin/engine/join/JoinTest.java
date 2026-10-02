@@ -2811,6 +2811,27 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardRefLeftJoinAcrossOuterJoinBeforeFullJoin() throws Exception {
+        // LEFT JOIN g1 reads CROSS JOIN g5, but FULL JOIN g2 and RIGHT JOIN g3 sit between them, so g5
+        // cannot execute before g1. The optimiser keeps LEFT JOIN g1 unpinned and the query fails to
+        // resolve the forward reference instead of returning rows that break JOIN g4 ON a4 = a1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            execute("CREATE TABLE g5 (a5 INT, b5 INT)");
+            execute("CREATE TABLE g6 (a6 INT, b6 INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 LEFT JOIN g1 ON a1 = a5 AND a1 <= a0 FULL JOIN g2 ON b2 = b1 AND a2 < a0 RIGHT JOIN g3 ON a3 = a2 AND a3 = b1 JOIN g4 ON a4 = a1 AND a4 = b0 AND b4 < b2 CROSS JOIN g5 FULL JOIN g6 ON b6 > b2",
+                    38,
+                    "Invalid column: a5"
+            );
+        });
+    }
+
+    @Test
     public void testForwardRefLeftJoinBeforeFullJoin() throws Exception {
         // LEFT JOIN g1 reads JOIN g3, which reads CROSS JOIN g2. The optimiser unpinned LEFT JOIN g1, so
         // FULL JOIN g4 lost the edge to its prefix and the query failed with "Invalid column: a3". Now
@@ -2851,8 +2872,15 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE g1 (a1 INT, b1 INT)");
             execute("CREATE TABLE g2 (a2 INT, b2 INT)");
             execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
             assertExceptionNoLeakCheck(
                     "SELECT * FROM g0 LEFT JOIN g1 ON a1 < a2 JOIN g2 ON a2 = b1 FULL JOIN g3 ON a3 < a0",
+                    38,
+                    "Invalid column: a2"
+            );
+            // the read-back may be indirect: g1 reads g2, g2 reads g3, g3 reads g1
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 LEFT JOIN g1 ON a1 < a2 JOIN g2 ON a2 = b3 JOIN g3 ON a3 = b1 FULL JOIN g4 ON a4 < a0",
                     38,
                     "Invalid column: a2"
             );
@@ -10295,6 +10323,28 @@ public class JoinTest extends AbstractCairoTest {
                     84,
                     "Invalid column: a2"
             );
+            // keyed on a1 = b0, LEFT JOIN g1 stays a LEFT JOIN rather than a cross-left join, and stays
+            // pinned the same way: CROSS JOIN g3 executes before it
+            final String expected = """
+                    a0\tb0\ta1\tb1\ta3\tb3\ta4\tb4\ta5\tb5
+                    3\t4\tnull\tnull\tnull\t3\t4\tnull\tnull\tnull
+                    3\t4\tnull\tnull\t4\tnull\t4\tnull\tnull\tnull
+                    3\t4\tnull\tnull\tnull\t2\t4\tnull\tnull\tnull
+                    null\t1\t1\t2\tnull\t3\tnull\tnull\tnull\tnull
+                    null\t1\tnull\tnull\t4\tnull\tnull\tnull\tnull\tnull
+                    null\t1\tnull\tnull\tnull\t2\tnull\tnull\tnull\tnull
+                    3\t2\tnull\tnull\tnull\t3\t4\tnull\tnull\tnull
+                    3\t2\tnull\tnull\t4\tnull\t4\tnull\tnull\tnull
+                    3\t2\tnull\tnull\tnull\t2\t4\tnull\tnull\tnull
+                    """;
+            assertQuery("SELECT a0, b0, a1, b1, a3, b3, a4, b4, a5, b5 FROM (SELECT * FROM (SELECT * FROM g0 CROSS JOIN g3 LEFT JOIN g1 ON a1 = b0 AND b1 < b3) FULL JOIN g4 ON a4 > a0) LEFT JOIN g5 ON a5 = b0 AND a5 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM g0 LEFT JOIN g1 ON a1 = b0 AND b1 < b3 CROSS JOIN g3 FULL JOIN g4 ON a4 > a0 LEFT JOIN g5 ON a5 = b0 AND a5 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
