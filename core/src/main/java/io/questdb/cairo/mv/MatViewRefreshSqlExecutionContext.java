@@ -79,6 +79,12 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
     }
 
+    // The stored query spells each function call with parentheses, so a bare name is always a column.
+    @Override
+    public boolean allowBareNoArgFunctionCalls() {
+        return false;
+    }
+
     @Override
     public boolean allowNonDeterministicFunctions() {
         return false;
@@ -178,6 +184,11 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         // and then can be re-used in another execution context.
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0), 0);
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0), 0);
+    }
+
+    @Override
+    public void setAllowBareNoArgFunctionCalls(boolean value) {
+        // no-op
     }
 
     @Override

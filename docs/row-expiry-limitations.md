@@ -64,7 +64,8 @@ up the new column takes a drop and re-create.
 - **Pinned by:** `MatViewTest.testPassthroughSelectStarStoresExpandedColumns`,
   `MatViewTest.testPassthroughSelectStarKeepsColumnsWhenBaseGainsColumn`,
   `MatViewTest.testPassthroughWildcardSpellingsStoreExpandedColumns`,
-  `MatViewTest.testPassthroughShowCreateRoundTrips`.
+  `MatViewTest.testPassthroughShowCreateRoundTrips`,
+  `MatViewTest.testBareFunctionNameColumnLossInvalidatesView`.
 - **Follow-up:** add new base columns to the view automatically.
 
 A wildcard that repeats a column the select list also names, such as

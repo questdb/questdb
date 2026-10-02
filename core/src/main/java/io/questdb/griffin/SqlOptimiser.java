@@ -272,6 +272,10 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<ObjList<QueryColumn>> windowColumnListPool = new ObjectPool<>(ObjList::new, 16);
     // Hash map for O(1) window function deduplication lookup: hash -> list of QueryColumns with that hash
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
+    // While non-null, rewriteTopLevelLiteralsToFunctions() records the name and position of each bare name in
+    // the query's own text that it reads as a call to a zero-argument function; see setBareNoArgCallSink().
+    private ObjList<String> bareNoArgCallNames;
+    private IntList bareNoArgCallPositions;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
     // Index of the SUBSAMPLE mirror scope currently reserving names; 0 outside a wrapper walk.
@@ -287,6 +291,12 @@ public class SqlOptimiser implements Mutable {
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
+    // Number of optimise() calls in progress: optimiseExpressionModels() calls optimise() for each sub-query
+    // used in an expression.
+    private int optimiseDepth;
+    // True while optimise() runs on a sub-query that belongs to the SQL of a regular view inlined into the
+    // query, rather than to the query's own text; see optimiseExpressionModels().
+    private boolean optimisingViewText;
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
 
@@ -7750,14 +7760,19 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // viewText is true when the model belongs to the SQL of a regular view inlined into the query: the
+    // model carries the view's originating name, or lies below one that does. The sub-queries optimised here
+    // inherit it through optimisingViewText.
     private void optimiseExpressionModels(
             IQueryModel model,
             SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback
+            SqlParserCallback sqlParserCallback,
+            boolean viewText
     ) throws SqlException {
         if (!model.isOptimisable()) {
             return;
         }
+        viewText = viewText || model.getOriginatingViewNameExpr() != null;
         ObjList<ExpressionNode> expressionModels = model.getExpressionModels();
         final int n = expressionModels.size();
         if (n > 0) {
@@ -7766,7 +7781,14 @@ public class SqlOptimiser implements Mutable {
                 // for expression models that have been converted to
                 // the joins, the query model will be set to null.
                 if (node.queryModel != null) {
-                    IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
+                    final boolean outerViewText = optimisingViewText;
+                    optimisingViewText = viewText;
+                    final IQueryModel optimised;
+                    try {
+                        optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
+                    } finally {
+                        optimisingViewText = outerViewText;
+                    }
                     if (optimised != node.queryModel) {
                         node.queryModel = optimised;
                     }
@@ -7775,7 +7797,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         if (model.getNestedModel() != null) {
-            optimiseExpressionModels(model.getNestedModel(), executionContext, sqlParserCallback);
+            optimiseExpressionModels(model.getNestedModel(), executionContext, sqlParserCallback, viewText);
         }
 
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
@@ -7783,13 +7805,13 @@ public class SqlOptimiser implements Mutable {
         // as usual, we already optimised self (index=0), now optimised others
         if (m > 1) {
             for (int i = 1; i < m; i++) {
-                optimiseExpressionModels(joinModels.getQuick(i), executionContext, sqlParserCallback);
+                optimiseExpressionModels(joinModels.getQuick(i), executionContext, sqlParserCallback, viewText);
             }
         }
 
         // call out to union models
         if (model.getUnionModel() != null) {
-            optimiseExpressionModels(model.getUnionModel(), executionContext, sqlParserCallback);
+            optimiseExpressionModels(model.getUnionModel(), executionContext, sqlParserCallback, viewText);
         }
     }
 
@@ -14089,14 +14111,21 @@ public class SqlOptimiser implements Mutable {
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
-    // if columns do not exist
-    private void rewriteTopLevelLiteralsToFunctions(IQueryModel model) {
+    // if columns do not exist. ownText is false for a model from the SQL of a regular view inlined into the
+    // query, which always reads such a name as a function call, so the view means the same wherever it is read.
+    // In the query's own text a bare name becomes a function call only while allowBareNoArgCalls is true;
+    // otherwise it stays a column reference and fails to resolve when the column does not exist.
+    private void rewriteTopLevelLiteralsToFunctions(IQueryModel model, boolean ownText, boolean allowBareNoArgCalls) {
         if (!model.isOptimisable()) {
             return;
         }
         final IQueryModel nested = model.getNestedModel();
         if (nested != null) {
-            rewriteTopLevelLiteralsToFunctions(nested);
+            rewriteTopLevelLiteralsToFunctions(
+                    nested,
+                    ownText && nested.getOriginatingViewNameExpr() == null,
+                    allowBareNoArgCalls
+            );
             final ObjList<QueryColumn> columns = model.getColumns();
             final int n = columns.size();
             if (n > 0) {
@@ -14108,8 +14137,13 @@ public class SqlOptimiser implements Mutable {
                             continue;
                         }
 
-                        if (functionParser.getFunctionFactoryCache().isValidNoArgFunction(node)) {
+                        if ((!ownText || allowBareNoArgCalls)
+                                && functionParser.getFunctionFactoryCache().isValidNoArgFunction(node)) {
                             node.type = FUNCTION;
+                            if (ownText && bareNoArgCallPositions != null) {
+                                bareNoArgCallNames.add(Chars.toString(node.token));
+                                bareNoArgCallPositions.add(node.position);
+                            }
                         }
                     } else {
                         model.addField(qc);
@@ -15626,16 +15660,25 @@ public class SqlOptimiser implements Mutable {
             @Transient SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
+        if (optimiseDepth == 0 && bareNoArgCallPositions != null) {
+            bareNoArgCallNames.clear();
+            bareNoArgCallPositions.clear();
+        }
         if (!model.isOptimisable()) {
             return model;
         }
         IQueryModel rewrittenModel = model;
+        optimiseDepth++;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
-            optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
+            optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback, optimisingViewText);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewrittenModel = rewritePivot(rewrittenModel, sqlExecutionContext);
-            rewriteTopLevelLiteralsToFunctions(rewrittenModel);
+            rewriteTopLevelLiteralsToFunctions(
+                    rewrittenModel,
+                    !optimisingViewText,
+                    sqlExecutionContext.allowBareNoArgFunctionCalls()
+            );
             rewriteSampleByFromTo(rewrittenModel);
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
@@ -15690,6 +15733,8 @@ public class SqlOptimiser implements Mutable {
             // model that one of the rewrites above disconnected from the graph.
             SqlCompilerImpl.freePooledTableNameFunctions(queryModelPool, th);
             throw th;
+        } finally {
+            optimiseDepth--;
         }
     }
 
@@ -15707,6 +15752,15 @@ public class SqlOptimiser implements Mutable {
 
         // And then generate plan for UPDATE top level QueryModel
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
+    }
+
+    // Makes rewriteTopLevelLiteralsToFunctions() record each bare name in the query's own text that it reads as a
+    // function call, as the name and its position in the text, until called again with nulls. The outermost
+    // optimise() call clears both lists on entry, so they describe the last query optimised. clear() leaves
+    // the sink as it is: the caller that arms it disarms it.
+    void setBareNoArgCallSink(@Nullable ObjList<String> names, @Nullable IntList positions) {
+        this.bareNoArgCallNames = names;
+        this.bareNoArgCallPositions = positions;
     }
 
     void setPendingExpiryReadVersions(IntLongHashMap pendingExpiryReadVersions) {

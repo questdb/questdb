@@ -2004,6 +2004,219 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBareFunctionCallKeepsMeaningWhenBaseGainsColumn() throws Exception {
+        // The stored query calls pi() with its parentheses, so a column the base table gains later under the
+        // same name leaves the view computing the function.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, v double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            execute("create materialized view mv as (select ts, pi, avg(v) from base_price sample by 1d)");
+            drainQueues();
+
+            execute("alter table base_price add column pi double");
+            execute("insert into base_price values('gbpusd', 2.5, '2024-09-11T12:01', 7.0)");
+            drainQueues();
+            execute("refresh materialized view mv full");
+            drainQueues();
+            assertQuery("select view_sql, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_sql\tview_status\nselect ts, pi(), avg(v) from base_price sample by 1d\tvalid\n");
+            assertQuery("mv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tpi\tavg
+                            2024-09-10T00:00:00.000000Z\t3.141592653589793\t1.5
+                            2024-09-11T00:00:00.000000Z\t3.141592653589793\t2.5
+                            """));
+        });
+    }
+
+    @Test
+    public void testBareFunctionCallStoredWithParentheses() throws Exception {
+        // A bare name the query reads as a call to a zero-argument function is stored with its parentheses. The
+        // refresh reads every bare name in the stored query as a column, so the parentheses keep the call.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, v double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            final String[] queries = {
+                    "select ts, pi, avg(v) from base_price sample by 1d",
+                    "select ts, \"pi\", avg(v) from base_price sample by 1d",
+                    "select *, pi from base_price",
+                    "select ts, avg(v) from base_price where v < (select pi from long_sequence(1)) sample by 1d",
+                    "select ts, avg(v) from base_price where v < (select pi from long_sequence(1))" +
+                            " and v <> (select pi from long_sequence(1)) sample by 1d",
+                    "select ts, PI, avg(v) from base_price sample by 1d"
+            };
+            for (int i = 0; i < queries.length; i++) {
+                execute("create materialized view mv" + i + " as (" + queries[i] + ")");
+            }
+            drainQueues();
+            assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_sql\tview_status
+                            mv0\tselect ts, pi(), avg(v) from base_price sample by 1d\tvalid
+                            mv1\tselect ts, pi(), avg(v) from base_price sample by 1d\tvalid
+                            mv2\tselect "sym", "v", "ts", pi() from base_price\tvalid
+                            mv3\tselect ts, avg(v) from base_price where v < (select pi() from long_sequence(1)) sample by 1d\tvalid
+                            mv4\tselect ts, avg(v) from base_price where v < (select pi() from long_sequence(1)) and v <> (select pi() from long_sequence(1)) sample by 1d\tvalid
+                            mv5\tselect ts, PI(), avg(v) from base_price sample by 1d\tvalid
+                            """);
+            assertQuery("mv0")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tpi\tavg\n2024-09-10T00:00:00.000000Z\t3.141592653589793\t1.5\n"));
+            assertQuery("mv2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("sym\tv\tts\tpi\ngbpusd\t1.5\t2024-09-10T12:01:00.000000Z\t3.141592653589793\n"));
+            assertQuery("mv4")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tavg\n2024-09-10T00:00:00.000000Z\t1.5\n"));
+
+            // SHOW CREATE prints the stored call, and running that output again recreates the same view.
+            printSql("show create materialized view mv0");
+            final String ddl = sink.toString().substring(sink.toString().indexOf('\n') + 1).trim();
+            execute("drop materialized view mv0");
+            drainQueues();
+            execute(ddl);
+            drainQueues();
+            printSql("select view_sql from materialized_views where view_name = 'mv0'");
+            Assert.assertEquals(
+                    "select ts, pi(), avg(v) from base_price sample by 1d",
+                    sink.toString().substring("view_sql\n".length()).trim()
+            );
+            assertQuery("mv0")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tpi\tavg\n2024-09-10T00:00:00.000000Z\t3.141592653589793\t1.5\n"));
+        });
+    }
+
+    @Test
+    public void testBareFunctionCallsStayAllowedOnContextAfterCreate() throws Exception {
+        // CREATE compiles the stored query with bare names read as columns on the caller's own context, which
+        // the connection goes on using; the context reads bare function names as calls again afterwards.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, v double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view mv as (select ts, pi, avg(v) from base_price sample by 1d)");
+            assertQuery("select pi from long_sequence(1)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("pi\n3.141592653589793\n");
+
+            final String sql = "create materialized view price_copy as (select ts, * from base_price)";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf('*'),
+                    "could not expand the wildcard of the materialized view query, list the columns explicitly [error=Invalid column: ts1]"
+            );
+            assertQuery("select pi from long_sequence(1)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("pi\n3.141592653589793\n");
+        });
+    }
+
+    @Test
+    public void testBareFunctionNameColumnLossInvalidatesView() throws Exception {
+        // A base column named like a zero-argument function stays a column reference in the stored query. Once
+        // the base drops or renames it, the refresh fails to resolve the name instead of calling version().
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"select sym, version, ts from base_price", "alter table base_price drop column version", "[12]"},
+                    {"select sym, version, ts from base_price", "alter table base_price rename column version to version_x", "[12]"},
+                    {"select * from base_price", "alter table base_price drop column version", "[14]"},
+                    {"select sym, \"version\", ts from base_price", "alter table base_price drop column version", "[12]"},
+                    {"select ts, version, avg(v) from base_price sample by 1d", "alter table base_price drop column version", "[11]"}
+            };
+            for (String[] c : cases) {
+                executeWithRewriteTimestamp(
+                        "create table base_price (" +
+                                "sym varchar, version varchar, v double, ts #TIMESTAMP" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+                execute("insert into base_price values('gbpusd', 'v1', 1.5, '2024-09-10T12:01')");
+                execute("create materialized view mv as (" + c[0] + ")");
+                drainQueues();
+                assertQuery("select view_status from materialized_views")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("view_status\nvalid\n");
+
+                execute(c[1]);
+                drainQueues();
+                execute("refresh materialized view mv full");
+                drainQueues();
+                assertQuery("select view_status, invalidation_reason from materialized_views")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("view_status\tinvalidation_reason\ninvalid\t" + c[2] + ": Invalid column: version\n");
+
+                execute("drop materialized view mv");
+                execute("drop table base_price");
+                drainQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testBareFunctionNameInRegularViewStaysFunctionCall() throws Exception {
+        // A regular view's own SQL keeps reading a bare function name as a call when a materialized view reads
+        // the view, both in its select list and in a sub-query, so the view means the same wherever it is read.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, v double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            execute("create view v_price as select ts, sym, pi, v from base_price");
+            execute("create view v_price_sub as select ts, sym, v from base_price where v < (select pi from long_sequence(1))");
+            execute("create materialized view mv_pi as (select ts, pi, avg(v) from v_price sample by 1d)");
+            execute("create materialized view mv_sub as (select ts, avg(v) from v_price_sub sample by 1d)");
+            drainQueues();
+            assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_sql\tview_status
+                            mv_pi\tselect ts, pi, avg(v) from v_price sample by 1d\tvalid
+                            mv_sub\tselect ts, avg(v) from v_price_sub sample by 1d\tvalid
+                            """);
+            assertQuery("mv_pi")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tpi\tavg\n2024-09-10T00:00:00.000000Z\t3.141592653589793\t1.5\n"));
+            assertQuery("mv_sub")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tavg\n2024-09-10T00:00:00.000000Z\t1.5\n"));
+        });
+    }
+
+    @Test
     public void testBaseTableInvalidateOnAttachPartition() throws Exception {
         final String partition = "2024-01-01";
         testBaseTableInvalidateOnOperation(

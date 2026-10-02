@@ -90,6 +90,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjList<WindowContextImpl> windowContexts = new ObjList<>();
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
+    private boolean allowBareNoArgFunctionCalls = true;
     private boolean allowNonDeterministicFunction = true;
     private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -159,6 +160,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
         windowContexts.add(windowContext);
+    }
+
+    @Override
+    public boolean allowBareNoArgFunctionCalls() {
+        return allowBareNoArgFunctionCalls;
     }
 
     @Override
@@ -609,6 +615,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setAllowBareNoArgFunctionCalls(boolean value) {
+        this.allowBareNoArgFunctionCalls = value;
+    }
+
+    @Override
     public void setAllowNonDeterministicFunction(boolean value) {
         this.allowNonDeterministicFunction = value;
     }
@@ -858,6 +869,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
+        this.allowBareNoArgFunctionCalls = true;
         this.allowNonDeterministicFunction = true;
         this.intervalPlanGeneration = 0;
         this.validationOnly = false;
