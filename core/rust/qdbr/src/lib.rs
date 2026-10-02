@@ -28,16 +28,22 @@ extern crate core;
 pub extern crate jni;
 
 pub mod allocator;
+#[cfg(feature = "jni-exports")]
 pub mod ffi;
+#[cfg(feature = "jni-exports")]
 pub mod files;
 pub mod parquet;
 pub mod parquet_metadata;
 pub mod parquet_read;
 pub mod parquet_write;
+#[cfg(feature = "jni-exports")]
 pub mod qwp_zstd;
+#[cfg(feature = "jni-exports")]
 mod wal_lock;
 
+#[cfg(feature = "jni-exports")]
 use jni::sys::jlong;
+#[cfg(feature = "jni-exports")]
 use jni::{objects::JClass, JNIEnv};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::LazyLock;
@@ -58,11 +64,13 @@ pub static POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
 });
 
 // Static size eq assertion: Ensures we can write pointers in place of jlong in our signatures.
+#[cfg(feature = "jni-exports")]
 const _: fn() = || {
     let _ = core::mem::transmute::<jlong, *const i32>;
 };
 
 #[no_mangle]
+#[cfg(feature = "jni-exports")]
 pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JClass) {
     if std::env::var("RUST_BACKTRACE").is_err() {
         std::env::set_var("RUST_BACKTRACE", "1");
@@ -70,6 +78,7 @@ pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JCl
 }
 
 #[no_mangle]
+#[cfg(feature = "jni-exports")]
 pub extern "system" fn Java_io_questdb_std_Os_smokeTest(
     _env: JNIEnv,
     _class: JClass,
@@ -80,6 +89,7 @@ pub extern "system" fn Java_io_questdb_std_Os_smokeTest(
 }
 
 #[no_mangle]
+#[cfg(feature = "jni-exports")]
 pub extern "system" fn Java_io_questdb_std_Os_isRustReleaseBuild(
     _env: JNIEnv,
     _class: JClass,

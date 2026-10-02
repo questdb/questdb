@@ -11,6 +11,11 @@ rust-version = "nightly"
 name = "questdbr"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["jni-exports"]
+# Rust consumers disable JVM entry points and own their decoder resources.
+jni-exports = []
+
 [dependencies]
 qdb-core = { path = "../qdb-core" }
 qdb-parquet-meta = { path = "../qdb-parquet-meta" }

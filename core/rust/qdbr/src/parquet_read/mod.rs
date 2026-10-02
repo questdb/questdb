@@ -5,6 +5,7 @@ pub mod column_sink;
 pub mod decode;
 pub mod decode_column;
 pub mod decoders;
+#[cfg(feature = "jni-exports")]
 pub mod jni;
 pub mod meta;
 pub mod page;

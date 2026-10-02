@@ -22,9 +22,11 @@
  *
  ******************************************************************************/
 pub(crate) mod error;
+#[cfg(feature = "jni-exports")]
 pub(crate) mod io;
 pub mod qdb_metadata;
 
+pub use error::ParquetError;
 pub use qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 pub(crate) mod util;
 

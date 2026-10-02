@@ -7,9 +7,11 @@ pub(crate) mod encode;
 pub(crate) mod encoders;
 pub(crate) mod file;
 pub use file::ParquetWriter;
+#[cfg(feature = "jni-exports")]
 mod jni;
 pub mod schema;
 pub mod simd;
+#[cfg(feature = "jni-exports")]
 mod update;
 mod util;
 pub mod varchar;
