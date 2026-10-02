@@ -47,7 +47,9 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.SPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -59,6 +61,7 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -88,6 +91,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 public class LogFactoryTest {
 
@@ -1130,6 +1134,35 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testRollingFileWriterClosesWhenFinalFlushFails() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+        // resolve the global factory first, so its lazy initialization does not shift the baselines
+        LogFactory.getInstance();
+        final long loggerMemBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LOGGER);
+        final long openFilesBefore = Files.getOpenFileCount();
+
+        withRollingFileWriter(ff, ticks::get, logFile, writer -> {
+        }, (writer, queue, pubSeq) -> {
+            publishInfoRecord(queue, pubSeq, "lost");
+            Assert.assertTrue(writer.runSerially());
+
+            ff.isAppendFailing = true;
+            try {
+                writer.close();
+                Assert.fail("close must report the failed final flush");
+            } catch (LogError e) {
+                TestUtils.assertContains(e.getMessage(), "Could not append log");
+            }
+            // close() releases the buffer and the descriptor even though the final flush failed
+            Assert.assertEquals(loggerMemBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LOGGER));
+            Assert.assertEquals(openFilesBefore, Files.getOpenFileCount());
+        });
+    }
+
+    @Test
     public void testRollingFileWriterDateParse() {
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
@@ -1265,6 +1298,209 @@ public class LogFactoryTest {
                 TestUtils.assertEventually(() -> Assert.assertTrue(expectedLogFile.length() > 0), 5);
             }
         });
+    }
+
+    @Test
+    public void testRollingFileWriterReopensAfterFailedTimeRollWhenClockStepsBack() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File activeLogFile = new File(base + "mylog-2015-05-03.log");
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+
+        withRollingFileWriter(ff, ticks::get, logFile, writer -> writer.setRollEvery("hour"), (writer, queue, pubSeq) -> {
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "first");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            ff.isRenameFailing = true;
+            ticks.set(MicrosFormatUtils.parseTimestamp("2015-05-03T11:05:00.000Z"));
+            publishAndFailFlush(writer, queue, pubSeq, ticks, "second", "Could not rename");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // the wall clock steps back below the unchanged 11:00 roll deadline; the writer holds
+            // no descriptor, so the next flush must still roll and open a file before appending
+            ff.isRenameFailing = false;
+            ticks.set(MicrosFormatUtils.parseTimestamp("2015-05-03T10:50:00.000Z"));
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "third");
+            Assert.assertEquals(1, writer.getRolledCount());
+
+            // the reopen did not move the deadline, so the hourly roll still happens past 11:00
+            ticks.set(MicrosFormatUtils.parseTimestamp("2015-05-03T11:10:00.000Z"));
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "fourth");
+            Assert.assertEquals(2, writer.getRolledCount());
+        });
+
+        Assert.assertEquals("fourth", TestUtils.readStringFromFile(activeLogFile));
+        Assert.assertEquals("secondthird", TestUtils.readStringFromFile(new File(activeLogFile + ".1")));
+        Assert.assertEquals("first", TestUtils.readStringFromFile(new File(activeLogFile + ".2")));
+        Assert.assertFalse(new File(activeLogFile + ".3").exists());
+    }
+
+    @Test
+    public void testRollingFileWriterRetriesRollAfterExpiredLogRemovalFails() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File activeLogFile = new File(base + "mylog-2015-05-03.log");
+        final File expiredLogFile = new File(base + "mylog-expired.log");
+        TestUtils.writeStringToFile(expiredLogFile, "expired");
+        Assert.assertTrue(expiredLogFile.setLastModified(MicrosFormatUtils.parseTimestamp("2015-04-01T00:00:00.000Z") / Micros.MILLI_MICROS));
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+
+        withRollingFileWriter(ff, ticks::get, logFile, writer -> {
+            writer.setRollSize("1");
+            writer.setLifeDuration("1d");
+        }, (writer, queue, pubSeq) -> {
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "first");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            ff.isRemoveFailing = true;
+            publishAndFailFlush(writer, queue, pubSeq, ticks, "second", "cannot remove");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // once the cause clears, the next pass retries the whole roll and flushes the buffered record
+            ff.isRemoveFailing = false;
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(1, writer.getRolledCount());
+        });
+
+        Assert.assertFalse(expiredLogFile.exists());
+        Assert.assertEquals("second", TestUtils.readStringFromFile(activeLogFile));
+        Assert.assertEquals("first", TestUtils.readStringFromFile(new File(activeLogFile + ".1")));
+        Assert.assertFalse(new File(activeLogFile + ".2").exists());
+    }
+
+    @Test
+    public void testRollingFileWriterRetriesSizeRollAfterRenameFails() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File activeLogFile = new File(base + "mylog-2015-05-03.log");
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+
+        withRollingFileWriter(ff, ticks::get, logFile, writer -> writer.setRollSize("1"), (writer, queue, pubSeq) -> {
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "first");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            ff.isRenameFailing = true;
+            publishAndFailFlush(writer, queue, pubSeq, ticks, "second", "Could not rename");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // once the cause clears, the next pass retries the whole roll and flushes the buffered record
+            ff.isRenameFailing = false;
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(1, writer.getRolledCount());
+        });
+
+        Assert.assertEquals("second", TestUtils.readStringFromFile(activeLogFile));
+        Assert.assertEquals("first", TestUtils.readStringFromFile(new File(activeLogFile + ".1")));
+        Assert.assertFalse(new File(activeLogFile + ".2").exists());
+    }
+
+    @Test
+    public void testRollingFileWriterRetriesTimeRollAfterOpenFails() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File activeLogFile = new File(base + "mylog-2015-05-03.log");
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+
+        withRollingFileWriter(ff, ticks::get, logFile, writer -> writer.setRollEvery("hour"), (writer, queue, pubSeq) -> {
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "first");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // the hourly roll pushes the active file to .1, then cannot open the new one
+            ff.isOpenAppendFailing = true;
+            ticks.set(MicrosFormatUtils.parseTimestamp("2015-05-03T11:05:00.000Z"));
+            publishAndFailFlush(writer, queue, pubSeq, ticks, "second", "Cannot open file for append");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // the roll deadline has not moved, so the next pass retries the roll instead of appending
+            ff.isOpenAppendFailing = false;
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(1, writer.getRolledCount());
+
+            // the completed roll moves the deadline to the next hour
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "third");
+            Assert.assertEquals(1, writer.getRolledCount());
+        });
+
+        Assert.assertEquals("secondthird", TestUtils.readStringFromFile(activeLogFile));
+        Assert.assertEquals("first", TestUtils.readStringFromFile(new File(activeLogFile + ".1")));
+        Assert.assertFalse(new File(activeLogFile + ".2").exists());
+    }
+
+    @Test
+    public void testRollingFileWriterRetriesTimeRollAfterRenameFails() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File activeLogFile = new File(base + "mylog-2015-05-03.log");
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+
+        withRollingFileWriter(ff, ticks::get, logFile, writer -> writer.setRollEvery("hour"), (writer, queue, pubSeq) -> {
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "first");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // the hourly roll keeps the daily file name, so it has to push the active file to .1
+            ff.isRenameFailing = true;
+            ticks.set(MicrosFormatUtils.parseTimestamp("2015-05-03T11:05:00.000Z"));
+            publishAndFailFlush(writer, queue, pubSeq, ticks, "second", "Could not rename");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // the roll deadline has not moved, so the next pass retries the roll instead of
+            // appending to the descriptor the failed roll closed
+            ff.isRenameFailing = false;
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(1, writer.getRolledCount());
+
+            // the completed roll moves the deadline to the next hour
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "third");
+            Assert.assertEquals(1, writer.getRolledCount());
+        });
+
+        Assert.assertEquals("secondthird", TestUtils.readStringFromFile(activeLogFile));
+        Assert.assertEquals("first", TestUtils.readStringFromFile(new File(activeLogFile + ".1")));
+        Assert.assertFalse(new File(activeLogFile + ".2").exists());
+    }
+
+    @Test
+    public void testRollingFileWriterRetriesTimeRollWithRetryTimeFileName() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyyMMddHH}.log";
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+
+        withRollingFileWriter(ff, ticks::get, logFile, writer -> writer.setRollEvery("hour"), (writer, queue, pubSeq) -> {
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "first");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // the 11:05 roll cannot open the file named for hour 11
+            ff.isOpenAppendFailing = true;
+            ticks.set(MicrosFormatUtils.parseTimestamp("2015-05-03T11:05:00.000Z"));
+            publishAndFailFlush(writer, queue, pubSeq, ticks, "second", "Cannot open file for append");
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            // the retry happens in hour 12, so it must name the new file from the retry time
+            ff.isOpenAppendFailing = false;
+            ticks.set(MicrosFormatUtils.parseTimestamp("2015-05-03T12:05:00.000Z"));
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(1, writer.getRolledCount());
+
+            // the completed roll moves the deadline to 13:00
+            publishAndFlushInfoRecord(writer, queue, pubSeq, ticks, "third");
+            Assert.assertEquals(1, writer.getRolledCount());
+        });
+
+        Assert.assertEquals("first", TestUtils.readStringFromFile(new File(base + "mylog-2015050310.log")));
+        Assert.assertFalse(new File(base + "mylog-2015050311.log").exists());
+        Assert.assertEquals("secondthird", TestUtils.readStringFromFile(new File(base + "mylog-2015050312.log")));
+        Assert.assertFalse(new File(base + "mylog-2015050310.log.1").exists());
+        Assert.assertFalse(new File(base + "mylog-2015050312.log.1").exists());
     }
 
     @Test
@@ -1789,6 +2025,40 @@ public class LogFactoryTest {
         Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
     }
 
+    private void publishAndFailFlush(
+            LogRollingFileWriter writer,
+            RingQueue<LogRecordUtf8Sink> queue,
+            SPSequence pubSeq,
+            AtomicLong ticks,
+            String message,
+            String expectedError
+    ) {
+        publishInfoRecord(queue, pubSeq, message);
+        Assert.assertTrue(writer.runSerially());
+        ticks.addAndGet(2 * Micros.MILLI_MICROS);
+        try {
+            writer.runSerially();
+            Assert.fail("flush must fail");
+        } catch (LogError e) {
+            TestUtils.assertContains(e.getMessage(), expectedError);
+        }
+    }
+
+    private void publishAndFlushInfoRecord(
+            LogRollingFileWriter writer,
+            RingQueue<LogRecordUtf8Sink> queue,
+            SPSequence pubSeq,
+            AtomicLong ticks,
+            String message
+    ) {
+        publishInfoRecord(queue, pubSeq, message);
+        // the first pass buffers the record and arms the flush deadline
+        Assert.assertTrue(writer.runSerially());
+        ticks.addAndGet(2 * Micros.MILLI_MICROS);
+        // the second pass is past the deadline and flushes
+        Assert.assertTrue(writer.runSerially());
+    }
+
     private void publishInfoRecord(RingQueue<LogRecordUtf8Sink> queue, SPSequence pubSeq, String message) {
         final long cursor = pubSeq.next();
         Assert.assertTrue(cursor > -1);
@@ -2014,6 +2284,26 @@ public class LogFactoryTest {
             String rollSize,
             RollingWriterCode code
     ) throws Exception {
+        withRollingFileWriter(
+                TestFilesFacadeImpl.INSTANCE,
+                clock,
+                location,
+                writer -> {
+                    if (rollSize != null) {
+                        writer.setRollSize(rollSize);
+                    }
+                },
+                code
+        );
+    }
+
+    private void withRollingFileWriter(
+            FilesFacade ff,
+            MicrosecondClock clock,
+            String location,
+            Consumer<LogRollingFileWriter> configurator,
+            RollingWriterCode code
+    ) throws Exception {
         // resolve the global factory first, so its lazy initialization does not count as a leak
         final LogFactory factory = LogFactory.getInstance();
         TestUtils.assertMemoryLeak(() -> {
@@ -2028,16 +2318,14 @@ public class LogFactoryTest {
                 pubSeq.then(subSeq).then(pubSeq);
 
                 try (LogRollingFileWriter writer = new LogRollingFileWriter(
-                        TestFilesFacadeImpl.INSTANCE,
+                        ff,
                         clock,
                         queue,
                         subSeq,
                         LogLevel.INFO
                 )) {
                     writer.setLocation(location);
-                    if (rollSize != null) {
-                        writer.setRollSize(rollSize);
-                    }
+                    configurator.accept(writer);
                     writer.bindProperties(factory);
                     code.run(writer, queue, pubSeq);
                 }
@@ -2053,6 +2341,55 @@ public class LogFactoryTest {
     @FunctionalInterface
     private interface RollingWriterCode {
         void run(LogRollingFileWriter writer, RingQueue<LogRecordUtf8Sink> queue, SPSequence pubSeq) throws Exception;
+    }
+
+    // Fails rename, openAppend, removeQuiet or append on demand, and rejects appends to any
+    // descriptor it did not open or has already closed, so a stale fd never reaches the OS.
+    private static class RollFailureFilesFacade extends TestFilesFacadeImpl {
+        private final LongHashSet openFds = new LongHashSet();
+        private boolean isAppendFailing;
+        private boolean isOpenAppendFailing;
+        private boolean isRemoveFailing;
+        private boolean isRenameFailing;
+
+        @Override
+        public long append(long fd, long buf, long len) {
+            if (fd == -1 || !openFds.contains(fd)) {
+                throw new AssertionError("append to fd the writer does not hold open [fd=" + fd + ']');
+            }
+            if (isAppendFailing) {
+                return -1;
+            }
+            return super.append(fd, buf, len);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            openFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long openAppend(LPSZ name) {
+            if (isOpenAppendFailing) {
+                return -1;
+            }
+            final long fd = super.openAppend(name);
+            if (fd != -1) {
+                openFds.add(fd);
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            return !isRemoveFailing && super.removeQuiet(name);
+        }
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            return isRenameFailing ? Files.FILES_RENAME_ERR_OTHER : super.rename(from, to);
+        }
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {

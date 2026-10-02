@@ -221,20 +221,24 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void close() {
-        if (buf != 0) {
-            if (_wptr > buf) {
+        try {
+            if (buf != 0 && _wptr > buf) {
                 flush();
             }
-            Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
-            buf = 0;
+        } finally {
+            // release native resources even when the final flush fails
+            if (buf != 0) {
+                Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
+                buf = 0;
+            }
+            if (fd != -1 && ff.close(fd)) {
+                fd = -1;
+            }
+            Misc.free(path);
+            Misc.free(renameToPath);
+            Misc.free(logFileList);
+            Misc.free(logFileNameSink);
         }
-        if (ff.close(fd)) {
-            fd = -1;
-        }
-        Misc.free(path);
-        Misc.free(renameToPath);
-        Misc.free(logFileList);
-        Misc.free(logFileNameSink);
     }
 
     @TestOnly
@@ -319,15 +323,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     private void flush() {
         long ticks = Long.MIN_VALUE;
-        if (currentSize > nRollSize || (ticks = clock.getTicks()) > rollDeadline) {
-            ff.close(fd);
-            removeOldLogs();
-            if (ticks > rollDeadline) {
-                rollDeadline = rollDeadlineFunction.getDeadline();
-                locationParser.setDateValue(ticks);
-            }
-            openUniqueFile();
-            rolledCounter.incrementAndGet();
+        // fd is -1 after a failed roll; reading the clock first lets a pending time roll refresh its date and deadline
+        if (currentSize > nRollSize || (ticks = clock.getTicks()) > rollDeadline || fd == -1) {
+            roll(ticks);
         }
 
         int len = (int) (_wptr - buf);
@@ -508,6 +506,25 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             logFileList.clear();
             logFileList.resetCapacity();
         }
+    }
+
+    // A failed roll leaves fd at -1 and the deadline untouched, so the next flush retries the whole roll.
+    private void roll(long ticks) {
+        if (fd != -1) {
+            ff.close(fd);
+            fd = -1;
+        }
+        removeOldLogs();
+        final boolean isTimeRoll = ticks > rollDeadline;
+        if (isTimeRoll) {
+            // the new file name depends on the date, so setDateValue() must run before openUniqueFile()
+            locationParser.setDateValue(ticks);
+        }
+        openUniqueFile();
+        if (isTimeRoll) {
+            rollDeadline = rollDeadlineFunction.getDeadline();
+        }
+        rolledCounter.incrementAndGet();
     }
 
     @FunctionalInterface
