@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -175,7 +176,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final CharSequence value = cursor.getRecord().getStrA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = IntervalUtils.parseFloorLiteral(driver, value);
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
@@ -353,7 +354,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = IntervalUtils.parseFloorLiteral(driver, value == null ? null : value.asAsciiCharSequence());
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }

@@ -27,6 +27,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -35,7 +36,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlException;
@@ -52,7 +52,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.DoubleList;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
-import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Mutable;
@@ -4520,22 +4519,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         if (Chars.isQuoted(token)) {
             if (ColumnType.isTimestamp(predicateContext.columnType)) {
-                // Scalar comparison preserves a nanosecond literal against a
-                // microsecond column. The current IR compares raw I8 values;
-                // parsing at column precision would silently truncate the bound.
-                if (FunctionParser.getAdaptiveTimestampType(token, predicateContext.columnType) != predicateContext.columnType) {
-                    throw SqlException.position(position).put("unsupported mixed-precision timestamp constant: ").put(token);
-                }
+                // The IR compares raw I8 values at the column's precision, so it takes only a
+                // literal that precision represents exactly.
+                final TimestampDriver driver = ColumnType.getTimestampDriver(predicateContext.columnType);
+                final CharSequence literal = GenericLexer.unquote(token);
+                final long value;
                 try {
-                    putOperand(
-                            offset,
-                            IMM,
-                            I8_TYPE,
-                            ColumnType.getTimestampDriver(predicateContext.columnType).parseQuotedLiteral(token)
-                    );
+                    value = IntervalUtils.parseCeilLiteral(driver, literal);
+                    if (value != IntervalUtils.parseFloorLiteral(driver, literal)) {
+                        throw SqlException.position(position).put("unsupported mixed-precision timestamp constant: ").put(token);
+                    }
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }
+                putOperand(offset, IMM, I8_TYPE, value);
                 return;
             } else if (predicateContext.columnType == ColumnType.DATE) {
                 try {
@@ -4821,6 +4818,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         );
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
+        if (intervals.size() == 0) {
+            // An empty interval set keeps no row; the inverted range [1, 0] matches nothing.
+            intervals.add(1L, 0L);
+        }
 
         int orCount = -1;
         for (int i = 0, n = intervals.size(); i < n; i += 2) {

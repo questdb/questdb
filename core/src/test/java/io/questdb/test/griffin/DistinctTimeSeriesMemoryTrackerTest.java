@@ -32,48 +32,30 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
  * Exercises the per-query memory limit through {@link DistinctTimeSeriesRecordCursorFactory}'s
- * {@code dataMap}. The factory is only reachable with the distinct-to-GROUP BY rewrite disabled,
- * which has no production property and is overridden to false on the {@link CairoTestConfiguration}
- * for this test in {@link #setUpStatic()}; plain SELECT DISTINCT otherwise
- * rewrites to (Async) GROUP BY. With the rewrite off, SELECT DISTINCT over a random-access,
- * designated-timestamp base routes here. The dataMap clears on every designated-timestamp change,
- * so it only grows under duplicated timestamps; a constant-timestamp table makes it grow unbounded.
+ * {@code dataMap}. Plain SELECT DISTINCT becomes (Async) GROUP BY; a window function in the
+ * select list keeps DISTINCT, and a cached window over a designated-timestamp table gives it the
+ * random-access, timestamp-ordered base this factory needs. The dataMap clears on every
+ * designated-timestamp change, so it only grows under duplicated timestamps; a constant-timestamp
+ * table makes it grow unbounded.
  */
 public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        // Force DistinctTimeSeriesRecordCursorFactory: otherwise AggregateBinder.bindDistinct turns
-        // SELECT DISTINCT into (Async) GROUP BY and this factory never runs. The flag has
-        // no production property, so override it directly on the CairoConfiguration.
-        configurationFactory = (root, telemetry, overrides) ->
-                new CairoTestConfiguration(root, telemetry, overrides) {
-                    @Override
-                    public boolean isSqlDistinctGroupByRewriteEnabled() {
-                        return false;
-                    }
-                };
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUpLimit() {
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 3 * 1024 * 1024L);
     }
 
     @Test
     public void testFailsOnHighCardinality() throws Exception {
         // One shared timestamp: the dataMap never clears and grows with the distinct row
-        // count until it trips the per-query limit.
+        // count until it trips the per-query limit. The window alone stays under the limit.
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE tab AS (" +
@@ -82,7 +64,16 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
             drainWalQueue();
-            assertBreach("SELECT DISTINCT * FROM tab");
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT ts, v, max(v) OVER () m FROM tab", sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                long rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(100_000, rows);
+            }
+            assertBreach("SELECT DISTINCT ts, v, max(v) OVER () m FROM tab");
         });
     }
 
@@ -100,7 +91,7 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
             );
             drainWalQueue();
             try (SqlCompiler compiler = engine.getSqlCompiler();
-                 RecordCursorFactory factory = compiler.compile("SELECT DISTINCT * FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                 RecordCursorFactory factory = compiler.compile("SELECT DISTINCT ts, v, max(v) OVER () m FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
                 assertInTree(factory);
                 for (int i = 0; i < 20; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -121,17 +112,19 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
     public void testRoutesAndReturnsDistinctRows() throws Exception {
         // Monotonic timestamps: every row is distinct and the dataMap clears each step, so the scan
         // stays under the limit. The plan guard pins the run to DistinctTimeSeries; returns() self-leak-checks.
-        assertQuery("SELECT DISTINCT * FROM tab")
+        assertQuery("SELECT DISTINCT ts, v, max(v) OVER () m FROM tab")
                 .ddl("CREATE TABLE tab AS (SELECT (x * 1_000_000L)::timestamp ts, (x % 3)::long v FROM long_sequence(6)) TIMESTAMP(ts) PARTITION BY DAY")
                 .timestamp("ts")
                 .withPlanContaining("DistinctTimeSeries")
-                .returns("ts\tv\n" +
-                        "1970-01-01T00:00:01.000000Z\t1\n" +
-                        "1970-01-01T00:00:02.000000Z\t2\n" +
-                        "1970-01-01T00:00:03.000000Z\t0\n" +
-                        "1970-01-01T00:00:04.000000Z\t1\n" +
-                        "1970-01-01T00:00:05.000000Z\t2\n" +
-                        "1970-01-01T00:00:06.000000Z\t0\n");
+                .returns("""
+                        ts\tv\tm
+                        1970-01-01T00:00:01.000000Z\t1\t2
+                        1970-01-01T00:00:02.000000Z\t2\t2
+                        1970-01-01T00:00:03.000000Z\t0\t2
+                        1970-01-01T00:00:04.000000Z\t1\t2
+                        1970-01-01T00:00:05.000000Z\t2\t2
+                        1970-01-01T00:00:06.000000Z\t0\t2
+                        """);
     }
 
     private static void assertBreach(String sql) throws Exception {

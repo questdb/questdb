@@ -59,7 +59,6 @@ import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
-import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -78,7 +77,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -90,7 +88,6 @@ import static io.questdb.griffin.BindContext.isRowCount;
 import static io.questdb.griffin.BindContext.isWildcard;
 import static io.questdb.griffin.BindContext.joinColumnSource;
 import static io.questdb.griffin.BindContext.sourceAlias;
-import static io.questdb.griffin.LateralBinder.hasCorrelatedColumns;
 import static io.questdb.griffin.OrderBinder.hasComputedOrder;
 import static io.questdb.griffin.OrderBinder.hasProjectedOrder;
 import static io.questdb.griffin.OrderBinder.isRowCountOrder;
@@ -105,7 +102,6 @@ final class SqlBinder implements Closeable, Mutable {
     private static final int MAX_RETAINED_SUBQUERY_DEPTH = 8;
     final BindContext ctx;
     final JoinBinder joinBinder;
-    final LateralBinder lateralBinder;
     final SampleByBinder sampleByBinder;
     final TemporalJoinBinder temporalJoinBinder;
     private final AggregateBinder aggregateBinder;
@@ -114,12 +110,10 @@ final class SqlBinder implements Closeable, Mutable {
     private final ObjList<CharSequence> hintAliases = new ObjList<>();
     private final ObjList<QueryModel> hintAliasModels = new ObjList<>();
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<CharSequence>> hintScopes = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 4);
-    private final ObjectPool<LatestByPlan> latestByPlans = new ObjectPool<>(LatestByPlan.FACTORY, 4);
+    private final LateralBinder lateralBinder;
     private final OrderBinder orderBinder;
     private final IntList outputColumnPositions = new IntList();
     private final PivotBinder pivotBinder;
-    private final ObjectPool<ScanPlan> scans = new ObjectPool<>(ScanPlan.FACTORY, 4);
-    private final ObjectPool<SetOperationPlan> setOperations = new ObjectPool<>(SetOperationPlan.FACTORY, 4);
     private final IntList setTypes = new IntList();
     private final ObjList<SqlBinder> subqueryBinders = new ObjList<>();
     private final ObjList<RecordCursorFactory> subqueryFactories = new ObjList<>();
@@ -150,19 +144,17 @@ final class SqlBinder implements Closeable, Mutable {
         this.orderBinder = new OrderBinder(ctx, this);
         this.aggregateBinder = new AggregateBinder(ctx, this, orderBinder);
         this.windowBinder = new WindowBinder(ctx, this, aggregateBinder, compiler.getAsm(), compiler.getEntityColumnFilter());
-        this.lateralBinder = new LateralBinder(ctx, this, windowBinder, orderBinder, aggregateBinder);
-        this.joinBinder = new JoinBinder(ctx, this, lateralBinder, compiler.getScratchIds());
+        this.lateralBinder = new LateralBinder(ctx, this);
+        this.joinBinder = new JoinBinder(ctx, this, lateralBinder, compiler.getScratchIds(), compiler.getIndexScratch(),
+                compiler.getValueScratch(), compiler.getMasterKeyScratch(), compiler.getSlaveKeyScratch());
         this.sampleByBinder = new SampleByBinder(ctx, this, windowBinder, orderBinder, aggregateBinder, joinBinder);
-        this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, orderBinder, aggregateBinder, joinBinder, lateralBinder);
-        this.pivotBinder = new PivotBinder(ctx, this, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder, lateralBinder,
+        this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, orderBinder, aggregateBinder, joinBinder);
+        this.pivotBinder = new PivotBinder(ctx, this, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
                 compiler.getScratchSink());
     }
 
     @Override
     public void clear() {
-        latestByPlans.clear();
-        scans.clear();
-        setOperations.clear();
         updateTableColumnNames.clear();
         updateTableColumnTypes.clear();
         updateMetadataVersion = 0;
@@ -204,15 +196,6 @@ final class SqlBinder implements Closeable, Mutable {
     public void close() {
         clear();
         Misc.freeObjListAndClear(subqueryBinders);
-    }
-
-    @TestOnly
-    public int getRetainedSubqueryDepthForTesting() {
-        int depth = 0;
-        for (int i = 0, n = subqueryBinders.size(); i < n; i++) {
-            depth = Math.max(depth, 1 + subqueryBinders.getQuick(i).getRetainedSubqueryDepthForTesting());
-        }
-        return depth;
     }
 
     private static LogicalPlan columnSource(LogicalPlan plan, int id) {
@@ -293,19 +276,6 @@ final class SqlBinder implements Closeable, Mutable {
             }
         }
         return false;
-    }
-
-    private static boolean hasSameCorrelation(OutputSchema left, OutputSchema right) {
-        if (left.getCorrelatedAliasCount() != right.getCorrelatedAliasCount() || left.getColumnCount() != right.getColumnCount()) {
-            return false;
-        }
-        for (int i = 0, n = left.getCorrelatedAliasCount(); i < n; i++) {
-            final CharSequence name = left.getCorrelatedAliasName(i);
-            if (right.getCorrelatedColumnIndexQuiet(left.getCorrelatedAliasQualifier(i), name, 0, name.length()) != left.getCorrelatedAliasIndex(i)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static boolean isProjectionReference(ExpressionNode expression, OutputSchema source, OutputSchema scope) {
@@ -479,31 +449,16 @@ final class SqlBinder implements Closeable, Mutable {
             return temporalJoinBinder.bindWindowJoinQuery(model, source, where, isOrderAndLimitEnabled, executionContext);
         }
         final boolean isHorizonJoin = horizonJoinIndex(source) > 0;
-        final int liftedSelectionBase = lateralBinder.liftedSelectionColumns.size();
+        final int outerColumnBase = ctx.functionBinder.getOuterColumnIds().size();
         LogicalPlan sourcePlan;
         if (isHorizonJoin) {
             sourcePlan = temporalJoinBinder.bindHorizonJoin(model, source, where, executionContext);
+            where = null;
         } else if (source.getJoinModels().size() > 1) {
-            final QueryModel previousHoistSource = lateralBinder.lateralHoistSource;
-            lateralBinder.lateralHoistSource = source;
-            try {
-                sourcePlan = joinBinder.bindJoins(model, source, where, executionContext);
-            } finally {
-                lateralBinder.lateralHoistSource = previousHoistSource;
-            }
+            sourcePlan = joinBinder.bindJoins(model, source, where, executionContext);
         } else {
             sourcePlan = bindSource(model, source, executionContext);
         }
-        final ExpressionNode hoistedWhere = lateralBinder.lateralHoistedWhere;
-        lateralBinder.lateralHoistedWhere = null;
-        if (isHorizonJoin) {
-            where = null;
-        }
-        if (ctx.lateralScopes.size() > 0 && source.getJoinModels().size() == 1) {
-            sourcePlan = lateralBinder.correlateSource(model, source, sourceAlias(source), sourcePlan, where, executionContext);
-            where = ctx.correlatedWhere;
-        }
-        where = lateralBinder.substituteLateralCounts(where, sourcePlan.getOutput());
         ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), source.getJoinModels().size() > 1 ? null : sourceAlias(source));
         final boolean isSampleByCursor = source.getSampleBy() != null && SampleByBinder.requiresSampleByCursor(source);
         final SampleByPlan sampleBy = isSampleByCursor ? sampleByBinder.bindSampleBy(model, source, sourcePlan, executionContext) : null;
@@ -550,16 +505,15 @@ final class SqlBinder implements Closeable, Mutable {
         }
 
         if (latest != null) {
-            if (ctx.lateralScopes.size() > 0 && sourcePlan.getOutput().getCorrelatedAliasCount() > 0) {
-                input = windowBinder.bindLatestWindow(input, latest, model, source.getModelPosition(), executionContext);
-            } else {
-                latest.replaceInput(0, input);
-                input = latest;
-            }
+            latest.replaceInput(0, input);
+            input = latest;
         }
 
         if (!isHorizonJoin) {
             aggregateBinder.validateGroupByKeys(model, source);
+        }
+        if (model.isDistinct() && isOrderAndLimitEnabled) {
+            aggregateBinder.validateDistinctOrder(model, source, sourcePlan.getOutput());
         }
         windowBinder.validateWindowOrder(model, source);
         final boolean hasWindows = windowBinder.hasWindows(model, source);
@@ -581,7 +535,7 @@ final class SqlBinder implements Closeable, Mutable {
                 && !model.getBottomUpColumns().getQuick(0).isWindowExpression()
                 && source.getSampleBy() == null
                 && blockGroupBy(model, source).size() == 0
-                && !hasCorrelatedColumns(input.getOutput())
+                && ctx.functionBinder.getOuterColumnIds().size() == outerColumnBase
                 && isRowCount(model.getBottomUpColumns().getQuick(0).getAst())
                 && isRowCountOrder(model.getBottomUpColumns().getQuick(0), source)) {
             final LogicalPlan counted = orderBinder.bindRowCount(model, source, input,
@@ -617,8 +571,8 @@ final class SqlBinder implements Closeable, Mutable {
         }
         final ProjectPlan project = ctx.projects.next().of(input, model.getModelPosition());
         ctx.sourceProjectionIndexes.setAll(sourcePlan.getOutput().getColumnCount(), -1);
-        final OutputSchema referenceScope = !hasWindows && !model.isUpdate() && hasProjectionReferences(model, sourcePlan.getOutput())
-                ? projectionReferenceScope(sourcePlan.getOutput()) : null;
+        final OutputSchema referenceScope = hasWindows ? windowReferenceScope(model, sourcePlan.getOutput())
+                : !model.isUpdate() && hasProjectionReferences(model, sourcePlan.getOutput()) ? projectionReferenceScope(sourcePlan.getOutput()) : null;
         // Qualified sources can hold distinct columns of one name. A virtual projection names a
         // plain column after its translating alias, which an earlier function argument may take.
         final TranslatingAliases translating = !hasWindows && !model.isUpdate() && referenceScope == null
@@ -628,26 +582,20 @@ final class SqlBinder implements Closeable, Mutable {
         }
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-            final ExpressionNode expression = lateralBinder.substituteLateralCounts(hasWindows ? ctx.windowSelectExpressions.getQuick(i) : column.getAst(),
-                    sourcePlan.getOutput());
+            final ExpressionNode expression = hasWindows ? ctx.windowSelectExpressions.getQuick(i) : column.getAst();
             if (!model.isUpdate() && isWildcard(expression)) {
                 boolean hasMatch = false;
                 for (int k = 0, count = sourcePlan.getOutput().getColumnCount(); k < count; k++) {
                     if (ctx.isWildcardColumn(expression, sourcePlan.getOutput(), k, sourceAlias(source))) {
-                        final ExpressionNode compensated = lateralBinder.lateralCompensatedColumn(sourcePlan.getOutput(), k, expression.position);
-                        if (compensated == null) {
-                            ctx.addProjection(project, sourcePlan.getOutput(), k, sourcePlan.getOutput().getColumnName(k), expression.position, true);
-                        } else {
-                            ctx.addProjection(project, ctx.functionBinder.bind(compensated, sourcePlan.getOutput(), sourceAlias(source), ColumnType.STRING, executionContext),
-                                    null, sourcePlan.getOutput().getColumnName(k), true);
-                        }
+                        ctx.addProjection(project, sourcePlan.getOutput(), k, sourcePlan.getOutput().getColumnName(k), expression.position, true);
                         hasMatch = true;
                     }
                 }
                 if (!hasMatch && Chars.indexOfLastUnquoted(expression.token, '.') >= 0) {
                     throw SqlException.$(expression.position, "invalid table alias");
                 }
-            } else if (expression.type != ExpressionNode.LITERAL) {
+            } else if (expression.type != ExpressionNode.LITERAL || ctx.functionBinder.isOuterColumn(expression,
+                    hasWindows ? ctx.windowBindingScope(sourcePlan.getOutput()) : sourcePlan.getOutput(), sourceAlias(source))) {
                 final int cursorSource = i < ctx.cursorProjectionSources.size() ? ctx.cursorProjectionSources.getQuick(i) : -1;
                 CharSequence name = cursorSource < 0 ? column.getName() : ctx.cursorNames.getQuick(cursorSource);
                 if (!model.isUpdate() && getColumnIndexQuiet(project.getOutput(), name) >= 0) {
@@ -719,24 +667,6 @@ final class SqlBinder implements Closeable, Mutable {
             throwDeferredError();
         }
         ctx.clearCursorColumns();
-        lateralBinder.exposeCorrelated(project, sourcePlan.getOutput(), null);
-        lateralBinder.exposeLifted(project, sourcePlan.getOutput());
-        for (int i = liftedSelectionBase, n = lateralBinder.liftedSelectionColumns.size(); i < n; i++) {
-            final int index = lateralBinder.liftedSelectionColumns.getQuick(i);
-            lateralBinder.addLateralTemplate(project.getOutput().getColumnId(index), lateralBinder.liftedSelectionTemplates.getQuick(i),
-                    ctx.qualifiedJoinName(lateralBinder.lateralBodyAlias, project.getOutput().getColumnName(index)));
-        }
-        lateralBinder.liftedSelectionColumns.setPos(liftedSelectionBase);
-        lateralBinder.liftedSelectionTemplates.setPos(liftedSelectionBase);
-        if (model == lateralBinder.lateralBodyModel) {
-            for (int i = 0, n = lateralBinder.lateralWrappedCountColumns.size(); i < n; i++) {
-                final int index = lateralBinder.lateralWrappedCountColumns.getQuick(i);
-                final CharSequence self = ctx.qualifiedJoinName(lateralBinder.lateralBodyAlias, project.getOutput().getColumnName(index));
-                lateralBinder.addLateralTemplate(project.getOutput().getColumnId(index),
-                        lateralBinder.zeroCoalesce(ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, self, 0, model.getModelPosition())), self);
-            }
-            lateralBinder.lateralWrappedCountColumns.clear();
-        }
 
         if (model.isUpdate()) {
             prepareUpdateAssignments(model, project);
@@ -760,13 +690,9 @@ final class SqlBinder implements Closeable, Mutable {
                 || source.getOrderBy().size() > 0 && (hasComputedProjection(project) || sourcePlan.getType() == LogicalPlan.Type.JOIN
                 || sourcePlan.getType() == LogicalPlan.Type.SET_OPERATION && isSelectedOrder(project, source, sourcePlan.getOutput(), sourceAlias(source)))
                 || LogicalPlans.hasRepeatedColumn(project) && hasProjectedOrder(project, source)
-                || lateralBinder.hasLateralCarrierOrder(source, sourcePlan.getOutput())
-                || hoistedWhere != null && source.getOrderBy().size() > 0)
+)
                   ? orderBinder.bindOutputOrder(model, sourcePlan, project, source, sourceAlias(source), hasWindows ? ctx.windowOrderExpressions : null, executionContext)
                   : isOrderAndLimitEnabled ? orderBinder.bindSourceOrder(sourcePlan, project, source, sourceAlias(source)) : orderBinder.designateTimestamp(project);
-        if (hoistedWhere != null) {
-            result = filterProjection(result, project, hoistedWhere, model, executionContext);
-        }
         return isOrderAndLimitEnabled ? orderBinder.bindLimit(result, model, executionContext) : result;
     }
 
@@ -787,7 +713,7 @@ final class SqlBinder implements Closeable, Mutable {
     }
 
     private ScanPlan bindScan(QueryModel model, QueryModel source, ExpressionNode tableName, TableRecordMetadata metadata) {
-        final ScanPlan scan = scans.next().of(metadata.getTableToken(), metadata.getMetadataVersion(), tableName.position, source.isUpdate());
+        final ScanPlan scan = ctx.scans.next().of(metadata.getTableToken(), metadata.getMetadataVersion(), tableName.position, source.isUpdate());
         scan.setHints(scanHints(source));
         final ExpressionNode view = source.getViewNameExpr();
         if (view != null) {
@@ -869,16 +795,10 @@ final class SqlBinder implements Closeable, Mutable {
             final QueryModel next = branch.getUnionModel();
             final LogicalPlan nextShow = bindShow(next, executionContext);
             LogicalPlan right = nextShow != null ? nextShow : bindQueryBlock(next, executionContext, false);
-            if (ctx.lateralScopes.size() > 0 && !hasSameCorrelation(result.getOutput(), right.getOutput())) {
-                result = lateralBinder.correlateBranch(result, right.getOutput(), branch.getModelPosition(), executionContext);
-                right = lateralBinder.correlateBranch(right, result.getOutput(), next.getModelPosition(), executionContext);
-                result = lateralBinder.orderCorrelatedColumns(result, result.getOutput(), branch.getModelPosition());
-                right = lateralBinder.orderCorrelatedColumns(right, result.getOutput(), next.getModelPosition());
-            }
             final boolean continuesUnion = next.getUnionModel() != null
                     && (next.getSetOperationType() == QueryModel.SET_OPERATION_UNION
                     || next.getSetOperationType() == QueryModel.SET_OPERATION_UNION_ALL);
-            final SetOperationPlan operation = setOperations.next().of(
+            final SetOperationPlan operation = ctx.setOperations.next().of(
                     result, right, branch.getSetOperationType(), branch.getModelPosition(), next.getModelPosition(), !continuesUnion
             );
             SetOperationBinder.resolveTypes(operation, setTypes);
@@ -901,11 +821,6 @@ final class SqlBinder implements Closeable, Mutable {
                 }
             }
             operation.getOutput().setTimestampIndex(SetOperationBinder.resolveTimestampIndex(operation));
-            final OutputSchema leftOutput = result.getOutput();
-            for (int i = 0, n = leftOutput.getCorrelatedAliasCount(); i < n; i++) {
-                operation.getOutput().addCorrelatedAlias(leftOutput.getCorrelatedAliasQualifier(i), leftOutput.getCorrelatedAliasName(i),
-                        leftOutput.getCorrelatedAliasIndex(i));
-            }
             result = operation;
             branch = next;
         }
@@ -1148,6 +1063,9 @@ final class SqlBinder implements Closeable, Mutable {
         }
         if (expression.type == ExpressionNode.LITERAL) {
             final OutputSchema output = input.getOutput();
+            if (ctx.functionBinder.isOuterColumn(expression, output, alias)) {
+                return true;
+            }
             final int id = output.getColumnId(ctx.bindColumnIndex(expression, output, alias));
             final LogicalPlan origin = columnSource(input, id);
             if (predicateSource == null) {
@@ -1164,45 +1082,6 @@ final class SqlBinder implements Closeable, Mutable {
             }
         }
         return true;
-    }
-
-    private void collectProjectedSubstitutions(ExpressionNode node, QueryModel model, OutputSchema output) {
-        if (node == null) {
-            return;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            final int index = selectedLiteralIndex(node, model);
-            ctx.substitutionNodes.add(node);
-            ctx.substitutionColumns.add(ctx.columns.next().of(output.getColumnId(index), output.getColumnType(index), node.position));
-            return;
-        }
-        collectProjectedSubstitutions(node.lhs, model, output);
-        collectProjectedSubstitutions(node.rhs, model, output);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            collectProjectedSubstitutions(node.args.getQuick(i), model, output);
-        }
-    }
-
-    private LogicalPlan filterProjection(LogicalPlan result, ProjectPlan project, ExpressionNode where, QueryModel model,
-                                         SqlExecutionContext executionContext) throws SqlException {
-        ctx.substitutionNodes.clear();
-        ctx.substitutionColumns.clear();
-        collectProjectedSubstitutions(where, model, project.getOutput());
-        final BoundExpression bound = ctx.functionBinder.bind(where, project.getOutput(), null, ctx.substitutionNodes, ctx.substitutionColumns, executionContext);
-        ctx.substitutionNodes.clear();
-        ctx.substitutionColumns.clear();
-        final FilterPlan filter = ctx.filters.next().of(project, bound, where.position);
-        filter.getOutput().copyFrom(project.getOutput());
-        if (result == project) {
-            return filter;
-        }
-        for (LogicalPlan node = result; node instanceof UnaryPlan unary; node = unary.getInput()) {
-            if (unary.getInput() == project) {
-                unary.replaceInput(0, filter);
-                break;
-            }
-        }
-        return result;
     }
 
     private int getUpdateColumnIndex(CharSequence name) {
@@ -1436,27 +1315,28 @@ final class SqlBinder implements Closeable, Mutable {
         }
     }
 
-    static int selectedLiteralIndex(ExpressionNode node, QueryModel model) {
+    /**
+     * A SELECT column over windows reads an earlier column by alias when that column computes a
+     * window function, so both read one value.
+     */
+    private OutputSchema windowReferenceScope(QueryModel model, OutputSchema source) {
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final ExpressionNode ast = columns.getQuick(i).getAst();
-            if (ast.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(ast.token, node.token)) {
-                return i;
+        for (int i = 1, n = columns.size(); i < n; i++) {
+            if (referencesEarlierAlias(ctx.windowSelectExpressions.getQuick(i), columns, i, source, false)) {
+                return projectionReferenceScope(ctx.windowBindingScope(source));
             }
         }
-        return -1;
+        return null;
     }
 
     /**
      * Binds the model into an unoptimised plan. {@link SqlCompilerImpl} optimises it and hands the
-     * result back through {@link #setRoot(LogicalPlan)}. {@code isFullFatJoins} forces full-fat
-     * ASOF/LT joins, which changes their key types.
+     * result back through {@link #setRoot(LogicalPlan)}.
      */
-    LogicalPlan bind(QueryModel model, SqlParserCallback parserCallback, boolean isFullFatJoins, SqlExecutionContext executionContext) throws SqlException {
+    LogicalPlan bind(QueryModel model, SqlParserCallback parserCallback, SqlExecutionContext executionContext) throws SqlException {
         clear();
         this.parserCallback = parserCallback;
         ctx.executionContext = executionContext;
-        ctx.isFullFatJoins = isFullFatJoins;
         isUpdate = model.isUpdate();
         collectHintAliases(model);
         final SqlBinder previous = ctx.functionParser.swapSubqueryBinder(this);
@@ -1510,19 +1390,16 @@ final class SqlBinder implements Closeable, Mutable {
         } else if (output.getTimestampColumnId() < 0) {
             throw SqlException.$(source.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
         }
-        final LatestByPlan latest = latestByPlans.next().of(input, output.getTimestampColumnId(), source.getModelPosition());
+        final LatestByPlan latest = ctx.latestByPlans.next().of(input, output.getTimestampColumnId(), source.getModelPosition());
         latest.setTimestampOrderInherited(source.getNestedModel() != null);
         for (int i = 0, n = source.getLatestBy().size(); i < n; i++) {
             final ExpressionNode key = source.getLatestBy().getQuick(i);
+            if (ctx.functionBinder.isOuterColumn(key, output, sourceAlias(source))) {
+                continue;
+            }
             final int index = ctx.bindColumnIndex(key, output, source);
             validateLatestByColumn(output.getColumnType(index), key.position, key.token);
             latest.getKeyColumnIds().add(output.getColumnId(index));
-        }
-        for (int i = 0, n = output.getCorrelatedAliasCount(); i < n; i++) {
-            final int columnId = output.getColumnId(output.getCorrelatedAliasIndex(i));
-            if (!latest.getKeyColumnIds().contains(columnId)) {
-                latest.getKeyColumnIds().add(columnId);
-            }
         }
         latest.getOutput().copyFrom(output);
         return latest;

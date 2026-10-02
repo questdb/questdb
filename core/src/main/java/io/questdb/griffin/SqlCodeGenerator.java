@@ -134,7 +134,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 new EntityColumnFilter(),
                 new OutputSchema(),
                 new StringSink(),
-                new IntHashSet()
+                new IntHashSet(),
+                new IntList(),
+                new IntList(),
+                new IntList(),
+                new IntList()
         );
     }
 
@@ -147,7 +151,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             EntityColumnFilter entityColumnFilter,
             OutputSchema emptySchema,
             StringSink scratchSink,
-            IntHashSet idScratch
+            IntHashSet idScratch,
+            IntList indexScratch,
+            IntList valueScratch,
+            IntList masterKeyScratch,
+            IntList slaveKeyScratch
     ) {
         try {
             this.configuration = configuration;
@@ -167,15 +175,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             final ListColumnFilter listColumnFilterB = new ListColumnFilter();
             final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            final IntList indexScratch = new IntList();
-            final IntList valueScratch = new IntList();
             final BitSet symbolScratch = new BitSet();
             this.filterGenerator = new FilterFactoryGenerator(configuration, expressionNodePool, characterStore, jitIRMem, reduceTaskFactory, scratchSink);
             this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, asm, emptySchema, entityColumnFilter,
                     indexScratch, valueScratch);
             this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionParser, asm, entityColumnFilter,
                     keyTypes, valueTypes, listColumnFilterA, listColumnFilterB, reduceTaskFactory, scratchSink, indexScratch, valueScratch,
-                    idScratch, symbolScratch);
+                    idScratch, symbolScratch, masterKeyScratch, slaveKeyScratch);
             this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, keyTypes, listColumnFilterA, indexScratch, longScratch);
             this.projectionGenerator = new ProjectionFactoryGenerator(indexScratch, valueScratch);
             this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionParser, asm, entityColumnFilter, intListPool,
@@ -611,10 +617,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             frame.functionSources = functionSources;
             frame.isUpdate = isUpdate;
             try {
-                if (ALLOW_FUNCTION_MEMOIZATION) {
-                    projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);
-                    projectionGenerator.collectColumnReferenceCounts(frame, root);
-                }
+                projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);
+                projectionGenerator.collectColumnReferenceCounts(frame, root);
                 aggregateGenerator.countSharedConsumers(frame, root);
                 final int slot = generate(frame, root, executionContext);
                 final Throwable cleanup = frame.closePrepared(frame.resources.closeOwned(slot, null));

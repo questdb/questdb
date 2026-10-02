@@ -107,7 +107,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.setBetweenBoundary(pendingFailure, 0);
 
         try {
-            builder.setBetweenBoundary(Numbers.LONG_NULL);
+            builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
             Assert.fail("adopted close failure expected");
         } catch (RuntimeException e) {
             Assert.assertSame(adoptedFailure.failure, e);
@@ -137,7 +137,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         ThrowingCloseFunction incomingFailure = new ThrowingCloseFunction("incoming");
         builder.intersectRuntimeTimestamp(adoptedFailure, 0);
         builder.intersectRuntimeTimestamp(adoptedTail, 0);
-        builder.setBetweenBoundary(Numbers.LONG_NULL);
+        builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
 
         try {
             builder.setBetweenBoundary(incomingFailure, 0);
@@ -166,7 +166,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         RuntimeIntervalModelBuilder builder = newBuilder();
         CloseCountingFunction lo = new CloseCountingFunction();
         builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(Numbers.LONG_NULL);
+        builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
 
@@ -174,14 +174,14 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.setBetweenNegated(true);
         lo = new CloseCountingFunction();
         builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(Numbers.LONG_NULL);
+        builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
 
         // constant NULL first, dynamic endpoint second
         builder = newBuilder();
         lo = new CloseCountingFunction();
-        builder.setBetweenBoundary(Numbers.LONG_NULL);
+        builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
         builder.setBetweenBoundary(lo, 0);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
@@ -315,7 +315,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         // otherwise the extractor catch and the builder rollback double-close it.
         ReservationFailingBuilder builder = newFailingBuilder();
         CloseCountingFunction hi = new CloseCountingFunction();
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         builder.failNextReservation = true;
         try {
             builder.setBetweenBoundary(hi, 0);
@@ -340,7 +340,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.setBetweenBoundary(lo, 0);
         builder.failNextReservation = true;
         try {
-            builder.setBetweenBoundary(2_000_000L);
+            builder.setBetweenBoundary(2_000_000L, 2_000_000L);
             Assert.fail("injected failure expected");
         } catch (RuntimeException e) {
             // no incoming function on this path; nothing for the parser to free
@@ -693,7 +693,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.setBetweenBoundary(pendingFailure, 0);
 
         try {
-            builder.setBetweenBoundary(1_000_000L);
+            builder.setBetweenBoundary(1_000_000L, 1_000_000L);
             Assert.fail("pending close failure expected");
         } catch (RuntimeException e) {
             Assert.assertSame(pendingFailure.failure, e);
@@ -707,7 +707,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder = newBuilder();
         builder.intersectEmpty();
         ThrowingCloseFunction incomingFailure = new ThrowingCloseFunction("incoming");
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         try {
             builder.setBetweenBoundary(incomingFailure, 0);
             Assert.fail("incoming close failure expected");
@@ -738,7 +738,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.intersectEmpty();
         lo = new CloseCountingFunction();
         builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
 
@@ -746,7 +746,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder = newBuilder();
         builder.intersectEmpty();
         hi = new CloseCountingFunction();
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         builder.setBetweenBoundary(hi, 0);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, hi.closeCount);
@@ -865,7 +865,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         RuntimeIntervalModelBuilder builder = newBuilder();
         CloseCountingFunction lo = new CloseCountingFunction();
         builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         builder.freeAndClear();
         Assert.assertEquals(1, lo.closeCount);
     }

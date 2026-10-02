@@ -694,7 +694,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampLiteralCoercionRetainsPrecisionOnReconstruction() throws Exception {
+    public void testTimestampLiteralCanonicalisationSurvivesReconstruction() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema original = new OutputSchema().add(1, "unused", ColumnType.INT, true)
@@ -705,16 +705,16 @@ public class FunctionBinderTest extends AbstractCairoTest {
                         literal("ts", 0), constant("'1970-01-01T00:00:00.000001001Z'", 5)),
                         original, "t", sqlExecutionContext);
                 final ConstantExpression timestamp = (ConstantExpression) expression.argumentAt(1);
-                Assert.assertEquals(ColumnType.TIMESTAMP_NANO, timestamp.getDataType());
-                Assert.assertEquals(1001, timestamp.getLongValue());
+                Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, timestamp.getDataType());
+                Assert.assertEquals(2, timestamp.getLongValue());
                 Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, expression.argumentAt(0).getDataType());
                 try (
                         Function first = binder.instantiate(expression, original, sqlExecutionContext);
                         Function second = binder.instantiate(expression, pruned, sqlExecutionContext);
                         Function rebuiltConstant = binder.instantiate(timestamp, pruned, sqlExecutionContext)
                 ) {
-                    Assert.assertEquals(ColumnType.TIMESTAMP_NANO, rebuiltConstant.getType());
-                    Assert.assertEquals(1001, rebuiltConstant.getTimestamp(null));
+                    Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, rebuiltConstant.getType());
+                    Assert.assertEquals(2, rebuiltConstant.getTimestamp(null));
                     Assert.assertEquals(first.isConstant(), second.isConstant());
                     Assert.assertEquals(first.isRuntimeConstant(), second.isRuntimeConstant());
                     Assert.assertEquals(first.isNonDeterministic(), second.isNonDeterministic());
@@ -730,7 +730,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                         literal("ts", 0), constant("'1970-01-01T00:00:00.000001001Z'", 5)),
                         original, "t", sqlExecutionContext);
                 Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, predicate.argumentAt(1).getDataType());
-                Assert.assertEquals(1, ((ConstantExpression) predicate.argumentAt(1)).getLongValue());
+                Assert.assertEquals(2, ((ConstantExpression) predicate.argumentAt(1)).getLongValue());
             }
         });
     }

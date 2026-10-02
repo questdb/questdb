@@ -155,10 +155,10 @@ final class JoinFactoryGenerator {
     private final ListColumnFilter listColumnFilterA;
     private final ListColumnFilter listColumnFilterB;
     private final IntList masterKeyIndexes;
-    private final IntList masterSymbolKeyColumns = new IntList();
+    private final IntList masterSymbolKeyColumns;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
     private final IntList slaveKeyIndexes;
-    private final IntList slaveSymbolKeyColumns = new IntList();
+    private final IntList slaveSymbolKeyColumns;
     private final IntList slaveValueIndexes;
     private final IntList symbolJoinKeyFlags;
     private final ArrayColumnTypes valueTypes;
@@ -190,7 +190,9 @@ final class JoinFactoryGenerator {
             IntList indexScratch,
             IntList valueScratch,
             IntHashSet intHashSet,
-            BitSet writeSymbolAsStringA
+            BitSet writeSymbolAsStringA,
+            IntList masterSymbolKeyColumns,
+            IntList slaveSymbolKeyColumns
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
@@ -210,6 +212,8 @@ final class JoinFactoryGenerator {
         this.slaveKeyIndexes = valueScratch;
         this.intHashSet = intHashSet;
         this.writeSymbolAsStringA = writeSymbolAsStringA;
+        this.masterSymbolKeyColumns = masterSymbolKeyColumns;
+        this.slaveSymbolKeyColumns = slaveSymbolKeyColumns;
     }
 
     static boolean isTemporalJoin(int type) {
@@ -542,7 +546,7 @@ final class JoinFactoryGenerator {
                 prepareLogicalJoinKeys(masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes,
                         step.getKeyPositions(), isSelfJoin);
             }
-            final boolean isFullFat = step.isFullFat() || isFullFatTemporalJoin(slave);
+            final boolean isFullFat = isFullFatTemporalJoin(slave);
             final Plannable condition = createCondition(step);
             final RecordCursorFactory ownedMaster = master;
             final RecordCursorFactory ownedSlave = slave;
@@ -618,8 +622,8 @@ final class JoinFactoryGenerator {
 
     /**
      * Consumes the raw factory, including failure. Maps the bound output onto the full-fat layout: master
-     * columns, slave value columns, then slave keys. A slave predicted to support random access can still
-     * force a full-fat join, and then SYMBOL keys paired with STRING or VARCHAR master keys are cast back.
+     * columns, slave value columns, then slave keys. The full-fat map exposes a slave key with its master
+     * key's type, so a SYMBOL key paired with a STRING or VARCHAR master key is cast back to SYMBOL.
      */
     private RecordCursorFactory restoreTemporalOutput(
             RecordCursorFactory base,

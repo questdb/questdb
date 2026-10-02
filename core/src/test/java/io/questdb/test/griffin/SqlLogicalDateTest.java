@@ -480,7 +480,7 @@ public class SqlLogicalDateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPrecisionSensitiveMonotonicConjunctsUseOutputPrecision() throws Exception {
+    public void testPrecisionSensitiveMonotonicConjunctsCompareExactly() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_date_native(id INT,ts TIMESTAMP,other TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO lp_date_native VALUES (1,'2020-01-01','2020-01-01'),(2,'2020-01-02','2020-01-02')");
@@ -488,15 +488,16 @@ public class SqlLogicalDateTest extends AbstractCairoTest {
                     "date_trunc('microsecond',ts)", "timestamp_floor('d',ts)", "timestamp_ceil('d',ts)",
                     "dateadd('d',0,ts)", "ts+0L"
             );
+            final ObjList<String> expected = new ObjList<>("id\n1\n", "id\n1\n", "id\n", "id\n1\n", "id\n1\n");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 for (int i = 0; i < expressions.size(); i++) {
                     final String query = "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i)
                             + "<'2020-01-01T00:00:00.000000001Z' ORDER BY id";
                     try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, "id\n");
+                        assertResult(factory, expected.getQuick(i));
                     }
                     try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, "id\n");
+                        assertResult(factory, expected.getQuick(i));
                     }
                 }
             }

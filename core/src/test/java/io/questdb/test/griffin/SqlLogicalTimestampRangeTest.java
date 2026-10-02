@@ -304,23 +304,17 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBetweenTextAndTypedNegativeEpochKeepDifferentRounding() throws Exception {
+    public void testBetweenTextAndTypedNegativeEpochCompareExactly() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_range(id INT,ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO lp_range VALUES (1,'1970-01-01'),(2,'1970-01-01T00:00:00.000001Z')");
             final String value = "'1969-12-31T23:59:59.999999999Z'";
             final String text = "SELECT id FROM lp_range WHERE ts-1L BETWEEN " + value + " AND " + value;
             final String typed = "SELECT id FROM lp_range WHERE ts-1L BETWEEN CAST(" + value + " AS TIMESTAMP_NS) AND CAST(" + value + " AS TIMESTAMP_NS)";
-            assertQueryRows(text, """
-                    id
-                    1
-                    """);
-            assertQueryRows(typed, """
-                    id
-                    2
-                    """);
-            assertExpected(text, "id\n1\n");
-            assertExpected(typed, "id\n2\n");
+            assertQueryRows(text, "id\n");
+            assertQueryRows(typed, "id\n");
+            assertExpected(text, "id\n");
+            assertExpected(typed, "id\n");
         });
     }
 
@@ -1120,7 +1114,6 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
-                                        2020-01-02T00:00:00.000000Z	3
                                         """
                         );
                     }
@@ -1165,7 +1158,6 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
-                                        2020-01-02T00:00:00.000000Z	3
                                         """
                         );
                     }
@@ -1212,8 +1204,6 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
-                                        2020-01-01T00:00:00.000000Z	1
-                                        2020-01-01T12:00:00.000000Z	2
                                         """
                         );
                     }
@@ -1260,7 +1250,6 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
-                                        2020-01-01T00:00:00.000000Z	1
                                         """
                         );
                     }
@@ -1432,7 +1421,6 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
-                                        2020-01-02T00:00:00.000000Z	3
                                         """
                         );
                     }
@@ -1859,7 +1847,6 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
-                                        2020-01-02T00:00:00.000000000Z	3
                                         """
                         );
                     }
@@ -2133,23 +2120,17 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMonotonicInNegativeEpochTextAndTypedPoints() throws Exception {
+    public void testMonotonicInNegativeEpochTextAndTypedPointsCompareExactly() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_range(id INT,ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO lp_range VALUES (1,'1970-01-01'),(2,'1970-01-01T00:00:00.000001Z')");
             final String value = "'1969-12-31T23:59:59.999999999Z'";
             final String text = "SELECT id FROM lp_range WHERE ts-1L IN " + value;
             final String typed = "SELECT id FROM lp_range WHERE ts-1L IN CAST(" + value + " AS TIMESTAMP_NS)";
-            assertQueryRows(text, """
-                    id
-                    1
-                    """);
-            assertQueryRows(typed, """
-                    id
-                    2
-                    """);
-            assertExpected(text, "id\n1\n");
-            assertExpected(typed, "id\n2\n");
+            assertQueryRows(text, "id\n");
+            assertQueryRows(typed, "id\n");
+            assertExpected(text, "id\n");
+            assertExpected(typed, "id\n");
         });
     }
 
@@ -2420,7 +2401,6 @@ public class SqlLogicalTimestampRangeTest extends AbstractCairoTest {
                     + " BETWEEN '2020-01-01T00:00:00.000000001Z' AND '2020-01-01T00:00:00.000000001Z'",
                     """
                             ts	id
-                            2020-01-01T00:00:00.000000Z	1
                             """
             );
         });

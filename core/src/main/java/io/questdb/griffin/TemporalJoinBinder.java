@@ -51,7 +51,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 
 import static io.questdb.griffin.BindContext.*;
 
@@ -59,56 +58,27 @@ final class TemporalJoinBinder implements Mutable {
     private final AggregateBinder aggregateBinder;
     private final SqlBinder binder;
     private final BindContext ctx;
-    private final ObjectPool<HorizonJoinPlan> horizonJoinPlans = new ObjectPool<>(HorizonJoinPlan.FACTORY, 2);
-    private final ObjectPool<HorizonJoinSlave> horizonJoinSlaves = new ObjectPool<>(HorizonJoinSlave.FACTORY, 2);
     private final JoinBinder joinBinder;
-    private final LateralBinder lateralBinder;
     private final OrderBinder orderBinder;
     private final IntList windowJoinAggregateSteps = new IntList();
-    private final ObjectPool<WindowJoinPlan> windowJoinPlans = new ObjectPool<>(WindowJoinPlan.FACTORY, 2);
-    private final ObjectPool<WindowJoinStep> windowJoinSteps = new ObjectPool<>(WindowJoinStep.FACTORY, 2);
 
     TemporalJoinBinder(
             BindContext ctx,
             SqlBinder binder,
             OrderBinder orderBinder,
             AggregateBinder aggregateBinder,
-            JoinBinder joinBinder,
-            LateralBinder lateralBinder
+            JoinBinder joinBinder
     ) {
         this.ctx = ctx;
         this.binder = binder;
         this.orderBinder = orderBinder;
         this.aggregateBinder = aggregateBinder;
         this.joinBinder = joinBinder;
-        this.lateralBinder = lateralBinder;
     }
 
     @Override
     public void clear() {
-        horizonJoinPlans.clear();
-        horizonJoinSlaves.clear();
-        windowJoinPlans.clear();
-        windowJoinSteps.clear();
         windowJoinAggregateSteps.clear();
-    }
-
-    private static boolean hasUnresolvableReference(ExpressionNode node, OutputSchema scope, CharSequence alias) {
-        if (node == null || node.queryModel != null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            return FunctionBinder.findColumn(node, scope, alias) == -1;
-        }
-        if (hasUnresolvableReference(node.lhs, scope, alias) || hasUnresolvableReference(node.rhs, scope, alias)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasUnresolvableReference(node.args.getQuick(i), scope, alias)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static int horizonGroupByIndex(ExpressionNode key) {
@@ -163,20 +133,6 @@ final class TemporalJoinBinder implements Mutable {
 
     private static int mergeReferencePosition(int position, int child) {
         return position == -2 || child == -2 ? -2 : position == -1 ? child : position;
-    }
-
-    private static void rejectHorizonWhere(ExpressionNode node, OutputSchema master, CharSequence masterAlias) throws SqlException {
-        if (node == null) {
-            return;
-        }
-        if (SqlKeywords.isAndKeyword(node.token) && node.paramCount == 2) {
-            rejectHorizonWhere(node.lhs, master, masterAlias);
-            rejectHorizonWhere(node.rhs, master, masterAlias);
-            return;
-        }
-        if (hasUnresolvableReference(node, master, masterAlias)) {
-            throw SqlException.position(node.position).put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
-        }
     }
 
     private static void rejectSlaveBoundReference(ExpressionNode node, CharSequence slaveAlias) throws SqlException {
@@ -335,6 +291,38 @@ final class TemporalJoinBinder implements Mutable {
                 }
                 step.setHi(hi, null, 0, syntax.getHiExprTimeUnit(), syntax.getHiExprPos());
             }
+        }
+    }
+
+    private boolean hasUnresolvableReference(ExpressionNode node, OutputSchema scope, CharSequence alias) {
+        if (node == null || node.queryModel != null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return FunctionBinder.findColumn(node, scope, alias) == -1 && !ctx.functionBinder.isOuterColumn(node, scope, alias);
+        }
+        if (hasUnresolvableReference(node.lhs, scope, alias) || hasUnresolvableReference(node.rhs, scope, alias)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasUnresolvableReference(node.args.getQuick(i), scope, alias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void rejectHorizonWhere(ExpressionNode node, OutputSchema master, CharSequence masterAlias) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (SqlKeywords.isAndKeyword(node.token) && node.paramCount == 2) {
+            rejectHorizonWhere(node.lhs, master, masterAlias);
+            rejectHorizonWhere(node.rhs, master, masterAlias);
+            return;
+        }
+        if (hasUnresolvableReference(node, master, masterAlias)) {
+            throw SqlException.position(node.position).put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         }
     }
 
@@ -668,10 +656,6 @@ final class TemporalJoinBinder implements Mutable {
         final QueryModel masterModel = sources.getQuick(0);
         final CharSequence masterAlias = sourceAlias(masterModel);
         LogicalPlan master = binder.bindSource(model, masterModel, executionContext);
-        if (ctx.lateralScopes.size() > 0) {
-            master = lateralBinder.correlateSource(model, masterModel, masterAlias, master, where, executionContext);
-            where = ctx.correlatedWhere;
-        }
         if (where != null) {
             rejectHorizonWhere(where, master.getOutput(), masterAlias);
             final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
@@ -685,7 +669,7 @@ final class TemporalJoinBinder implements Mutable {
             throw SqlException.$(first.getJoinKeywordPosition(), "left side of time series join has no timestamp");
         }
         final CharSequence horizonAlias = GenericLexer.unquote(horizon.getAlias().token);
-        final HorizonJoinPlan plan = horizonJoinPlans.next().of(master, masterAlias, horizonAlias, horizon.getAliasPosition(),
+        final HorizonJoinPlan plan = ctx.horizonJoinPlans.next().of(master, masterAlias, horizonAlias, horizon.getAliasPosition(),
                 horizon.getMode() == HorizonJoinContext.MODE_RANGE ? HorizonJoinPlan.MODE_RANGE : HorizonJoinPlan.MODE_LIST,
                 last.getJoinKeywordPosition());
         if (horizon.getMode() == HorizonJoinContext.MODE_RANGE) {
@@ -705,7 +689,6 @@ final class TemporalJoinBinder implements Mutable {
             output.setSymbolTableStatic(i, masterOutput.isSymbolTableStatic(i));
         }
         output.setTimestampIndex(masterOutput.getTimestampIndex());
-        copyCorrelatedAliases(masterOutput, output, masterOutput.getColumnCount());
         output.add(ctx.nextColumnId++, "offset", ColumnType.LONG, null, true, horizonAlias);
         output.add(ctx.nextColumnId++, "timestamp", masterOutput.getColumnType(masterOutput.getTimestampIndex()), null, true, horizonAlias);
         for (int i = 0, n = selected.size(); i < n; i++) {
@@ -718,7 +701,7 @@ final class TemporalJoinBinder implements Mutable {
             final QueryModel occurrence = sources.getQuick(i);
             final CharSequence slaveAlias = sourceAlias(occurrence);
             final LogicalPlan slave = binder.bindSource(model, occurrence, executionContext);
-            final HorizonJoinSlave step = horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
+            final HorizonJoinSlave step = ctx.horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
             plan.getSlaves().add(step);
             final OutputSchema slaveOutput = slave.getOutput();
             for (int k = 0, m = slaveOutput.getColumnCount(); k < m; k++) {
@@ -761,16 +744,12 @@ final class TemporalJoinBinder implements Mutable {
             where = null;
         } else {
             master = binder.bindSource(model, masterModel, executionContext);
-            if (ctx.lateralScopes.size() > 0) {
-                master = lateralBinder.correlateSource(model, masterModel, masterAlias, master, where, executionContext);
-                where = ctx.correlatedWhere;
-            }
         }
-        final WindowJoinPlan plan = windowJoinPlans.next().of(master, source.getModelPosition());
+        final WindowJoinPlan plan = ctx.windowJoinPlans.next().of(master, source.getModelPosition());
         for (int i = first, n = sources.size(); i < n; i++) {
             final QueryModel occurrence = sources.getQuick(i);
             final LogicalPlan slave = binder.bindSource(model, occurrence, executionContext);
-            final WindowJoinStep step = windowJoinSteps.next().of(slave, masterAlias, sourceAlias(occurrence),
+            final WindowJoinStep step = ctx.windowJoinSteps.next().of(slave, masterAlias, sourceAlias(occurrence),
                     occurrence.getWindowJoinContext().isIncludePrevailing(), occurrence.getJoinKeywordPosition());
             step.setTableSource(occurrence.getNestedModel() == null && occurrence.getTableNameExpr() != null
                     && occurrence.getTableNameExpr().type == ExpressionNode.LITERAL);
@@ -805,7 +784,6 @@ final class TemporalJoinBinder implements Mutable {
             output.setSymbolTableStatic(i, masterOutput.isSymbolTableStatic(i));
         }
         output.setTimestampIndex(masterOutput.getTimestampIndex());
-        copyCorrelatedAliases(masterOutput, output, masterOutput.getColumnCount());
 
         ctx.aggregateNodes.clear();
         if (aggregates != null) {
@@ -888,7 +866,7 @@ final class TemporalJoinBinder implements Mutable {
         ctx.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-            final ExpressionNode expression = isWildcard(column.getAst()) ? column.getAst() : lateralBinder.substituteLateralCounts(column.getAst(), output);
+            final ExpressionNode expression = column.getAst();
             if (isWildcard(expression)) {
                 for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
                     final WindowJoinStep step = plan.getSteps().getQuick(s);
@@ -922,7 +900,6 @@ final class TemporalJoinBinder implements Mutable {
         }
         aggregateSources.clear();
         aggregateColumns.clear();
-        lateralBinder.exposeCorrelated(project, output, null);
         final LogicalPlan result = isOrderAndLimitEnabled && source.getOrderBy().size() > 0
                 ? orderBinder.bindOutputOrder(model, plan, project, source, masterAlias, null, executionContext)
                 : orderBinder.designateTimestamp(project);

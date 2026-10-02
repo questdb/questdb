@@ -342,26 +342,24 @@ public class SqlLogicalJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMixedSourceConjunctsPreserveNativeTimestampLiteralPrecision() throws Exception {
+    public void testMixedSourceConjunctsCompareTimestampLiteralsExactly() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_join_ts_l(id INT,ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE lp_join_ts_r(id INT)");
             execute("INSERT INTO lp_join_ts_l VALUES (1,'2020-01-01T00:00:00.000000Z'),(2,'2020-01-01T12:00:00.000000Z')");
             execute("INSERT INTO lp_join_ts_r VALUES (1),(2)");
             final String predicate = "l.ts<'2020-01-01T00:00:00.000000001Z' AND r.id>0";
-            final String[] emptyQueries = {
+            final String[] queries = {
                     "SELECT l.id lid,r.id rid FROM lp_join_ts_l l JOIN lp_join_ts_r r ON l.id=r.id WHERE " + predicate,
                     "SELECT l.id lid,r.id rid FROM lp_join_ts_l l LEFT JOIN lp_join_ts_r r ON l.id=r.id WHERE " + predicate,
                     "SELECT l.id lid,r.id rid FROM lp_join_ts_l l JOIN lp_join_ts_r r ON l.id=r.id AND " + predicate
             };
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                for (String sql : emptyQueries) {
+                for (String sql : queries) {
                     try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, "lid\trid\n");
+                        assertResult(factory, "lid\trid\n1\t1\n");
                     }
                 }
-                // LEFT ON remains a pair predicate: the literal uses adaptive
-                // nanosecond precision and unmatched master rows are retained.
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT l.id lid,r.id rid FROM lp_join_ts_l l LEFT JOIN lp_join_ts_r r ON l.id=r.id AND "
                                 + predicate + " ORDER BY lid", sqlExecutionContext).getRecordCursorFactory()) {

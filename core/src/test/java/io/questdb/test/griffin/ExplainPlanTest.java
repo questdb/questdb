@@ -8291,12 +8291,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: null
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Sample By
+                                      fill: none
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'")
@@ -8347,13 +8351,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: prev
-                              keys: [s]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: prev
+                                    Sample By
+                                      keys: [s,ts]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select s, first(i) from a sample by 1h fill(prev) align to calendar")
@@ -8411,12 +8418,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .ddl("create table a (i int, ts timestamp) timestamp(ts);")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: prev
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: prev
+                                    Sample By
+                                      fill: none
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select first(i) from a sample by 1h fill(prev) align to calendar")
@@ -8495,13 +8506,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: value
-                              keys: [s]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Sample By
+                                      keys: [s,ts]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select s, first(i) from a sample by 1h fill(1) align to calendar")
@@ -8532,12 +8546,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .ddl("create table a (i int, ts timestamp) timestamp(ts);")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: value
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Sample By
+                                      fill: none
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'")
@@ -8914,13 +8932,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: null
-                              keys: [l]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Sample By
+                                      keys: [l,ts]
+                                      values: [first(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select l, first(i) from a sample by 1h fill(null) align to calendar")
@@ -9011,13 +9032,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: value
-                              keys: [l]
-                              values: [first(i),last(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1d'
+                                  fill: value
+                                    Sample By
+                                      keys: [l,ts]
+                                      values: [first(i),last(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar")
@@ -9048,13 +9072,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: value
-                              keys: [l]
-                              values: [first(i),last(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1d'
+                                  fill: prev
+                                    Sample By
+                                      keys: [l,ts]
+                                      values: [first(i),last(i)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                             """);
 
             assertQuery("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar")
@@ -13543,6 +13570,28 @@ public class ExplainPlanTest extends AbstractCairoTest {
         execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast" : (isLight ? "Light" : "");
+        String masterAsOfJoin = isLight
+                ? """
+                        AsOf Join%s
+                          condition: b1=a1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: taba
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tabb
+                """.formatted(asofJoinType)
+                : """
+                        SelectedRecord
+                            AsOf Join
+                              condition: b1=a1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: taba
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tabb
+                """;
         assertQuery("select * " + "from taba " + "left join tabb on a1=b1 " + "asof join tabc on b1=c1")
                 .withCompiler(compiler)
                 .noLeakCheck()
@@ -13550,11 +13599,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * " + "from taba " + "asof join tabb on a1=b1 " + "right join tabc on b1=c1")
                 .withCompiler(compiler)
                 .noLeakCheck()
-                .assertsPlan("SelectedRecord\n" + "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + "        AsOf Join" + asofJoinType + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
+                .assertsPlan("SelectedRecord\n" + "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + masterAsOfJoin + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
         assertQuery("select * " + "from taba " + "asof join tabb on a1=b1 " + "full join tabc on b1=c1")
                 .withCompiler(compiler)
                 .noLeakCheck()
-                .assertsPlan("SelectedRecord\n" + "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + "        AsOf Join" + asofJoinType + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
+                .assertsPlan("SelectedRecord\n" + "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + masterAsOfJoin + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
     }
 
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {

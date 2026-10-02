@@ -209,6 +209,64 @@ public class SqlLogicalMemoizationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVolatileValueOfEveryTypeReadTwiceIsEvaluatedOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"rnd_boolean()", "v <> v2"},
+                    {"rnd_byte()", "v <> v2"},
+                    {"rnd_short()", "v <> v2"},
+                    {"rnd_char()", "v <> v2"},
+                    {"rnd_int()", "v <> v2"},
+                    {"rnd_long()", "v <> v2"},
+                    {"rnd_date()", "v <> v2"},
+                    {"rnd_timestamp('2020-01-01', '2021-01-01', 0)", "v <> v2"},
+                    {"rnd_timestamp_ns('2020-01-01', '2021-01-01', 0)", "v <> v2"},
+                    {"rnd_float()", "v <> v2"},
+                    {"rnd_double()", "v <> v2"},
+                    {"rnd_str(5, 5, 0)", "v <> v2"},
+                    {"rnd_symbol(10, 5, 5, 0)", "v <> v2"},
+                    {"list('a', 'b', 'c')", "v <> v2"},
+                    {"rnd_varchar(5, 5, 0)", "v <> v2"},
+                    {"rnd_long256()", "v <> v2"},
+                    {"rnd_geohash(5)", "v <> v2"},
+                    {"rnd_geohash(10)", "v <> v2"},
+                    {"rnd_geohash(20)", "v <> v2"},
+                    {"rnd_geohash(30)", "v <> v2"},
+                    {"rnd_bin(10, 10, 0)", "base64(v, 100) <> base64(v2, 100)"},
+                    {"rnd_uuid4()", "v <> v2"},
+                    {"to_long128(rnd_long(), rnd_long())", "v <> v2"},
+                    {"rnd_ipv4()", "v <> v2"},
+                    {"rnd_double_array(1, 0, 0, 3)", "v[1] <> v2[1]"},
+                    {"rnd_decimal(2, 1, 0)", "v <> v2"},
+                    {"rnd_decimal(4, 1, 0)", "v <> v2"},
+                    {"rnd_decimal(9, 2, 0)", "v <> v2"},
+                    {"rnd_decimal(18, 2, 0)", "v <> v2"},
+                    {"rnd_decimal(30, 2, 0)", "v <> v2"},
+                    {"rnd_decimal(60, 2, 0)", "v <> v2"},
+                    {"rnd_interval()", "v::STRING <> v2::STRING"},
+            };
+            for (String[] c : cases) {
+                assertRowsAndMemoizers("SELECT count() FROM (SELECT " + c[0] + " v, v v2 FROM long_sequence(50)) WHERE " + c[1], "count\n0\n", 1);
+            }
+        });
+    }
+
+    @Test
+    public void testVolatileValueReadTwiceIsEvaluatedOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertRowsAndMemoizers("SELECT r = r2 AND r + 1 = r3 eq, count() FROM (SELECT rnd_int(1, 1_000_000, 0) r, r r2, r + 1 r3 FROM lp_memo)",
+                    "eq\tcount\ntrue\t4\n", 1);
+            assertRowsAndMemoizers("SELECT count() FROM (SELECT rnd_int(1, 3, 0) k, k k2 FROM lp_memo) WHERE k <> k2", "count\n0\n", 1);
+            assertRowsAndMemoizers("SELECT k = k2 eq, count() FROM (SELECT rnd_int(1, 3, 0) k, k k2 FROM lp_memo) GROUP BY k = k2",
+                    "eq\tcount\ntrue\t4\n", 1);
+            assertRowsAndMemoizers("SELECT count() FROM (SELECT rnd_int(1, 1_000_000, 0) r, r r2 FROM lp_memo ORDER BY r) WHERE r <> r2", "count\n0\n", 1);
+            assertRowsAndMemoizers("SELECT count() FROM (SELECT rnd_geohash(10) g, g g2 FROM lp_memo) WHERE g <> g2", "count\n0\n", 1);
+            assertRowsAndMemoizers("SELECT v, v AS v2 FROM (SELECT d + 1.0 AS v FROM lp_memo)", "v\tv2\n4.0\t4.0\n2.0\t2.0\n3.0\t3.0\nnull\tnull\n", 0);
+        });
+    }
+
     private void assertRowsAndMemoizers(String sql, String expected, int memoizerCount) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             assertMemoizerCount(factory, memoizerCount);

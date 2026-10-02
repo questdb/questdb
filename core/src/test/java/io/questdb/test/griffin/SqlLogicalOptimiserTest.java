@@ -89,20 +89,20 @@ public class SqlLogicalOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampCastProjectionKeepsConsumerPrecision() throws Exception {
+    public void testTimestampCastProjectionComparesAtConsumerPrecision() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_projection_ts (id INT,ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO lp_projection_ts VALUES (1,'2020-01-01'),(2,'2020-01-02')");
             final String literal = "'2020-01-01T00:00:00.000000001Z'";
             assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE renamed=" + literal,
-                    "id\n", LogicalPlan.Type.PROJECT);
+                    "id\n", LogicalPlan.Type.SCAN);
             assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS ts FROM lp_projection_ts) WHERE ts=" + literal,
-                    "id\n", LogicalPlan.Type.PROJECT);
+                    "id\n", LogicalPlan.Type.SCAN);
             assertOptimised("SELECT id FROM (SELECT id,renamed AS second FROM"
                             + " (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts)) WHERE second=" + literal,
-                    "id\n", LogicalPlan.Type.PROJECT);
+                    "id\n", LogicalPlan.Type.SCAN);
             assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE renamed=" + literal + " AND id>0",
-                    "id\n", LogicalPlan.Type.PROJECT);
+                    "id\n", LogicalPlan.Type.SCAN);
             assertOptimised("SELECT renamed FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE id>0",
                     "renamed\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n", LogicalPlan.Type.SCAN);
         });

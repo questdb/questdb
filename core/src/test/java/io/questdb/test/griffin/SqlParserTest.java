@@ -9593,13 +9593,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                             Hash Left Outer Join Light
                                               condition: d.objoid=c.oid
                                               filter: d.objsubid=0
-                                                Filter filter: (c.relkind=r and n.nspname !~ ^pg_ and n.nspname!='information_schema')
-                                                    Hash Join
-                                                      condition: c.relnamespace=n.oid
+                                                Hash Join
+                                                  condition: c.relnamespace=n.oid
+                                                    Filter filter: (nspname !~ ^pg_ and nspname!='information_schema')
                                                         GenericRecord
-                                                        Hash
-                                                            Filter filter: relname ~ quickstart-events2
-                                                                pg_class
+                                                    Hash
+                                                        Filter filter: (relname ~ quickstart-events2 and relkind=r)
+                                                            pg_class
                                                 Hash
                                                     Empty table
                                             Hash
@@ -9615,7 +9615,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               keys: [TABLE_TYPE, TABLE_SCHEM, TABLE_NAME]
                                 VirtualRecord
                                   functions: [null,n.nspname,c.relname,case([(n.nspname ~ ^pg_ or n.nspname='information_schema'),case([(n.nspname='pg_catalog' or n.nspname='information_schema'),case(['SYSTEM TABLE','SYSTEM VIEW','SYSTEM INDEX',null,c.relkind]),n.nspname='pg_toast',case(['SYSTEM TOAST TABLE','SYSTEM TOAST INDEX',null,c.relkind]),case(['TEMPORARY TABLE','TEMPORARY TABLE','TEMPORARY INDEX','TEMPORARY SEQUENCE','TEMPORARY VIEW',null,c.relkind])]),case(['TABLE','PARTITIONED TABLE','INDEX','SEQUENCE','VIEW','TYPE','FOREIGN TABLE','MATERIALIZED VIEW',null,c.relkind])]),d.description,'','','','','']
-                                    Filter filter: (c.relnamespace=n.oid and (c.relkind=r and n.nspname !~ ^pg_ and n.nspname!='information_schema'))
+                                    Filter filter: (c.relnamespace=n.oid and c.relkind=r)
                                         Cross Join
                                             Filter filter: c.relname ~ quickstart-events2
                                                 Hash Right Outer Join
@@ -9634,7 +9634,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                             pg_class
                                                     Hash
                                                         GenericRecord
-                                            GenericRecord
+                                            Filter filter: (nspname !~ ^pg_ and nspname!='information_schema')
+                                                GenericRecord
                             """)
                     .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n");
             assertQuery(query.replace("#OUTER_JOIN_TYPE", "full"))
@@ -9644,7 +9645,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               keys: [TABLE_TYPE, TABLE_SCHEM, TABLE_NAME]
                                 VirtualRecord
                                   functions: [null,n.nspname,c.relname,case([(n.nspname ~ ^pg_ or n.nspname='information_schema'),case([(n.nspname='pg_catalog' or n.nspname='information_schema'),case(['SYSTEM TABLE','SYSTEM VIEW','SYSTEM INDEX',null,c.relkind]),n.nspname='pg_toast',case(['SYSTEM TOAST TABLE','SYSTEM TOAST INDEX',null,c.relkind]),case(['TEMPORARY TABLE','TEMPORARY TABLE','TEMPORARY INDEX','TEMPORARY SEQUENCE','TEMPORARY VIEW',null,c.relkind])]),case(['TABLE','PARTITIONED TABLE','INDEX','SEQUENCE','VIEW','TYPE','FOREIGN TABLE','MATERIALIZED VIEW',null,c.relkind])]),d.description,'','','','','']
-                                    Filter filter: (c.relnamespace=n.oid and (c.relkind=r and n.nspname !~ ^pg_ and n.nspname!='information_schema'))
+                                    Filter filter: (c.relnamespace=n.oid and c.relkind=r)
                                         Cross Join
                                             Filter filter: c.relname ~ quickstart-events2
                                                 Hash Full Outer Join
@@ -9663,7 +9664,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                             pg_class
                                                     Hash
                                                         GenericRecord
-                                            GenericRecord
+                                            Filter filter: (nspname !~ ^pg_ and nspname!='information_schema')
+                                                GenericRecord
                             """)
                     .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n");
         });
@@ -15403,7 +15405,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             VirtualRecord
-                              functions: [rnd_double_array(2,0,ignored,2,10),a[0,0]]
+                              functions: [memoize(rnd_double_array(2,0,ignored,2,10)),a[0,0]]
                                 long_sequence count: 100
                             """);
         });
@@ -16040,7 +16042,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             Filter filter: a ~ ^W
                                 VirtualRecord
-                                  functions: [rnd_str(3,10,0)]
+                                  functions: [memoize(rnd_str(3,10,0))]
                                     long_sequence count: 100
                             """);
         });
@@ -16420,13 +16422,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select a,sum(b) b from tab timestamp(t) sample by 10m fill(21.1,22,null,98) align to first observation")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: value
-                              keys: [a]
-                              values: [sum(b)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '10m'
+                                  fill: value
+                                    Sample By
+                                      keys: [a,t]
+                                      values: [sum(b)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
                             """);
             assertQuery("select a,sum(b) b from tab timestamp(t) sample by 10m fill(21.1,22,null,98)")
                     .noLeakCheck()
@@ -16636,13 +16641,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select a,sum(b) b from tab timestamp(t) sample by 10m fill(21231.2344) align to first observation")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: value
-                              keys: [a]
-                              values: [sum(b)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '10m'
+                                  fill: value
+                                    Sample By
+                                      keys: [a,t]
+                                      values: [sum(b)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
                             """);
             assertQuery("select a,sum(b) b from tab timestamp(t) sample by 10m fill(21231.2344)")
                     .noLeakCheck()
@@ -16992,12 +17000,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Sample By
+                                Sample By Fill
+                                  stride: '1s'
                                   fill: null
-                                  values: [sum(x)]
-                                    VirtualRecord
-                                      functions: [x,timestamp_sequence(0,2000000)]
-                                        long_sequence count: 10
+                                    Sample By
+                                      fill: none
+                                      values: [sum(x)]
+                                        VirtualRecord
+                                          functions: [x,timestamp_sequence(0,2000000)]
+                                            long_sequence count: 10
                             """);
         });
     }
@@ -19913,8 +19924,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertQuery("select * from x where t > CAST(timestamp with time zone '2005-04-02 12:00:00-07' as DATE)")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async Filter workers: 1
-                              filter: 1112468400000<t
+                            Async JIT Filter workers: 1
+                              filter: 2005-04-02T19:00:00.000000Z<t
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x

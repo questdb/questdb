@@ -311,7 +311,11 @@ final class IntervalExtractor implements Mutable {
             return predicate;
         }
         if (!(operand instanceof ColumnExpression column) || !column.isDirectReference()) {
-            return negated || !isScalarBound(lo) || !isScalarBound(hi) ? predicate : intersectMonotonicRange(predicate, operand, lo, hi, (short) 0, (short) 0,
+            if (negated || !isScalarBound(lo) || !isScalarBound(hi)
+                    || isFinerBound(lo, operand.getDataType()) || isFinerBound(hi, operand.getDataType())) {
+                return predicate;
+            }
+            return intersectMonotonicRange(predicate, operand, lo, hi, (short) 0, (short) 0,
                     true, timestampColumnId, input, binder, executionContext);
         }
         Throwable failure = null;
@@ -620,7 +624,16 @@ final class IntervalExtractor implements Mutable {
     private void setBetweenBoundary(BoundExpression bound, OutputSchema input, FunctionBinder binder, SqlExecutionContext executionContext)
             throws SqlException, NumericException {
         if (bound instanceof ConstantExpression constant) {
-            intervals.setBetweenBoundary(timestampValue(constant));
+            final int type = constant.getDataType();
+            if (ColumnType.isTimestamp(type) && type != timestampType) {
+                final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+                final int constantType = ColumnType.getTimestampType(type);
+                intervals.setBetweenBoundary(driver.ceilFrom(constant.getLongValue(), constantType),
+                        driver.floorFrom(constant.getLongValue(), constantType));
+            } else {
+                final long value = timestampValue(constant);
+                intervals.setBetweenBoundary(value, value);
+            }
             return;
         }
         final Function function = boundFunction(bound, input, binder, executionContext);
@@ -831,6 +844,15 @@ final class IntervalExtractor implements Mutable {
             case ColumnType.INT -> Numbers.intToLong((int) constant.getLongValue());
             default -> constant.getLongValue();
         };
+    }
+
+    /**
+     * A constant BETWEEN bound finer than a computed operand: binding rounds such a bound only when the
+     * other bound is a constant too, so this one stays in the filter, which compares it exactly.
+     */
+    private static boolean isFinerBound(BoundExpression bound, int operandType) {
+        return bound instanceof ConstantExpression && ColumnType.isTimestampNano(bound.getDataType())
+                && !ColumnType.isTimestampNano(operandType);
     }
 
     private static boolean isMonotonicOperand(BoundExpression expression) {

@@ -823,31 +823,31 @@ public class SqlBinderTest extends AbstractCairoTest {
                 assertRows("SELECT " + column + ">'2020' AS value FROM lp_partial ORDER BY id", "value\nfalse\ntrue\ntrue\n");
             }
             final String nanoLiteral = "'2020-01-01T00:00:00.000000001Z'";
-            assertRows("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral, "id\n1\n");
+            assertRows("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral, "id\n");
             assertRows("SELECT id FROM lp_partial WHERE ts!='2020'", "id\n");
             assertRows("SELECT id FROM lp_partial WHERE ts!='2020-01'", "id\n3\n");
-            assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n1\n");
-            assertRows("SELECT id FROM (SELECT id, ts AS a, ts AS b FROM lp_partial) WHERE b=" + nanoLiteral, "id\n1\n");
+            assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n");
+            assertRows("SELECT id FROM (SELECT id, ts AS a, ts AS b FROM lp_partial) WHERE b=" + nanoLiteral, "id\n");
             assertRows("SELECT id FROM (SELECT id, ts::timestamp AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial WHERE id>0) WHERE renamed=" + nanoLiteral, "id\n1\n");
+            assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial WHERE id>0) WHERE renamed=" + nanoLiteral, "id\n");
             assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial LIMIT 2) WHERE renamed=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts<" + nanoLiteral, "id\n");
+            assertRows("SELECT id FROM lp_partial WHERE ts<" + nanoLiteral, "id\n1\n");
             assertRows("SELECT id FROM lp_partial WHERE other<" + nanoLiteral, "id\n1\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts::timestamp<" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts::timestamp=" + nanoLiteral, "id\n1\n");
+            assertRows("SELECT id FROM lp_partial WHERE ts::timestamp<" + nanoLiteral, "id\n1\n");
+            assertRows("SELECT id FROM lp_partial WHERE ts::timestamp=" + nanoLiteral, "id\n");
             assertRows("SELECT id FROM lp_partial WHERE ts::timestamp!=" + nanoLiteral + " ORDER BY id", "id\n1\n2\n3\n");
             assertRows("SELECT ts<" + nanoLiteral + " AS value FROM lp_partial ORDER BY id", "value\ntrue\nfalse\nfalse\n");
             assertRows("SELECT id FROM lp_partial WHERE ts='2020-01-01' OR ts='2020-02-01' ORDER BY id", "id\n1\n3\n");
             assertRows("SELECT id FROM lp_partial WHERE ts='2020-01-01' OR id=3 ORDER BY id", "id\n1\n3\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral + " OR ts='2020-02-01' ORDER BY id", "id\n1\n3\n");
+            assertRows("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral + " OR ts='2020-02-01' ORDER BY id", "id\n3\n");
             assertRows("SELECT id FROM (SELECT id, ts FROM lp_partial UNION ALL SELECT id, ts FROM lp_partial) WHERE ts=" + nanoLiteral,
-                    "id\n1\n1\n");
+                    "id\n");
             final String mixedSet = "SELECT id FROM (SELECT id, ts FROM lp_partial UNION ALL SELECT id, ts FROM lp_partial_ns) WHERE ts=";
-            assertRows(mixedSet + nanoLiteral + " ORDER BY id", "id\n1\n4\n");
+            assertRows(mixedSet + nanoLiteral + " ORDER BY id", "id\n4\n");
             bindVariableService.clear();
             bindVariableService.setTimestampNano(0, 1_577_836_800_000_000_001L);
-            assertRows(mixedSet + "$1 ORDER BY id", "id\n1\n4\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts=$1", "id\n1\n");
+            assertRows(mixedSet + "$1 ORDER BY id", "id\n4\n");
+            assertRows("SELECT id FROM lp_partial WHERE ts=$1", "id\n");
         });
     }
 

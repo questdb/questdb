@@ -138,6 +138,18 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return new InTimestampVarFunction(new ObjList<>(args), timestampType);
     }
 
+    /**
+     * Adds the element's value at the column's precision; an element no column value equals adds nothing.
+     */
+    private static void addElement(LongList values, Function func, Record rec, TimestampDriver driver) throws NumericException {
+        final int type = elementType(func, rec, driver);
+        final long value = elementValue(func, rec, type, driver);
+        final long ceil = driver.ceilFrom(value, type);
+        if (ceil == driver.floorFrom(value, type)) {
+            values.add(ceil);
+        }
+    }
+
     private static boolean containsDateVariable(CharSequence seq) {
         int lim = seq.length();
         for (int i = 0; i < lim - 1; i++) {
@@ -146,6 +158,35 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
         }
         return false;
+    }
+
+    /**
+     * The timestamp type at which an IN element is exact: its own timestamp type, the finer of a
+     * literal's precision and the column's, or the column's for any other value.
+     */
+    private static int elementType(Function func, Record rec, TimestampDriver driver) {
+        return switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.TIMESTAMP -> func.getType();
+            case ColumnType.STRING, ColumnType.SYMBOL -> {
+                final CharSequence value = func.getStrA(rec);
+                yield value == null ? driver.getTimestampType() : IntervalUtils.literalTimestampType(driver, value);
+            }
+            case ColumnType.VARCHAR -> {
+                final Utf8Sequence value = func.getVarcharA(rec);
+                yield value == null ? driver.getTimestampType() : IntervalUtils.literalTimestampType(driver, value.asAsciiCharSequence());
+            }
+            default -> driver.getTimestampType();
+        };
+    }
+
+    private static long elementValue(Function func, Record rec, int type, TimestampDriver driver) throws NumericException {
+        return switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.DATE -> driver.fromDate(func.getDate(rec));
+            case ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec);
+            case ColumnType.STRING, ColumnType.SYMBOL -> ColumnType.getTimestampDriver(type).parseFloorLiteral(func.getStrA(rec));
+            case ColumnType.VARCHAR -> ColumnType.getTimestampDriver(type).parseFloorLiteral(func.getVarcharA(rec));
+            default -> Numbers.LONG_NULL;
+        };
     }
 
     private static boolean isIntervalSearch(ObjList<Function> args) {
@@ -158,62 +199,26 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
     private static LongList parseDiscreteTimestampValues(int timestampType, ObjList<Function> args, IntList argPositions)
             throws SqlException {
-        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-        LongList res = new LongList(args.size() - 1);
-        res.extendAndSet(args.size() - 2, 0);
-
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final LongList res = new LongList(args.size() - 1);
         for (int i = 1, n = args.size(); i < n; i++) {
-            Function func = args.getQuick(i);
-            long val;
-            int funcType = func.getType();
-            val = switch (ColumnType.tagOf(funcType)) {
-                case ColumnType.DATE -> driver.fromDate(func.getDate(null));
-                case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(null), funcType);
-                case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(null);
-                case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.NULL ->
-                        parseFloorOrDie(driver, func.getStrA(null), argPositions.getQuick(i));
-                case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(null), argPositions.getQuick(i));
+            final Function func = args.getQuick(i);
+            switch (ColumnType.tagOf(func.getType())) {
+                case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.INT, ColumnType.STRING,
+                     ColumnType.SYMBOL, ColumnType.NULL, ColumnType.VARCHAR -> {
+                }
                 default -> throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(),
                         ColumnType.nameOf(func.getType()), timestampType,
                         ColumnType.nameOf(timestampType));
-            };
-            res.setQuick(i - 1, val);
+            }
+            try {
+                addElement(res, func, null, driver);
+            } catch (NumericException e) {
+                throw SqlException.invalidDate(func.getStrA(null), argPositions.getQuick(i));
+            }
         }
-
         res.sort();
         return res;
-    }
-
-    private static long parseFloorOrDie(TimestampDriver driver, CharSequence value) {
-        try {
-            return driver.parseFloorLiteral(value);
-        } catch (NumericException e) {
-            throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
-        }
-    }
-
-    private static long parseFloorOrDie(TimestampDriver driver, Utf8Sequence value) {
-        try {
-            return driver.parseFloorLiteral(value);
-        } catch (NumericException e) {
-            throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
-        }
-    }
-
-    private static long parseFloorOrDie(TimestampDriver driver, CharSequence seq, int position) throws SqlException {
-        try {
-            return driver.parseFloorLiteral(seq);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(seq, position);
-        }
-    }
-
-    private static long parseFloorOrDie(TimestampDriver driver, Utf8Sequence seq, int position) throws SqlException {
-        try {
-            return driver.parseFloorLiteral(seq);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(seq, position);
-        }
     }
 
     private static class EqTimestampCompiledTickExprFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -420,18 +425,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
             timestampValues.clear();
             for (int i = 1, n = args.size(); i < n; i++) {
-                Function func = args.getQuick(i);
-                long val = Numbers.LONG_NULL;
-                int funcType = func.getType();
-                val = switch (ColumnType.tagOf(funcType)) {
-                    case ColumnType.DATE -> driver.fromDate(func.getDate(null));
-                    case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(null), funcType);
-                    case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(null);
-                    case ColumnType.STRING, ColumnType.SYMBOL -> parseFloorOrDie(driver, func.getStrA(null));
-                    case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(null));
-                    default -> val;
-                };
-                timestampValues.add(val);
+                final Function func = args.getQuick(i);
+                try {
+                    addElement(timestampValues, func, null, driver);
+                } catch (NumericException e) {
+                    throw CairoException.nonCritical().put("Invalid timestamp: ").put(func.getStrA(null));
+                }
             }
         }
 
@@ -532,21 +531,17 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long ts = args.getQuick(0).getTimestamp(rec);
-
+            final long ts = args.getQuick(0).getTimestamp(rec);
             for (int i = 1, n = args.size(); i < n; i++) {
-                Function func = args.getQuick(i);
-                long val = Numbers.LONG_NULL;
-                int funcType = func.getType();
-                val = switch (ColumnType.tagOf(funcType)) {
-                    case ColumnType.DATE -> driver.fromDate(func.getDate(rec));
-                    case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(rec), funcType);
-                    case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec);
-                    case ColumnType.STRING, ColumnType.SYMBOL -> parseFloorOrDie(driver, func.getStrA(rec));
-                    case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(rec));
-                    default -> val;
-                };
-                if (val == ts) {
+                final Function func = args.getQuick(i);
+                final int type = elementType(func, rec, driver);
+                final long value;
+                try {
+                    value = elementValue(func, rec, type, driver);
+                } catch (NumericException e) {
+                    throw CairoException.nonCritical().put("Invalid timestamp: ").put(func.getStrA(rec));
+                }
+                if (driver.ceilFrom(value, type) == ts && driver.floorFrom(value, type) == ts) {
                     return !negated;
                 }
             }

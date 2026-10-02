@@ -122,6 +122,11 @@ public final class LogicalPlanPrinter {
                 sink.put("(subquery #").put(subqueries.size()).put(')');
             }
             case FunctionExpression function -> function(function);
+            case OuterColumnExpression outer -> {
+                sink.put("outer(");
+                column(outer.getColumnId());
+                sink.put(')');
+            }
             default -> sink.put(ColumnType.nameOf(expression.getDataType()));
         }
     }
@@ -445,6 +450,9 @@ public final class LogicalPlanPrinter {
             if (i == 0) {
                 sink.put("Master");
             } else {
+                if (input.isDependent()) {
+                    sink.put("DEPENDENT ");
+                }
                 joinTypeName(input.getJoinType());
             }
             if (input.getBindingAlias() != null) {

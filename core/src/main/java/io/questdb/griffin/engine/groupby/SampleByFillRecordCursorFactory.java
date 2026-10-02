@@ -67,14 +67,8 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
-
-import java.util.Arrays;
 
 /**
  * Unified fill cursor for SAMPLE BY on the GROUP BY fast path. Two-pass
@@ -102,6 +96,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
     private RecordCursorFactory base;
     private ObjList<Function> constantFills;
+    // Null for a keyed fill other than all-own PREV over a SAMPLE BY cursor: that
+    // cursor fills its own rows (SampleByFillNoneRecordCursor.ofValueFill()).
     private SampleByFillCursor cursor;
     // Slot-cache value for non-keyed runs. Allocated only when there is at
     // least one fixed-size FILL_PREV column to cache; null otherwise. Layout
@@ -111,6 +107,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private SimpleMapValue nonKeyedPrevCache;
     private final IntList fillModes;
     private Function fromFunc;
+    private final SampleByFillGrid grid;
     private final boolean hasPrevFill;
     private Function offsetFunc;
     private final long samplingInterval;
@@ -122,6 +119,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     // (set by SAMPLE BY binding). Cursor re-evaluates per of() so a
     // bind-variable TZ picks up its current value. Null means no TZ wrap.
     private Function tzFunc;
+    // Gap-row record of a keyed SAMPLE BY cursor that fills its own rows, created
+    // with the first cursor.
+    private SampleByFillRecord valueFillRecord;
 
     /**
      * Appends the fixed-width value header (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT
@@ -131,6 +131,35 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     public static void populateMapValueTypes(ArrayColumnTypes mapValueTypes) {
         mapValueTypes.add(ColumnType.LONG);
         mapValueTypes.add(ColumnType.LONG);
+    }
+
+    // Per output column of a SAMPLE BY source's gap row: the source column it
+    // reads, or -1 for a constant fill.
+    private static IntList gapSourceColumns(IntList fillModes, int timestampIndex) {
+        final IntList gapColumns = new IntList(fillModes.size());
+        for (int col = 0, n = fillModes.size(); col < n; col++) {
+            final int mode = fillModes.getQuick(col);
+            if (col == timestampIndex || mode == FILL_KEY || mode == FILL_PREV_SELF) {
+                gapColumns.add(col);
+            } else if (mode >= 0) {
+                gapColumns.add(mode);
+            } else {
+                gapColumns.add(-1);
+            }
+        }
+        return gapColumns;
+    }
+
+    // Whether every output column carries its own previous value in a gap row: keys,
+    // the timestamp and self PREV only.
+    private static boolean isEveryColumnOwnPrev(IntList fillModes, int timestampIndex) {
+        for (int col = 0, n = fillModes.size(); col < n; col++) {
+            final int mode = fillModes.getQuick(col);
+            if (col != timestampIndex && mode != FILL_KEY && mode != FILL_PREV_SELF) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public SampleByFillRecordCursorFactory(
@@ -159,7 +188,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             IntList fixedPrevSrcCols,
             IntList fixedPrevTypeTags,
             IntList prevValueSlot,
-            boolean isPrevPositioningNeeded
+            boolean isPrevPositioningNeeded,
+            boolean isSampleBySource
     ) {
         super(metadata);
         // True if any column uses self-prev or cross-column prev fill.
@@ -174,13 +204,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         Map keysMap = null;
         SimpleMapValue localNonKeyedPrevCache = null;
         SampleByFillCursor cursorLocal;
+        final SampleByFillGrid grid = new SampleByFillGrid(
+                timestampSampler, timestampType, fromFunc, toFunc, toFuncPos,
+                offsetFunc, offsetFuncPos, tzFunc, tzFuncPos, samplingIntervalUnit
+        );
         try {
-            if (keyColIndices.size() > 0) {
+            if (keyColIndices.size() > 0 && !isSampleBySource) {
                 // Lazy variant (openOnInit=false): the native backing is allocated by the
                 // first reopen() in the cursor's of(), after the per-query MemoryTracker is
                 // bound, so the map's malloc and the matching free at cursor close balance
-                // on the per-query counter. Mirrors the AbstractSampleByFillRecordCursorFactory
-                // idiom.
+                // on the per-query counter.
                 keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes, false);
             } else if (fixedPrevSrcCols.size() > 0) {
                 // Non-keyed with at least one fixed-size FILL_PREV source: cache
@@ -189,16 +222,29 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // and skips baseCursor.recordAt entirely.
                 localNonKeyedPrevCache = new SimpleMapValue(mapValueTypes.getColumnCount());
             }
-            cursorLocal = new SampleByFillCursor(
-                    metadata, timestampSampler,
-                    fromFunc, toFunc, toFuncPos, fillModes, constantFills,
-                    timestampIndex, timestampType, localHasPrevFill,
-                    keySink, keysMap, keyColIndices, symbolTableColIndices,
-                    offsetFunc, offsetFuncPos,
-                    tzFunc, tzFuncPos, samplingIntervalUnit,
-                    fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot,
-                    isPrevPositioningNeeded, localNonKeyedPrevCache
-            );
+            if (!isSampleBySource) {
+                cursorLocal = new SampleByFillCursor(
+                        metadata, grid, fillModes, constantFills,
+                        timestampIndex, timestampType, localHasPrevFill,
+                        keySink, keysMap, keyColIndices, symbolTableColIndices,
+                        fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot,
+                        isPrevPositioningNeeded, false, localNonKeyedPrevCache
+                );
+            } else if (keyColIndices.size() == 0) {
+                cursorLocal = new SampleBySourceFillCursor(
+                        metadata, grid, fillModes, constantFills,
+                        timestampIndex, timestampType, localHasPrevFill,
+                        keyColIndices, symbolTableColIndices, prevValueSlot
+                );
+            } else if (isEveryColumnOwnPrev(fillModes, timestampIndex)) {
+                cursorLocal = new KeyedSampleByPrevFillCursor(
+                        metadata, grid, fillModes, constantFills,
+                        timestampIndex, timestampType, localHasPrevFill,
+                        keyColIndices, symbolTableColIndices, prevValueSlot
+                );
+            } else {
+                cursorLocal = null;
+            }
         } catch (Throwable th) {
             // Free what this constructor allocated. Caller still owns its inputs
             // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
@@ -219,6 +265,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.constantFills = constantFills;
         this.fillModes = fillModes;
         this.hasPrevFill = localHasPrevFill;
+        this.grid = grid;
         this.cursor = cursorLocal;
     }
 
@@ -230,6 +277,22 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
+        if (cursor == null) {
+            try {
+                baseCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                final SampleByFillNoneRecordCursor sampleByCursor = (SampleByFillNoneRecordCursor) baseCursor;
+                if (valueFillRecord == null) {
+                    valueFillRecord = sampleByCursor.newFillRecord(gapSourceColumns(fillModes, timestampIndex), constantFills);
+                }
+                Function.init(constantFills, baseCursor, executionContext, null);
+                grid.of(baseCursor, executionContext);
+                sampleByCursor.ofValueFill(grid, valueFillRecord);
+                return baseCursor;
+            } catch (Throwable th) {
+                Misc.free(baseCursor, th);
+                throw th;
+            }
+        }
         try {
             baseCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(baseCursor, executionContext);
@@ -341,10 +404,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
-        // Per-column dispatch codes compiled by compileDispatchPlan(). Two parallel
-        // tables: fillDispatchCode for fill rows, dataDispatchCode (all DISPATCH_BASE)
-        // for data rows. currentDispatchCode swaps between them at row boundaries.
-        private static final int DISPATCH_BASE = 6;
+        // Per-column dispatch codes for gap rows, compiled by compileDispatchPlan().
+        // Data rows read the base record.
         private static final int DISPATCH_CONSTANT = 0;
         private static final int DISPATCH_KEY_SLOT = 1;
         private static final int DISPATCH_NULL = 2;
@@ -355,48 +416,72 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private static final int DISPATCH_PREV_SLOT = 3;
         private static final int DISPATCH_TIMESTAMP_FILL = 4;
 
-        private RecordCursor baseCursor;
-        private Record baseRecord;
-        // Unwrapped uniform-UTC sampler. timestampSampler may point here or at
-        // tzWrap; held separately so the wrap can be rebuilt per of().
-        private final TimestampSampler baseSampler;
-        private long calendarOffset;
-        private SqlExecutionCircuitBreaker circuitBreaker;
+        protected final SampleByFillGrid grid;
+        // A gap row is the SAMPLE BY source's current row with the gap's timestamp.
+        protected final boolean isSourceRecord;
         private final ObjList<Function> constantFills;
-        private long currentBucketTimestamp;
-        private int[] currentDispatchCode;
-        private int[] dataDispatchCode;
         private final ObjList<Function> dispatchConstant = new ObjList<>();
-        private int[] dispatchSlot;
-        private int[] fillDispatchCode;
         private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampHolder fillTimestampFunc;
         private final IntList fixedPrevSrcCols;
         private final IntList fixedPrevTypeTags;
-        private final Function fromFunc;
-        private boolean hasDataForCurrentBucket;
-        private boolean hasExplicitTo;
-        private boolean hasPendingRow;
         private final boolean hasPrevFill;
-        private boolean hasPrevForCurrentGap;
-        private boolean hasSimplePrev;
-        private boolean isBaseCursorExhausted;
-        private boolean isEmittingFills;
-        private boolean isInitialized;
         private final boolean isKeyed;
-        // Starts closed: the keyed keysMap is built lazily (openOnInit=false), so the
-        // first of() must reopen it under the bound MemoryTracker. close() flips this
-        // back to false and frees the map, so the next of() reopens again.
-        private boolean isOpen;
         // True when the recordAt-based PREV path is reachable: any FILL_PREV
         // output column reads a variable-width source (VARCHAR/BIN/STRING/ARRAY),
         // or non-keyed FILL_PREV is in use (no MapValue cache available).
         // False lets emitNextFillRow skip baseCursor.recordAt entirely.
         private final boolean isPrevPositioningNeeded;
-        private int keyCount;
+        private final boolean isSampleBySource;
         private final RecordSink keySink;
         private final Map keysMap;
+        // Non-keyed FILL_PREV slot cache. Null for keyed runs and for non-keyed
+        // runs with no fixed-size PREV source.
+        private final SimpleMapValue nonKeyedPrevCache;
+        private final IntList outputColToKeyPos = new IntList();
+        // Per output column: MapValue slot for the cached fixed-size PREV value,
+        // or -1 if not slot-eligible (variable-width sources fall back to PREV_SLOT).
+        private final IntList prevValueSlot;
+        // Per output column SymbolTable cache, populated in of(); used by
+        // getSymA/getSymB to skip the MapRecord setSymbolTableResolver chain.
+        private final ObjList<SymbolTable> symbolCache = new ObjList<>();
+        private final IntList symbolTableColIndices;
+        private final int timestampIndex;
+        protected long currentBucketTimestamp;
+        protected boolean hasDataForCurrentBucket;
+        protected boolean hasExplicitTo;
+        protected boolean hasPendingRow;
+        protected boolean isEmittingFills;
+        protected boolean isGapRow;
+        protected boolean isInitialized;
+        protected SampleByFillNoneRecordCursor keyedSampleBySource;
+        protected long maxTimestamp;
+        protected long pendingTs;
+        // Non-null when the base is a SAMPLE BY cursor that keeps its latest rows
+        // readable: the fill then peeks the next row's timestamp instead of
+        // advancing, and reads PREV values and gap keys from the source's rows.
+        protected SampleByFillSource sampleBySource;
+        // Source modes with any gap value other than the row's own: data rows read
+        // the source row as is (active A), gap rows read it through gap functions
+        // (active B).
+        protected SampleByFillRecord sourceFillRecord;
+        private RecordCursor baseCursor;
+        private Record baseRecord;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private int[] dispatchSlot;
+        private int[] fillDispatchCode;
+        // Gap rows a SAMPLE BY source cursor emits on its own; it polls the breaker
+        // on a stride of them, while the source polls it for every row it reads.
+        private int gapRowCount;
+        private boolean hasPrevForCurrentGap;
+        private boolean hasSimplePrev;
+        private boolean isBaseCursorExhausted;
+        // Starts closed: the keyed keysMap is built lazily (openOnInit=false), so the
+        // first of() must reopen it under the bound MemoryTracker. close() flips this
+        // back to false and frees the map, so the next of() reopens again.
+        private boolean isOpen;
+        private int keyCount;
         private MapRecordCursor keysMapCursor;
         // Source for DISPATCH_KEY_SLOT and DISPATCH_PREV_CACHE_SLOT reads.
         // Bound in initialize() to either the keyed Map's MapRecord or, for
@@ -404,55 +489,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // over nonKeyedPrevCache. Typed as Record so the FillRecord getters
         // read uniformly across both modes without a per-call branch.
         private Record keysMapRecord;
-        private long maxTimestamp;
-        // Non-keyed FILL_PREV slot cache. Null for keyed runs and for non-keyed
-        // runs with no fixed-size PREV source.
-        private final SimpleMapValue nonKeyedPrevCache;
         // Record-typed view over nonKeyedPrevCache; lazily created in
         // initialize() when the non-keyed cache is in use.
         private SimpleMapValueRecord nonKeyedPrevCacheRecord;
-        private final Function offsetFunc;
-        private final int offsetFuncPos;
-        private final IntList outputColToKeyPos = new IntList();
-        private long pendingTs;
+        private Record outputRecord;
         private Record prevRecord;
-        // Per output column: MapValue slot for the cached fixed-size PREV value,
-        // or -1 if not slot-eligible (variable-width sources fall back to PREV_SLOT).
-        private final IntList prevValueSlot;
-        // FILL stride unit ('d','w','M','y'), forwarded to the TZ wrap so the
-        // local-grid floor uses the right calendar resolution.
-        private final char samplingIntervalUnit;
         private long simplePrevRowId = -1L;
-        // Per output column SymbolTable cache, populated in of(); used by
-        // getSymA/getSymB to skip the MapRecord setSymbolTableResolver chain.
-        private final ObjList<SymbolTable> symbolCache = new ObjList<>();
-        private final IntList symbolTableColIndices;
-        private final TimestampDriver timestampDriver;
-        private final int timestampIndex;
-        // Active sampler. Points at baseSampler or tzWrap; re-bound per of()
-        // so a runtime-constant TIME ZONE picks up its current value.
-        private TimestampSampler timestampSampler;
         // Keys still pending a fill emission for the current bucket. Reset to
         // keyCount at every boundary; decremented when a data row marks a key
         // present. toEmitCnt == 0 means the bucket is dense -- skip the scan.
         private int toEmitCnt;
-        private final Function toFunc;
-        private final int toFuncPos;
-        // Runtime-constant TIME ZONE Function (null when no TZ clause). Re-read
-        // per of() so a bind variable picks up its current value -- pre-resolving
-        // at compile time would silently bake the first-execute value.
-        private final Function tzFunc;
-        private final int tzFuncPos;
-        // Lazily-allocated TZ wrap around baseSampler. Reused across of() calls
-        // via setTzRules; held even after a fixed-offset of() for the next bind.
-        private TimezoneFloorTimestampSampler tzWrap;
 
         private SampleByFillCursor(
                 RecordMetadata metadata,
-                TimestampSampler timestampSampler,
-                @NotNull Function fromFunc,
-                @NotNull Function toFunc,
-                int toFuncPos,
+                SampleByFillGrid grid,
                 IntList fillModes,
                 ObjList<Function> constantFills,
                 int timestampIndex,
@@ -462,32 +512,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 Map keysMap,
                 IntList keyColIndices,
                 IntList symbolTableColIndices,
-                Function offsetFunc,
-                int offsetFuncPos,
-                Function tzFunc,
-                int tzFuncPos,
-                char samplingIntervalUnit,
                 IntList fixedPrevSrcCols,
                 IntList fixedPrevTypeTags,
                 IntList prevValueSlot,
                 boolean isPrevPositioningNeeded,
+                boolean isSampleBySource,
                 SimpleMapValue nonKeyedPrevCache
         ) {
-            this.offsetFunc = offsetFunc;
-            this.offsetFuncPos = offsetFuncPos;
-            this.tzFunc = tzFunc;
-            this.tzFuncPos = tzFuncPos;
-            this.samplingIntervalUnit = samplingIntervalUnit;
-            // Factory passes the unwrapped sampler; of() lazily binds tzWrap.
-            this.baseSampler = timestampSampler;
-            this.timestampSampler = timestampSampler;
-            this.fromFunc = fromFunc;
-            this.toFunc = toFunc;
-            this.toFuncPos = toFuncPos;
+            this.grid = grid;
             this.fillModes = fillModes;
             this.constantFills = constantFills;
             this.timestampIndex = timestampIndex;
-            this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.fillTimestampFunc = new FillTimestampHolder(timestampType);
             this.hasPrevFill = hasPrevFill;
             this.keySink = keySink;
@@ -497,18 +532,24 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.fixedPrevTypeTags = fixedPrevTypeTags;
             this.prevValueSlot = prevValueSlot;
             this.isPrevPositioningNeeded = isPrevPositioningNeeded;
-            assert (keysMap == null) == (keyColIndices.size() == 0);
-            this.isKeyed = keysMap != null;
+            this.isSampleBySource = isSampleBySource;
+            // When every column carries its own previous value, a gap row is the
+            // SAMPLE BY source's current row with the gap's timestamp.
+            this.isSourceRecord = isSampleBySource && isEveryColumnOwnPrev(fillModes, timestampIndex);
+            assert (keysMap == null) == (keyColIndices.size() == 0 || isSampleBySource);
+            this.isKeyed = keyColIndices.size() > 0;
             this.nonKeyedPrevCache = nonKeyedPrevCache;
             assert nonKeyedPrevCache == null || (!isKeyed && fixedPrevSrcCols.size() > 0);
 
             // Key columns sit after the fixed-width value header plus any
             // FILL_PREV cache slots; dispatchSlot[col] for KEY_SLOT entries
-            // resolves through this offset.
+            // resolves through this offset. A keyed SAMPLE BY source exposes the
+            // keys at their output positions instead.
             final int keyPosOffset = PREV_CACHE_OFFSET + fixedPrevSrcCols.size();
             outputColToKeyPos.setAll(metadata.getColumnCount(), -1);
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
-                outputColToKeyPos.setQuick(keyColIndices.getQuick(i), keyPosOffset + i);
+                final int col = keyColIndices.getQuick(i);
+                outputColToKeyPos.setQuick(col, isSampleBySource ? col : keyPosOffset + i);
             }
 
             compileDispatchPlan(metadata.getColumnCount());
@@ -528,7 +569,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public Record getRecord() {
-            return fillRecord;
+            return outputRecord;
         }
 
         @Override
@@ -555,17 +596,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 long dataTs;
                 if (hasPendingRow) {
                     dataTs = pendingTs;
-                } else if (!isBaseCursorExhausted && baseCursor.hasNext()) {
-                    dataTs = baseRecord.getTimestamp(timestampIndex);
+                } else if (!isBaseCursorExhausted && peekNextRow()) {
+                    dataTs = pendingTs;
                     hasPendingRow = true;
-                    pendingTs = dataTs;
                 } else {
                     isBaseCursorExhausted = true;
                     dataTs = Long.MAX_VALUE;
                 }
 
                 if (isBaseCursorExhausted && !hasExplicitTo) {
-                    if (hasDataForCurrentBucket && keysMap != null) {
+                    if (hasDataForCurrentBucket && isKeyed) {
                         isEmittingFills = true;
                         keysMapCursor.toTop();
                         return emitNextFillRow();
@@ -575,8 +615,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
                 if (dataTs == currentBucketTimestamp) {
                     hasPendingRow = false;
-                    currentDispatchCode = dataDispatchCode;
-                    if (keysMap != null) {
+                    isGapRow = false;
+                    if (isKeyed) {
                         hasDataForCurrentBucket = true;
                         MapKey mapKey = keysMap.withKey();
                         keySink.copy(baseRecord, mapKey);
@@ -605,18 +645,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                                 writePrevCacheSlots(nonKeyedPrevCache, baseRecord);
                             }
                         }
-                        currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
+                        currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp);
                     }
                     return true;
                 }
 
                 if (dataTs > currentBucketTimestamp) {
                     // Gap -- emit fill rows before advancing bucket.
-                    if (hasDataForCurrentBucket && keysMap != null) {
+                    if (hasDataForCurrentBucket && isKeyed) {
                         // Dense bucket fast-path: skip the inner key-scan if every key already had data.
                         if (toEmitCnt == 0) {
                             toEmitCnt = keyCount;
-                            currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
+                            currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp);
                             hasDataForCurrentBucket = false;
                             continue;
                         }
@@ -628,7 +668,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         continue; // gap fills exhausted, continue main loop
                     }
 
-                    if (keysMap != null && keyCount > 0) {
+                    if (isKeyed && keyCount > 0) {
                         // This bucket has NO data at all -- emit fills for all keys
                         isEmittingFills = true;
                         keysMapCursor.toTop();
@@ -640,7 +680,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
 
                     // Non-keyed gap
-                    currentDispatchCode = fillDispatchCode;
+                    isGapRow = true;
                     fillTimestampFunc.value = currentBucketTimestamp;
                     hasPrevForCurrentGap = hasSimplePrev;
                     if (hasPrevForCurrentGap && isPrevPositioningNeeded) {
@@ -648,19 +688,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // Non-keyed FILL_PREV always lands here (no MapValue cache available).
                         baseCursor.recordAt(prevRecord, simplePrevRowId);
                     }
-                    currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
+                    currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp);
                     hasDataForCurrentBucket = false;
                     return true;
                 }
 
-                // Data row before the current bucket boundary -- upstream contract
-                // violation or bucket-grid drift (DST, FROM/offset misalignment).
-                // Fail visibly rather than silently corrupting output.
-                throw CairoException.critical(0)
-                        .put("sample by fill: data row timestamp ")
-                        .put(dataTs)
-                        .put(" precedes next bucket ")
-                        .put(currentBucketTimestamp);
+                throw SampleByFillGrid.dataRowBeforeBucket(dataTs, currentBucketTimestamp);
             }
             return false;
         }
@@ -685,7 +718,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (baseCursor != null) {
                 baseCursor.toTop();
             }
-            if (isKeyed) {
+            if (keysMap != null) {
                 keysMap.clear();
             }
             isInitialized = false;
@@ -704,18 +737,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void compileDispatchPlan(int columnCount) {
-            // Precompute per-column dispatch tables once per cursor. Two parallel
-            // arrays let hasNext swap a single pointer at row boundaries instead
-            // of branching on an isGapFilling flag inside every getter.
+            // Precompute per-column gap-row dispatch tables once per cursor.
             if (fillDispatchCode == null || fillDispatchCode.length < columnCount) {
                 fillDispatchCode = new int[columnCount];
-                dataDispatchCode = new int[columnCount];
                 dispatchSlot = new int[columnCount];
             }
             dispatchConstant.setAll(columnCount, null);
-            // Data rows always pass through to baseRecord, including the
-            // timestamp column.
-            Arrays.fill(dataDispatchCode, 0, columnCount, DISPATCH_BASE);
             for (int col = 0; col < columnCount; col++) {
                 if (col == timestampIndex) {
                     fillDispatchCode[col] = DISPATCH_TIMESTAMP_FILL;
@@ -748,7 +775,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
             // hasNext rebinds this before returning the first row; defaulting
             // to fill mode keeps pre-first-row reads well-defined.
-            currentDispatchCode = fillDispatchCode;
+            isGapRow = true;
         }
 
         private boolean emitNextFillRow() {
@@ -768,7 +795,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                     long lastKnownTs = keysMapRecord.getLong(LAST_KNOWN_TS_SLOT);
                     if (lastKnownTs != currentBucketTimestamp) {
-                        currentDispatchCode = fillDispatchCode;
+                        isGapRow = true;
                         fillTimestampFunc.value = currentBucketTimestamp;
                         // PREV_CACHE_SLOT slots are pre-filled with null sentinels in
                         // initialize(), so HAS_PREV / hasPrevForCurrentGap matter only
@@ -790,7 +817,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // next bucket's timestamp differs from any LAST_KNOWN_TS_SLOT
                 // values still carrying the just-emitted bucket's stamp.
                 toEmitCnt = keyCount;
-                currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
+                currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp);
                 hasDataForCurrentBucket = false;
                 isEmittingFills = false;
 
@@ -851,154 +878,24 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
-        private void initialize() {
-            TimestampDriver driver = timestampDriver;
-            long fromTs = fromFunc == driver.getTimestampConstantNull() ? Numbers.LONG_NULL
-                    : driver.from(fromFunc.getTimestamp(null), ColumnType.getTimestampType(fromFunc.getType()));
-            hasExplicitTo = toFunc != driver.getTimestampConstantNull();
-            maxTimestamp = hasExplicitTo
-                    ? driver.from(toFunc.getTimestamp(null), ColumnType.getTimestampType(toFunc.getType()))
-                    : Numbers.LONG_NULL;
-            // Demote hasExplicitTo when TO evaluates to LONG_NULL at runtime
-            // (bind variable, null::timestamp, or function returning null).
-            // The toFunc identity check above only catches the constant-null
-            // singleton. Long.MIN_VALUE folds into the same path: LONG_NULL ==
-            // Long.MIN_VALUE is QuestDB's universal timestamp null sentinel.
-            if (maxTimestamp == Numbers.LONG_NULL) hasExplicitTo = false;
-
-            // Pass 1: key discovery (keyed queries only)
-            if (keysMap != null) {
-                keysMap.clear();
-                int keyIdx = 0;
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                    MapKey key = keysMap.withKey();
-                    keySink.copy(baseRecord, key);
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        keyIdx++;
-                        // LONG_NULL is the absence sentinel: it can never equal
-                        // any bucket timestamp produced by TimestampSampler, and
-                        // doubles as the "no prev" marker in the emit path.
-                        value.putLong(LAST_KNOWN_TS_SLOT, Numbers.LONG_NULL);
-                        // Pre-fill cached PREV slots with per-type null sentinels
-                        // so PREV_CACHE_SLOT getters can read unconditionally
-                        // -- no hasPrev branch needed in the hot path.
-                        initPrevCacheSlots(value);
-                    }
-                }
-                keyCount = keyIdx;
-                if (keyCount == 0) {
-                    // Empty GROUP BY output -- no keys to fill, emit zero rows.
-                    isBaseCursorExhausted = true;
-                    maxTimestamp = Long.MIN_VALUE;
-                    currentBucketTimestamp = Long.MAX_VALUE;
-                    return;
-                }
-                toEmitCnt = keyCount;
-                baseCursor.toTop();
-                MapRecord mapRecord = keysMap.getRecord();
-                mapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
-                keysMapRecord = mapRecord;
-                keysMapCursor = keysMap.getCursor();
-            } else {
-                // Non-keyed: degenerate case with 1 "empty" key
-                keyCount = 1;
-                toEmitCnt = 1;
-                if (nonKeyedPrevCache != null) {
-                    nonKeyedPrevCache.clear();
-                    // LAST_KNOWN_TS_SLOT participates only in keyed bookkeeping;
-                    // for non-keyed we still seed it for layout symmetry.
-                    nonKeyedPrevCache.putLong(LAST_KNOWN_TS_SLOT, Numbers.LONG_NULL);
-                    initPrevCacheSlots(nonKeyedPrevCache);
-                    if (nonKeyedPrevCacheRecord == null) {
-                        nonKeyedPrevCacheRecord = new SimpleMapValueRecord(nonKeyedPrevCache);
-                    }
-                    keysMapRecord = nonKeyedPrevCacheRecord;
-                } else {
-                    keysMapRecord = null;
-                }
-            }
-
-            // Peek first row to determine range. prevRecord MUST be captured
-            // AFTER buildChain (i.e. after the first hasNext on the non-keyed
-            // path) -- earlier capture would let SortedRecordCursor reposition
-            // recordB underneath us. Skip the capture when no PREV column needs
-            // recordAt -- a non-random-access streaming base would throw on
-            // getRecordB and the slot-cache covers all reads anyway.
-            if (baseCursor.hasNext()) {
-                if (isPrevPositioningNeeded) {
-                    prevRecord = baseCursor.getRecordB();
-                }
-                long firstTs = baseRecord.getTimestamp(timestampIndex);
-                final boolean currentBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
-                currentBucketTimestamp = currentBucketIsFirstTs ? firstTs : fromTs;
-                if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
-                    // No FROM but offset exists: align grid to offset so round()
-                    // matches timestamp_floor_utc buckets.
-                    timestampSampler.setOffset(calendarOffset);
-                    currentBucketTimestamp = timestampSampler.round(currentBucketTimestamp);
-                } else if (calendarOffset != 0 && currentBucketIsFirstTs) {
-                    // firstTs already sits on the floor grid (anchored at
-                    // fromTs+calendarOffset). setLocalAnchor forwards untranslated
-                    // because fromTs+calendarOffset is local-grid space (matches
-                    // timestamp_floor_utc's raw-modulus treatment).
-                    timestampSampler.setLocalAnchor(fromTs + calendarOffset);
-                } else {
-                    // firstTs path (calendarOffset == 0) OR fromTs path (any offset).
-                    // Anchor at effectiveOffset = currentBucketTimestamp + calendarOffset
-                    // to match timestamp_floor_utc's grid.
-                    //
-                    // Math.max clamps a positive-offset case where effectiveOffset
-                    // > seed: GROUP BY's Micros.floor* clamps up; round() doesn't.
-                    //
-                    // setStart vs setLocalAnchor tracks the origin of currentBucketTimestamp:
-                    //  - firstTs path: a GROUP BY bucket label on the local grid;
-                    //    setStart applies UTC->local conversion. (Here calendarOffset
-                    //    is 0, so effectiveOffset == firstTs.)
-                    //  - fromTs path: a raw user FROM in local-grid space;
-                    //    setLocalAnchor forwards untranslated, and localAnchorAsUtc
-                    //    lifts back to UTC for the Math.max comparison.
-                    //  Using setStart on the fromTs path would shift the grid by
-                    //  tzOffset and trip the grid-drift guard on super-day strides.
-                    final long effectiveOffset = currentBucketTimestamp + calendarOffset;
-                    final long anchorUtc;
-                    if (currentBucketIsFirstTs) {
-                        timestampSampler.setStart(effectiveOffset);
-                        anchorUtc = effectiveOffset;
-                    } else {
-                        timestampSampler.setLocalAnchor(effectiveOffset);
-                        anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
-                    }
-                    currentBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(currentBucketTimestamp));
-                }
-                hasPendingRow = true;
-                pendingTs = firstTs;
-                if (maxTimestamp == Numbers.LONG_NULL) {
-                    maxTimestamp = Long.MAX_VALUE;
-                }
-            } else {
-                if (fromTs != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
-                    // Same anchor rule as the non-empty-base branch, fromTs path
-                    // only (no firstTs). effectiveOffset is local-grid space;
-                    // setLocalAnchor forwards untranslated and localAnchorAsUtc
-                    // lifts back so Math.max clamps in UTC.
-                    final long effectiveOffset = fromTs + calendarOffset;
-                    timestampSampler.setLocalAnchor(effectiveOffset);
-                    final long anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
-                    currentBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(fromTs));
-                } else {
-                    maxTimestamp = Long.MIN_VALUE;
-                    currentBucketTimestamp = Long.MAX_VALUE;
-                }
-                isBaseCursorExhausted = true;
-            }
-        }
-
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             this.baseRecord = baseCursor.getRecord();
-            if (isKeyed) {
+            sampleBySource = isSampleBySource ? (SampleByFillSource) baseCursor : null;
+            if (!isSampleBySource) {
+                outputRecord = fillRecord;
+            } else if (isSourceRecord) {
+                outputRecord = baseRecord;
+            } else {
+                if (sourceFillRecord == null) {
+                    sourceFillRecord = ((AbstractVirtualRecordSampleByCursor) baseCursor).newFillRecord(gapSourceColumns(fillModes, timestampIndex), constantFills);
+                }
+                sourceFillRecord.setActiveA();
+                isGapRow = false;
+                outputRecord = sourceFillRecord;
+            }
+            keyedSampleBySource = isSampleBySource && isKeyed ? (SampleByFillNoneRecordCursor) baseCursor : null;
+            if (keysMap != null) {
                 // Bind the active workload's MemoryTracker before reopen() so the keysMap's
                 // initial allocation is charged to it; the matching free at cursor close keeps
                 // the per-query counter balanced. Rebound on every of() because the same pooled
@@ -1007,74 +904,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
             if (!isOpen) {
                 isOpen = true;
-                if (isKeyed) {
+                if (keysMap != null) {
                     keysMap.reopen();
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             Function.init(constantFills, baseCursor, executionContext, null);
-            fromFunc.init(baseCursor, executionContext);
-            toFunc.init(baseCursor, executionContext);
-            // Reject FROM > TO at the same point as HORIZON JOIN RANGE
-            // (SqlCodeGenerator.java) and MAT VIEW REFRESH RANGE
-            // (SqlCompilerImpl.java). Both surface a clear SQL-level error
-            // pointing at the offending TO expression. Without this guard
-            // SAMPLE BY silently returns zero rows, masking what is almost
-            // always a query-construction bug. FROM == TO is allowed (a
-            // single-point range) -- only strict inversion is rejected.
-            // LONG_NULL on either side means the clause is absent / null /
-            // unbound and the bound is not in effect; only check when both
-            // are concrete timestamps.
-            final TimestampDriver driver = timestampDriver;
-            if (fromFunc != driver.getTimestampConstantNull() && toFunc != driver.getTimestampConstantNull()) {
-                final long fromTs = driver.from(fromFunc.getTimestamp(null), ColumnType.getTimestampType(fromFunc.getType()));
-                final long toTs = driver.from(toFunc.getTimestamp(null), ColumnType.getTimestampType(toFunc.getType()));
-                if (toTs != Numbers.LONG_NULL && fromTs > toTs) {
-                    throw SqlException.$(toFuncPos, "TO timestamp must not be earlier than FROM timestamp");
-                }
-            }
-            offsetFunc.init(baseCursor, executionContext);
-            // Evaluate runtime-constant OFFSET into native units. Mirrors
-            // AbstractSampleByCursor.parseParams. Null/absent leaves
-            // calendarOffset == 0, which the initialize() branches no-op.
-            final CharSequence offsetStr = offsetFunc.getStrA(null);
-            if (offsetStr != null) {
-                final long parsed = Dates.parseOffset(offsetStr);
-                if (parsed == Numbers.LONG_NULL) {
-                    throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offsetStr);
-                }
-                calendarOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(parsed));
-            } else {
-                calendarOffset = 0;
-            }
-            // Re-resolve TIME ZONE per of() so bind variables pick up their
-            // current value. The wrap is needed whenever a TZ resolves
-            // (named zone or offset literal): only setLocalAnchor /
-            // localAnchorAsUtc can fold tzOffset into the anchor for
-            // super-day strides. tzFunc != null already implies the wrap
-            // is required (binding only sets it for day-or-larger
-            // SAMPLE BY + non-trivial FILL). getTimezoneRules unifies
-            // offset literals (FixedTimeZoneRule) and DST zones uniformly.
-            if (tzFunc != null) {
-                tzFunc.init(baseCursor, executionContext);
-                final CharSequence tz = tzFunc.getStrA(null);
-                if (tz != null) {
-                    final TimeZoneRules tzRules;
-                    try {
-                        tzRules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
-                    } catch (CairoException e) {
-                        throw SqlException.$(tzFuncPos, "invalid timezone: ").put(tz);
-                    }
-                    if (tzWrap == null) {
-                        tzWrap = new TimezoneFloorTimestampSampler(baseSampler, tzRules, samplingIntervalUnit);
-                    } else {
-                        tzWrap.setTzRules(tzRules);
-                    }
-                    timestampSampler = tzWrap;
-                } else {
-                    timestampSampler = baseSampler;
-                }
-            }
+            grid.of(baseCursor, executionContext);
             // Cache one SymbolTable per slot-dispatched output column. Cuts the
             // per-cell setSymbolTableResolver chain to a single valueOf call --
             // the dominant cost on sparse keyed SYMBOL fills.
@@ -1107,6 +943,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             toTop();
         }
 
+        // Sets pendingTs to the next base row's timestamp. A SAMPLE BY source only
+        // peeks at it; any other base advances to the row.
+        private boolean peekNextRow() {
+            if (sampleBySource != null) {
+                pendingTs = sampleBySource.peekNextTimestamp();
+                return pendingTs != Numbers.LONG_NULL;
+            }
+            if (baseCursor.hasNext()) {
+                pendingTs = baseRecord.getTimestamp(timestampIndex);
+                return true;
+            }
+            return false;
+        }
+
         private void saveSimplePrevRowId(Record record) {
             // Skip the rowId capture when no PREV column needs recordAt -- a
             // non-random-access streaming base would throw on getRowId. The
@@ -1123,7 +973,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // The data-row arrival path already wrote LAST_KNOWN_TS_SLOT to the
             // current bucket timestamp; that doubles as the "has prev" marker
             // for subsequent gap buckets, so no separate flag write is needed.
-            value.putLong(PREV_ROWID_SLOT, record.getRowId());
+            if (isPrevPositioningNeeded) {
+                value.putLong(PREV_ROWID_SLOT, record.getRowId());
+            }
             // Copy fixed-size FILL_PREV values into cached MapValue slots --
             // amortises a recordAt+RecordChain per read into N small writes.
             writePrevCacheSlots(value, record);
@@ -1172,6 +1024,115 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
+        protected void initialize() {
+            grid.resolveBounds();
+            hasExplicitTo = grid.hasExplicitTo();
+            maxTimestamp = grid.getMaxTimestamp();
+
+            // Pass 1: key discovery (keyed queries only). A keyed SAMPLE BY source
+            // collects the keys of its input rows without aggregating them.
+            if (keyedSampleBySource != null) {
+                keyedSampleBySource.scanKeys();
+                // Gap rows read their keys and PREV values from the source row of their
+                // key, which holds NULL values until the key's first row.
+                prevRecord = baseRecord;
+                keysMapRecord = baseRecord;
+                hasPrevForCurrentGap = true;
+            } else if (keysMap != null) {
+                keysMap.clear();
+                int keyIdx = 0;
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    MapKey key = keysMap.withKey();
+                    keySink.copy(baseRecord, key);
+                    MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        keyIdx++;
+                        // LONG_NULL is the absence sentinel: it can never equal
+                        // any bucket timestamp produced by TimestampSampler, and
+                        // doubles as the "no prev" marker in the emit path.
+                        value.putLong(LAST_KNOWN_TS_SLOT, Numbers.LONG_NULL);
+                        // Pre-fill cached PREV slots with per-type null sentinels
+                        // so PREV_CACHE_SLOT getters can read unconditionally
+                        // -- no hasPrev branch needed in the hot path.
+                        initPrevCacheSlots(value);
+                    }
+                }
+                keyCount = keyIdx;
+                if (keyCount == 0) {
+                    // Empty GROUP BY output -- no keys to fill, emit zero rows.
+                    isBaseCursorExhausted = true;
+                    maxTimestamp = Long.MIN_VALUE;
+                    currentBucketTimestamp = Long.MAX_VALUE;
+                    return;
+                }
+                toEmitCnt = keyCount;
+                baseCursor.toTop();
+                MapRecord mapRecord = keysMap.getRecord();
+                mapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
+                keysMapRecord = mapRecord;
+                keysMapCursor = keysMap.getCursor();
+            } else {
+                // Non-keyed: degenerate case with 1 "empty" key
+                keyCount = 1;
+                toEmitCnt = 1;
+                if (sampleBySource != null) {
+                    // The source keeps its current row while the fill emits gap rows.
+                    prevRecord = baseRecord;
+                }
+                if (nonKeyedPrevCache != null) {
+                    nonKeyedPrevCache.clear();
+                    // LAST_KNOWN_TS_SLOT participates only in keyed bookkeeping;
+                    // for non-keyed we still seed it for layout symmetry.
+                    nonKeyedPrevCache.putLong(LAST_KNOWN_TS_SLOT, Numbers.LONG_NULL);
+                    initPrevCacheSlots(nonKeyedPrevCache);
+                    if (nonKeyedPrevCacheRecord == null) {
+                        nonKeyedPrevCacheRecord = new SimpleMapValueRecord(nonKeyedPrevCache);
+                    }
+                    keysMapRecord = nonKeyedPrevCacheRecord;
+                } else {
+                    keysMapRecord = null;
+                }
+            }
+
+            // Peek first row to determine range. prevRecord MUST be captured
+            // AFTER buildChain (i.e. after the first hasNext on the non-keyed
+            // path) -- earlier capture would let SortedRecordCursor reposition
+            // recordB underneath us. Skip the capture when no PREV column needs
+            // recordAt -- a non-random-access streaming base would throw on
+            // getRecordB and the slot-cache covers all reads anyway. A SAMPLE BY
+            // source bound prevRecord above.
+            if (peekNextRow()) {
+                if (isPrevPositioningNeeded && sampleBySource == null) {
+                    prevRecord = baseCursor.getRecordB();
+                }
+                currentBucketTimestamp = grid.firstBucket(pendingTs);
+                hasPendingRow = true;
+                maxTimestamp = grid.getMaxTimestamp();
+            } else {
+                currentBucketTimestamp = grid.firstBucketWithoutRows();
+                maxTimestamp = grid.getMaxTimestamp();
+                isBaseCursorExhausted = true;
+            }
+        }
+
+        protected void pollBreakerOnGapRow() {
+            if ((++gapRowCount & 0x3FF) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
+        }
+
+        protected void setSourceGapRow(boolean isGap) {
+            if (isGap != isGapRow && !isSourceRecord) {
+                isGapRow = isGap;
+                if (isGap) {
+                    sourceFillRecord.setActiveB();
+                } else {
+                    sourceFillRecord.setActiveA();
+                }
+            }
+        }
+
         /**
          * Per-cell dispatch consumes the flat arrays compiled by
          * {@link #compileDispatchPlan}. The default null/0/NaN tail in each getter
@@ -1188,8 +1149,203 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public ArrayView getArray(int col, int columnType) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getArray(col, columnType);
+                return isGapRow ? getGapArray(col, columnType) : baseRecord.getArray(col, columnType);
+            }
+
+            @Override
+            public BinarySequence getBin(int col) {
+                return isGapRow ? getGapBin(col) : baseRecord.getBin(col);
+            }
+
+            @Override
+            public long getBinLen(int col) {
+                return isGapRow ? getGapBinLen(col) : baseRecord.getBinLen(col);
+            }
+
+            @Override
+            public boolean getBool(int col) {
+                return isGapRow ? getGapBool(col) : baseRecord.getBool(col);
+            }
+
+            @Override
+            public byte getByte(int col) {
+                return isGapRow ? getGapByte(col) : baseRecord.getByte(col);
+            }
+
+            @Override
+            public char getChar(int col) {
+                return isGapRow ? getGapChar(col) : baseRecord.getChar(col);
+            }
+
+            @Override
+            public void getDecimal128(int col, Decimal128 sink) {
+                if (isGapRow) {
+                    getGapDecimal128(col, sink);
+                } else {
+                    baseRecord.getDecimal128(col, sink);
+                }
+            }
+
+            @Override
+            public short getDecimal16(int col) {
+                return isGapRow ? getGapDecimal16(col) : baseRecord.getDecimal16(col);
+            }
+
+            @Override
+            public void getDecimal256(int col, Decimal256 sink) {
+                if (isGapRow) {
+                    getGapDecimal256(col, sink);
+                } else {
+                    baseRecord.getDecimal256(col, sink);
+                }
+            }
+
+            @Override
+            public int getDecimal32(int col) {
+                return isGapRow ? getGapDecimal32(col) : baseRecord.getDecimal32(col);
+            }
+
+            @Override
+            public long getDecimal64(int col) {
+                return isGapRow ? getGapDecimal64(col) : baseRecord.getDecimal64(col);
+            }
+
+            @Override
+            public byte getDecimal8(int col) {
+                return isGapRow ? getGapDecimal8(col) : baseRecord.getDecimal8(col);
+            }
+
+            @Override
+            public double getDouble(int col) {
+                return isGapRow ? getGapDouble(col) : baseRecord.getDouble(col);
+            }
+
+            @Override
+            public float getFloat(int col) {
+                return isGapRow ? getGapFloat(col) : baseRecord.getFloat(col);
+            }
+
+            @Override
+            public byte getGeoByte(int col) {
+                return isGapRow ? getGapGeoByte(col) : baseRecord.getGeoByte(col);
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+                return isGapRow ? getGapGeoInt(col) : baseRecord.getGeoInt(col);
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+                return isGapRow ? getGapGeoLong(col) : baseRecord.getGeoLong(col);
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+                return isGapRow ? getGapGeoShort(col) : baseRecord.getGeoShort(col);
+            }
+
+            @Override
+            public int getIPv4(int col) {
+                return isGapRow ? getGapIPv4(col) : baseRecord.getIPv4(col);
+            }
+
+            @Override
+            public int getInt(int col) {
+                return isGapRow ? getGapInt(col) : baseRecord.getInt(col);
+            }
+
+            @Override
+            public Interval getInterval(int col) {
+                return isGapRow ? getGapInterval(col) : baseRecord.getInterval(col);
+            }
+
+            @Override
+            public long getLong(int col) {
+                return isGapRow ? getGapLong(col) : baseRecord.getLong(col);
+            }
+
+            @Override
+            public long getLong128Hi(int col) {
+                return isGapRow ? getGapLong128Hi(col) : baseRecord.getLong128Hi(col);
+            }
+
+            @Override
+            public long getLong128Lo(int col) {
+                return isGapRow ? getGapLong128Lo(col) : baseRecord.getLong128Lo(col);
+            }
+
+            @Override
+            public void getLong256(int col, CharSink<?> sink) {
+                if (isGapRow) {
+                    getGapLong256(col, sink);
+                } else {
+                    baseRecord.getLong256(col, sink);
+                }
+            }
+
+            @Override
+            public Long256 getLong256A(int col) {
+                return isGapRow ? getGapLong256A(col) : baseRecord.getLong256A(col);
+            }
+
+            @Override
+            public Long256 getLong256B(int col) {
+                return isGapRow ? getGapLong256B(col) : baseRecord.getLong256B(col);
+            }
+
+            @Override
+            public short getShort(int col) {
+                return isGapRow ? getGapShort(col) : baseRecord.getShort(col);
+            }
+
+            @Override
+            public CharSequence getStrA(int col) {
+                return isGapRow ? getGapStrA(col) : baseRecord.getStrA(col);
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return isGapRow ? getGapStrB(col) : baseRecord.getStrB(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return isGapRow ? getGapStrLen(col) : baseRecord.getStrLen(col);
+            }
+
+            @Override
+            public CharSequence getSymA(int col) {
+                return isGapRow ? getGapSymA(col) : baseRecord.getSymA(col);
+            }
+
+            @Override
+            public CharSequence getSymB(int col) {
+                return isGapRow ? getGapSymB(col) : baseRecord.getSymB(col);
+            }
+
+            @Override
+            public long getTimestamp(int col) {
+                return isGapRow ? getGapTimestamp(col) : baseRecord.getTimestamp(col);
+            }
+
+            @Override
+            public Utf8Sequence getVarcharA(int col) {
+                return isGapRow ? getGapVarcharA(col) : baseRecord.getVarcharA(col);
+            }
+
+            @Override
+            public Utf8Sequence getVarcharB(int col) {
+                return isGapRow ? getGapVarcharB(col) : baseRecord.getVarcharB(col);
+            }
+
+            @Override
+            public int getVarcharSize(int col) {
+                return isGapRow ? getGapVarcharSize(col) : baseRecord.getVarcharSize(col);
+            }
+
+            private ArrayView getGapArray(int col, int columnType) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getArray(dispatchSlot[col], columnType);
                     case DISPATCH_PREV_SLOT -> {
                         if (hasPrevForCurrentGap) {
@@ -1202,87 +1358,75 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getArray(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield ArrayConstant.NULL;
                     }
                 };
             }
 
-            @Override
-            public BinarySequence getBin(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getBin(col);
+            private BinarySequence getGapBin(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getBin(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getBin(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getBin(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield null;
                     }
                 };
             }
 
-            @Override
-            public long getBinLen(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getBinLen(col);
+            private long getGapBinLen(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getBinLen(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getBinLen(dispatchSlot[col]) : -1;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getBinLen(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield -1;
                     }
                 };
             }
 
-            @Override
-            public boolean getBool(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getBool(col);
+            private boolean getGapBool(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getBool(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap && prevRecord.getBool(dispatchSlot[col]);
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getBool(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield false;
                     }
                 };
             }
 
-            @Override
-            public byte getByte(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getByte(col);
+            private byte getGapByte(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getByte(dispatchSlot[col]) : 0;
                     // Narrow-integer Function convention: byte fills come through getInt().
                     case DISPATCH_CONSTANT -> (byte) dispatchConstant.getQuick(col).getInt(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield 0;
                     }
                 };
             }
 
-            @Override
-            public char getChar(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getChar(col);
+            private char getGapChar(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getChar(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getChar(dispatchSlot[col]) : 0;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getChar(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield 0;
                     }
                 };
             }
 
-            @Override
-            public void getDecimal128(int col, Decimal128 sink) {
-                switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getDecimal128(col, sink);
+            private void getGapDecimal128(int col, Decimal128 sink) {
+                switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
                             keysMapRecord.getDecimal128(dispatchSlot[col], sink);
                     case DISPATCH_PREV_SLOT -> {
@@ -1291,32 +1435,28 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal128(null, sink);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         sink.ofRawNull();
                     }
                 }
             }
 
-            @Override
-            public short getDecimal16(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getDecimal16(col);
+            private short getGapDecimal16(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal16(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal16(dispatchSlot[col]) : Decimals.DECIMAL16_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal16(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Decimals.DECIMAL16_NULL;
                     }
                 };
             }
 
-            @Override
-            public void getDecimal256(int col, Decimal256 sink) {
-                switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getDecimal256(col, sink);
+            private void getGapDecimal256(int col, Decimal256 sink) {
+                switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
                             keysMapRecord.getDecimal256(dispatchSlot[col], sink);
                     case DISPATCH_PREV_SLOT -> {
@@ -1325,255 +1465,223 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal256(null, sink);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         sink.ofRawNull();
                     }
                 }
             }
 
-            @Override
-            public int getDecimal32(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getDecimal32(col);
+            private int getGapDecimal32(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal32(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal32(dispatchSlot[col]) : Decimals.DECIMAL32_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal32(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Decimals.DECIMAL32_NULL;
                     }
                 };
             }
 
-            @Override
-            public long getDecimal64(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getDecimal64(col);
+            private long getGapDecimal64(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal64(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal64(dispatchSlot[col]) : Decimals.DECIMAL64_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal64(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Decimals.DECIMAL64_NULL;
                     }
                 };
             }
 
-            @Override
-            public byte getDecimal8(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getDecimal8(col);
+            private byte getGapDecimal8(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal8(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal8(dispatchSlot[col]) : Decimals.DECIMAL8_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal8(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Decimals.DECIMAL8_NULL;
                     }
                 };
             }
 
-            @Override
-            public double getDouble(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getDouble(col);
+            private double getGapDouble(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getDouble(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDouble(dispatchSlot[col]) : Double.NaN;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDouble(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Double.NaN;
                     }
                 };
             }
 
-            @Override
-            public float getFloat(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getFloat(col);
+            private float getGapFloat(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getFloat(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getFloat(dispatchSlot[col]) : Float.NaN;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getFloat(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Float.NaN;
                     }
                 };
             }
 
-            @Override
-            public byte getGeoByte(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getGeoByte(col);
+            private byte getGapGeoByte(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoByte(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoByte(dispatchSlot[col]) : GeoHashes.BYTE_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getGeoByte(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield GeoHashes.BYTE_NULL;
                     }
                 };
             }
 
-            @Override
-            public int getGeoInt(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getGeoInt(col);
+            private int getGapGeoInt(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoInt(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoInt(dispatchSlot[col]) : GeoHashes.INT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getGeoInt(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield GeoHashes.INT_NULL;
                     }
                 };
             }
 
-            @Override
-            public long getGeoLong(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getGeoLong(col);
+            private long getGapGeoLong(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoLong(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoLong(dispatchSlot[col]) : GeoHashes.NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getGeoLong(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield GeoHashes.NULL;
                     }
                 };
             }
 
-            @Override
-            public short getGeoShort(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getGeoShort(col);
+            private short getGapGeoShort(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoShort(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoShort(dispatchSlot[col]) : GeoHashes.SHORT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getGeoShort(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield GeoHashes.SHORT_NULL;
                     }
                 };
             }
 
-            @Override
-            public int getIPv4(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getIPv4(col);
+            private int getGapIPv4(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getIPv4(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getIPv4(dispatchSlot[col]) : Numbers.IPv4_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getIPv4(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Numbers.IPv4_NULL;
                     }
                 };
             }
 
-            @Override
-            public int getInt(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getInt(col);
+            private int getGapInt(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getInt(dispatchSlot[col]) : Numbers.INT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getInt(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Numbers.INT_NULL;
                     }
                 };
             }
 
-            @Override
-            public Interval getInterval(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getInterval(col);
+            private Interval getGapInterval(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getInterval(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getInterval(dispatchSlot[col]) : Interval.NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getInterval(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Interval.NULL;
                     }
                 };
             }
 
-            @Override
-            public long getLong(int col) {
+            private long getGapLong(int col) {
                 // Timestamp is a 64-bit long internally; Record.getLong(timestampIndex)
                 // is a valid call. Without DISPATCH_TIMESTAMP_FILL here, fill rows
                 // would silently return LONG_NULL for the bucket timestamp.
                 // getDate() defaults to getLong(), so this arm covers both.
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getLong(col);
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Numbers.LONG_NULL;
                     }
                 };
             }
 
-            @Override
-            public long getLong128Hi(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getLong128Hi(col);
+            private long getGapLong128Hi(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong128Hi(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong128Hi(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong128Hi(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Numbers.LONG_NULL;
                     }
                 };
             }
 
-            @Override
-            public long getLong128Lo(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getLong128Lo(col);
+            private long getGapLong128Lo(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong128Lo(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong128Lo(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong128Lo(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Numbers.LONG_NULL;
                     }
                 };
             }
 
-            @Override
-            public void getLong256(int col, CharSink<?> sink) {
+            private void getGapLong256(int col, CharSink<?> sink) {
                 // Per the Record.getLong256 contract, null appends nothing.
                 // Do NOT call sink.clear() -- it would erase the caller's row prefix.
-                switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getLong256(col, sink);
+                switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
                             keysMapRecord.getLong256(dispatchSlot[col], sink);
                     case DISPATCH_PREV_SLOT -> {
@@ -1581,186 +1689,162 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong256(null, sink);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                     }
                 }
             }
 
-            @Override
-            public Long256 getLong256A(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getLong256A(col);
+            private Long256 getGapLong256A(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong256A(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong256A(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong256A(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Long256Impl.NULL_LONG256;
                     }
                 };
             }
 
-            @Override
-            public Long256 getLong256B(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getLong256B(col);
+            private Long256 getGapLong256B(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong256B(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong256B(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong256B(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Long256Impl.NULL_LONG256;
                     }
                 };
             }
 
-            @Override
-            public short getShort(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getShort(col);
+            private short getGapShort(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getShort(dispatchSlot[col]) : (short) 0;
                     // Narrow-integer Function convention: short fills come through getInt().
                     case DISPATCH_CONSTANT -> (short) dispatchConstant.getQuick(col).getInt(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield (short) 0;
                     }
                 };
             }
 
-            @Override
-            public CharSequence getStrA(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getStrA(col);
+            private CharSequence getGapStrA(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getStrA(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrA(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getStrA(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield null;
                     }
                 };
             }
 
-            @Override
-            public CharSequence getStrB(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getStrB(col);
+            private CharSequence getGapStrB(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getStrB(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrB(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getStrB(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield null;
                     }
                 };
             }
 
-            @Override
-            public int getStrLen(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getStrLen(col);
+            private int getGapStrLen(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getStrLen(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrLen(dispatchSlot[col]) : -1;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getStrLen(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield -1;
                     }
                 };
             }
 
-            @Override
-            public CharSequence getSymA(int col) {
+            private CharSequence getGapSymA(int col) {
                 // KEY_SLOT and PREV_CACHE_SLOT route through the cached symbolCache
                 // for a direct slot read. PREV_CACHE_SLOT is pre-filled with
                 // INT_NULL == VALUE_IS_NULL, so valueOf returns null on first read.
                 // Constant fills go through Function.getSymbol() by historical convention.
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getSymA(col);
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
                             symbolCache.getQuick(col).valueOf(keysMapRecord.getInt(dispatchSlot[col]));
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymA(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getSymbol(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield null;
                     }
                 };
             }
 
-            @Override
-            public CharSequence getSymB(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getSymB(col);
+            private CharSequence getGapSymB(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
                             symbolCache.getQuick(col).valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymB(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getSymbolB(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield null;
                     }
                 };
             }
 
-            @Override
-            public long getTimestamp(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getTimestamp(col);
+            private long getGapTimestamp(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getTimestamp(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getTimestamp(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getTimestamp(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield Numbers.LONG_NULL;
                     }
                 };
             }
 
-            @Override
-            public Utf8Sequence getVarcharA(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getVarcharA(col);
+            private Utf8Sequence getGapVarcharA(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharA(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharA(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getVarcharA(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield null;
                     }
                 };
             }
 
-            @Override
-            public Utf8Sequence getVarcharB(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getVarcharB(col);
+            private Utf8Sequence getGapVarcharB(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharB(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharB(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getVarcharB(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield null;
                     }
                 };
             }
 
-            @Override
-            public int getVarcharSize(int col) {
-                return switch (currentDispatchCode[col]) {
-                    case DISPATCH_BASE -> baseRecord.getVarcharSize(col);
+            private int getGapVarcharSize(int col) {
+                return switch (fillDispatchCode[col]) {
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharSize(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharSize(dispatchSlot[col]) : -1;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getVarcharSize(null);
                     default -> {
-                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        assert false : "unexpected dispatch code: " + fillDispatchCode[col];
                         yield -1;
                     }
                 };
@@ -1936,6 +2020,171 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public long getTimestamp(int col) {
                 return value.getTimestamp(col);
             }
+        }
+    }
+
+    // Keyed fill over a SAMPLE BY cursor whose every value is its column's PREV: the
+    // source returns a row for every key in each bucket it computes, its rows are the
+    // gap rows as is, and a bucket without data replays the source's keys.
+    private static final class KeyedSampleByPrevFillCursor extends SampleByFillCursor {
+
+        private KeyedSampleByPrevFillCursor(
+                RecordMetadata metadata,
+                SampleByFillGrid grid,
+                IntList fillModes,
+                ObjList<Function> constantFills,
+                int timestampIndex,
+                int timestampType,
+                boolean hasPrevFill,
+                IntList keyColIndices,
+                IntList symbolTableColIndices,
+                IntList prevValueSlot
+        ) {
+            super(
+                    metadata, grid, fillModes, constantFills,
+                    timestampIndex, timestampType, hasPrevFill,
+                    null, null, keyColIndices, symbolTableColIndices,
+                    new IntList(), new IntList(), prevValueSlot,
+                    hasPrevFill, true, null
+            );
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (hasDataForCurrentBucket && keyedSampleBySource.hasNextInBucket()) {
+                return true;
+            }
+            return nextBucket();
+        }
+
+        private boolean nextBucket() {
+            if (hasDataForCurrentBucket) {
+                hasDataForCurrentBucket = false;
+                currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp);
+            }
+            if (!isInitialized) {
+                initialize();
+                isInitialized = true;
+            }
+            final SampleByFillNoneRecordCursor source = keyedSampleBySource;
+            while (currentBucketTimestamp < maxTimestamp) {
+                if (isEmittingFills) {
+                    if (source.nextKey()) {
+                        pollBreakerOnGapRow();
+                        return true;
+                    }
+                    isEmittingFills = false;
+                    currentBucketTimestamp = grid.nextBucket(currentBucketTimestamp);
+                    continue;
+                }
+                final long dataTs = source.peekNextTimestamp();
+                if (dataTs == currentBucketTimestamp) {
+                    if (!source.hasNext()) {
+                        throw CairoException.critical(0).put("sample by fill: peeked row is missing");
+                    }
+                    hasDataForCurrentBucket = true;
+                    return true;
+                }
+                if (dataTs == Numbers.LONG_NULL && !hasExplicitTo) {
+                    return false;
+                }
+                if (dataTs != Numbers.LONG_NULL && dataTs < currentBucketTimestamp) {
+                    throw SampleByFillGrid.dataRowBeforeBucket(dataTs, currentBucketTimestamp);
+                }
+                source.rewindKeys();
+                source.setGapTimestamp(currentBucketTimestamp);
+                isEmittingFills = true;
+            }
+            return false;
+        }
+    }
+
+    // Fill over a non-keyed SAMPLE BY cursor: the fill peeks at the bucket of the
+    // next row, so a gap row reads the latest source row while it is still current.
+    private static final class SampleBySourceFillCursor extends SampleByFillCursor {
+        private long gapLimit = Long.MIN_VALUE;
+        // The fill reads the bucket of the next source row as it moves to a row,
+        // which leaves the source row readable for the gap rows before the next one.
+        private SampleByFillNoneNotKeyedRecordCursor source;
+
+        private SampleBySourceFillCursor(
+                RecordMetadata metadata,
+                SampleByFillGrid grid,
+                IntList fillModes,
+                ObjList<Function> constantFills,
+                int timestampIndex,
+                int timestampType,
+                boolean hasPrevFill,
+                IntList keyColIndices,
+                IntList symbolTableColIndices,
+                IntList prevValueSlot
+        ) {
+            super(
+                    metadata, grid, fillModes, constantFills,
+                    timestampIndex, timestampType, hasPrevFill,
+                    null, null, keyColIndices, symbolTableColIndices,
+                    new IntList(), new IntList(), prevValueSlot,
+                    hasPrevFill, true, null
+            );
+        }
+
+        @Override
+        public boolean hasNext() {
+            final long bucketTimestamp = currentBucketTimestamp;
+            if (bucketTimestamp < gapLimit) {
+                setGapRow(bucketTimestamp);
+                return true;
+            }
+            return nextBucket(bucketTimestamp);
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            gapLimit = Long.MIN_VALUE;
+            pendingTs = Numbers.LONG_NULL;
+        }
+
+        private boolean nextBucket(long bucketTimestamp) {
+            if (bucketTimestamp == pendingTs && bucketTimestamp < maxTimestamp) {
+                pendingTs = source.nextRowAndPeek();
+                updateGapLimit();
+                currentBucketTimestamp = grid.nextBucket(bucketTimestamp);
+                setSourceGapRow(false);
+                return true;
+            }
+            if (!isInitialized) {
+                initialize();
+                isInitialized = true;
+                source = (SampleByFillNoneNotKeyedRecordCursor) sampleBySource;
+                if (!hasPendingRow) {
+                    pendingTs = Numbers.LONG_NULL;
+                }
+                updateGapLimit();
+                return hasNext();
+            }
+            if (pendingTs == Numbers.LONG_NULL && hasExplicitTo && bucketTimestamp < maxTimestamp) {
+                // Gap rows up to TO after the last source row; the source no longer
+                // polls the breaker for them.
+                pollBreakerOnGapRow();
+                setGapRow(bucketTimestamp);
+                return true;
+            }
+            if (pendingTs != Numbers.LONG_NULL && pendingTs < bucketTimestamp) {
+                throw SampleByFillGrid.dataRowBeforeBucket(pendingTs, bucketTimestamp);
+            }
+            return false;
+        }
+
+        private void setGapRow(long bucketTimestamp) {
+            currentBucketTimestamp = grid.nextBucket(bucketTimestamp);
+            source.setGapTimestamp(bucketTimestamp);
+            setSourceGapRow(true);
+        }
+
+        // Every bucket before gapLimit is a gap before the next source row.
+        private void updateGapLimit() {
+            gapLimit = pendingTs != Numbers.LONG_NULL ? Math.min(pendingTs, maxTimestamp) : Long.MIN_VALUE;
         }
     }
 }

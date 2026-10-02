@@ -5772,14 +5772,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isSqlDistinctGroupByRewriteEnabled() {
-            // No production property backs this seam: the rewrite is always on in
-            // a running server. Only tests override it (to reach
-            // DistinctTimeSeriesRecordCursorFactory) via a CairoConfiguration subclass.
-            return true;
-        }
-
-        @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
         }

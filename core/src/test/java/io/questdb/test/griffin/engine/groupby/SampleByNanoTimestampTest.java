@@ -158,18 +158,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .returns("""
                         created\tavg\tlatency
-                        2025-01-20T13:56:50.000000000Z\t0.0\t0.0
-                        2025-01-20T13:56:52.000000000Z\t0.0\t0.0
-                        2025-01-20T13:56:54.000000000Z\t0.0\t0.0
-                        2025-01-20T13:56:56.000000000Z\t0.0\t0.0
-                        2025-01-20T13:56:58.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:00.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:02.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:04.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:06.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:08.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:10.000000000Z\t0.0\t0.0
-                        2025-01-20T13:57:12.000000000Z\t0.0\t0.0
+                        2025-01-20T13:56:50.000000000Z\t0.0\tnull
+                        2025-01-20T13:56:52.000000000Z\t0.0\tnull
+                        2025-01-20T13:56:54.000000000Z\t0.0\tnull
+                        2025-01-20T13:56:56.000000000Z\t0.0\tnull
+                        2025-01-20T13:56:58.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:00.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:02.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:04.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:06.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:08.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:10.000000000Z\t0.0\tnull
+                        2025-01-20T13:57:12.000000000Z\t0.0\tnull
                         2025-01-20T13:57:14.000000000Z\t0.4851638802935891\t0.4846019644078461
                         2025-01-20T13:57:16.000000000Z\t0.5040684715238979\t0.0014510055926236776
                         2025-01-20T13:57:18.000000000Z\t0.4855058436740148\t0.760595244599882
@@ -3083,7 +3083,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " timestamp_sequence_ns(172800000000000, 3600000000000) ts" +
                         " from long_sequence(20)" +
                         ") timestamp(ts) partition by day")
-                .fails(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+                .noRandomAccess()
+                .returns("day\tsym2\tc\n");
     }
 
     @Test
@@ -4359,13 +4360,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Filter filter: s='B'
-                                Sample By
+                                Sample By Fill
+                                  stride: '30m'
                                   fill: prev
-                                  keys: [ts,s]
-                                  values: [first(v)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                                    Sample By
+                                      keys: [ts,s]
+                                      values: [first(v)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
                             """);
 
             assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ")
@@ -4392,12 +4395,16 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Filter filter: 2022-12-01T01:10:00.000000000Z<ts
-                                Sample By
+                                Sample By Fill
+                                  stride: '30m'
                                   fill: prev
-                                  values: [first(v)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                                    Sample By
+                                      fill: none
+                                      range: (,)
+                                      values: [first(v)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
                             """);
 
             assertQuery("select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000000Z' ")
@@ -5945,14 +5952,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertQuery(query)
                     .noLeakCheck()
-                    .assertsPlan("Sample By\n" +
-                            "  fill: null\n" +
+                    .assertsPlan("Sample By Fill\n" +
                             "  range: (timestamp_floor('day',now()),)\n" +
-                            "  values: [count(*)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Interval forward scan on: trades\n" +
-                            "          intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000000Z\",\"MAX\")]\n");
+                            "  stride: '1m'\n" +
+                            "  fill: null\n" +
+                            "    Sample By\n" +
+                            "      fill: none\n" +
+                            "      range: (timestamp_floor('day',now()),)\n" +
+                            "      values: [count(*)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: trades\n" +
+                            "              intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000000Z\",\"MAX\")]\n");
 
             assertQuery(query)
                     .noLeakCheck()
@@ -6309,16 +6320,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
+                            Sample By Fill
+                              stride: '30m'
                               fill: prev
-                              keys: [ts,s]
-                              values: [first(v)]
-                                Async Filter workers: 1
-                                  filter: s='B'
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tab
-                                          intervals: [("2022-12-01T00:00:00.000000001Z","MAX")]
+                                Sample By
+                                  keys: [ts,s]
+                                  values: [first(v)]
+                                    Async Filter workers: 1
+                                      filter: s='B'
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: tab
+                                              intervals: [("2022-12-01T00:00:00.000000001Z","MAX")]
                             """);
 
             assertQuery(query)
@@ -13224,7 +13237,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE")
-                .fails(43, "Invalid column: zz");
+                .fails(43, "invalid fill value: zz");
     }
 
     @Test
@@ -13239,7 +13252,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE")
-                .fails(43, "Invalid column: zz");
+                .fails(43, "invalid fill value: zz");
     }
 
     @Test
@@ -15111,8 +15124,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     private static String sampleByPushdownPlan(String fill, String align) {
-        boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
-                && !"align to first observation".equals(align);
+        final boolean isFilled = fill.equals("null") || fill.equals("prev");
+        boolean isFastPath = isFilled && !"align to first observation".equals(align);
         boolean isNoneFill = fill.isEmpty() || "none".equals(fill);
         if (isFastPath) {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and 0<length(sym)*tstmp::long)\n" +
@@ -15129,6 +15142,18 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: #TABLE#\n";
+        }
+        if (isFilled) {
+            return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
+                    "    Sample By Fill\n" +
+                    "      stride: '1m'\n" +
+                    "      fill: " + fill + "\n" +
+                    "        Sample By\n" +
+                    "          keys: [tstmp,sym]\n" +
+                    "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: #TABLE#\n";
         }
         return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                 "    Sample By\n" +

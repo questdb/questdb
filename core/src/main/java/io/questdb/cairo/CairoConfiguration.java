@@ -1271,12 +1271,6 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
-    // Test-only seam, with no backing production property: always true in a running server, so
-    // the optimiser always rewrites SELECT DISTINCT to GROUP BY. Tests override it to false in a
-    // CairoConfiguration subclass to keep DISTINCT as a Distinct factory and reach
-    // DistinctTimeSeriesRecordCursorFactory.
-    boolean isSqlDistinctGroupByRewriteEnabled();
-
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlOrderBySortEnabled();

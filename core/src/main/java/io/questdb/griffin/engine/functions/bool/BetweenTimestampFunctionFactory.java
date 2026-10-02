@@ -70,7 +70,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                     CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                     return BooleanConstant.FALSE;
                 }
-                return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
+                return new ConstFunc(arg, Math.min(fromFnTimestamp, toFnTimestamp), Math.max(fromFnTimestamp, toFnTimestamp));
             }
             return new VarBetweenFunction(arg, fromFn, toFn, null, fromType, toType);
         }
@@ -79,51 +79,22 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         TimestampDriver driver = ColumnType.getTimestampDriver(argType);
 
         if (fromFn.isConstant() && toFn.isConstant()) {
-            long fromFnTimestamp = driver.from(fromFn.getTimestamp(null), fromType);
-            long toFnTimestamp = driver.from(toFn.getTimestamp(null), toType);
-            if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
+            final long fromTimestamp = fromFn.getTimestamp(null);
+            final long toTimestamp = toFn.getTimestamp(null);
+            if (fromTimestamp == Numbers.LONG_NULL || toTimestamp == Numbers.LONG_NULL) {
                 CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return BooleanConstant.FALSE;
             }
-            return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
+            return new ConstFunc(
+                    arg,
+                    Math.min(driver.ceilFrom(fromTimestamp, fromType), driver.ceilFrom(toTimestamp, toType)),
+                    Math.max(driver.floorFrom(fromTimestamp, fromType), driver.floorFrom(toTimestamp, toType))
+            );
         }
-        boolean leftNeedConvert = fromType != argType;
-        boolean rightNeedConvert = toType != argType;
-
-        if (!leftNeedConvert && !rightNeedConvert) {
+        if (fromType == argType && toType == argType) {
             return new VarBetweenFunction(arg, fromFn, toFn, driver, fromType, toType);
-        } else if (leftNeedConvert && rightNeedConvert) {
-            return new BothConvertFunction(arg, fromFn, toFn, driver, fromType, toType);
-        } else if (leftNeedConvert) {
-            return new LeftConvertFunction(arg, fromFn, toFn, driver, fromType, toType);
-        } else {
-            return new RightConvertFunction(arg, fromFn, toFn, driver, fromType, toType);
         }
-    }
-
-    private static class BothConvertFunction extends VarBetweenFunction {
-        public BothConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
-            super(left, from, to, driver, fromType, toType);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return false;
-            }
-            long fromTs = driver.from(from.getTimestamp(rec), fromType);
-            if (fromTs == Numbers.LONG_NULL) {
-                return false;
-            }
-
-            long toTs = driver.from(to.getTimestamp(rec), toType);
-            if (toTs == Numbers.LONG_NULL) {
-                return false;
-            }
-
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
-        }
+        return new ConvertFunction(arg, fromFn, toFn, driver, fromType, toType);
     }
 
     private static class ConstFunc extends BooleanFunction implements UnaryFunction {
@@ -133,8 +104,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         public ConstFunc(Function left, long from, long to) {
             this.left = left;
-            this.from = Math.min(from, to);
-            this.to = Math.max(from, to);
+            this.from = from;
+            this.to = to;
         }
 
         @Override
@@ -156,53 +127,31 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LeftConvertFunction extends VarBetweenFunction {
-        public LeftConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
+    /**
+     * Compares at the finer of the argument's and each bound's precision: the bounds round inward to the
+     * argument's precision.
+     */
+    private static class ConvertFunction extends VarBetweenFunction {
+        public ConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
             super(left, from, to, driver, fromType, toType);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long value = arg.getTimestamp(rec);
+            final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NULL) {
                 return false;
             }
-            long fromTs = driver.from(from.getTimestamp(rec), fromType);
+            final long fromTs = from.getTimestamp(rec);
             if (fromTs == Numbers.LONG_NULL) {
                 return false;
             }
-
-            long toTs = to.getTimestamp(rec);
+            final long toTs = to.getTimestamp(rec);
             if (toTs == Numbers.LONG_NULL) {
                 return false;
             }
-
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
-        }
-    }
-
-    private static class RightConvertFunction extends VarBetweenFunction {
-        public RightConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
-            super(left, from, to, driver, fromType, toType);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return false;
-            }
-            long fromTs = from.getTimestamp(rec);
-            if (fromTs == Numbers.LONG_NULL) {
-                return false;
-            }
-
-            long toTs = driver.from(to.getTimestamp(rec), toType);
-            if (toTs == Numbers.LONG_NULL) {
-                return false;
-            }
-
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
+            return Math.min(driver.ceilFrom(fromTs, fromType), driver.ceilFrom(toTs, toType)) <= value
+                    && value <= Math.max(driver.floorFrom(fromTs, fromType), driver.floorFrom(toTs, toType));
         }
     }
 

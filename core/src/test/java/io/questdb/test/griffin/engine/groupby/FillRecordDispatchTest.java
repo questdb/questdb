@@ -38,10 +38,10 @@ import org.junit.Test;
  * dispatch surface of every supported typed getter against silent branch
  * omission during future refactors.
  * <p>
- * The cursor compiles per-output-column dispatch into seven codes consumed
- * by every {@code FillRecord.getXxx(col)} on each cell read:
+ * Data rows pass every {@code FillRecord.getXxx(col)} through to
+ * {@code baseRecord.getXxx(col)}. For gap rows the cursor compiles per-output-column
+ * dispatch into six codes:
  * <ol>
- *   <li><b>DISPATCH_BASE</b> -- data-row pass-through to {@code baseRecord.getXxx(col)}.</li>
  *   <li><b>DISPATCH_KEY_SLOT</b> -- gap rows read a group-by key column via
  *       {@code keysMapRecord.getXxx(keyPos)}. Used for FILL_KEY columns and for
  *       cross-col PREV whose source resolves to a key.</li>
@@ -60,9 +60,8 @@ import org.junit.Test;
  *   <li><b>DISPATCH_NULL</b> -- defensive fallthrough; unreachable in practice
  *       because {@code generateFill} always assigns a fill mode.</li>
  * </ol>
- * The cursor swaps {@code currentDispatchCode} between {@code dataDispatchCode}
- * (uniformly DISPATCH_BASE) and {@code fillDispatchCode} on row boundaries,
- * so each getter sees a single per-cell read of the dispatch code.
+ * The cursor sets {@code isGapRow} on row boundaries, so each getter reads the
+ * dispatch code only for gap rows.
  * <p>
  * The default null-sentinel path (FILL_PREV_SELF without prior data for a
  * key) is exercised by gap buckets that precede the first real row.
@@ -1055,7 +1054,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
     @Test
     public void testGetBinAndBinLenDispatch() throws Exception {
         // BINARY group-by key routes through FillRecord.getBin /
-        // FillRecord.getBinLen via DISPATCH_BASE on data rows
+        // FillRecord.getBinLen via the base record on data rows
         // (baseRecord.getBin) and DISPATCH_KEY_SLOT on gap-bucket fill
         // rows (keysMapRecord.getBin). Single key + FROM/TO bound: one
         // data row at 00:00, two fill rows at 01:00 and 02:00. ORDER BY

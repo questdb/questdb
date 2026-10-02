@@ -45,10 +45,8 @@ import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
@@ -66,43 +64,20 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             1970-01-01T00:00:00.000020Z\t2\t1970-01-01T00:00:00.000015Z\t90
             """;
 
-    private static boolean isDistinctRewriteEnabled = true;
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        configurationFactory = (root, telemetry, overrides) -> new CairoTestConfiguration(root, telemetry, overrides) {
-            @Override
-            public boolean isSqlDistinctGroupByRewriteEnabled() {
-                return isDistinctRewriteEnabled;
-            }
-        };
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Test
     public void testDistinctTransparentOrdinaryColumns() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            try {
-                for (int rewrite = 0; rewrite < 2; rewrite++) {
-                    isDistinctRewriteEnabled = rewrite == 1;
-                    assertQuery("SELECT DISTINCT x FROM ca ORDER BY x").expectSize().returns("x\n1\n2\n3\n4\n");
-                    assertQuery("SELECT DISTINCT abs(x) AS value, x AS renamed FROM ca ORDER BY renamed")
-                            .expectSize().returns("value\trenamed\n1\t1\n2\t2\n3\t3\n4\t4\n");
-                    assertQuery("SELECT DISTINCT ARRAY[x::DOUBLE, x::DOUBLE + 1][1] AS value FROM ca ORDER BY value")
-                            .expectSize().returns("value\n1.0\n2.0\n3.0\n4.0\n");
-                    assertQuery("SELECT DISTINCT x, ARRAY[x::DOUBLE] AS value FROM ca ORDER BY x")
-                            .expectSize().returns("x\tvalue\n1\t[1.0]\n2\t[2.0]\n3\t[3.0]\n4\t[4.0]\n");
-                    final var lateral = assertQuery("SELECT a.ts, b.value FROM ca a JOIN LATERAL (SELECT DISTINCT y AS value FROM cb WHERE cb.ts <= a.ts) b ON true ORDER BY a.ts, b.value")
-                            .timestamp("ts");
-                    if (!isDistinctRewriteEnabled) {
-                        lateral.expectSize();
-                    }
-                    lateral.returns("ts\tvalue\n1970-01-01T00:00:00.000010Z\t10\n1970-01-01T00:00:00.000020Z\t10\n1970-01-01T00:00:00.000020Z\t90\n1970-01-01T00:00:00.000030Z\t10\n1970-01-01T00:00:00.000030Z\t20\n1970-01-01T00:00:00.000030Z\t90\n1970-01-01T00:00:00.000040Z\t10\n1970-01-01T00:00:00.000040Z\t20\n1970-01-01T00:00:00.000040Z\t30\n1970-01-01T00:00:00.000040Z\t90\n");
-                }
-            } finally {
-                isDistinctRewriteEnabled = true;
-            }
+            assertQuery("SELECT DISTINCT x FROM ca ORDER BY x").expectSize().returns("x\n1\n2\n3\n4\n");
+            assertQuery("SELECT DISTINCT abs(x) AS value, x AS renamed FROM ca ORDER BY renamed")
+                    .expectSize().returns("value\trenamed\n1\t1\n2\t2\n3\t3\n4\t4\n");
+            assertQuery("SELECT DISTINCT ARRAY[x::DOUBLE, x::DOUBLE + 1][1] AS value FROM ca ORDER BY value")
+                    .expectSize().returns("value\n1.0\n2.0\n3.0\n4.0\n");
+            assertQuery("SELECT DISTINCT x, ARRAY[x::DOUBLE] AS value FROM ca ORDER BY x")
+                    .expectSize().returns("x\tvalue\n1\t[1.0]\n2\t[2.0]\n3\t[3.0]\n4\t[4.0]\n");
+            assertQuery("SELECT a.ts, b.value FROM ca a JOIN LATERAL (SELECT DISTINCT y AS value FROM cb WHERE cb.ts <= a.ts) b ON true ORDER BY a.ts, b.value")
+                    .timestamp("ts")
+                    .returns("ts\tvalue\n1970-01-01T00:00:00.000010Z\t10\n1970-01-01T00:00:00.000020Z\t10\n1970-01-01T00:00:00.000020Z\t90\n1970-01-01T00:00:00.000030Z\t10\n1970-01-01T00:00:00.000030Z\t20\n1970-01-01T00:00:00.000030Z\t90\n1970-01-01T00:00:00.000040Z\t10\n1970-01-01T00:00:00.000040Z\t20\n1970-01-01T00:00:00.000040Z\t30\n1970-01-01T00:00:00.000040Z\t90\n");
         });
     }
 
@@ -1300,26 +1275,6 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPendingSubsampleGeneratedCarrierExclusionWithoutDistinctRewrite() throws Exception {
-        try {
-            isDistinctRewriteEnabled = false;
-            testPendingSubsampleGeneratedCarrierExclusion();
-        } finally {
-            isDistinctRewriteEnabled = true;
-        }
-    }
-
-    @Test
-    public void testPendingSubsampleUserCarrierNameWithoutDistinctRewrite() throws Exception {
-        try {
-            isDistinctRewriteEnabled = false;
-            testPendingSubsampleUserCarrierName();
-        } finally {
-            isDistinctRewriteEnabled = true;
-        }
-    }
-
-    @Test
     public void testPendingSubsampleUserCarrierName() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1382,18 +1337,11 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
             queries.add("SELECT DISTINCT abs(x) AS value FROM ca");
             queries.add("SELECT DISTINCT ARRAY[x::DOUBLE][1] AS value FROM ca");
             queries.add("SELECT DISTINCT ARRAY[x::DOUBLE] AS value FROM ca");
-            try {
-                for (int aliases = 0; aliases < 2; aliases++) {
-                    setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, aliases == 1 ? "true" : "false");
-                    for (int rewrite = 0; rewrite < 2; rewrite++) {
-                        isDistinctRewriteEnabled = rewrite == 1;
-                        for (int i = 0; i < queries.size(); i++) {
-                            assertDistinctRewriteShape(queries.getQuick(i), false);
-                        }
-                    }
+            for (int aliases = 0; aliases < 2; aliases++) {
+                setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, aliases == 1 ? "true" : "false");
+                for (int i = 0; i < queries.size(); i++) {
+                    assertDistinctRewriteShape(queries.getQuick(i), false);
                 }
-            } finally {
-                isDistinctRewriteEnabled = true;
             }
         });
     }
@@ -1402,32 +1350,18 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     public void testDistinctHiddenGeneratedPublicStars() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            try {
-                for (int rewrite = 0; rewrite < 2; rewrite++) {
-                    isDistinctRewriteEnabled = rewrite == 1;
-                    for (int collision = 0; collision < 2; collision++) {
-                        final String suffix = collision == 1 ? ", y AS __qdb_outer_ref__0_ts" : "";
-                        final String sql = "SELECT a.ts, b.* FROM ca a JOIN LATERAL (SELECT DISTINCT y AS value" + suffix
-                                + " FROM cb WHERE cb.ts <= a.ts) b ON true";
-                        final String header = collision == 1 ? "ts\tvalue\t__qdb_outer_ref__0_ts\n" : "ts\tvalue\n";
-                        final String rows = collision == 1
-                                ? "1970-01-01T00:00:00.000010Z\t10\t10\n1970-01-01T00:00:00.000020Z\t10\t10\n1970-01-01T00:00:00.000020Z\t90\t90\n1970-01-01T00:00:00.000030Z\t10\t10\n1970-01-01T00:00:00.000030Z\t20\t20\n1970-01-01T00:00:00.000030Z\t90\t90\n1970-01-01T00:00:00.000040Z\t10\t10\n1970-01-01T00:00:00.000040Z\t20\t20\n1970-01-01T00:00:00.000040Z\t30\t30\n1970-01-01T00:00:00.000040Z\t90\t90\n"
-                                : "1970-01-01T00:00:00.000010Z\t10\n1970-01-01T00:00:00.000020Z\t10\n1970-01-01T00:00:00.000020Z\t90\n1970-01-01T00:00:00.000030Z\t10\n1970-01-01T00:00:00.000030Z\t20\n1970-01-01T00:00:00.000030Z\t90\n1970-01-01T00:00:00.000040Z\t10\n1970-01-01T00:00:00.000040Z\t20\n1970-01-01T00:00:00.000040Z\t30\n1970-01-01T00:00:00.000040Z\t90\n";
-                        final var all = assertQuery(sql + " ORDER BY a.ts, b.value").timestamp("ts");
-                        final var empty = assertQuery(sql + " WHERE a.x < 0 ORDER BY a.ts, b.value").timestamp("ts");
-                        final var singleton = assertQuery(sql + " WHERE a.x = 1 ORDER BY a.ts, b.value").timestamp("ts");
-                        if (!isDistinctRewriteEnabled) {
-                            all.expectSize();
-                            empty.expectSize();
-                            singleton.expectSize();
-                        }
-                        all.returns(header + rows);
-                        empty.returns(header);
-                        singleton.returns(header + rows.substring(0, rows.indexOf('\n') + 1));
-                    }
-                }
-            } finally {
-                isDistinctRewriteEnabled = true;
+            for (int collision = 0; collision < 2; collision++) {
+                final String suffix = collision == 1 ? ", y AS __qdb_outer_ref__0_ts" : "";
+                final String sql = "SELECT a.ts, b.* FROM ca a JOIN LATERAL (SELECT DISTINCT y AS value" + suffix
+                        + " FROM cb WHERE cb.ts <= a.ts) b ON true";
+                final String header = collision == 1 ? "ts\tvalue\t__qdb_outer_ref__0_ts\n" : "ts\tvalue\n";
+                final String rows = collision == 1
+                        ? "1970-01-01T00:00:00.000010Z\t10\t10\n1970-01-01T00:00:00.000020Z\t10\t10\n1970-01-01T00:00:00.000020Z\t90\t90\n1970-01-01T00:00:00.000030Z\t10\t10\n1970-01-01T00:00:00.000030Z\t20\t20\n1970-01-01T00:00:00.000030Z\t90\t90\n1970-01-01T00:00:00.000040Z\t10\t10\n1970-01-01T00:00:00.000040Z\t20\t20\n1970-01-01T00:00:00.000040Z\t30\t30\n1970-01-01T00:00:00.000040Z\t90\t90\n"
+                        : "1970-01-01T00:00:00.000010Z\t10\n1970-01-01T00:00:00.000020Z\t10\n1970-01-01T00:00:00.000020Z\t90\n1970-01-01T00:00:00.000030Z\t10\n1970-01-01T00:00:00.000030Z\t20\n1970-01-01T00:00:00.000030Z\t90\n1970-01-01T00:00:00.000040Z\t10\n1970-01-01T00:00:00.000040Z\t20\n1970-01-01T00:00:00.000040Z\t30\n1970-01-01T00:00:00.000040Z\t90\n";
+                assertQuery(sql + " ORDER BY a.ts, b.value").timestamp("ts").returns(header + rows);
+                assertQuery(sql + " WHERE a.x < 0 ORDER BY a.ts, b.value").timestamp("ts").returns(header);
+                assertQuery(sql + " WHERE a.x = 1 ORDER BY a.ts, b.value").timestamp("ts")
+                        .returns(header + rows.substring(0, rows.indexOf('\n') + 1));
             }
         });
     }
@@ -1436,23 +1370,16 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     public void testDistinctCountHelperVisibility() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            try {
-                for (int rewrite = 0; rewrite < 2; rewrite++) {
-                    isDistinctRewriteEnabled = rewrite == 1;
-                    assertQuery("SELECT * FROM (SELECT DISTINCT x % 2 AS key FROM ca) ORDER BY key")
-                            .expectSize().returns("key\n0\n1\n");
-                    assertQuery("SELECT * FROM (SELECT * FROM (SELECT DISTINCT x % 2 AS key FROM ca WHERE x < 0)) ORDER BY key")
-                            .expectSize().returns("key\n");
-                    assertQuery("SELECT * FROM (SELECT DISTINCT NULL::INT AS key FROM ca) ORDER BY key")
-                            .expectSize().supportsRandomAccess(!isDistinctRewriteEnabled).returns("key\nnull\n");
-                    assertQuery("SELECT * FROM (SELECT DISTINCT ts, x AS count FROM ca ORDER BY ts) TIMESTAMP(ts) SUBSAMPLE minmax(count, 2)")
-                            .timestamp("ts").returns(primaryRows().replace("\tx\n", "\tcount\n"));
-                    assertCompileErrorThenReuse("SELECT * FROM (SELECT DISTINCT ts, x FROM ca ORDER BY ts) TIMESTAMP(ts) SUBSAMPLE minmax(^count, 2)",
-                            "column not found in SELECT list: count");
-                }
-            } finally {
-                isDistinctRewriteEnabled = true;
-            }
+            assertQuery("SELECT * FROM (SELECT DISTINCT x % 2 AS key FROM ca) ORDER BY key")
+                    .expectSize().returns("key\n0\n1\n");
+            assertQuery("SELECT * FROM (SELECT * FROM (SELECT DISTINCT x % 2 AS key FROM ca WHERE x < 0)) ORDER BY key")
+                    .expectSize().returns("key\n");
+            assertQuery("SELECT * FROM (SELECT DISTINCT NULL::INT AS key FROM ca) ORDER BY key")
+                    .expectSize().noRandomAccess().returns("key\nnull\n");
+            assertQuery("SELECT * FROM (SELECT DISTINCT ts, x AS count FROM ca ORDER BY ts) TIMESTAMP(ts) SUBSAMPLE minmax(count, 2)")
+                    .timestamp("ts").returns(primaryRows().replace("\tx\n", "\tcount\n"));
+            assertCompileErrorThenReuse("SELECT * FROM (SELECT DISTINCT ts, x FROM ca ORDER BY ts) TIMESTAMP(ts) SUBSAMPLE minmax(^count, 2)",
+                    "column not found in SELECT list: count");
         });
     }
 
@@ -1490,8 +1417,8 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 final String plan = new LogicalPlanPrinter().print(compiler.getLogicalPlanForTesting()).toString();
-                Assert.assertEquals(sql, !isDistinctRewriteEnabled || isAbandoned, plan.contains("Distinct\n"));
-                if (isDistinctRewriteEnabled && !isAbandoned) {
+                Assert.assertEquals(sql, isAbandoned, plan.contains("Distinct\n"));
+                if (!isAbandoned) {
                     Assert.assertTrue(sql, plan.contains("Aggregate\n"));
                 }
             }

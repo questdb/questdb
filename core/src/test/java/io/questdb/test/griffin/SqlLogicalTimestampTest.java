@@ -184,6 +184,7 @@ public class SqlLogicalTimestampTest extends AbstractCairoTest {
                     "SELECT id,other FROM lp_timestamp TIMESTAMP(other) WHERE ts < '2020-01-01T00:00:00.000000001Z'",
                     """
                             id	other
+                            1	2020-01-03T00:00:00.000000000Z
                             """
             );
             assertQueryRows(

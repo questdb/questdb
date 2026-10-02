@@ -1510,29 +1510,29 @@ public class ArrayTest extends AbstractCairoTest {
             assertSqlWithTypes("""
                             i\tarray_sum
                             [null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             """,
                     "select rnd_double_array(1,1) i, array_sum(i) from long_sequence(10);\n");
             assertSqlWithTypes("""
                             i\tarray_cum_sum
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             """,
                     "select rnd_double_array(1,1) i, array_cum_sum(i) from long_sequence(10);\n");
         });

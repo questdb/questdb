@@ -38,6 +38,7 @@ public final class SampleByPlan extends AggregatePlan {
     private final ObjList<CharSequence> aggregateSql = new ObjList<>();
     private final IntList fillPositions = new IntList();
     private final ObjList<CharSequence> fillTokens = new ObjList<>();
+    private final ObjList<BoundExpression> fillValues = new ObjList<>();
     private int fillMode;
     private BoundExpression from;
     private boolean isJoinInput;
@@ -58,6 +59,7 @@ public final class SampleByPlan extends AggregatePlan {
         aggregateSql.clear();
         fillPositions.clear();
         fillTokens.clear();
+        fillValues.clear();
         fillMode = FILL_NONE;
         from = null;
         isJoinInput = false;
@@ -87,6 +89,13 @@ public final class SampleByPlan extends AggregatePlan {
 
     public ObjList<CharSequence> getFillTokens() {
         return fillTokens;
+    }
+
+    /**
+     * The bound constant of each FILL value, aligned with {@link #getFillTokens()}; null for a keyword.
+     */
+    public ObjList<BoundExpression> getFillValues() {
+        return fillValues;
     }
 
     public BoundExpression getFrom() {

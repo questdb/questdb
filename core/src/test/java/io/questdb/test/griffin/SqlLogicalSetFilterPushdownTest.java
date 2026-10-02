@@ -122,25 +122,25 @@ public class SqlLogicalSetFilterPushdownTest extends AbstractCairoTest {
             execute("INSERT INTO lp_sp_nano VALUES (1,6),('2024-01-01T00:00:00.000000001Z',3),('2024-01-01T00:00:00.000001000Z',4)");
             final String set = " FROM (SELECT id,ts FROM lp_sp_micro UNION ALL SELECT id,ts FROM lp_sp_nano)";
             final String nano = "'2024-01-01T00:00:00.000000001Z'";
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=" + nano + " ORDER BY id", "id\n1\n3\n", 2);
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts>=" + nano + " ORDER BY id", "id\n1\n2\n3\n4\n", 2);
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts!=" + nano + " ORDER BY id", "id\n2\n4\n5\n6\n", 2);
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts IN (" + nano + ") ORDER BY id", "id\n1\n3\n", 2);
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts BETWEEN " + nano + " AND '2025' ORDER BY id", "id\n1\n2\n3\n4\n", 2);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=" + nano + " ORDER BY id", "id\n3\n", 1);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts>=" + nano + " ORDER BY id", "id\n2\n3\n4\n", 2);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts!=" + nano + " ORDER BY id", "id\n1\n2\n4\n5\n6\n", 1);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts IN (" + nano + ") ORDER BY id", "id\n3\n", 1);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts BETWEEN " + nano + " AND '2025' ORDER BY id", "id\n2\n3\n4\n", 2);
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=1 ORDER BY id", "id\n5\n6\n", 2);
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts>=1 AND ts<" + nano + " AND id>0 ORDER BY id", "id\n5\n6\n", 2);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts>=1 AND ts<" + nano + " AND id>0 ORDER BY id", "id\n1\n5\n6\n", 2);
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=" + nano + " OR id=5 ORDER BY id", "id\n3\n5\n", 0);
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts+0L!=" + nano + " ORDER BY id", "id\n1\n2\n4\n5\n6\n", 0);
             assertRowsAndIntervalScans("SELECT id FROM (SELECT id,ts AS t FROM lp_sp_micro UNION ALL SELECT id,ts FROM lp_sp_nano) x"
-                    + " WHERE x.t=" + nano + " ORDER BY id", "id\n1\n3\n", 2);
+                    + " WHERE x.t=" + nano + " ORDER BY id", "id\n3\n", 1);
             assertRowsAndIntervalScans("SELECT id FROM (SELECT id,ts FROM (SELECT id,ts FROM lp_sp_micro UNION ALL SELECT id,ts FROM lp_sp_nano))"
-                    + " WHERE ts=" + nano + " ORDER BY id", "id\n1\n3\n", 2);
+                    + " WHERE ts=" + nano + " ORDER BY id", "id\n3\n", 1);
             assertRowsAndIntervalScans("SELECT id FROM (SELECT id,ts FROM lp_sp_micro UNION ALL (SELECT id,ts FROM lp_sp_nano LIMIT 2))"
-                    + " WHERE ts=" + nano + " ORDER BY id", "id\n1\n3\n", 1);
+                    + " WHERE ts=" + nano + " ORDER BY id", "id\n3\n", 0);
             assertRowsAndIntervalScans("SELECT id FROM (SELECT id,ts FROM lp_sp_micro EXCEPT SELECT id,ts FROM lp_sp_nano)"
-                    + " WHERE ts<" + nano + " ORDER BY id", "id\n5\n", 2);
+                    + " WHERE ts<" + nano + " ORDER BY id", "id\n1\n5\n", 2);
             assertRowsAndIntervalScans("SELECT a.id FROM lp_sp_micro a JOIN (SELECT id,ts FROM lp_sp_micro UNION ALL SELECT id,ts FROM lp_sp_nano) b"
-                    + " ON a.id=b.id WHERE b.ts=" + nano, "id\n1\n", 2);
+                    + " ON a.id=b.id WHERE b.ts=" + nano, "id\n", 1);
             assertRowsAndIntervalScans("SELECT a.id,b.id FROM lp_sp_micro a LEFT JOIN (SELECT id,ts FROM lp_sp_micro UNION ALL SELECT id,ts FROM lp_sp_nano) b"
                     + " ON a.id=b.id AND b.ts=" + nano + " ORDER BY a.id", "id\tid1\n1\tnull\n2\tnull\n5\tnull\n", 0);
             bindVariableService.clear();

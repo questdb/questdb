@@ -313,6 +313,10 @@ public class GroupByUtils {
         return !SqlKeywords.isNoneKeyword(token) && (flags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0 ? "VALUE" : null;
     }
 
+    public static SqlException invalidSampleByFillValue(CharSequence fillToken, int fillPosition) {
+        return SqlException.position(fillPosition).put("invalid fill value: ").put(fillToken);
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {

@@ -31,32 +31,11 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class SqlLogicalOrderAliasTest extends AbstractCairoTest {
-    private static boolean isDistinctRewriteEnabled = true;
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        configurationFactory = (root, telemetry, overrides) -> new CairoTestConfiguration(root, telemetry, overrides) {
-            @Override
-            public boolean isSqlDistinctGroupByRewriteEnabled() {
-                return isDistinctRewriteEnabled;
-            }
-        };
-        AbstractCairoTest.setUpStatic();
-    }
-
-    @Before
-    public void resetDistinctRewrite() {
-        isDistinctRewriteEnabled = true;
-    }
-
     @Test
     public void testAliasExpressionsKeepSourcePrecedenceAndHiddenDependencies() throws Exception {
         assertMemoryLeak(() -> {
@@ -72,17 +51,18 @@ public class SqlLogicalOrderAliasTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctSourceKeysRemainInEqualityTuple() throws Exception {
+    public void testDistinctOrderReadsOnlySelectedColumns() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            // Equal visible values with different source ordering values remain distinct tuples.
-            assertRows("SELECT DISTINCT d+1.0 v FROM oa_t ORDER BY v+1.0", "v\n4.0\n3.0\n2.0\n2.0\n");
-            assertRows("SELECT DISTINCT d v FROM oa_t ORDER BY v+1.0", "v\n3.0\n2.0\n1.0\n1.0\n");
-            assertRows("SELECT DISTINCT d AS x FROM oa_t ORDER BY v+1.0", "x\n3.0\n2.0\n1.0\n1.0\n");
-            isDistinctRewriteEnabled = false;
-            assertRows("SELECT DISTINCT d+1.0 v FROM oa_t ORDER BY v+1.0", "v\tcolumn\n4.0\t11.0\n3.0\t21.0\n2.0\t31.0\n2.0\t41.0\n");
-            assertRows("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY id+1.0", "v\tcolumn\n2.0\t2.0\n4.0\t3.0\n3.0\t4.0\n2.0\t5.0\n");
-            assertRows("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v+1.0", "v\tcolumn\n2.0\t3.0\n3.0\t4.0\n4.0\t5.0\n");
+            assertQuery("SELECT DISTINCT d+1.0 v FROM oa_t ORDER BY v+1.0").noLeakCheck().fails(43, "ORDER BY expressions must appear in select list. Invalid column: v");
+            assertQuery("SELECT DISTINCT d v FROM oa_t ORDER BY v+1.0").noLeakCheck().fails(39, "ORDER BY expressions must appear in select list. Invalid column: v");
+            assertQuery("SELECT DISTINCT d AS x FROM oa_t ORDER BY v+1.0").noLeakCheck().fails(42, "ORDER BY expressions must appear in select list. Invalid column: v");
+            assertQuery("SELECT DISTINCT d+1.0 v, max(id) OVER () m FROM oa_t ORDER BY v+1.0").noLeakCheck().fails(62, "ORDER BY expressions must appear in select list. Invalid column: v");
+            assertQuery("SELECT DISTINCT d+1.0 v, max(id) OVER () m FROM oa_u ORDER BY id+1.0").noLeakCheck().fails(62, "ORDER BY expressions must appear in select list. Invalid column: id");
+            assertRows("SELECT DISTINCT d+1.0 v, max(id) OVER () m FROM oa_u ORDER BY v+1.0", "v\tm\n2.0\t4\n3.0\t4\n4.0\t4\n");
+            assertRows("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v+1.0", "v\n2.0\n3.0\n4.0\n");
+            assertRows("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY abs(v) DESC", "v\n4.0\n3.0\n2.0\n");
+            assertQuery("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v-id").noLeakCheck().fails(45, "ORDER BY expressions must appear in select list. Invalid column: id");
         });
     }
 
@@ -153,8 +133,22 @@ public class SqlLogicalOrderAliasTest extends AbstractCairoTest {
             assertQuery("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0,missing").noLeakCheck().fails(40, "Invalid column: missing");
             assertQuery("SELECT sum(d) v FROM oa_u ORDER BY v+1.0").noLeakCheck().fails(35, "Invalid column: v");
             assertQuery("SELECT id,sum(d) v FROM oa_u GROUP BY id ORDER BY v+1.0").noLeakCheck().fails(50, "Invalid column: v");
-            assertQuery("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v+1.0").noLeakCheck().fails(43, "Invalid column: v");
             assertQuery("SELECT l.d+1.0 d FROM oa_u l JOIN oa_u r ON l.id=r.id ORDER BY d+1.0").noLeakCheck().fails(63, "Ambiguous column [name=d]");
+        });
+    }
+
+    @Test
+    public void testOrderByColumnReadingEarlierAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertRows("SELECT v, v2 FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "v\tv2\n2.0\t2.0\n2.0\t2.0\n3.0\t3.0\n4.0\t4.0\n");
+            assertRows("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2 DESC)", "v\n4.0\n3.0\n2.0\n2.0\n");
+            assertRows("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2) WHERE v > 2.0 LIMIT 1", "v\n3.0\n");
+            assertRows("SELECT lag(v) OVER () prev FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "prev\nnull\n2.0\n2.0\n3.0\n");
+            assertRows("SELECT row_number() OVER () rn, sum(v) OVER () total FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)",
+                    "rn\ttotal\n1\t11.0\n2\t11.0\n3\t11.0\n4\t11.0\n");
+            assertRows("SELECT count() FROM (SELECT r, lag(r) OVER () prev FROM (SELECT rnd_int(1, 1_000_000, 0) r, r r2 FROM long_sequence(20) ORDER BY r2)) WHERE prev > r",
+                    "count\n0\n");
         });
     }
 

@@ -34,18 +34,17 @@ import org.junit.Test;
 
 public class CompiledFilterTimestampPrecisionTest extends AbstractCairoTest {
     @Test
-    public void testMixedPrecisionLiteralFallsBackWithoutTruncation() throws Exception {
+    public void testMixedPrecisionLiteralCompilesAtColumnPrecision() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
             final String bound = "'2020-01-01T00:00:00.000000001Z'";
-            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other<" + bound, "id\n1\n3\n", false);
-            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE " + bound + ">other", "id\n1\n3\n", false);
+            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other<" + bound, "id\n1\n3\n", true);
+            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE " + bound + ">other", "id\n1\n3\n", true);
             assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other=" + bound, "id\n", false);
-            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other>" + bound, "id\n2\n", false);
-            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other<=" + bound, "id\n1\n3\n", false);
-            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other>=" + bound, "id\n2\n", false);
-            // The designated column still uses its existing intrinsic tick precision.
-            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE ts<" + bound, "id\n", false);
+            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other>" + bound, "id\n2\n", true);
+            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other<=" + bound, "id\n1\n3\n", true);
+            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE other>=" + bound, "id\n2\n", true);
+            assertAllModes("SELECT id FROM jit_timestamp_precision WHERE ts<" + bound, "id\n1\n", false);
         });
     }
 
@@ -62,7 +61,7 @@ public class CompiledFilterTimestampPrecisionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertAllModes(String sql, String expected, boolean isSamePrecision) throws Exception {
+    private void assertAllModes(String sql, String expected, boolean isCompiled) throws Exception {
         final int previousMode = sqlExecutionContext.getJitMode();
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -72,7 +71,7 @@ public class CompiledFilterTimestampPrecisionTest extends AbstractCairoTest {
             }
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(isSamePrecision && JitUtil.isJitSupported(), factory.usesCompiledFilter());
+                Assert.assertEquals(isCompiled && JitUtil.isJitSupported(), factory.usesCompiledFilter());
                 assertResult(factory, expected);
             }
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {

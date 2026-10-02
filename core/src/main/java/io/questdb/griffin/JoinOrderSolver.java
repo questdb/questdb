@@ -44,8 +44,8 @@ import io.questdb.std.ObjectPool;
  * runtime resources are retained.
  */
 final class JoinOrderSolver implements Mutable {
-    private final IntList bestJoinTypes = new IntList();
-    private final IntList bestOrder = new IntList();
+    private final IntList bestJoinTypes;
+    private final IntList bestOrder;
     private final IntList candidateOrder;
     private final ObjectPool<Context> contextPool = new ObjectPool<>(Context::new, 8);
     private final ObjList<Context> contexts = new ObjList<>();
@@ -58,24 +58,34 @@ final class JoinOrderSolver implements Mutable {
     private final IntList orderingConstraints = new IntList();
     private final IntList pendingSources;
     private final IntSortedList ready = new IntSortedList();
-    private final IntList roots = new IntList();
+    private final IntList roots;
     private final ObjList<Equality> sourceFilters = new ObjList<>();
     private final ObjList<Context> stagedContexts = new ObjList<>();
-    private final IntList stagedIndexes = new IntList();
+    private final IntList stagedIndexes;
     private boolean isOrdered;
     private JoinPlan join;
 
     /** Borrows two caller lists as {@link #order()} scratch; the caller stops reading them once order() starts. */
-    JoinOrderSolver(IntList candidateOrder, IntList pendingSources, IntHashSet markedIndexes) {
+    JoinOrderSolver(
+            IntList candidateOrder,
+            IntList pendingSources,
+            IntHashSet markedIndexes,
+            IntList stagedIndexes,
+            IntList bestOrder,
+            IntList bestJoinTypes,
+            IntList roots
+    ) {
         this.candidateOrder = candidateOrder;
         this.pendingSources = pendingSources;
         this.markedIndexes = markedIndexes;
+        this.stagedIndexes = stagedIndexes;
+        this.bestOrder = bestOrder;
+        this.bestJoinTypes = bestJoinTypes;
+        this.roots = roots;
     }
 
     @Override
     public void clear() {
-        bestJoinTypes.clear();
-        bestOrder.clear();
         candidateOrder.clear();
         for (int i = 0, n = contextPool.getPos(); i < n; i++) {
             contextPool.peekQuick(i).clear();
@@ -93,16 +103,23 @@ final class JoinOrderSolver implements Mutable {
         orderingConstraints.clear();
         pendingSources.clear();
         ready.clear();
-        roots.clear();
         sourceFilters.clear();
         stagedContexts.clear();
-        stagedIndexes.clear();
         isOrdered = false;
         join = null;
     }
 
     static boolean isBarrier(int joinType) {
         return joinType != QueryModel.JOIN_INNER && joinType != QueryModel.JOIN_CROSS;
+    }
+
+    /**
+     * The child reads columns of the parent without an equality between them, as a dependent join step
+     * reads the columns of the inputs before it.
+     */
+    void addDependency(int parent, int child) {
+        requireCollecting();
+        addParent(parent, child);
     }
 
     /** Holds the input while nothing depends on it until no other input is ready, so a context-free outer join goes last. */
@@ -442,6 +459,9 @@ final class JoinOrderSolver implements Mutable {
     }
 
     private void reorder() {
+        bestJoinTypes.clear();
+        bestOrder.clear();
+        roots.clear();
         stagedContexts.clear();
         for (int i = 0, n = contexts.size(); i < n; i++) {
             final Context context = contexts.getQuick(i);

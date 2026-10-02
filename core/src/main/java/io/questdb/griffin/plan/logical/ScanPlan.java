@@ -66,6 +66,10 @@ public final class ScanPlan extends LogicalPlan {
         hints = 0;
     }
 
+    public int getHints() {
+        return hints;
+    }
+
     public IntList getIndexedColumnIds() {
         return indexedColumnIds;
     }

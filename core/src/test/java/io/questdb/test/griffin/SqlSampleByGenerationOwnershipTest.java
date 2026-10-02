@@ -73,17 +73,6 @@ public class SqlSampleByGenerationOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyedRangeValidationClosesAliasedOwners() throws Exception {
-        assertSampleBy((fixture, compiler) -> {
-            fixture.table("ts", ColumnType.TIMESTAMP_MICRO, "k", ColumnType.INT, "v", ColumnType.LONG)
-                    .timestamp(0).closeFailure = new RuntimeException("input close");
-            fixture.assertCompileFails(compiler, sqlExecutionContext,
-                    "SELECT ts, k, sum(v) FROM owned_table(0) SAMPLE BY (1+0) h FROM '2024-01-01' TO '2024-01-02' FILL(PREV)",
-                    "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
-        });
-    }
-
-    @Test
     public void testMixedLinearFillOwnsWrappedAggregateOnSuccessAndFailure() throws Exception {
         assertSampleBy((fixture, compiler) -> {
             fixture.table("ts", ColumnType.TIMESTAMP_MICRO, "v", ColumnType.LONG).timestamp(0);

@@ -218,13 +218,8 @@ public class SqlLogicalOrderTest extends AbstractCairoTest {
             );
             assertException("SELECT sum FROM (" + ordered + ")", 7, "Invalid column: sum");
             final String distinct = "SELECT DISTINCT sum(i) AS total FROM lp_order_agg GROUP BY k ORDER BY sum(i*2)";
-            final String distinctExpected = """
-                    total\tsum
-                    null\tnull
-                    3\t6
-                    """;
-            assertNestedRows(distinct, distinctExpected);
-            assertNestedRows("SELECT * FROM (" + distinct + ")", distinctExpected);
+            assertException(distinct, 70, "ORDER BY expressions must appear in select list. Invalid column: sum");
+            assertException("SELECT * FROM (" + distinct + ")", 85, "ORDER BY expressions must appear in select list. Invalid column: sum");
             assertQuery(ordered).noLeakCheck().assertsPlan("""
                     SelectedRecord
                         Encode sort light lo: 3

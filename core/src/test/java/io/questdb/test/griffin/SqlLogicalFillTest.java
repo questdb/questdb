@@ -24,16 +24,12 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -421,19 +417,17 @@ public class SqlLogicalFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInvalidFillCastFailsAtExecutionAndCompilerRecovers() throws Exception {
+    public void testInvalidFillValueFailsAtCompileTimeAndCompilerRecovers() throws Exception {
         assertMemoryLeak(() -> {
             createRows("lp_fill", "TIMESTAMP");
             final String sql = "SELECT ts,sum(v) a FROM lp_fill SAMPLE BY 1h FILL('bad')";
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 for (int reuse = 0; reuse < 2; reuse++) {
-                    try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        try {
-                            rowsOf(factory);
-                            Assert.fail(sql);
-                        } catch (ImplicitCastException e) {
-                            TestUtils.assertEquals("inconvertible value: `bad` [STRING -> DOUBLE]", e.getFlyweightMessage());
-                        }
+                    try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                        Assert.fail(sql);
+                    } catch (SqlException e) {
+                        Assert.assertEquals(sql.indexOf("'bad'"), e.getPosition());
+                        TestUtils.assertEquals("invalid fill value: 'bad'", e.getFlyweightMessage());
                     }
                     try (RecordCursorFactory factory = compiler.compile("SELECT count() FROM lp_fill", sqlExecutionContext).getRecordCursorFactory()) {
                         assertResult(factory, "count\n4\n");
@@ -643,13 +637,6 @@ public class SqlLogicalFillTest extends AbstractCairoTest {
         return sink.getSink().toString();
     }
 
-    private String rowsOf(RecordCursorFactory factory) throws SqlException {
-        final StringSink sink = new StringSink();
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-        }
-        return sink.toString();
-    }
     private void assertQueryRows(String sql, String expected) throws Exception {
         assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }

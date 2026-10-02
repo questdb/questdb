@@ -238,6 +238,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAliasOfVolatileWindowExpressionIsOneValue() throws Exception {
+        assertQuery("SELECT a = b - 1 eq, count() FROM (SELECT rnd_int(1, 1_000_000, 0) + first_value(x) OVER (ORDER BY ts) a, a + 1 b FROM t)")
+                .ddl("CREATE TABLE t AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
+                        eq\tcount
+                        true\t10
+                        """);
+    }
+
+    @Test
     public void testAliasedColumnVisibleByBothNamesInCaseThen() throws Exception {
         // Verify that both the alias (p) and the original column name (price)
         // can be used in CASE branches alongside a window function.
@@ -19937,6 +19948,71 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVolatileWindowAliasOrdersByOneValue() throws Exception {
+        assertQuery("SELECT count() FROM (SELECT a, lag(a) OVER () prev FROM (SELECT rnd_int(1, 1_000_000, 0) + first_value(x) OVER (ORDER BY ts) a FROM t ORDER BY a)) " +
+                "WHERE prev > a")
+                .ddl("CREATE TABLE t AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        0
+                        """);
+    }
+
+    @Test
+    public void testVolatileWindowCallRepeatedInOrderByIsOneValue() throws Exception {
+        assertQuery("SELECT count() FROM (SELECT a, lag(a) OVER () prev FROM (SELECT first_value(rnd_int(1, 1_000_000, 0)) OVER (ORDER BY ts ROWS CURRENT ROW) a FROM t " +
+                "ORDER BY first_value(rnd_int(1, 1_000_000, 0)) OVER (ORDER BY ts ROWS CURRENT ROW))) WHERE prev > a")
+                .ddl("CREATE TABLE t AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        0
+                        """);
+    }
+
+    @Test
+    public void testVolatileWindowCallsEvaluatedPerOccurrence() throws Exception {
+        assertQuery("SELECT a = b eq, count() FROM (SELECT first_value(rnd_int(1, 1_000_000, 0)) OVER (ORDER BY ts) a, " +
+                "first_value(rnd_int(1, 1_000_000, 0)) OVER (ORDER BY ts) b FROM t)")
+                .ddl("CREATE TABLE t AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
+                        eq\tcount
+                        false\t10
+                        """);
+    }
+
+    @Test
+    public void testWindowArgumentReadsVolatileWindowAliasAsOneValue() throws Exception {
+        assertQuery("SELECT a = c eq, count() FROM (SELECT rnd_int(1, 1_000_000, 0) + first_value(x) OVER (ORDER BY ts) a, " +
+                "sum(a) OVER (ORDER BY ts ROWS CURRENT ROW) c FROM t)")
+                .ddl("CREATE TABLE t AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
+                        eq\tcount
+                        true\t10
+                        """);
+    }
+
+    @Test
+    public void testWindowArgumentReadsWindowAlias() throws Exception {
+        assertQuery("SELECT ts, x * 2 + first_value(x) OVER (ORDER BY ts) a, sum(a) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) c FROM t LIMIT 3")
+                .ddl("CREATE TABLE t AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\ta\tc
+                        2024-01-01T00:00:00.000000Z\t3\t3.0
+                        2024-01-01T00:00:01.000000Z\t5\t8.0
+                        2024-01-01T00:00:02.000000Z\t7\t12.0
+                        """);
+    }
+
+    @Test
     public void testWindowAvg() throws Exception {
         // Test avg() window function
         assertQuery("SELECT id, avg(id) OVER (ORDER BY ts) AS avg_val FROM x")
@@ -22191,6 +22267,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         2\t3
                         3\t4
                         3\t4
+                        """);
+    }
+
+    @Test
+    public void testWindowReadsVolatileAliasAsOneValue() throws Exception {
+        assertQuery("SELECT r = c AND r = d eq, count() FROM (SELECT rnd_double() r, sum(r) OVER (ORDER BY ts ROWS CURRENT ROW) c, r + 0 d, ts FROM t)")
+                .ddl("CREATE TABLE t AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
+                        eq\tcount
+                        true\t10
                         """);
     }
 

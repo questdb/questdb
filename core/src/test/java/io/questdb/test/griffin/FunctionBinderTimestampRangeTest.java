@@ -106,7 +106,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBetweenLiteralPrecisionFollowsPredicateScope() throws Exception {
+    public void testBetweenLiteralsCanonicaliseToColumnPrecision() throws Exception {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema().add(70, "ts", ColumnType.TIMESTAMP_MICRO, true);
             input.setTimestampIndex(0);
@@ -125,16 +125,19 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
                     FunctionExpression bound = (FunctionExpression) (variant == 3
                             ? binder.bind(predicate, input, null, sqlExecutionContext)
                             : binder.bindPredicate(predicate, input, null, sqlExecutionContext));
-                    if (variant == 1 || variant == 2) {
+                    if (variant == 1) {
                         bound = (FunctionExpression) bound.argumentAt(0);
                     }
                     final ConstantExpression lo = (ConstantExpression) bound.argumentAt(1);
-                    Assert.assertEquals(variant < 2 ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO, lo.getDataType());
-                    Assert.assertEquals(-1, lo.getLongValue());
-                    if (explicit) {
-                        Assert.assertNull(lo.getTimestampText());
-                    } else {
+                    if (variant == 5) {
+                        // A bound beside a column keeps its precision: it rounds only when both bounds are constant.
+                        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, lo.getDataType());
+                        Assert.assertEquals(-1, lo.getLongValue());
                         TestUtils.assertEquals("1969-12-31T23:59:59.999999999Z", lo.getTimestampText());
+                    } else {
+                        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, lo.getDataType());
+                        Assert.assertEquals(0, lo.getLongValue());
+                        Assert.assertNull(lo.getTimestampText());
                     }
                     binder.clear();
                 }
@@ -184,7 +187,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInPointListPreservesTextTypedTimestampAndNull() throws Exception {
+    public void testInPointListDropsValuesTheColumnCannotHold() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema original = wideSchema(ColumnType.TIMESTAMP_MICRO);
@@ -194,9 +197,8 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
                         text("1969-12-31T23:59:59.999999999Z"),
                         cast(text("1969-12-31T23:59:59.999999999Z"), "timestamp_ns"), constant("null")),
                         original, null, sqlExecutionContext);
-                Assert.assertEquals(ColumnType.STRING, expression.argumentAt(1).getDataType());
-                Assert.assertEquals(ColumnType.TIMESTAMP_NANO, expression.argumentAt(2).getDataType());
-                Assert.assertEquals(ColumnType.NULL, expression.argumentAt(3).getDataType());
+                Assert.assertEquals(2, expression.getArgumentCount());
+                Assert.assertEquals(ColumnType.NULL, expression.argumentAt(1).getDataType());
                 try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
                      Function worker = binder.instantiate(expression, original, sqlExecutionContext)) {
                     binder.clear();
@@ -204,7 +206,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
                     original.clear();
                     pruned.clear();
                     for (long value : new long[]{-2, -1, 0, 1, Numbers.LONG_NULL}) {
-                        final boolean expected = value == -1 || value == 0 || value == Numbers.LONG_NULL;
+                        final boolean expected = value == Numbers.LONG_NULL;
                         Assert.assertEquals(expected, owner.getBool(record(0, value)));
                         Assert.assertEquals(expected, worker.getBool(record(48, value)));
                     }
@@ -254,7 +256,7 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
     @Test
     public void testInRuntimePointListsKeepIndependentCachedValues() throws Exception {
         assertMemoryLeak(() -> {
-            bindVariableService.setTimestampNano(0, 1);
+            bindVariableService.setTimestampNano(0, 1000);
             bindVariableService.setStr(1, "1969-12-31T23:59:59.999999999Z");
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema original = wideSchema(ColumnType.TIMESTAMP_MICRO);
@@ -270,17 +272,18 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
                     pruned.clear();
                     owner.init(null, sqlExecutionContext);
                     worker.init(null, sqlExecutionContext);
-                    for (long value : new long[]{-1, 0, Numbers.LONG_NULL}) {
-                        Assert.assertTrue(owner.getBool(record(0, value)));
-                        Assert.assertTrue(worker.getBool(record(48, value)));
+                    for (long value : new long[]{-1, 0, 1, Numbers.LONG_NULL}) {
+                        final boolean expected = value == 1 || value == Numbers.LONG_NULL;
+                        Assert.assertEquals(expected, owner.getBool(record(0, value)));
+                        Assert.assertEquals(expected, worker.getBool(record(48, value)));
                     }
                     bindVariableService.setTimestampNano(0, 2000);
                     owner.init(null, sqlExecutionContext);
-                    Assert.assertFalse(owner.getBool(record(0, 0)));
+                    Assert.assertFalse(owner.getBool(record(0, 1)));
                     Assert.assertTrue(owner.getBool(record(0, 2)));
-                    Assert.assertTrue(worker.getBool(record(48, 0)));
+                    Assert.assertTrue(worker.getBool(record(48, 1)));
                     worker.init(null, sqlExecutionContext);
-                    Assert.assertFalse(worker.getBool(record(48, 0)));
+                    Assert.assertFalse(worker.getBool(record(48, 1)));
                     Assert.assertTrue(worker.getBool(record(48, 2)));
                 }
             }

@@ -1025,31 +1025,31 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             );
             try {
                 compiler.compile(
-                        "select ts, sum(price + alloc(32)) s from t sample by 1d fill(no_such_column)",
+                        "select ts, sum(price + alloc(32)) s from t sample by 1d fill('abc')",
                         ctx
                 );
                 Assert.fail("fill-value parse failure expected");
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "Invalid column");
+                TestUtils.assertContains(e.getMessage(), "invalid fill value");
             }
         });
     }
 
     @Test
-    public void testSampleByKeyedFromToFailureFreesAssembledFunctions() throws Exception {
+    public void testSampleByKeyedLinearFailureFreesAssembledFunctions() throws Exception {
         // generateSampleBy assembles the group-by and projection functions (including any
         // resource-bearing scalar sub-query keys and aggregate arguments) before rejecting the
-        // unsupported keyed FROM/TO combination. When guardAgainstFromToWithKeyedSampleBy throws,
-        // the catch must free the assembled owner lists. alloc() places tracked native memory in
-        // both the key and the aggregate argument so assertMemoryLeak() sees the leak.
+        // unsupported keyed LINEAR fill list. When that rejection throws, the catch must free the
+        // assembled owner lists. alloc() places tracked native memory in both the key and the
+        // aggregate argument so assertMemoryLeak() sees the leak.
         assertMemoryLeak(() -> {
             execute("create table t as (" +
                     "select x::double price, x::double qty, timestamp_sequence(0, 60000000) ts" +
                     " from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
-            assertQuery("select price + alloc(32) > (select avg(price) from t) k, sum(qty + alloc(32)) s " +
-                    "from t sample by 1h from dateadd('h', 0, '1970-01-01'::timestamp) fill(prev)")
-                    .fails(-1, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+            assertQuery("select price + alloc(32) > (select avg(price) from t) k, sum(qty + alloc(32)) s, max(qty) m " +
+                    "from t sample by 1h fill(linear, prev)")
+                    .fails(-1, "linear interpolation is not supported when using fill values for keyed sample by expression");
         });
     }
 

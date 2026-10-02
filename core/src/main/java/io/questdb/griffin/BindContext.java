@@ -32,13 +32,24 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.SampleByPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.UnnestSpec;
+import io.questdb.griffin.plan.logical.WindowJoinPlan;
+import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
@@ -51,7 +62,6 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 
 final class BindContext implements Mutable {
@@ -73,41 +83,50 @@ final class BindContext implements Mutable {
     final IntList cursorProjectionSources = new IntList();
     final IntList cursorSourceIndexes = new IntList();
     final ObjList<ExpressionNode> cursorSources = new ObjList<>();
+    final ObjectPool<DistinctPlan> distincts = new ObjectPool<>(DistinctPlan.FACTORY, 4);
     final OutputSchema emptySchema;
+    final ObjectPool<FillPlan> fills = new ObjectPool<>(FillPlan.FACTORY, 4);
     final ObjectPool<FilterPlan> filters = new ObjectPool<>(FilterPlan.FACTORY, 4);
     final FunctionBinder functionBinder;
     final FunctionFactoryCache functionFactoryCache;
     final FunctionParser functionParser;
     final TableFunctionSources functionSources;
     final ObjList<ExpressionNode> groupingNodes = new ObjList<>();
+    final ObjectPool<HorizonJoinPlan> horizonJoinPlans = new ObjectPool<>(HorizonJoinPlan.FACTORY, 2);
+    final ObjectPool<HorizonJoinSlave> horizonJoinSlaves = new ObjectPool<>(HorizonJoinSlave.FACTORY, 2);
     final IntHashSet intrinsicTimestampColumnIds = new IntHashSet();
     final ObjectPool<JoinInput> joinInputs = new ObjectPool<>(JoinInput.FACTORY, 4);
     final IntHashSet joinNativeTimestampIds = new IntHashSet();
     final ObjectPool<JoinPlan> joins = new ObjectPool<>(JoinPlan.FACTORY, 2);
-    final ObjList<LateralScope> lateralScopes = new ObjList<>();
+    final ObjectPool<LatestByPlan> latestByPlans = new ObjectPool<>(LatestByPlan.FACTORY, 4);
     final ObjectPool<LimitPlan> limits = new ObjectPool<>(LimitPlan.FACTORY, 4);
     final ExpressionNode normalizedCount = ExpressionNode.FACTORY.newInstance();
+    final IntList outerColumnScratch;
     final IntList projectionAliasIndexes = new IntList();
     final ObjectPool<ProjectPlan> projects = new ObjectPool<>(ProjectPlan.FACTORY, 4);
+    final ObjectPool<SampleByPlan> sampleByPlans = new ObjectPool<>(SampleByPlan.FACTORY, 4);
+    final ObjectPool<ScanPlan> scans = new ObjectPool<>(ScanPlan.FACTORY, 4);
     final OutputSchema scratchScope = new OutputSchema();
+    final ObjectPool<SetOperationPlan> setOperations = new ObjectPool<>(SetOperationPlan.FACTORY, 4);
     final ObjectPool<SortPlan> sorts = new ObjectPool<>(SortPlan.FACTORY, 4);
     final IntList sourceProjectionIndexes = new IntList();
     final ObjList<ColumnExpression> substitutionColumns = new ObjList<>();
     final ObjList<ExpressionNode> substitutionNodes = new ObjList<>();
     final IntHashSet translatingCopyIds = new IntHashSet();
     final WindowExpression unboundedWindow = WindowExpression.FACTORY.newInstance();
+    final ObjectPool<UnnestSpec> unnestSpecs = new ObjectPool<>(UnnestSpec.FACTORY, 4);
     final IntList wildcardExcludedIds = new IntList();
     final IntList windowAliasIds = new IntList();
     final OutputSchema windowBindingSchema = new OutputSchema();
+    final ObjectPool<WindowJoinPlan> windowJoinPlans = new ObjectPool<>(WindowJoinPlan.FACTORY, 2);
+    final ObjectPool<WindowJoinStep> windowJoinSteps = new ObjectPool<>(WindowJoinStep.FACTORY, 2);
     final ObjList<ExpressionNode> windowOrderExpressions = new ObjList<>();
     final ObjectPool<WindowPlan> windowPlans = new ObjectPool<>(WindowPlan.FACTORY, 4);
     final ObjList<ExpressionNode> windowSelectExpressions = new ObjList<>();
     final ObjectPool<WindowSpec> windowSpecs = new ObjectPool<>(WindowSpec.FACTORY, 4);
     final ObjectPool<WindowExpression> windowSyntax = new ObjectPool<>(WindowExpression.FACTORY, 4);
-    ExpressionNode correlatedWhere;
     LowerCaseCharSequenceObjHashMap<CharSequence> currentHints;
     SqlExecutionContext executionContext;
-    boolean isFullFatJoins;
     boolean isInsideJoin;
     boolean isSetOperationBranch;
     int nextColumnId;
@@ -121,6 +140,7 @@ final class BindContext implements Mutable {
         this.configuration = configuration;
         this.bindingExpressions = bindingExpressions;
         this.emptySchema = emptySchema;
+        this.outerColumnScratch = projectionAliasIndexes;
         this.functionBinder = new FunctionBinder(functionParser, columns, constants, scratchScope);
         this.functionParser = functionParser;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
@@ -138,6 +158,8 @@ final class BindContext implements Mutable {
         isInsideJoin = false;
         windowAliasIds.clear();
         windowBindingSchema.clear();
+        windowJoinPlans.clear();
+        windowJoinSteps.clear();
         windowOrderExpressions.clear();
         windowPlans.clear();
         windowSelectExpressions.clear();
@@ -152,27 +174,35 @@ final class BindContext implements Mutable {
         characterStore.clear();
         columnSpellings.clear();
         clearCursorColumns();
+        distincts.clear();
         filters.clear();
+        fills.clear();
         currentHints = null;
         joinInputs.clear();
         joinNativeTimestampIds.clear();
         joins.clear();
         groupingNodes.clear();
+        horizonJoinPlans.clear();
+        horizonJoinSlaves.clear();
         intrinsicTimestampColumnIds.clear();
+        latestByPlans.clear();
         limits.clear();
         normalizedCount.clear();
         projectionAliasIndexes.clear();
         projects.clear();
+        sampleByPlans.clear();
+        scans.clear();
         scratchScope.clear();
+        setOperations.clear();
         sourceProjectionIndexes.clear();
         substitutionColumns.clear();
         substitutionNodes.clear();
         translatingCopyIds.clear();
+        unnestSpecs.clear();
         sorts.clear();
         nextColumnId = 0;
         isSetOperationBranch = false;
         wildcardExcludedIds.clear();
-        lateralScopes.clear();
     }
 
     private static boolean hasVisibleColumn(OutputSchema schema, CharSequence name) {
@@ -198,15 +228,6 @@ final class BindContext implements Mutable {
 
     static ObjList<ExpressionNode> blockGroupBy(QueryModel model, QueryModel source) {
         return source.getGroupBy().size() > 0 && !source.isPivot() ? source.getGroupBy() : model.getGroupBy();
-    }
-
-    static void copyCorrelatedAliases(OutputSchema from, OutputSchema to, int columnLimit) {
-        for (int i = 0, n = from.getCorrelatedAliasCount(); i < n; i++) {
-            final int index = from.getCorrelatedAliasIndex(i);
-            if (index < columnLimit) {
-                to.addCorrelatedAlias(from.getCorrelatedAliasQualifier(i), from.getCorrelatedAliasName(i), index);
-            }
-        }
     }
 
     static int findGroupingColumn(AggregatePlan aggregate, int columnId) {
@@ -286,10 +307,6 @@ final class BindContext implements Mutable {
                 && expression.rhs.type == ExpressionNode.CONSTANT && !SqlKeywords.isNullKeyword(expression.rhs.token));
     }
 
-    static boolean isTrivialCondition(ExpressionNode criteria) {
-        return criteria == null || criteria.type == ExpressionNode.CONSTANT && SqlKeywords.isTrueKeyword(criteria.token);
-    }
-
     static boolean isWildcard(ExpressionNode expression) {
         return expression.isWildcard();
     }
@@ -301,6 +318,10 @@ final class BindContext implements Mutable {
             }
         }
         throw new IllegalStateException("join column is outside its inputs");
+    }
+
+    static SqlException orderNotSelected(ExpressionNode order) {
+        return SqlException.$(order.position, "ORDER BY expressions must appear in select list. Invalid column: ").put(order.token);
     }
 
     static CharSequence sourceAlias(QueryModel source) {
@@ -509,37 +530,5 @@ final class BindContext implements Mutable {
         }
         windowBindingSchema.setTimestampIndex(input.getTimestampIndex());
         return windowBindingSchema;
-    }
-
-    static final class LateralScope implements Mutable {
-        static final ObjectFactory<LateralScope> FACTORY = LateralScope::new;
-        final ObjList<JoinInput> joinInputs = new ObjList<>();
-        final IntList inputs = new IntList();
-        final OutputSchema master = new OutputSchema();
-        final IntList positions = new IntList();
-        QueryModel model;
-        boolean isLeft;
-        QueryModel source;
-        ExpressionNode where;
-
-        @Override
-        public void clear() {
-            isLeft = false;
-            joinInputs.clear();
-            inputs.clear();
-            master.clear();
-            positions.clear();
-            model = null;
-            source = null;
-            where = null;
-        }
-
-        LateralScope of(QueryModel model, QueryModel source, ExpressionNode where) {
-            clear();
-            this.model = model;
-            this.source = source;
-            this.where = where;
-            return this;
-        }
     }
 }

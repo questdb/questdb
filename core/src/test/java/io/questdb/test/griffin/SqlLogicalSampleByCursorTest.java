@@ -521,6 +521,62 @@ public class SqlLogicalSampleByCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillReadsLatestSourceRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_fill_rows (k SYMBOL, s STRING, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO lp_fill_rows VALUES
+                    ('a', 'x', 1.0, '2024-01-01T00:10:00'),
+                    ('a', 'y', 2.0, '2024-01-01T01:10:00'),
+                    ('b', 'z', 3.0, '2024-01-01T01:20:00'),
+                    ('a', 'w', 4.0, '2024-01-01T04:10:00')
+                    """);
+            assertQueryRows(
+                    "SELECT ts, k, first(s) s, sum(v) v FROM lp_fill_rows SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION",
+                    """
+                            ts	k	s	v
+                            2024-01-01T00:10:00.000000Z	a	x	1.0
+                            2024-01-01T00:10:00.000000Z	b		null
+                            2024-01-01T01:10:00.000000Z	a	y	2.0
+                            2024-01-01T01:10:00.000000Z	b	z	3.0
+                            2024-01-01T02:10:00.000000Z	a	y	2.0
+                            2024-01-01T02:10:00.000000Z	b	z	3.0
+                            2024-01-01T03:10:00.000000Z	a	y	2.0
+                            2024-01-01T03:10:00.000000Z	b	z	3.0
+                            2024-01-01T04:10:00.000000Z	a	w	4.0
+                            2024-01-01T04:10:00.000000Z	b	z	3.0
+                            """
+            );
+            assertQueryRows(
+                    "SELECT ts, k, first(s) s, sum(v) v FROM lp_fill_rows SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO FIRST OBSERVATION",
+                    """
+                            ts	k	s	v
+                            2024-01-01T00:10:00.000000Z	a	x	1.0
+                            2024-01-01T00:10:00.000000Z	b		null
+                            2024-01-01T01:10:00.000000Z	a	y	2.0
+                            2024-01-01T01:10:00.000000Z	b	z	3.0
+                            2024-01-01T02:10:00.000000Z	a	y	null
+                            2024-01-01T02:10:00.000000Z	b	z	null
+                            2024-01-01T03:10:00.000000Z	a	y	null
+                            2024-01-01T03:10:00.000000Z	b	z	null
+                            2024-01-01T04:10:00.000000Z	a	w	4.0
+                            2024-01-01T04:10:00.000000Z	b	z	null
+                            """
+            );
+            assertQueryRows(
+                    "SELECT ts, first(s) s FROM lp_fill_rows WHERE k = 'b' SAMPLE BY (0+1)h FROM '2024-01-01' TO '2024-01-01T04:00' FILL(PREV)",
+                    """
+                            ts	s
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T01:00:00.000000Z	z
+                            2024-01-01T02:00:00.000000Z	z
+                            2024-01-01T03:00:00.000000Z	z
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testRuntimeBoundsAndDerivedBounds() throws Exception {
         assertMemoryLeak(() -> {
             createRows("lp_sample_cursor", "TIMESTAMP");
@@ -586,7 +642,6 @@ public class SqlLogicalSampleByCursorTest extends AbstractCairoTest {
             assertQuery("SELECT ts,sum(v) FROM (SELECT * FROM lp_sample_cursor ORDER BY ts DESC) TIMESTAMP(ts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION").noLeakCheck().fails(0, "base query does not provide ASC order over designated TIMESTAMP column");
             assertQuery("SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY (1.5) h ALIGN TO FIRST OBSERVATION").noLeakCheck().fails(55, "unexpected token [h]");
             assertQuery("SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY 1h FILL('bad') ALIGN TO FIRST OBSERVATION").noLeakCheck().fails(57, "invalid fill value: 'bad'");
-            assertQuery("SELECT ts,k,sum(v) FROM lp_sample_cursor SAMPLE BY (1+0) h FROM '2024-01-01' TO '2024-01-02' FILL(PREV)").noLeakCheck().fails(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
             assertQuery("SELECT ts,sum(v),count(),max(v) FROM lp_sample_cursor SAMPLE BY 1h FILL(0,0) ALIGN TO FIRST OBSERVATION").noLeakCheck().fails(72, "not enough fill values");
         });
     }

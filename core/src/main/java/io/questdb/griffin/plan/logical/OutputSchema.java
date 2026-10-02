@@ -48,9 +48,6 @@ public final class OutputSchema implements Mutable {
     private final ObjList<CharSequence> columnQualifiers = new ObjList<>();
     private final IntList columnTypes = new IntList();
     private final IntList columnFlags = new IntList();
-    private final IntList correlatedAliasIndexes = new IntList();
-    private final ObjList<CharSequence> correlatedAliasNames = new ObjList<>();
-    private final ObjList<CharSequence> correlatedAliasQualifiers = new ObjList<>();
     private int timestampIndex = -1;
 
     public OutputSchema add(int columnId, CharSequence name, int type, boolean isVisible) {
@@ -90,9 +87,6 @@ public final class OutputSchema implements Mutable {
         columnQualifiers.clear();
         columnTypes.clear();
         columnFlags.clear();
-        correlatedAliasIndexes.clear();
-        correlatedAliasNames.clear();
-        correlatedAliasQualifiers.clear();
         timestampIndex = -1;
     }
 
@@ -105,17 +99,8 @@ public final class OutputSchema implements Mutable {
             columnQualifiers.addAll(that.columnQualifiers);
             columnTypes.addAll(that.columnTypes);
             columnFlags.addAll(that.columnFlags);
-            correlatedAliasIndexes.addAll(that.correlatedAliasIndexes);
-            correlatedAliasNames.addAll(that.correlatedAliasNames);
-            correlatedAliasQualifiers.addAll(that.correlatedAliasQualifiers);
             timestampIndex = that.timestampIndex;
         }
-    }
-
-    public void addCorrelatedAlias(CharSequence qualifier, CharSequence name, int index) {
-        correlatedAliasQualifiers.add(qualifier);
-        correlatedAliasNames.add(name);
-        correlatedAliasIndexes.add(index);
     }
 
     public int getColumnCount() {
@@ -141,7 +126,7 @@ public final class OutputSchema implements Mutable {
                 return i;
             }
         }
-        return getCorrelatedColumnIndexQuiet(null, name, lo, hi);
+        return -1;
     }
 
     /**
@@ -161,7 +146,7 @@ public final class OutputSchema implements Mutable {
                 index = i;
             }
         }
-        return index != -1 ? index : getCorrelatedColumnIndexQuiet(qualifier, name, lo, hi);
+        return index;
     }
 
     public CharSequence getColumnName(int index) {
@@ -177,7 +162,6 @@ public final class OutputSchema implements Mutable {
     }
 
     public void remove(int index) {
-        assert correlatedAliasIndexes.size() == 0;
         columnIds.removeIndex(index);
         columnMetadata.remove(index);
         columnNames.remove(index);
@@ -189,6 +173,13 @@ public final class OutputSchema implements Mutable {
         } else if (timestampIndex > index) {
             timestampIndex--;
         }
+    }
+
+    public void setColumnId(int index, int columnId) {
+        if (columnId < 0) {
+            throw new IllegalArgumentException("negative logical column ID");
+        }
+        columnIds.setQuick(index, columnId);
     }
 
     public void setColumnName(int index, CharSequence name, CharSequence qualifier) {
@@ -210,33 +201,6 @@ public final class OutputSchema implements Mutable {
 
     public int getTimestampIndex() {
         return timestampIndex;
-    }
-
-    public int getCorrelatedAliasCount() {
-        return correlatedAliasIndexes.size();
-    }
-
-    public int getCorrelatedAliasIndex(int alias) {
-        return correlatedAliasIndexes.getQuick(alias);
-    }
-
-    public CharSequence getCorrelatedAliasName(int alias) {
-        return correlatedAliasNames.getQuick(alias);
-    }
-
-    public CharSequence getCorrelatedAliasQualifier(int alias) {
-        return correlatedAliasQualifiers.getQuick(alias);
-    }
-
-    public int getCorrelatedColumnIndexQuiet(CharSequence qualifier, CharSequence name, int lo, int hi) {
-        for (int i = 0, n = correlatedAliasNames.size(); i < n; i++) {
-            final CharSequence alias = correlatedAliasNames.getQuick(i);
-            if ((qualifier == null || Chars.equalsIgnoreCaseNc(qualifier, correlatedAliasQualifiers.getQuick(i)))
-                    && alias.length() == hi - lo && Chars.equalsIgnoreCase(alias, name, lo, hi)) {
-                return correlatedAliasIndexes.getQuick(i);
-            }
-        }
-        return -1;
     }
 
     public boolean hasColumnQualifier(CharSequence qualifier) {

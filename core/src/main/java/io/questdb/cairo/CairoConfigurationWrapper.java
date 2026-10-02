@@ -1790,11 +1790,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlDistinctGroupByRewriteEnabled() {
-        return getDelegate().isSqlDistinctGroupByRewriteEnabled();
-    }
-
-    @Override
     public boolean isSqlJitDebugEnabled() {
         return getDelegate().isSqlJitDebugEnabled();
     }

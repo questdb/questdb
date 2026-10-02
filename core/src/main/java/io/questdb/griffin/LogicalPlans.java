@@ -27,24 +27,29 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
-import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.UnaryPlan;
+import io.questdb.griffin.plan.logical.WindowJoinPlan;
+import io.questdb.griffin.plan.logical.WindowJoinStep;
+import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -126,6 +131,109 @@ final class LogicalPlans {
         }
     }
 
+    /**
+     * Adds the ids of the outer columns the expression reads, with repeats.
+     */
+    static void collectOuterColumnIds(BoundExpression expression, IntList sink) {
+        if (expression instanceof OuterColumnExpression outer) {
+            sink.add(outer.getColumnId());
+        } else if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                collectOuterColumnIds(call.argumentAt(i), sink);
+            }
+        }
+    }
+
+    static void collectOuterColumnIds(ObjList<? extends BoundExpression> expressions, IntList sink) {
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            collectOuterColumnIds(expressions.getQuick(i), sink);
+        }
+    }
+
+    /**
+     * Adds the ids of the outer columns the node's own expressions read, with repeats; its inputs are not visited.
+     */
+    static void collectOuterColumnIds(LogicalPlan plan, IntList sink) {
+        switch (plan) {
+            case FilterPlan filter -> collectOuterColumnIds(filter.getPredicate(), sink);
+            case ProjectPlan project -> collectOuterColumnIds(project.getExpressions(), sink);
+            case AggregatePlan aggregate -> {
+                collectOuterColumnIds(aggregate.getGroupingExpressions(), sink);
+                collectOuterColumnIds(aggregate.getAggregates(), sink);
+            }
+            case FillPlan fill -> collectOuterColumnIds(fill.getValues(), sink);
+            case WindowPlan window -> {
+                collectOuterColumnIds(window.getFunctions(), sink);
+                for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
+                    collectOuterColumnIds(window.getSpecs().getQuick(i).getPartitionBy(), sink);
+                }
+            }
+            case LimitPlan limit -> {
+                collectOuterColumnIds(limit.getLo(), sink);
+                collectOuterColumnIds(limit.getHi(), sink);
+            }
+            case JoinPlan join -> {
+                for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+                    final JoinInput input = join.getInputs().getQuick(i);
+                    collectOuterColumnIds(input.getKeyFilter(), sink);
+                    collectOuterColumnIds(input.getOnResidual(), sink);
+                    collectOuterColumnIds(input.getPostJoinFilter(), sink);
+                    if (input.getUnnest() != null) {
+                        collectOuterColumnIds(input.getUnnest().getExpressions(), sink);
+                    }
+                }
+            }
+            case WindowJoinPlan windowJoin -> {
+                for (int i = 0, n = windowJoin.getSteps().size(); i < n; i++) {
+                    final WindowJoinStep step = windowJoin.getSteps().getQuick(i);
+                    collectOuterColumnIds(step.getAggregates(), sink);
+                    collectOuterColumnIds(step.getFilter(), sink);
+                    collectOuterColumnIds(step.getLoExpression(), sink);
+                    collectOuterColumnIds(step.getHiExpression(), sink);
+                }
+            }
+            default -> {
+            }
+        }
+    }
+
+    /**
+     * True when the expression reads a column of an enclosing LATERAL's outer input.
+     */
+    static boolean hasOuterColumn(BoundExpression expression) {
+        if (expression instanceof OuterColumnExpression) {
+            return true;
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (hasOuterColumn(call.argumentAt(i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when the plan or one of its inputs reads a column of an enclosing LATERAL's outer input;
+     * {@code scratch} is restored on return.
+     */
+    static boolean hasOuterColumn(LogicalPlan plan, IntList scratch) {
+        final int base = scratch.size();
+        collectOuterColumnIds(plan, scratch);
+        final boolean hasOwn = scratch.size() > base;
+        scratch.setPos(base);
+        if (hasOwn) {
+            return true;
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            if (hasOuterColumn(plan.inputAt(i), scratch)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static boolean hasRepeatedColumn(ProjectPlan project) {
         final ObjList<BoundExpression> expressions = project.getExpressions();
         for (int i = 1, n = expressions.size(); i < n; i++) {
@@ -169,33 +277,6 @@ final class LogicalPlans {
         final int flags = predicate.getFunctionFlags();
         return (flags & BoundExpression.STABLE_WITHIN_EXECUTION) != 0
                 && (flags & BoundExpression.NON_DETERMINISTIC) == 0;
-    }
-
-    /**
-     * Predicts whether the factory generated for the plan supports random access, which the full-fat
-     * temporal join decision needs before generation. Plans whose factory choice is not known before generation report false.
-     */
-    static boolean isRandomAccess(LogicalPlan plan) {
-        return switch (plan) {
-            case ScanPlan scan -> scan.isRandomAccess();
-            case FilterPlan _, LimitPlan _ -> isRandomAccess(plan.inputAt(0));
-            case ProjectPlan project -> {
-                final ObjList<BoundExpression> expressions = project.getExpressions();
-                for (int i = 0, n = expressions.size(); i < n; i++) {
-                    if (hasNonRepeatableFunction(expressions.getQuick(i))) {
-                        yield false;
-                    }
-                }
-                yield isRandomAccess(plan.inputAt(0));
-            }
-            case SortPlan _, LatestByPlan _ -> true;
-            case SampleByPlan sample -> sample.getFillMode() == SampleByPlan.FILL_LINEAR;
-            case AggregatePlan aggregate -> aggregate.getGroupingExpressions().size() > 0;
-            case SetOperationPlan operation -> operation.getOperation() != QueryModel.SET_OPERATION_UNION
-                    && operation.getOperation() != QueryModel.SET_OPERATION_UNION_ALL
-                    && !operation.isSymbolRestorationRequired() && isRandomAccess(operation.getLeft());
-            default -> false;
-        };
     }
 
     /**
@@ -254,6 +335,27 @@ final class LogicalPlans {
         return type == ColumnType.BYTE || type == ColumnType.SHORT || type == ColumnType.INT || type == ColumnType.LONG ? operation : null;
     }
 
+    /**
+     * Evaluating the expression twice may give two values: it calls a function that is neither
+     * deterministic nor stable within one execution, or a sub-query.
+     */
+    static boolean isVolatile(BoundExpression expression) {
+        final int flags = expression.getFunctionFlags();
+        if ((flags & BoundExpression.NON_DETERMINISTIC) != 0 && (flags & BoundExpression.STABLE_WITHIN_EXECUTION) == 0) {
+            return true;
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (isVolatile(call.argumentAt(i))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return !(expression instanceof ColumnExpression || expression instanceof ConstantExpression
+                || expression instanceof BindVariableExpression || expression instanceof TypeExpression);
+    }
+
     static int projectedColumnIndex(ProjectPlan project, int columnId) {
         final ObjList<BoundExpression> expressions = project.getExpressions();
         for (int i = 0, n = expressions.size(); i < n; i++) {
@@ -294,25 +396,11 @@ final class LogicalPlans {
         return !(expression instanceof CursorExpression);
     }
 
-    static void retypeFullFatKeys(JoinInput step, OutputSchema output) {
-        if (!step.isFullFat()) {
-            return;
-        }
-        final IntList masterIds = step.getMasterKeyColumnIds();
-        final IntList slaveIds = step.getSlaveKeyColumnIds();
-        for (int i = 0, n = slaveIds.size(); i < n; i++) {
-            final int slaveId = slaveIds.getQuick(i);
-            // The last equality on a shared slave column decides its type.
-            if (slaveIds.indexOf(slaveId, i + 1, n) < 0) {
-                final int slaveIndex = output.getColumnIndexById(slaveId);
-                final int masterIndex = output.getColumnIndexById(masterIds.getQuick(i));
-                if (slaveIndex >= 0 && masterIndex >= 0 && ColumnType.isSymbol(output.getColumnType(slaveIndex))
-                        && !ColumnType.isSymbol(output.getColumnType(masterIndex))) {
-                    output.setColumnType(slaveIndex, output.getColumnType(masterIndex));
-                    output.setSymbolTableStatic(slaveIndex, false);
-                }
-            }
-        }
+    /**
+     * True when the call reads at least one outer column and no column of its own input.
+     */
+    static boolean readsOnlyOuterColumns(FunctionExpression call) {
+        return hasOuterColumn(call) && !hasInputColumn(call);
     }
 
     static int setTimestampIndex(LogicalPlan plan) {
@@ -354,15 +442,13 @@ final class LogicalPlans {
         return inputIndex >= 0 && canPushSetTimestamp(input, inputIndex);
     }
 
-    private static boolean hasNonRepeatableFunction(BoundExpression expression) {
-        if (expression instanceof FunctionExpression function) {
-            final String name = function.getName();
-            if (Chars.startsWith(name, "rnd_") || Chars.equals(name, "timestamp_sequence") || Chars.equals(name, "within_box")
-                    || Chars.equals(name, "within_radius") || Chars.equals(name, "geo_within_radius_latlon")) {
-                return true;
-            }
-            for (int i = 0, n = function.getArgumentCount(); i < n; i++) {
-                if (hasNonRepeatableFunction(function.argumentAt(i))) {
+    private static boolean hasInputColumn(BoundExpression expression) {
+        if (expression instanceof ColumnExpression) {
+            return true;
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (hasInputColumn(call.argumentAt(i))) {
                     return true;
                 }
             }

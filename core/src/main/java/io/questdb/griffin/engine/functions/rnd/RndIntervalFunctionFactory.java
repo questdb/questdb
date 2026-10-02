@@ -115,6 +115,11 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
         public boolean isRandom() {
             return true;
         }

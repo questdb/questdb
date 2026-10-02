@@ -83,19 +83,27 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIdentityTimestampCastAdmitsOnlyConstantRangePrecisionBounds() throws Exception {
+    public void testIdentityTimestampCastCanonicalisesFinerBounds() throws Exception {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema().add(70, "value", ColumnType.TIMESTAMP_MICRO, true);
             input.setTimestampIndex(0);
             try (FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
-                for (String operator : new String[]{"=", "<", "<=", ">", ">="}) {
+                final ExpressionNode equality = binary("=", cast(literal("value"), "timestamp"),
+                        cast(constant("'1970-01-01T00:00:00.000000001Z'"), "timestamp_ns"));
+                final ConstantExpression folded = (ConstantExpression) binder.bindPredicate(equality, input, null, sqlExecutionContext);
+                Assert.assertEquals(ColumnType.BOOLEAN, folded.getDataType());
+                Assert.assertEquals(0, folded.getLongValue());
+                binder.clear();
+                final String[] operators = {"<", "<=", ">", ">="};
+                final long[] bounds = {1, 0, 0, 1};
+                for (int i = 0; i < operators.length; i++) {
                     final ExpressionNode bound = cast(constant("'1970-01-01T00:00:00.000000001Z'"), "timestamp_ns");
-                    final FunctionExpression expression = (FunctionExpression) binder.bindPredicate(binary(operator,
+                    final FunctionExpression expression = (FunctionExpression) binder.bindPredicate(binary(operators[i],
                             cast(literal("value"), "timestamp"), bound), input, null, sqlExecutionContext);
                     Assert.assertFalse(((ColumnExpression) expression.argumentAt(0)).isDirectReference());
                     final ConstantExpression timestamp = (ConstantExpression) expression.argumentAt(1);
-                    Assert.assertEquals(ColumnType.TIMESTAMP_NANO, timestamp.getDataType());
-                    Assert.assertEquals(1, timestamp.getLongValue());
+                    Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, timestamp.getDataType());
+                    Assert.assertEquals(bounds[i], timestamp.getLongValue());
                     Assert.assertNull(timestamp.getTimestampText());
                     binder.clear();
                 }

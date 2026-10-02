@@ -71,7 +71,7 @@ final class FilterPushdownPass implements Mutable {
     private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ObjectPool<ProjectPlan> narrowingProjects;
     private final IntList transitiveFactOrigins;
-    private final ObjList<BoundExpression> transitiveFacts = new ObjList<>();
+    private final ObjList<BoundExpression> transitiveFacts;
     private SqlExecutionContext executionContext;
     private FunctionBinder functionBinder;
     private boolean isLatestKeyScope;
@@ -85,7 +85,8 @@ final class FilterPushdownPass implements Mutable {
             ObjectPool<ColumnExpression> narrowingColumns,
             ObjectPool<ProjectPlan> narrowingProjects,
             IntList latestKeyPositions,
-            IntList transitiveFactOrigins
+            IntList transitiveFactOrigins,
+            ObjList<BoundExpression> transitiveFacts
     ) {
         this.aggregateInputOrder = aggregateInputOrder;
         this.expressionScratch = expressionScratch;
@@ -94,6 +95,7 @@ final class FilterPushdownPass implements Mutable {
         this.narrowingProjects = narrowingProjects;
         this.latestKeyPositions = latestKeyPositions;
         this.transitiveFactOrigins = transitiveFactOrigins;
+        this.transitiveFacts = transitiveFacts;
     }
 
     @Override
@@ -105,7 +107,6 @@ final class FilterPushdownPass implements Mutable {
         latestKeySort = null;
         mappingColumn.clear();
         mappingProjection.clear();
-        transitiveFacts.clear();
     }
 
     private static boolean canPushThroughProjection(BoundExpression expression, ProjectPlan project) {

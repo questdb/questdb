@@ -8152,7 +8152,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         ")")
                 .returns("""
                         x\tts
-                        2\t2019-10-17T00:00:00.200000Z
                         3\t2019-10-17T00:00:00.700000Z
                         4\t2019-10-17T00:00:00.800000Z
                         """);

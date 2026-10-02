@@ -77,7 +77,7 @@ final class AggregateRewritePass implements Mutable {
     private final ObjectPool<ProjectPlan> projects;
     private final IntList removedAggregates;
     private final IntList replacedSumIds;
-    private final IntList sortKeyIndexes = new IntList();
+    private final IntList sortKeyIndexes;
     private SqlExecutionContext executionContext;
     private FunctionBinder functionBinder;
     // The projection whose aggregate the last rewriteProjectedAggregate call lifted keys from.
@@ -93,7 +93,8 @@ final class AggregateRewritePass implements Mutable {
             ObjectPool<ProjectPlan> projects,
             ObjList<BoundExpression> callArguments,
             IntList removedAggregates,
-            IntList replacedSumIds
+            IntList replacedSumIds,
+            IntList sortKeyIndexes
     ) {
         this.projectionMerge = projectionMerge;
         this.characterStore = characterStore;
@@ -102,6 +103,7 @@ final class AggregateRewritePass implements Mutable {
         this.callArguments = callArguments;
         this.removedAggregates = removedAggregates;
         this.replacedSumIds = replacedSumIds;
+        this.sortKeyIndexes = sortKeyIndexes;
     }
 
     @Override
@@ -110,7 +112,6 @@ final class AggregateRewritePass implements Mutable {
         functionBinder = null;
         liftedProject = null;
         repeatedKeyAggregate = null;
-        sortKeyIndexes.clear();
     }
 
     /**
@@ -379,7 +380,7 @@ final class AggregateRewritePass implements Mutable {
     }
 
     private boolean liftKeys(ProjectPlan project, AggregatePlan aggregate) {
-        if (aggregate.hasSampleByBucket() || aggregate.getOutput().getCorrelatedAliasCount() > 0 || isJoinInput(aggregate)
+        if (aggregate.hasSampleByBucket() || isJoinInput(aggregate)
                 || !aggregate.hasExplicitGrouping() && !hasComputedColumn(project)
                 || !hasRepeatedKeyColumn(aggregate)) {
             return false;

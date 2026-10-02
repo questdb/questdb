@@ -272,6 +272,29 @@ final class TableFunctionSources implements Closeable, Mutable {
         return resources.closeOwned(-1, primary);
     }
 
+    /**
+     * Copies a prepared source without its output, which the caller fills. The copy creates its own
+     * function from the same call when generated.
+     */
+    FunctionSourcePlan copy(FunctionSourcePlan plan) {
+        final int index = prepared.indexOf(plan);
+        if (index < 0) {
+            throw new IllegalStateException("table-function source was not prepared");
+        }
+        final FunctionSourcePlan copy = plans.next().of(plan.getPosition());
+        copy.getRecordSchema().copyFrom(plan.getRecordSchema());
+        copy.getSourceColumnIndexes().addAll(plan.getSourceColumnIndexes());
+        copy.setProjectable(plan.isProjectable());
+        copy.setRecordName(plan.getRecordName());
+        prepared.add(copy);
+        expressions.add(expressions.getQuick(index));
+        if (index < showModels.size()) {
+            showModels.extendAndSet(prepared.size() - 1, showModels.getQuick(index));
+        }
+        slots.add(resources.reserve());
+        return copy;
+    }
+
     RecordCursorFactory takeFactory(FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = takeSourceFactory(plan, executionContext);
         if (plan.getRecordName() == null) {

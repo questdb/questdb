@@ -32,73 +32,57 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class SqlLogicalDistinctTest extends AbstractCairoTest {
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        configurationFactory = (root, telemetry, overrides) -> new CairoTestConfiguration(root, telemetry, overrides) {
-            @Override
-            public boolean isSqlDistinctGroupByRewriteEnabled() {
-                return false;
-            }
-        };
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Test
     public void testComputedOrderExpressionsPreserveDirectDistinctTuple() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT id+1 AS v FROM lp_distinct ORDER BY id+1", """
-                    v
-                    null
-                    2
-                    3
-                    4
-                    """);
-            assertQueryRows("SELECT DISTINCT id FROM lp_distinct ORDER BY id+1", """
-                    id	column
-                    null	null
-                    1	2
+            assertQueryRows("SELECT DISTINCT id+1 AS v, max(id) OVER () m FROM lp_distinct ORDER BY id+1", """
+                    v	m
+                    null	3
                     2	3
-                    3	4
+                    3	3
+                    4	3
                     """);
-            assertQueryRows("SELECT DISTINCT id AS v FROM lp_distinct ORDER BY v+1", """
-                    v	column
-                    null	null
-                    1	2
+            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id+1", """
+                    id	m
+                    null	3
+                    1	3
                     2	3
-                    3	4
+                    3	3
                     """);
-            assertQueryRows("SELECT DISTINCT id+1 AS v FROM lp_distinct ORDER BY v DESC", """
-                    v
-                    4
-                    3
-                    2
-                    null
+            assertQueryRows("SELECT DISTINCT id AS v, max(id) OVER () m FROM lp_distinct ORDER BY v+1", """
+                    v	m
+                    null	3
+                    1	3
+                    2	3
+                    3	3
                     """);
-            assertQueryRows(
-                    "SELECT DISTINCT id AS v FROM lp_distinct ORDER BY lp_distinct.id",
-                    """
-                            v
-                            null
-                            1
-                            2
-                            3
-                            """
-            );
-            assertQueryRows("SELECT DISTINCT sym,id FROM lp_distinct ORDER BY 2,1", """
-                    sym	id
-                    	null
-                    A	1
-                    B	1
-                    B	2
-                    C	3
+            assertQueryRows("SELECT DISTINCT id+1 AS v, max(id) OVER () m FROM lp_distinct ORDER BY v DESC", """
+                    v	m
+                    4	3
+                    3	3
+                    2	3
+                    null	3
+                    """);
+            assertQueryRows("SELECT DISTINCT id AS v, max(id) OVER () m FROM lp_distinct ORDER BY lp_distinct.id", """
+                    v	m
+                    null	3
+                    1	3
+                    2	3
+                    3	3
+                    """);
+            assertQueryRows("SELECT DISTINCT sym,id, max(id) OVER () m FROM lp_distinct ORDER BY 2,1", """
+                    sym	id	m
+                    	null	3
+                    A	1	3
+                    B	1	3
+                    B	2	3
+                    C	3	3
                     """);
         });
     }
@@ -108,7 +92,7 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             assertQueryRows(
-                    "SELECT id FROM (SELECT DISTINCT id,sym FROM lp_distinct) ORDER BY id",
+                    "SELECT id FROM (SELECT DISTINCT id,sym, max(id) OVER () m FROM lp_distinct) ORDER BY id",
                     """
                             id
                             null
@@ -119,7 +103,7 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
                             """
             );
             assertQueryRows(
-                    "SELECT id FROM (SELECT DISTINCT id,sym FROM lp_distinct) WHERE id>1 ORDER BY id",
+                    "SELECT id FROM (SELECT DISTINCT id,sym, max(id) OVER () m FROM lp_distinct) WHERE id>1 ORDER BY id",
                     """
                             id
                             2
@@ -127,7 +111,7 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
                             """
             );
             assertQueryRows(
-                    "SELECT 7 AS v FROM (SELECT DISTINCT id,sym FROM lp_distinct)",
+                    "SELECT 7 AS v FROM (SELECT DISTINCT id,sym, max(id) OVER () m FROM lp_distinct)",
                     """
                             v
                             7
@@ -145,24 +129,24 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             assertQueryRows(
-                    "SELECT DISTINCT id,sym,label,note FROM lp_distinct ORDER BY id,sym",
+                    "SELECT DISTINCT id,sym,label,note, max(id) OVER () m FROM lp_distinct ORDER BY id,sym",
                     """
-                            id	sym	label	note
-                            null		\t
-                            1	A	a	alpha
-                            1	B	b	beta
-                            2	B	b	beta
-                            3	C	c	café
+                            id	sym	label	note	m
+                            null				3
+                            1	A	a	alpha	3
+                            1	B	b	beta	3
+                            2	B	b	beta	3
+                            3	C	c	café	3
                             """
             );
-            assertQueryRows("SELECT DISTINCT id FROM lp_distinct", """
-                    id
-                    3
-                    1
-                    null
-                    2
+            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct", """
+                    id	m
+                    3	3
+                    1	3
+                    null	3
+                    2	3
                     """);
-            assertPlan("SELECT DISTINCT id FROM lp_distinct", "Distinct", "DistinctTimeSeries");
+            assertPlan("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct", "Distinct", "DistinctTimeSeries");
         });
     }
 
@@ -170,28 +154,28 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
     public void testLimitAdviceDoesNotReplaceLimit() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT id FROM lp_distinct LIMIT 2", """
-                    id
-                    3
-                    1
+            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT 2", """
+                    id	m
+                    3	3
+                    1	3
                     """);
-            assertQueryRows("SELECT DISTINCT id FROM lp_distinct LIMIT 1,3", """
-                    id
-                    1
-                    null
+            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT 1,3", """
+                    id	m
+                    1	3
+                    null	3
                     """);
-            assertQueryRows("SELECT DISTINCT id FROM lp_distinct LIMIT -2", """
-                    id
-                    null
-                    2
+            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT -2", """
+                    id	m
+                    null	3
+                    2	3
                     """);
-            assertQueryRows("SELECT DISTINCT id FROM lp_distinct ORDER BY id LIMIT 2", """
-                    id
-                    null
-                    1
+            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id LIMIT 2", """
+                    id	m
+                    null	3
+                    1	3
                     """);
-            assertPlan("SELECT DISTINCT id FROM lp_distinct LIMIT 2", "earlyExit: 2", "DistinctTimeSeries");
-            assertPlan("SELECT DISTINCT id FROM lp_distinct ORDER BY id LIMIT 2", "Limit", "earlyExit");
+            assertPlan("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT 2", "earlyExit: 2", "DistinctTimeSeries");
+            assertPlan("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id LIMIT 2", "Limit", "earlyExit");
         });
     }
 
@@ -199,9 +183,9 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
     public void testOrderErrorsAndCompilerRecovers() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertErrorOnCompilerReuse("SELECT DISTINCT id FROM lp_distinct ORDER BY ts", 45, "ORDER BY expressions must appear in select list. Invalid column: ts");
-            assertErrorOnCompilerReuse("SELECT DISTINCT id FROM lp_distinct ORDER BY missing", 45, "Invalid column: missing");
-            assertErrorOnCompilerReuse("SELECT DISTINCT id FROM lp_distinct ORDER BY 2", 45, "order column position is out of range [max=1]");
+            assertErrorOnCompilerReuse("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY ts", 64, "ORDER BY expressions must appear in select list. Invalid column: ts");
+            assertErrorOnCompilerReuse("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY missing", 64, "Invalid column: missing");
+            assertErrorOnCompilerReuse("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY 3", 64, "order column position is out of range [max=2]");
         });
     }
 
@@ -212,9 +196,9 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
             RecordCursorFactory retained = null;
             try {
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                    retained = compiler.compile("SELECT DISTINCT id FROM lp_distinct ORDER BY id", sqlExecutionContext)
+                    retained = compiler.compile("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id", sqlExecutionContext)
                             .getRecordCursorFactory();
-                    try (RecordCursorFactory other = compiler.compile("SELECT DISTINCT sym FROM lp_distinct LIMIT 1", sqlExecutionContext)
+                    try (RecordCursorFactory other = compiler.compile("SELECT DISTINCT sym, max(id) OVER () m FROM lp_distinct LIMIT 1", sqlExecutionContext)
                             .getRecordCursorFactory()) {
                         try (RecordCursor cursor = other.getCursor(sqlExecutionContext)) {
                             Assert.assertTrue(cursor.hasNext());
@@ -224,7 +208,7 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
                     compiler.clear();
                 }
                 assertFactory(retained).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp()
-                        .sizeMayVary().returns("id\nnull\n1\n2\n3\n");
+                        .sizeMayVary().returns("id\tm\nnull\t3\n1\t3\n2\t3\n3\t3\n");
             } finally {
                 Misc.free(retained);
             }
@@ -235,37 +219,36 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
     public void testTimeSeriesDistinctKeepsInputOrderAndFactoryChoice() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT ts,id FROM lp_distinct", """
-                    ts	id
-                    2020-01-01T00:00:00.000000Z	3
-                    2020-01-01T00:00:01.000000Z	1
-                    2020-01-01T00:00:02.000000Z	null
-                    2020-01-01T00:00:03.000000Z	2
-                    2020-01-01T00:00:04.000000Z	3
+            assertQueryRows("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct", """
+                    ts	id	m
+                    2020-01-01T00:00:00.000000Z	3	3
+                    2020-01-01T00:00:01.000000Z	1	3
+                    2020-01-01T00:00:02.000000Z	null	3
+                    2020-01-01T00:00:03.000000Z	2	3
+                    2020-01-01T00:00:04.000000Z	3	3
                     """);
-            assertQueryRows("SELECT DISTINCT ts,id FROM lp_distinct ORDER BY ts", """
-                    ts	id
-                    2020-01-01T00:00:00.000000Z	3
-                    2020-01-01T00:00:01.000000Z	1
-                    2020-01-01T00:00:02.000000Z	null
-                    2020-01-01T00:00:03.000000Z	2
-                    2020-01-01T00:00:04.000000Z	3
+            assertQueryRows("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct ORDER BY ts", """
+                    ts	id	m
+                    2020-01-01T00:00:00.000000Z	3	3
+                    2020-01-01T00:00:01.000000Z	1	3
+                    2020-01-01T00:00:02.000000Z	null	3
+                    2020-01-01T00:00:03.000000Z	2	3
+                    2020-01-01T00:00:04.000000Z	3	3
                     """);
-            assertQueryRows("SELECT DISTINCT ts,id FROM lp_distinct ORDER BY ts DESC", """
-                    ts	id
-                    2020-01-01T00:00:04.000000Z	3
-                    2020-01-01T00:00:03.000000Z	2
-                    2020-01-01T00:00:02.000000Z	null
-                    2020-01-01T00:00:01.000000Z	1
-                    2020-01-01T00:00:00.000000Z	3
+            assertQueryRows("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct ORDER BY ts DESC", """
+                    ts	id	m
+                    2020-01-01T00:00:04.000000Z	3	3
+                    2020-01-01T00:00:03.000000Z	2	3
+                    2020-01-01T00:00:02.000000Z	null	3
+                    2020-01-01T00:00:01.000000Z	1	3
+                    2020-01-01T00:00:00.000000Z	3	3
                     """);
-            assertQueryRows("SELECT DISTINCT ts,id FROM lp_distinct LIMIT 2", """
-                    ts	id
-                    2020-01-01T00:00:00.000000Z	3
-                    2020-01-01T00:00:01.000000Z	1
+            assertQueryRows("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct LIMIT 2", """
+                    ts	id	m
+                    2020-01-01T00:00:00.000000Z	3	3
+                    2020-01-01T00:00:01.000000Z	1	3
                     """);
-            assertPlan("SELECT DISTINCT ts,id FROM lp_distinct ORDER BY ts DESC", "DistinctTimeSeries", "Frame backward scan");
-            assertPlan("SELECT DISTINCT ts,id FROM lp_distinct ORDER BY ts", "DistinctTimeSeries", "sort");
+            assertPlan("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct ORDER BY ts", "DistinctTimeSeries", "sort");
         });
     }
 
@@ -284,18 +267,18 @@ public class SqlLogicalDistinctTest extends AbstractCairoTest {
                     (2, '2020-01-01T00:00:03Z'),
                     (3, '2020-01-01T00:00:04Z')
                     """);
-            assertQuery("SELECT DISTINCT ts, id FROM x")
+            assertQuery("SELECT DISTINCT ts, id, max(id) OVER () m FROM x")
                     .noLeakCheck()
                     .withPlanContaining("DistinctTimeSeries")
                     .inferTimestamp()
                     .sizeMayVary()
                     .returns("""
-                            ts\tid
-                            2020-01-01T00:00:00.000000Z\t3
-                            2020-01-01T00:00:01.000000Z\t1
-                            2020-01-01T00:00:02.000000Z\tnull
-                            2020-01-01T00:00:03.000000Z\t2
-                            2020-01-01T00:00:04.000000Z\t3
+                            ts	id	m
+                            2020-01-01T00:00:00.000000Z	3	3
+                            2020-01-01T00:00:01.000000Z	1	3
+                            2020-01-01T00:00:02.000000Z	null	3
+                            2020-01-01T00:00:03.000000Z	2	3
+                            2020-01-01T00:00:04.000000Z	3	3
                             """);
         });
     }

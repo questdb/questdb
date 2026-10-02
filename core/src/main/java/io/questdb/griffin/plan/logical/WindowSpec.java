@@ -184,4 +184,26 @@ public final class WindowSpec implements Mutable {
         rowsLoKindPos = expression.getRowsLoKindPos();
         return this;
     }
+
+    /**
+     * Takes the frame, exclusion, null handling and live-view description of the spec; the keys stay empty.
+     */
+    public WindowSpec ofFrame(WindowSpec spec) {
+        exclusionKind = spec.exclusionKind;
+        exclusionKindPos = spec.exclusionKindPos;
+        framingMode = spec.framingMode;
+        isIgnoreNulls = spec.isIgnoreNulls;
+        isSubsampleKeepFlag = spec.isSubsampleKeepFlag;
+        liveViewDescription = spec.liveViewDescription;
+        nullsDescPos = spec.nullsDescPos;
+        rowsHi = spec.rowsHi;
+        rowsHiExprPos = spec.rowsHiExprPos;
+        rowsHiExprTimeUnit = spec.rowsHiExprTimeUnit;
+        rowsHiKindPos = spec.rowsHiKindPos;
+        rowsLo = spec.rowsLo;
+        rowsLoExprPos = spec.rowsLoExprPos;
+        rowsLoExprTimeUnit = spec.rowsLoExprTimeUnit;
+        rowsLoKindPos = spec.rowsLoKindPos;
+        return this;
+    }
 }

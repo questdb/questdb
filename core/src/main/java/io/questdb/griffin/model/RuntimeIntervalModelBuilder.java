@@ -80,7 +80,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     // functions. The LongList starts with plain [lo, hi] static interval pairs and ends with
     // STATIC_LONGS_PER_DYNAMIC_INTERVAL encoded entries per dynamic interval (see the class doc)
     private final LongList staticIntervals = new LongList();
-    private long betweenBoundary = Numbers.LONG_NULL;
+    private long betweenBoundaryCeil = Numbers.LONG_NULL;
+    private long betweenBoundaryFloor = Numbers.LONG_NULL;
     private Function betweenBoundaryFunc;
     private int betweenBoundaryFuncPosition;
     private boolean betweenBoundarySet;
@@ -237,14 +238,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         final int size = staticIntervals.size();
         final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        final boolean isStaticParse = noDynamicIntervals || IntervalUtils.hasSubPrecisionDigits(timestampDriver, seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, isStaticParse);
             if (noDynamicIntervals) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
+            } else if (isStaticParse) {
+                appendStaticIntervals();
             } else {
                 appendParsedDynamicIntervals();
             }
@@ -407,9 +411,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         this.configuration = configuration;
     }
 
-    public void setBetweenBoundary(long timestamp) {
+    /**
+     * Sets a constant BETWEEN bound as its value rounded up and down to the model's precision; the two
+     * differ only for a bound finer than the model.
+     */
+    public void setBetweenBoundary(long ceil, long floor) {
         if (!betweenBoundarySet) {
-            betweenBoundary = timestamp;
+            betweenBoundaryCeil = ceil;
+            betweenBoundaryFloor = floor;
             betweenBoundarySet = true;
             return;
         }
@@ -417,15 +426,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (betweenBoundaryFunc == null) {
             // No Function ownership changes on this branch, so reset temporary parsing state
             // before an empty-model cleanup can throw.
-            final long pendingTimestamp = betweenBoundary;
+            final long pendingCeil = betweenBoundaryCeil;
+            final long pendingFloor = betweenBoundaryFloor;
             resetBetweenParsingState();
-            final long lo = Math.min(timestamp, pendingTimestamp);
-            final long hi = Math.max(timestamp, pendingTimestamp);
-            if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
+            if (ceil == Numbers.LONG_NULL || pendingCeil == Numbers.LONG_NULL) {
                 if (!betweenNegated) {
                     intersectEmpty();
                 }
                 // NOT BETWEEN with NULL does no filtering, consistent with row filtering.
+                return;
+            }
+            final long lo = Math.min(ceil, pendingCeil);
+            final long hi = Math.max(floor, pendingFloor);
+            if (lo > hi) {
+                if (!betweenNegated) {
+                    intersectEmpty();
+                }
             } else if (!betweenNegated) {
                 intersect(lo, hi);
             } else {
@@ -436,12 +452,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         final Function pendingFunction = betweenBoundaryFunc;
         final int pendingFunctionPosition = betweenBoundaryFuncPosition;
-        if (timestamp == Numbers.LONG_NULL || isEmptySet()) {
+        if (ceil == Numbers.LONG_NULL || isEmptySet()) {
             // This terminal handoff consumes the pending endpoint. Detach it before any adopted
             // cleanup or endpoint close can throw, then complete all cleanup best-effort.
             resetBetweenParsingState();
             Throwable failure = null;
-            if (timestamp == Numbers.LONG_NULL && !betweenNegated) {
+            if (ceil == Numbers.LONG_NULL && !betweenNegated) {
                 failure = freeAndClearBestEffort();
                 intervalApplied = true;
             }
@@ -451,7 +467,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         // Reservation failure is pre-adoption: keep the pending endpoint attached for rollback.
-        intersectBetweenSemiDynamic(pendingFunction, pendingFunctionPosition, timestamp);
+        intersectBetweenSemiDynamic(pendingFunction, pendingFunctionPosition, ceil, floor);
         resetBetweenParsingState();
     }
 
@@ -466,11 +482,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         if (betweenBoundaryFunc == null) {
-            if (betweenBoundary == Numbers.LONG_NULL || isEmptySet()) {
+            if (betweenBoundaryCeil == Numbers.LONG_NULL || isEmptySet()) {
                 // The incoming endpoint is consumed before cleanup begins. This flag tells the
                 // parser not to close it again if a close operation below throws.
                 isBetweenBoundaryFunctionConsumed = true;
-                final boolean isNullBoundary = betweenBoundary == Numbers.LONG_NULL;
+                final boolean isNullBoundary = betweenBoundaryCeil == Numbers.LONG_NULL;
                 resetBetweenParsingState();
                 Throwable failure = null;
                 if (isNullBoundary && !betweenNegated) {
@@ -483,7 +499,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
 
             // Reservation failure is pre-adoption, so the caller still owns timestamp.
-            intersectBetweenSemiDynamic(timestamp, functionPosition, betweenBoundary);
+            intersectBetweenSemiDynamic(timestamp, functionPosition, betweenBoundaryCeil, betweenBoundaryFloor);
             isBetweenBoundaryFunctionConsumed = true;
             resetBetweenParsingState();
             return;
@@ -571,15 +587,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         final int size = staticIntervals.size();
         final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        final boolean isStaticParse = noDynamicIntervals || IntervalUtils.hasSubPrecisionDigits(timestampDriver, seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, isStaticParse);
             if (noDynamicIntervals) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
+            } else if (isStaticParse) {
+                IntervalUtils.invert(parsedIntervals, 0);
+                appendStaticIntervals();
             } else {
                 appendParsedDynamicIntervals();
             }
@@ -642,14 +662,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals).
         final int size = staticIntervals.size();
         final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        final boolean isStaticParse = noDynamicIntervals || IntervalUtils.hasSubPrecisionDigits(timestampDriver, seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, isStaticParse);
             if (noDynamicIntervals) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.unionInPlace(staticIntervals, size);
                 }
+            } else if (isStaticParse) {
+                appendStaticUnion();
             } else {
                 appendParsedDynamicIntervals();
             }
@@ -778,6 +801,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
+    /**
+     * Intersects the statically parsed intervals with the dynamic model; no intervals leave nothing.
+     */
+    private void appendStaticIntervals() {
+        if (parsedIntervals.size() == 0) {
+            intersectEmpty();
+        } else {
+            appendStaticIntervalsIntersection();
+        }
+    }
+
     private void appendStaticIntervalsIntersection() {
         final int intervalCount = parsedIntervals.size() / 2;
         reserveEncodedIntervals(intervalCount, 0);
@@ -791,6 +825,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     i == 0 ? IntervalOperation.INTERSECT_INTERVALS : IntervalOperation.NONE,
                     staticIntervals
             );
+            addDynamicFunction(null, 0, false);
+        }
+    }
+
+    private void appendStaticUnion() {
+        final int intervalCount = parsedIntervals.size() / 2;
+        reserveEncodedIntervals(intervalCount, 0);
+        for (int i = 0; i < intervalCount; i++) {
+            IntervalUtils.encodeInterval(parsedIntervals.getQuick(i * 2), parsedIntervals.getQuick(i * 2 + 1), IntervalOperation.UNION, staticIntervals);
             addDynamicFunction(null, 0, false);
         }
     }
@@ -884,8 +927,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
-    private void intersectBetweenSemiDynamic(Function funcValue, int funcPosition, long constValue) {
-        assert constValue != Numbers.LONG_NULL;
+    private void intersectBetweenSemiDynamic(Function funcValue, int funcPosition, long constCeil, long constFloor) {
+        assert constCeil != Numbers.LONG_NULL;
         assert !isEmptySet();
 
         // Reserve capacity for the whole operation before mutating any list or adopting the
@@ -895,7 +938,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         reserveEncodedIntervals(1, isCursor ? 1 : 0);
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
-        IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
+        IntervalUtils.encodeInterval(constCeil, constFloor, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
         addDynamicFunction(funcValue, funcPosition, isCursor);
         intervalApplied = true;
     }
@@ -949,7 +992,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         betweenBoundarySet = false;
         betweenBoundaryFunc = null;
         betweenBoundaryFuncPosition = 0;
-        betweenBoundary = Numbers.LONG_NULL;
+        betweenBoundaryCeil = Numbers.LONG_NULL;
+        betweenBoundaryFloor = Numbers.LONG_NULL;
     }
 
     private void subtractCompiledTickExpr(CompiledTickExpression expr) {

@@ -30,7 +30,9 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -99,6 +101,7 @@ import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -106,6 +109,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.TypeExpression;
@@ -114,6 +118,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -154,6 +159,9 @@ public final class FunctionBinder implements Closeable, Mutable {
     private final GenericRecordMetadata nullProbeMetadata = new GenericRecordMetadata();
     private final VirtualRecord nullProbeRecord;
     private final OutputSchema nullProbeSchema;
+    private final IntList outerColumnIds = new IntList();
+    private final ObjectPool<OuterColumnExpression> outerColumns = new ObjectPool<>(OuterColumnExpression.FACTORY, 4);
+    private final ObjList<OutputSchema> outerScopes = new ObjList<>();
     private final ObjectPool<BindVariableExpression> parameters = new ObjectPool<>(BindVariableExpression.FACTORY, 8);
     private final ObjList<CursorExpression> parkedCursors = new ObjList<>();
     private final ObjList<Function> parkedSubqueries = new ObjList<>();
@@ -466,6 +474,9 @@ public final class FunctionBinder implements Closeable, Mutable {
             cursors.clear();
             functions.clear();
             instantiations.clear();
+            outerColumnIds.clear();
+            outerColumns.clear();
+            outerScopes.clear();
             keySubqueryColumnIds.clear();
             parameters.clear();
             rewriteArguments.clear();
@@ -694,11 +705,6 @@ public final class FunctionBinder implements Closeable, Mutable {
         return false;
     }
 
-    private static boolean hasOrLeaf(ExpressionNode tree, ExpressionNode node) {
-        return tree == node || tree.token != null && SqlKeywords.isOrKeyword(tree.token)
-                && (hasOrLeaf(tree.lhs, node) || hasOrLeaf(tree.rhs, node));
-    }
-
     private static boolean isBindableType(int type) {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.ARRAY, ColumnType.TIMESTAMP, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR,
@@ -714,8 +720,8 @@ public final class FunctionBinder implements Closeable, Mutable {
         return type == ColumnType.STRING || type == ColumnType.VARCHAR || type == ColumnType.SYMBOL;
     }
 
-    private static boolean isColumnLiteral(ExpressionNode node, CharSequence column) {
-        return node.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(node.token, column);
+    private static boolean isConnective(CharSequence name) {
+        return SqlKeywords.isAndKeyword(name) || SqlKeywords.isOrKeyword(name);
     }
 
     private static boolean isLiteral(BoundExpression expression) {
@@ -729,37 +735,38 @@ public final class FunctionBinder implements Closeable, Mutable {
         return arguments.size() == 1 && Chars.equals(name, "-") && isLiteral(arguments.getQuick(0));
     }
 
+    private static boolean isNotEqualsOperator(CharSequence operator) {
+        return Chars.equals(operator, "!=") || Chars.equals(operator, "<>");
+    }
+
     private static boolean isPrimitiveNumeric(int type) {
         return type == ColumnType.BYTE || type == ColumnType.SHORT || type == ColumnType.INT
                 || type == ColumnType.LONG || type == ColumnType.FLOAT || type == ColumnType.DOUBLE;
     }
 
-    private static boolean isTimestampUnion(ExpressionNode node, CharSequence column) {
-        if (node == null || node.token == null) {
-            return false;
+    private static boolean isTemporalComparisonOperator(CharSequence operator) {
+        return Chars.equals(operator, '=') || Chars.equals(operator, '<') || Chars.equals(operator, '>')
+                || Chars.equals(operator, "<=") || Chars.equals(operator, ">=") || isNotEqualsOperator(operator);
+    }
+
+    /**
+     * A TIMESTAMP or DATE value that is not a constant: the side of a comparison whose precision the
+     * constants on the other side adopt.
+     */
+    private static boolean isTemporalOperand(Function function) {
+        return !function.isConstant()
+                && (ColumnType.tagOf(function.getType()) == ColumnType.TIMESTAMP || function.getType() == ColumnType.DATE);
+    }
+
+    private static CharSequence literalText(BoundExpression expression) {
+        if (!(expression instanceof ConstantExpression constant)) {
+            return null;
         }
-        if (SqlKeywords.isOrKeyword(node.token)) {
-            return isTimestampUnion(node.lhs, column) && isTimestampUnion(node.rhs, column);
-        }
-        if (Chars.equals(node.token, '=') && node.paramCount == 2) {
-            return isColumnLiteral(node.lhs, column) && node.rhs.type == ExpressionNode.CONSTANT
-                    || isColumnLiteral(node.rhs, column) && node.lhs.type == ExpressionNode.CONSTANT;
-        }
-        if (SqlKeywords.isInKeyword(node.token) && node.paramCount >= 2) {
-            if (node.paramCount == 2) {
-                return isColumnLiteral(node.lhs, column) && node.rhs.type == ExpressionNode.CONSTANT;
-            }
-            if (!isColumnLiteral(node.args.getLast(), column)) {
-                return false;
-            }
-            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                if (node.args.getQuick(i).type != ExpressionNode.CONSTANT) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return false;
+        return switch (ColumnType.tagOf(constant.getDataType())) {
+            case ColumnType.STRING, ColumnType.SYMBOL -> constant.getStrValue();
+            case ColumnType.VARCHAR -> constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence();
+            default -> null;
+        };
     }
 
     private static ConstantExpression markSource(ConstantExpression folded, BoundExpression source) {
@@ -777,7 +784,6 @@ public final class FunctionBinder implements Closeable, Mutable {
         }
         return folded;
     }
-
     private static BindableColumn newColumn(int columnId, int type, boolean isSymbolTableStatic) {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.ARRAY -> new BindableArrayColumn(columnId, type);
@@ -861,6 +867,10 @@ public final class FunctionBinder implements Closeable, Mutable {
             }
         }
         return false;
+    }
+
+    private static TimestampDriver temporalDriver(int type) {
+        return type == ColumnType.DATE ? MillisTimestampDriver.INSTANCE : ColumnType.getTimestampDriver(type);
     }
 
     /**
@@ -1067,6 +1077,136 @@ public final class FunctionBinder implements Closeable, Mutable {
         }
     }
 
+    private Function canonicalizeTemporalBetween(ObjList<Function> args) {
+        final Function operand = args.getQuick(0);
+        if (!isTemporalOperand(operand)) {
+            return null;
+        }
+        final int operandType = operand.getType();
+        final TimestampDriver driver = temporalDriver(operandType);
+        final int loType = temporalConstantType(args, 1, driver);
+        final int hiType = temporalConstantType(args, 2, driver);
+        try {
+            if (loType != ColumnType.UNDEFINED && hiType != ColumnType.UNDEFINED) {
+                if (isOperandTyped(args, 1, operandType) && isOperandTyped(args, 2, operandType)) {
+                    return null;
+                }
+                final long lo = temporalConstantValue(args, 1, loType);
+                final long hi = temporalConstantValue(args, 2, hiType);
+                if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
+                    return null;
+                }
+                final long low = Math.min(driver.ceilFrom(lo, loType), driver.ceilFrom(hi, hiType));
+                final long high = Math.max(driver.floorFrom(lo, loType), driver.floorFrom(hi, hiType));
+                if (low > high) {
+                    return BooleanConstant.FALSE;
+                }
+                replaceTemporalConstant(args, 1, low, operandType, false);
+                replaceTemporalConstant(args, 2, high, operandType, false);
+            } else if (loType != ColumnType.UNDEFINED && !isOperandTyped(args, 1, operandType)) {
+                replaceExactTemporalConstant(args, 1, loType, operandType, driver);
+            } else if (hiType != ColumnType.UNDEFINED && !isOperandTyped(args, 2, operandType)) {
+                replaceExactTemporalConstant(args, 2, hiType, operandType, driver);
+            }
+        } catch (NumericException | ImplicitCastException e) {
+            return null;
+        }
+        return null;
+    }
+
+    private Function canonicalizeTemporalBinary(CharSequence operator, ObjList<Function> args) {
+        final int operandIndex = isTemporalOperand(args.getQuick(0)) ? 0 : isTemporalOperand(args.getQuick(1)) ? 1 : -1;
+        if (operandIndex < 0) {
+            return null;
+        }
+        final int index = 1 - operandIndex;
+        final int operandType = args.getQuick(operandIndex).getType();
+        final TimestampDriver driver = temporalDriver(operandType);
+        final int type = temporalConstantType(args, index, driver);
+        if (type == ColumnType.UNDEFINED || isOperandTyped(args, index, operandType)) {
+            return null;
+        }
+        try {
+            final long value = temporalConstantValue(args, index, type);
+            if (value == Numbers.LONG_NULL) {
+                return null;
+            }
+            final long ceil = driver.ceilFrom(value, type);
+            final long floor = driver.floorFrom(value, type);
+            final boolean isExact = ceil == floor;
+            if (Chars.equals(operator, '=') || isNotEqualsOperator(operator)) {
+                if (!isExact) {
+                    return Chars.equals(operator, '=') ? BooleanConstant.FALSE : BooleanConstant.TRUE;
+                }
+                replaceTemporalConstant(args, index, ceil, operandType, true);
+            } else {
+                final boolean isCeil = (Chars.equals(operator, '<') || Chars.equals(operator, ">=")) == (operandIndex == 0);
+                replaceTemporalConstant(args, index, isCeil ? ceil : floor, operandType, isExact);
+            }
+        } catch (NumericException | ImplicitCastException e) {
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Rewrites a comparison of a TIMESTAMP or DATE operand with constants of another precision into the
+     * same comparison at the operand's precision, so every consumer compares column-precision values.
+     * The rounding is exact: a lower bound rounds up and an upper bound down (TimestampDriver.ceilFrom and
+     * floorFrom), an equality with a value the operand cannot hold is false and its negation true, and an
+     * IN element it cannot hold drops out. Returns the boolean the comparison folds to, or null.
+     */
+    private Function canonicalizeTemporalComparison(ExpressionNode node, ObjList<Function> args, IntList positions) {
+        final int count = args == null ? 0 : args.size();
+        final CharSequence operator = node.token;
+        if (count == 2 && isTemporalComparisonOperator(operator)) {
+            return canonicalizeTemporalBinary(operator, args);
+        }
+        if (count == 3 && SqlKeywords.isBetweenKeyword(operator)) {
+            return canonicalizeTemporalBetween(args);
+        }
+        if (SqlKeywords.isInKeyword(operator) && (count > 2 || count == 2 && !isCaseText(args.getQuick(1).getType()))) {
+            return canonicalizeTemporalIn(args, positions);
+        }
+        return null;
+    }
+
+    private Function canonicalizeTemporalIn(ObjList<Function> args, IntList positions) {
+        final Function operand = args.getQuick(0);
+        if (!isTemporalOperand(operand)) {
+            return null;
+        }
+        final int operandType = operand.getType();
+        final TimestampDriver driver = temporalDriver(operandType);
+        boolean isMatchable = false;
+        for (int i = args.size() - 1; i > 0; i--) {
+            final int type = isCaseText(args.getQuick(i).getType())
+                    ? textConstantType(args, i, driver) : temporalConstantType(args, i, driver);
+            if (type == ColumnType.UNDEFINED || isOperandTyped(args, i, operandType)) {
+                isMatchable = true;
+                continue;
+            }
+            try {
+                final long value = temporalConstantValue(args, i, type);
+                final long ceil = driver.ceilFrom(value, type);
+                if (value == Numbers.LONG_NULL || ceil == driver.floorFrom(value, type)) {
+                    replaceTemporalConstant(args, i, ceil, operandType, true);
+                    isMatchable = true;
+                } else {
+                    Misc.free(args.getQuick(i));
+                    args.remove(i);
+                    arguments.remove(i);
+                    if (positions != null) {
+                        positions.removeIndex(i);
+                    }
+                }
+            } catch (NumericException | ImplicitCastException e) {
+                isMatchable = true;
+            }
+        }
+        return isMatchable ? null : BooleanConstant.FALSE;
+    }
+
     private ConstantExpression constant(Function function, int position) {
         return switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.TIMESTAMP ->
@@ -1119,6 +1259,23 @@ public final class FunctionBinder implements Closeable, Mutable {
             }
             default -> throw new IllegalStateException("unexpected constant type");
         };
+    }
+
+    private Function createOuterColumn(ExpressionNode node) throws SqlException {
+        for (int i = outerScopes.size() - 1; i > -1; i--) {
+            final OutputSchema scope = outerScopes.getQuick(i);
+            final int index = findColumn(node, scope, null);
+            if (index > -1) {
+                final int columnId = scope.getColumnId(index);
+                final int type = scope.getColumnType(index);
+                outerColumnIds.add(columnId);
+                currentPreparation.isRebuildRequired = true;
+                expressionStack.add(outerColumns.next().of(columnId, type, node.position));
+                return isBindableType(type) ? newColumn(columnId, type, scope.isSymbolTableStatic(index))
+                        : createColumnFunction(node.position, index, type, scope);
+            }
+        }
+        return null;
     }
 
     private boolean hasSharedBound(BoundExpression expression) {
@@ -1359,24 +1516,13 @@ public final class FunctionBinder implements Closeable, Mutable {
         return true;
     }
 
-    private boolean isRangePredicateConjunct(ExpressionNode node) {
-        for (int i = 0, n = predicateConjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = predicateConjuncts.getQuick(i);
-            if (conjunct == node || unwrapNot(conjunct) == node) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean isTimestampUnionLeaf(ExpressionNode node, CharSequence column) {
-        for (int i = 0, n = predicateConjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = predicateConjuncts.getQuick(i);
-            if (conjunct != node && hasOrLeaf(conjunct, node) && isTimestampUnion(conjunct, column)) {
-                return true;
-            }
-        }
-        return false;
+    /**
+     * Whether a comparison constant already holds a value at the operand's precision: its type is the
+     * operand's, and for a DATE operand it was not typed from text, which DATE typing truncates.
+     */
+    private boolean isOperandTyped(ObjList<Function> args, int index, int operandType) {
+        return args.getQuick(index).getType() == operandType
+                && (operandType != ColumnType.DATE || literalText(arguments.getQuick(index)) == null);
     }
 
     private boolean isWindowArgument(ExpressionNode node) {
@@ -1450,6 +1596,30 @@ public final class FunctionBinder implements Closeable, Mutable {
             }
         }
         return false;
+    }
+
+    private void replaceExactTemporalConstant(ObjList<Function> args, int index, int type, int operandType, TimestampDriver driver) throws NumericException {
+        final long value = temporalConstantValue(args, index, type);
+        final long ceil = driver.ceilFrom(value, type);
+        if (value != Numbers.LONG_NULL && ceil == driver.floorFrom(value, type)) {
+            replaceTemporalConstant(args, index, ceil, operandType, true);
+        }
+    }
+
+    /**
+     * Replaces a comparison constant by its value at the operand's precision. An exact text literal keeps
+     * its text, which normalization attaches to the converted constant; a rounded one loses it, because
+     * the text no longer spells the value.
+     */
+    private void replaceTemporalConstant(ObjList<Function> args, int index, long value, int operandType, boolean isExact) {
+        final Function replacement = operandType == ColumnType.DATE
+                ? DateConstant.newInstance(value) : TimestampConstant.newInstance(value, operandType);
+        Misc.free(args.getQuick(index));
+        args.setQuick(index, replacement);
+        final BoundExpression argument = arguments.getQuick(index);
+        if (!isExact || literalText(argument) == null) {
+            arguments.setQuick(index, constant(replacement, argument.getPosition()).markLiteral());
+        }
     }
 
     private BoundExpression remapColumns0(BoundExpression expression, ProjectPlan projection, boolean isMoving) {
@@ -1591,6 +1761,37 @@ public final class FunctionBinder implements Closeable, Mutable {
         };
     }
 
+    /**
+     * The precision at which a TIMESTAMP or DATE comparison constant is exact: the precision of the literal
+     * it was typed from, or its own type; UNDEFINED for anything else.
+     */
+    private int temporalConstantType(ObjList<Function> args, int index, TimestampDriver driver) {
+        final Function constant = args.getQuick(index);
+        final int type = constant.getType();
+        if (!constant.isConstant() || ColumnType.tagOf(type) != ColumnType.TIMESTAMP && type != ColumnType.DATE) {
+            return ColumnType.UNDEFINED;
+        }
+        final CharSequence text = literalText(arguments.getQuick(index));
+        return text != null ? IntervalUtils.literalTimestampType(driver, text) : type;
+    }
+
+    private long temporalConstantValue(ObjList<Function> args, int index, int type) throws NumericException {
+        final CharSequence text = literalText(arguments.getQuick(index));
+        if (text != null) {
+            return ColumnType.getTimestampDriver(type).parseFloorLiteral(text);
+        }
+        final Function constant = args.getQuick(index);
+        return type == ColumnType.DATE ? constant.getDate(null) : constant.getTimestamp(null);
+    }
+
+    /**
+     * The precision of a text IN element that spells a timestamp; UNDEFINED for anything else.
+     */
+    private int textConstantType(ObjList<Function> args, int index, TimestampDriver driver) {
+        final CharSequence text = args.getQuick(index).isConstant() ? literalText(arguments.getQuick(index)) : null;
+        return text != null ? IntervalUtils.literalTimestampType(driver, text) : ColumnType.UNDEFINED;
+    }
+
     private void validateKeySubquery(Function cursorFunction) throws SqlException {
         if (!(arguments.getQuick(0) instanceof ColumnExpression column) || !keySubqueryColumnIds.contains(column.getColumnId())
                 || !(arguments.getQuick(1) instanceof CursorExpression cursor) || cursor.isBoolean()) {
@@ -1661,22 +1862,14 @@ public final class FunctionBinder implements Closeable, Mutable {
                 : Chars.equalsIgnoreCaseNc(qualifier, inputAlias)) {
             return getColumnIndexQuiet(input, input.hasColumnQualifiers() ? qualifier : null, name, dot + 1, name.length());
         }
-        return input.getCorrelatedColumnIndexQuiet(qualifier, name, dot + 1, name.length());
+        return -1;
     }
 
     static boolean isUnknownQualifier(CharSequence qualifier, OutputSchema input, CharSequence inputAlias) {
         if (input.hasColumnQualifiers()) {
             return !input.hasColumnQualifier(qualifier);
         }
-        if (Chars.equalsIgnoreCaseNc(qualifier, inputAlias)) {
-            return false;
-        }
-        for (int i = 0, n = input.getCorrelatedAliasCount(); i < n; i++) {
-            if (Chars.equalsIgnoreCaseNc(qualifier, input.getCorrelatedAliasQualifier(i))) {
-                return false;
-            }
-        }
-        return true;
+        return !Chars.equalsIgnoreCaseNc(qualifier, inputAlias);
     }
 
     static int monotonicTimestampColumnId(Function function) {
@@ -1840,6 +2033,12 @@ public final class FunctionBinder implements Closeable, Mutable {
     }
 
     Function createColumn(ExpressionNode node) throws SqlException {
+        if (findColumn(node, input, inputAlias) == -1) {
+            final Function outer = createOuterColumn(node);
+            if (outer != null) {
+                return outer;
+            }
+        }
         final int index = resolveColumn(node, input, inputAlias);
         final int type = input.getColumnType(index);
         final int columnId = input.getColumnId(index);
@@ -1878,6 +2077,12 @@ public final class FunctionBinder implements Closeable, Mutable {
     ) throws SqlException {
         validateFactory(overload, node, args);
         try {
+            final Function folded = canonicalizeTemporalComparison(node, args, positions);
+            if (folded != null) {
+                Misc.freeObjList(args);
+                expressionStack.add(constants.next().ofBoolean(folded.getBool(null), node.position).markLiteral());
+                return folded;
+            }
             final int count = args == null ? 0 : args.size();
             if (count == 0) {
                 arguments.clear();
@@ -1918,6 +2123,8 @@ public final class FunctionBinder implements Closeable, Mutable {
             Misc.freeObjList(args, th);
             throw th;
         }
+        final Function first = args != null && args.size() == 2 ? args.getQuick(0) : null;
+        final Function second = first != null ? args.getQuick(1) : null;
         final Function function = parser.createFunction(overload, node.position, node.token, args, positions, executionContext);
         try {
             if (node == windowRoot) {
@@ -1930,10 +2137,16 @@ public final class FunctionBinder implements Closeable, Mutable {
             }
             // Some factories return a folded constant and close unused children.
             // Preserve that replacement rather than retaining false dependencies.
-            final BoundExpression expression = function instanceof ConstantFunction && !ColumnType.isArray(function.getType())
-                    ? markSource(constant(function, node.position), overload, function.getType(), functionFlags(function), node.position)
-                    : functions.next().of(overload, arguments, argumentPositions,
-                    function.getType(), functionFlags(function), node.position);
+            final BoundExpression expression;
+            if (function instanceof ConstantFunction && !ColumnType.isArray(function.getType())) {
+                expression = markSource(constant(function, node.position), overload, function.getType(), functionFlags(function), node.position);
+            } else if (first != null && isConnective(node.token) && (function == first || function == second)) {
+                // A connective with a constant operand returns its other operand.
+                expression = arguments.getQuick(function == first ? 0 : 1);
+            } else {
+                expression = functions.next().of(overload, arguments, argumentPositions,
+                        function.getType(), functionFlags(function), node.position);
+            }
             if (node.type == ExpressionNode.SET_OPERATION && expression instanceof FunctionExpression call) {
                 call.markSetOperation();
             }
@@ -1944,6 +2157,23 @@ public final class FunctionBinder implements Closeable, Mutable {
             Misc.free(function, th);
             throw th;
         }
+    }
+
+    /**
+     * Describes the argument-free window function {@code name}, such as {@code row_number}, without preparing
+     * it; the generator builds windows under their final window context.
+     */
+    FunctionExpression describeWindowCall(CharSequence name, int position) {
+        final ObjList<FunctionFactoryDescriptor> overloads = parser.getFunctionFactoryCache().getOverloadList(name);
+        for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
+            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
+            if (overload.getSigArgCount() == 0 && overload.getFactory().isWindow()) {
+                conversionArguments.clear();
+                conversionPositions.clear();
+                return functions.next().of(overload, conversionArguments, conversionPositions, ColumnType.LONG, 0, position);
+            }
+        }
+        throw new IllegalStateException("window function is not registered");
     }
 
     void endWorkerClones() {
@@ -1974,8 +2204,23 @@ public final class FunctionBinder implements Closeable, Mutable {
         return keySubqueryColumnIds;
     }
 
+    /**
+     * Ids of the outer columns every binding since {@link #clear()} resolved, in resolution order and with
+     * repeats; a caller reads the range its own binding appended.
+     */
+    IntList getOuterColumnIds() {
+        return outerColumnIds;
+    }
+
     int getScalarBoundDepth() {
         return subqueryBinder.getScalarBoundDepth();
+    }
+
+    /**
+     * True while a LATERAL body binds.
+     */
+    boolean hasOuterScope() {
+        return outerScopes.size() > 0;
     }
 
     Function instantiateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
@@ -2069,6 +2314,21 @@ public final class FunctionBinder implements Closeable, Mutable {
         }
     }
 
+    /**
+     * True when the name does not resolve in the input but does in an enclosing lateral scope.
+     */
+    boolean isOuterColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
+        if (node.type != ExpressionNode.LITERAL || findColumn(node, input, inputAlias) != -1) {
+            return false;
+        }
+        for (int i = outerScopes.size() - 1; i > -1; i--) {
+            if (findColumn(node, outerScopes.getQuick(i), null) > -1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     boolean isUnresolvedNoArgFunction(ExpressionNode node) {
         return findColumn(node, input, inputAlias) == -1 && parser.findNoArgFunction(node);
     }
@@ -2089,6 +2349,10 @@ public final class FunctionBinder implements Closeable, Mutable {
             Misc.free(parkedSubqueries.getQuick(index));
             parkedSubqueries.setQuick(index, subquery);
         }
+    }
+
+    void popOuterScope() {
+        outerScopes.remove(outerScopes.size() - 1);
     }
 
     /**
@@ -2113,6 +2377,45 @@ public final class FunctionBinder implements Closeable, Mutable {
             }
         }
         throw new IllegalStateException("UPDATE assignment is not owned");
+    }
+
+    /**
+     * Makes the columns of {@code scope} resolvable as outer columns until {@link #popOuterScope()}.
+     */
+    void pushOuterScope(OutputSchema scope) {
+        outerScopes.add(scope);
+    }
+
+    /**
+     * Returns the expression with each column and outer column the map holds read under its mapped id, as a
+     * column. Unchanged sub-expressions are shared; a changed call is a fresh description without a preparation.
+     */
+    BoundExpression remapColumns(BoundExpression expression, IntIntHashMap columnIds) {
+        if (expression instanceof ColumnExpression column) {
+            final int columnId = columnIds.get(column.getColumnId());
+            return columnId < 0 ? column
+                    : columns.next().of(columnId, column.getDataType(), column.getPosition(), column.isDirectReference(), column.isCast());
+        }
+        if (expression instanceof OuterColumnExpression outer) {
+            final int columnId = columnIds.get(outer.getColumnId());
+            return columnId < 0 ? outer : columns.next().of(columnId, outer.getDataType(), outer.getPosition());
+        }
+        if (expression instanceof FunctionExpression call) {
+            return remapColumns(call, columnIds);
+        }
+        return expression;
+    }
+
+    FunctionExpression remapColumns(FunctionExpression call, IntIntHashMap columnIds) {
+        final ObjList<BoundExpression> args = rewriteArguments.next();
+        boolean isChanged = false;
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            final BoundExpression argument = call.argumentAt(i);
+            final BoundExpression remapped = remapColumns(argument, columnIds);
+            args.add(remapped);
+            isChanged |= remapped != argument;
+        }
+        return isChanged ? functions.next().of(call, args) : call;
     }
 
     BoundExpression replaceConjunction(FunctionExpression original, BoundExpression left, BoundExpression right) {
@@ -2168,6 +2471,7 @@ public final class FunctionBinder implements Closeable, Mutable {
             expressionStack.add(switch (argument) {
                 case ColumnExpression column ->
                         columns.next().of(column.getColumnId(), column.getDataType(), position, false, true);
+                case OuterColumnExpression outer -> outerColumns.next().of(outer.getColumnId(), outer.getDataType(), position);
                 case BindVariableExpression parameter ->
                         parameters.next().of(parameter.getName(), parameter.getDataType(), parameter.getFunctionFlags(), position, false);
                 case FunctionExpression call -> functions.next().of(call, position);
@@ -2269,49 +2573,6 @@ public final class FunctionBinder implements Closeable, Mutable {
             }
         }
         return null;
-    }
-
-    int timestampConstantType(ExpressionNode node, int argumentIndex, int adaptiveType, ObjList<Function> args) {
-        if (!isBindingPredicate) {
-            return adaptiveType;
-        }
-        if (SqlKeywords.isBetweenKeyword(node.token) && arguments.size() == 3 && argumentIndex > 0
-                && arguments.getQuick(0) instanceof ColumnExpression column) {
-            if (isNativeTimestampColumn(column.getColumnId()) && node.args.getQuick(2).type == ExpressionNode.LITERAL
-                    && node.args.getQuick(2 - argumentIndex).type == ExpressionNode.CONSTANT && isRangePredicateConjunct(node)
-                    && (args.getQuick(1).isConstant() || args.getQuick(1).isRuntimeConstant())
-                    && (args.getQuick(2).isConstant() || args.getQuick(2).isRuntimeConstant())) {
-                return column.getDataType();
-            }
-            return adaptiveType;
-        }
-        if (arguments.size() != 2) {
-            return adaptiveType;
-        }
-        if (!(arguments.getQuick(1 - argumentIndex) instanceof ColumnExpression column)
-                || !isNativeTimestampColumn(column.getColumnId())) {
-            return adaptiveType;
-        }
-        final ExpressionNode valueNode = argumentIndex == 0 ? node.lhs : node.rhs;
-        final ExpressionNode columnNode = argumentIndex == 0 ? node.rhs : node.lhs;
-        if (valueNode == null || valueNode.type != ExpressionNode.CONSTANT
-                || columnNode == null) {
-            return adaptiveType;
-        }
-        final boolean isNotEquals = Chars.equals(node.token, "!=") || Chars.equals(node.token, "<>");
-        if (!isNotEquals && !Chars.equals(node.token, '=') && !Chars.equals(node.token, '<')
-                && !Chars.equals(node.token, '>') && !Chars.equals(node.token, "<=") && !Chars.equals(node.token, ">=")) {
-            return adaptiveType;
-        }
-        // The monotonic extractor accepts an erased identity CAST as an
-        // empty chain for top-level equality/ranges, but not inequality or OR.
-        if (columnNode.type != ExpressionNode.LITERAL && (isNotEquals || !predicateConjuncts.contains(node))) {
-            return adaptiveType;
-        }
-        if (predicateConjuncts.contains(node) || isTimestampUnionLeaf(node, columnNode.token)) {
-            return column.getDataType();
-        }
-        return adaptiveType;
     }
 
     BoundExpression toBooleanSubquery(BoundExpression expression) {

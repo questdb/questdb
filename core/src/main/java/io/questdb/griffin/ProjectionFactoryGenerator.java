@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.BinFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
@@ -40,8 +41,11 @@ import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.DecimalFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.GeoHashFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IntervalFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.Long128FunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
@@ -305,8 +309,11 @@ final class ProjectionFactoryGenerator {
     }
 
     static Function memoizeProjectionFunction(Function function, int referenceCount) {
-        if (!SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION || function == null || function.isConstant()
-                || (referenceCount <= 1 && !function.shouldMemoize())) {
+        if (function == null || function.isConstant()) {
+            return function;
+        }
+        final boolean isVolatileReadTwice = referenceCount > 1 && function.isNonDeterministic() && !function.isStableWithinExecution();
+        if (!isVolatileReadTwice && (!SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION || referenceCount <= 1 && !function.shouldMemoize())) {
             return function;
         }
         return switch (ColumnType.tagOf(function.getType())) {
@@ -330,6 +337,10 @@ final class ProjectionFactoryGenerator {
             case ColumnType.STRING -> new StrFunctionMemoizer(function);
             case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> new VarcharFunctionMemoizer(function);
             case ColumnType.SYMBOL -> new SymbolFunctionMemoizer(function);
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> new GeoHashFunctionMemoizer(function);
+            case ColumnType.BINARY -> new BinFunctionMemoizer(function);
+            case ColumnType.LONG128 -> new Long128FunctionMemoizer(function);
+            case ColumnType.INTERVAL -> new IntervalFunctionMemoizer(function);
             default -> function;
         };
     }

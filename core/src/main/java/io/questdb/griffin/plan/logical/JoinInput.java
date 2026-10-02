@@ -53,7 +53,7 @@ public final class JoinInput implements Mutable {
     private CharSequence bindingAlias;
     private int hints;
     private LogicalPlan input;
-    private boolean isFullFat;
+    private boolean isDependent;
     private boolean isSubquery;
     private BoundExpression keyFilter;
     private int joinType = -1;
@@ -79,7 +79,7 @@ public final class JoinInput implements Mutable {
         bindingAlias = null;
         hints = 0;
         input = null;
-        isFullFat = false;
+        isDependent = false;
         isSubquery = false;
         keyFilter = null;
         joinType = -1;
@@ -188,10 +188,11 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * A full-fat temporal join exposes a SYMBOL slave key paired with a non-SYMBOL master key as the master type.
+     * True when the input reads columns of the inputs before it through {@link OuterColumnExpression}s, as a
+     * LATERAL body does; decorrelation rewrites the step into an ordinary one before optimisation.
      */
-    public boolean isFullFat() {
-        return isFullFat;
+    public boolean isDependent() {
+        return isDependent;
     }
 
     public boolean isSubquery() {
@@ -218,8 +219,8 @@ public final class JoinInput implements Mutable {
         return this;
     }
 
-    public void setFullFat(boolean isFullFat) {
-        this.isFullFat = isFullFat;
+    public void setDependent(boolean isDependent) {
+        this.isDependent = isDependent;
     }
 
     public void setHints(int hints) {

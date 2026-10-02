@@ -854,7 +854,10 @@ public class SqlLogicalMultiJoinTest extends AbstractCairoTest {
             assertRows("SELECT a.id aid,b.id bid,c.id cid FROM lp_multi_a a JOIN lp_multi_b b ON a.k=b.k "
                     + "JOIN lp_multi_c c ON b.k=c.k WHERE a.ts<'2020-01-01T00:00:00.000000001Z' "
                     + "AND c.v>0 ORDER BY aid,bid,cid", false,
-                    "aid\tbid\tcid\n",
+                    """
+                    aid	bid	cid
+                    1	11	21
+                    """,
                     """
                     Encode sort
                       keys: [aid, bid, cid]
@@ -866,7 +869,7 @@ public class SqlLogicalMultiJoinTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: lp_multi_a
-                                          intervals: [("MIN","2019-12-31T23:59:59.999999Z")]
+                                          intervals: [("MIN","2020-01-01T00:00:00.000000Z")]
                                     Hash
                                         PageFrame
                                             Row forward scan
@@ -883,7 +886,6 @@ public class SqlLogicalMultiJoinTest extends AbstractCairoTest {
                     + "AND b.v IN (11,21) AND c.v>0 ORDER BY aid,bid,cid", false,
                     """
                     aid	bid	cid
-                    1	11	21
                     2	12	22
                     """,
                     """
@@ -897,7 +899,7 @@ public class SqlLogicalMultiJoinTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: lp_multi_a
-                                          intervals: [("2020-01-01T00:00:00.000000Z","MAX")]
+                                          intervals: [("2020-01-01T00:00:00.000001Z","MAX")]
                                     Hash
                                         Async JIT Filter workers: 1
                                           filter: v in [11,21]

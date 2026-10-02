@@ -385,8 +385,7 @@ final class ProjectionMergePass implements Mutable {
      */
     void mergeComputingProject(ProjectPlan project, ProjectPlan inner) {
         if (project.hasUpdateConversions() || project.hasPrunedComputedColumns() || project.hasTimestampDeclaration()
-                || inner.hasUpdateConversions() || inner.hasPrunedComputedColumns() || inner.hasTimestampDeclaration()
-                || project.getOutput().getCorrelatedAliasCount() > 0 || inner.getOutput().getCorrelatedAliasCount() > 0) {
+                || inner.hasUpdateConversions() || inner.hasPrunedComputedColumns() || inner.hasTimestampDeclaration()) {
             return;
         }
         final ObjList<BoundExpression> expressions = project.getExpressions();

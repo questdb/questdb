@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.window.LiveViewWindowDescription;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -51,11 +52,11 @@ import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.datetime.CommonUtils;
 
 import static io.questdb.griffin.BindContext.findGroupingColumn;
 import static io.questdb.griffin.BindContext.isWildcard;
+import static io.questdb.griffin.BindContext.orderNotSelected;
 import static io.questdb.griffin.BindContext.sourceAlias;
 
 final class SampleByBinder implements Mutable {
@@ -63,10 +64,8 @@ final class SampleByBinder implements Mutable {
     private final SqlBinder binder;
     private final BindContext ctx;
     private final ObjList<BoundExpression> fillBindings = new ObjList<>();
-    private final ObjectPool<FillPlan> fills = new ObjectPool<>(FillPlan.FACTORY, 4);
     private final JoinBinder joinBinder;
     private final OrderBinder orderBinder;
-    private final ObjectPool<SampleByPlan> sampleByPlans = new ObjectPool<>(SampleByPlan.FACTORY, 4);
     private final WindowBinder windowBinder;
 
     SampleByBinder(
@@ -87,9 +86,17 @@ final class SampleByBinder implements Mutable {
 
     @Override
     public void clear() {
-        fills.clear();
-        sampleByPlans.clear();
         fillBindings.clear();
+    }
+
+    private static boolean hasLinearFill(QueryModel source) {
+        final ObjList<ExpressionNode> fill = source.getSampleByFill();
+        for (int i = 0, n = fill.size(); i < n; i++) {
+            if (SqlKeywords.isLinearKeyword(fill.getQuick(i).token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean hasQuery(ExpressionNode node) {
@@ -123,13 +130,7 @@ final class SampleByBinder implements Mutable {
                 || from.type == ExpressionNode.OPERATION)) {
             return true;
         }
-        final ObjList<ExpressionNode> fill = source.getSampleByFill();
-        for (int i = 0, n = fill.size(); i < n; i++) {
-            if (SqlKeywords.isLinearKeyword(fill.getQuick(i).token)) {
-                return true;
-            }
-        }
-        return false;
+        return hasLinearFill(source);
     }
 
     private static void validateFillPrev(ExpressionNode expression) throws SqlException {
@@ -138,6 +139,13 @@ final class SampleByBinder implements Mutable {
                 && expression.rhs != null && expression.rhs.type == ExpressionNode.LITERAL)) {
             throw SqlException.$(expression.position, "PREV argument must be a single column name");
         }
+    }
+
+    private BoundExpression bindFillValue(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
+        if (expression.type == ExpressionNode.LITERAL || ctx.isAggregate(expression)) {
+            throw GroupByUtils.invalidSampleByFillValue(expression.token, expression.position);
+        }
+        return ctx.functionBinder.bind(expression, ctx.emptySchema, null, executionContext);
     }
 
     private BoundExpression bindSampleByParameter(ExpressionNode expression, int type, SqlExecutionContext executionContext) throws SqlException {
@@ -185,6 +193,18 @@ final class SampleByBinder implements Mutable {
 
     private ExpressionNode sampleByNull() {
         return ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, 0);
+    }
+
+    /**
+     * The SAMPLE BY period as a stride literal; a constant period expression contributes its value.
+     */
+    private CharSequence sampleByPeriod(QueryModel source, AggregatePlan aggregate) {
+        if (aggregate instanceof SampleByPlan sampleBy && sampleBy.getPeriod() instanceof ConstantExpression period) {
+            final CharacterStoreEntry entry = ctx.characterStore.newEntry();
+            entry.put(period.getLongValue()).put(sampleBy.getPeriodUnit());
+            return entry.toImmutable();
+        }
+        return source.getSampleBy().token;
     }
 
     private ExpressionNode sampleByRangeBound(ExpressionNode bound, ExpressionNode timezone, int timestampType) {
@@ -351,6 +371,15 @@ final class SampleByBinder implements Mutable {
         }
     }
 
+    /**
+     * A {@link FillPlan} above the aggregate fills the gaps: any FILL other than NONE, in both SAMPLE BY
+     * shapes. Only a FILL that interpolates stays in the SAMPLE BY cursor.
+     */
+    static boolean isFillPlanned(QueryModel source) {
+        final ObjList<ExpressionNode> fill = source.getSampleByFill();
+        return (fill.size() > 1 || fill.size() == 1 && !SqlKeywords.isNoneKeyword(fill.getQuick(0).token)) && !hasLinearFill(source);
+    }
+
     static boolean requiresSampleByCursor(QueryModel source) {
         if (requiresSampleByCursorAlignment(source)) {
             return true;
@@ -362,7 +391,7 @@ final class SampleByBinder implements Mutable {
     }
 
     FillPlan bindFill(
-            QueryModel source, AggregatePlan aggregate, BoundExpression bucket, SqlExecutionContext executionContext
+            QueryModel source, AggregatePlan aggregate, int timestampIndex, SqlExecutionContext executionContext
     ) throws SqlException {
         final ObjList<ExpressionNode> fill = source.getSampleByFill();
         final int fillCount = fill.size();
@@ -393,20 +422,16 @@ final class SampleByBinder implements Mutable {
         fillBindings.clear();
         for (int i = 0; i < fillCount; i++) {
             final ExpressionNode expression = fill.getQuick(i);
-            if (ctx.isAggregate(expression)) {
-                throw SqlException.position(expression.position).put("invalid fill value: ").put(expression.token);
-            }
-            fillBindings.add(SqlKeywords.isPrevKeyword(expression.token) ? null
-                    : ctx.functionBinder.bind(expression, ctx.emptySchema, null, executionContext));
+            fillBindings.add(SqlKeywords.isPrevKeyword(expression.token) ? null : bindFillValue(expression, executionContext));
         }
-        final FillPlan plan = fills.next().of(aggregate, source.getSampleBy().position);
+        final FillPlan plan = ctx.fills.next().of(aggregate, source.getSampleBy().position);
         final OutputSchema output = aggregate.getOutput();
-        final int timestampIndex = aggregate.getGroupingExpressions().indexOf(bucket);
         plan.setTimestampColumnId(output.getColumnId(timestampIndex));
         plan.getOutput().setTimestampIndex(timestampIndex);
-        plan.setPeriod(source.getSampleBy().token, source.getSampleBy().position);
+        final CharSequence period = sampleByPeriod(source, aggregate);
+        plan.setPeriod(period, source.getSampleBy().position);
         final ExpressionNode timezone = sampleByTimezone(source);
-        final boolean isSubDay = CommonUtils.isSubDayUnit(source.getSampleBy().token.charAt(source.getSampleBy().token.length() - 1));
+        final boolean isSubDay = CommonUtils.isSubDayUnit(period.charAt(period.length() - 1));
         final ExpressionNode from = source.getSampleByFrom();
         final ExpressionNode to = source.getSampleByTo();
         final int timestampType = output.getColumnType(timestampIndex);
@@ -491,7 +516,7 @@ final class SampleByBinder implements Mutable {
         validateSampleByQuery(model, source, input.getOutput(), false);
         final int timestampIndex = input.getOutput().getTimestampIndex();
 
-        final SampleByPlan plan = sampleByPlans.next().of(input, model.getModelPosition());
+        final SampleByPlan plan = ctx.sampleByPlans.next().of(input, model.getModelPosition());
         plan.setTimestampColumnId(input.getOutput().getColumnId(timestampIndex));
         // LATEST ON names its timestamp without declaring the sampled input's order.
         plan.setTimestampRequired(source.getTimestamp() == null || !source.isExplicitTimestamp() && source.getLatestBy().size() > 0);
@@ -537,7 +562,10 @@ final class SampleByBinder implements Mutable {
         return ctx.functionBinder.bind(floor, input, sourceAlias(source), executionContext);
     }
 
-    void bindSampleByFill(QueryModel source, SampleByPlan plan) {
+    void bindSampleByFill(QueryModel source, SampleByPlan plan, SqlExecutionContext executionContext) throws SqlException {
+        if (!hasLinearFill(source)) {
+            return;
+        }
         final ObjList<ExpressionNode> fill = source.getSampleByFill();
         plan.setFillMode(fill.size() > 1 ? SampleByPlan.FILL_VALUE : SampleByPlan.FILL_NONE);
         for (int i = 0, n = fill.size(); i < n; i++) {
@@ -551,6 +579,7 @@ final class SampleByBinder implements Mutable {
             }
             plan.getFillTokens().add(value.token);
             plan.getFillPositions().add(value.position);
+            plan.getFillValues().add(mode == SampleByPlan.FILL_VALUE ? bindFillValue(value, executionContext) : null);
         }
     }
 
@@ -658,10 +687,6 @@ final class SampleByBinder implements Mutable {
         spec.getOrderByDirections().add(QueryModel.ORDER_DIRECTION_ASCENDING);
         spec.getOrderByNames().add(output.getColumnName(timestampIndex));
         spec.getOrderByPositions().add(subsample.position);
-        for (int i = 0, n = output.getCorrelatedAliasCount(); i < n; i++) {
-            final int index = output.getCorrelatedAliasIndex(i);
-            spec.getPartitionBy().add(ctx.columns.next().of(output.getColumnId(index), output.getColumnType(index), subsample.position));
-        }
         final FunctionExpression function;
         try {
             function = windowBinder.bindWindowFunction(call, spec, output, source, executionContext);
@@ -707,7 +732,7 @@ final class SampleByBinder implements Mutable {
                     if (dot > -1 && FunctionBinder.isUnknownQualifier(GenericLexer.unquote(order.token.subSequence(0, dot)), input.getOutput(), sourceAlias(source))) {
                         throw SqlException.$(order.position, "Invalid table name or alias");
                     }
-                    throw SqlException.$(order.position, "ORDER BY expressions must appear in select list. Invalid column: ").put(order.token);
+                    throw orderNotSelected(order);
                 }
             }
             final ProjectPlan projection = ctx.projects.next().of(input, source.getSubsamplePosition());
@@ -727,7 +752,7 @@ final class SampleByBinder implements Mutable {
             QueryModel model, QueryModel source, SampleByPlan sampleBy, SqlExecutionContext context
     ) throws SqlException {
         final OutputSchema input = sampleBy.getInput().getOutput();
-        boolean hasTimestampOutput = false;
+        boolean hasTimestampOutput = isFillPlanned(source);
         for (int i = 0, n = ctx.aggregateSelectExpressions.size(); i < n && !hasTimestampOutput; i++) {
             hasTimestampOutput = referencesSampleByTimestamp(ctx.aggregateSelectExpressions.getQuick(i), input, source);
         }

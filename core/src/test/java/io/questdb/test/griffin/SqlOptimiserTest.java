@@ -7056,14 +7056,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
+                            Sample By Fill
+                              stride: '1d'
                               fill: null
-                              values: [avg(x)]
-                                Async JIT Filter workers: 1
-                                  filter: 4>=x
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: fromto
+                                Sample By
+                                  fill: none
+                                  values: [avg(x)]
+                                    Async JIT Filter workers: 1
+                                      filter: 4>=x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: fromto
                             """);
         });
     }

@@ -123,24 +123,32 @@ public class SqlLogicalTemporalJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFullFatKeyTypeConversionExposesMasterKeyType() throws Exception {
+    public void testFullFatKeepsSymbolKeyType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_temporal_str(k STRING,ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE lp_temporal_vch(k VARCHAR,ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE lp_temporal_sym(k SYMBOL,ts TIMESTAMP) TIMESTAMP(ts)");
-            for (String masterTable : new String[]{"lp_temporal_str", "lp_temporal_vch"}) {
-                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                    compiler.setFullFatJoins(true);
-                    try (RecordCursorFactory factory = compiler.compile(
-                            "SELECT * FROM " + masterTable + " m ASOF JOIN lp_temporal_sym s ON k", sqlExecutionContext
-                    ).getRecordCursorFactory()) {
-                        final RecordMetadata metadata = factory.getMetadata();
-                        final int masterType = masterTable.equals("lp_temporal_str") ? ColumnType.STRING : ColumnType.VARCHAR;
-                        Assert.assertEquals(4, metadata.getColumnCount());
-                        Assert.assertEquals(masterType, metadata.getColumnType(0));
-                        Assert.assertEquals(masterType, metadata.getColumnType(2));
-                        Assert.assertEquals(1, metadata.getTimestampIndex());
-                        assertPlanContains(factory, "AsOf Join");
+            execute("INSERT INTO lp_temporal_str VALUES ('a','2020-01-01T00:00:02Z'),('b','2020-01-01T00:00:03Z')");
+            execute("INSERT INTO lp_temporal_vch VALUES ('a','2020-01-01T00:00:02Z'),('b','2020-01-01T00:00:03Z')");
+            execute("INSERT INTO lp_temporal_sym VALUES ('a','2020-01-01T00:00:01Z'),('c','2020-01-01T00:00:01Z')");
+            for (String join : new String[]{"ASOF", "LT"}) {
+                for (String masterTable : new String[]{"lp_temporal_str", "lp_temporal_vch"}) {
+                    for (String slave : new String[]{"lp_temporal_sym", "(SELECT k, ts, rnd_int() r FROM lp_temporal_sym)"}) {
+                        for (boolean isFullFat : new boolean[]{false, true}) {
+                            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                                compiler.setFullFatJoins(isFullFat);
+                                try (RecordCursorFactory factory = compiler.compile(
+                                        "SELECT m.k, s.k sk, s.ts FROM " + masterTable + " m " + join + " JOIN " + slave + " s ON k", sqlExecutionContext
+                                ).getRecordCursorFactory()) {
+                                    Assert.assertEquals(ColumnType.SYMBOL, factory.getMetadata().getColumnType(1));
+                                    assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns("""
+                                            k	sk	ts
+                                            a	a	2020-01-01T00:00:01.000000Z
+                                            b\t\t
+                                            """);
+                                }
+                            }
+                        }
                     }
                 }
             }

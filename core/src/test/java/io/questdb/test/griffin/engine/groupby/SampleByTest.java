@@ -225,13 +225,9 @@ public class SampleByTest extends AbstractCairoTest {
                     .returns("""
                             ts\tsymbol\tswitch
                             1970-01-03T00:00:00.000000Z\tBTC-USD\t101.0
-                            1970-01-03T00:00:00.000000Z\tETH-USD\t202.0
-                            1970-01-03T01:00:00.000000Z\tBTC-USD\t103.0
-                            1970-01-03T01:00:00.000000Z\tETH-USD\t204.0
-                            1970-01-03T02:00:00.000000Z\tBTC-USD\t105.0
-                            1970-01-03T02:00:00.000000Z\tETH-USD\t206.0
-                            1970-01-03T03:00:00.000000Z\tBTC-USD\t107.0
-                            1970-01-03T03:00:00.000000Z\tETH-USD\t208.0
+                            1970-01-03T00:00:00.000000Z\tETH-USD\t204.0
+                            1970-01-03T01:00:00.000000Z\tBTC-USD\t105.0
+                            1970-01-03T01:00:00.000000Z\tETH-USD\t208.0
                             """);
 
             // Same query, but with additionally SELECTed aggregates
@@ -250,14 +246,10 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             ts\tsymbol\tfirst_price\tlast_price\tswitch
-                            1970-01-03T00:00:00.000000Z\tBTC-USD\t101.0\t102.0\t101.0
-                            1970-01-03T00:00:00.000000Z\tETH-USD\t201.0\t202.0\t202.0
-                            1970-01-03T01:00:00.000000Z\tBTC-USD\t103.0\t104.0\t103.0
-                            1970-01-03T01:00:00.000000Z\tETH-USD\t203.0\t204.0\t204.0
-                            1970-01-03T02:00:00.000000Z\tBTC-USD\t105.0\t106.0\t105.0
-                            1970-01-03T02:00:00.000000Z\tETH-USD\t205.0\t206.0\t206.0
-                            1970-01-03T03:00:00.000000Z\tBTC-USD\t107.0\t108.0\t107.0
-                            1970-01-03T03:00:00.000000Z\tETH-USD\t207.0\t208.0\t208.0
+                            1970-01-03T00:00:00.000000Z\tBTC-USD\t101.0\t104.0\t101.0
+                            1970-01-03T00:00:00.000000Z\tETH-USD\t201.0\t204.0\t204.0
+                            1970-01-03T01:00:00.000000Z\tBTC-USD\t105.0\t108.0\t105.0
+                            1970-01-03T01:00:00.000000Z\tETH-USD\t205.0\t208.0\t208.0
                             """);
         });
     }
@@ -431,18 +423,18 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             created\tavg\tlatency
-                            2025-01-20T13:56:50.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:52.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:54.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:56.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:58.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:00.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:02.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:04.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:06.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:08.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:10.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:12.000000Z\t0.0\t0.0
+                            2025-01-20T13:56:50.000000Z\t0.0\tnull
+                            2025-01-20T13:56:52.000000Z\t0.0\tnull
+                            2025-01-20T13:56:54.000000Z\t0.0\tnull
+                            2025-01-20T13:56:56.000000Z\t0.0\tnull
+                            2025-01-20T13:56:58.000000Z\t0.0\tnull
+                            2025-01-20T13:57:00.000000Z\t0.0\tnull
+                            2025-01-20T13:57:02.000000Z\t0.0\tnull
+                            2025-01-20T13:57:04.000000Z\t0.0\tnull
+                            2025-01-20T13:57:06.000000Z\t0.0\tnull
+                            2025-01-20T13:57:08.000000Z\t0.0\tnull
+                            2025-01-20T13:57:10.000000Z\t0.0\tnull
+                            2025-01-20T13:57:12.000000Z\t0.0\tnull
                             2025-01-20T13:57:14.000000Z\t0.4851638802935891\t0.4846019644078461
                             2025-01-20T13:57:16.000000Z\t0.5040684715238979\t0.0014510055926236776
                             2025-01-20T13:57:18.000000Z\t0.4855058436740148\t0.760595244599882
@@ -3860,7 +3852,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000000) ts" +
                         " from long_sequence(20)" +
                         ") timestamp(ts) partition by day")
-                .fails(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+                .noRandomAccess()
+                .returns("day\tsym2\tc\n");
     }
 
     @Test
@@ -5758,13 +5751,15 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Filter filter: s='B'
-                                Sample By
+                                Sample By Fill
+                                  stride: '30m'
                                   fill: prev
-                                  keys: [ts,s]
-                                  values: [first(v)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                                    Sample By
+                                      keys: [ts,s]
+                                      values: [first(v)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
                             """);
 
             assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ")
@@ -5794,12 +5789,15 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Filter filter: 2022-12-01T01:10:00.000000Z<ts
-                                Sample By
+                                Sample By Fill
+                                  stride: '30m'
                                   fill: prev
-                                  values: [first(v)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                                    Sample By
+                                      fill: none
+                                      values: [first(v)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
                             """);
 
             assertQuery("select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z' ")
@@ -7424,7 +7422,7 @@ public class SampleByTest extends AbstractCairoTest {
         // with the default sentinel of -1 for the empty-slot marker. length(null_sym)
         // returns -1, which collided with the sentinel, so each call inserted a fresh
         // entry instead of reusing the cached id. Pass 1 (initMap) and pass 2 (buildMap)
-        // of SampleByFillValueRecordCursor consequently produced different keys for
+        // of the keyed SAMPLE BY fill cursor consequently produced different keys for
         // the same row, tripping `assert value != null` in buildMap.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_sb_intsym (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -8841,14 +8839,18 @@ public class SampleByTest extends AbstractCairoTest {
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertQuery(query)
                     .noLeakCheck()
-                    .assertsPlan("Sample By\n" +
-                            "  fill: null\n" +
+                    .assertsPlan("Sample By Fill\n" +
                             "  range: (timestamp_floor('day',now()),)\n" +
-                            "  values: [count(*)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Interval forward scan on: trades\n" +
-                            "          intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000Z\",\"MAX\")]\n");
+                            "  stride: '1m'\n" +
+                            "  fill: null\n" +
+                            "    Sample By\n" +
+                            "      fill: none\n" +
+                            "      range: (timestamp_floor('day',now()),)\n" +
+                            "      values: [count(*)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: trades\n" +
+                            "              intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000Z\",\"MAX\")]\n");
 
             assertQuery(query)
                     .timestamp("timestamp")
@@ -9303,16 +9305,18 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
+                            Sample By Fill
+                              stride: '30m'
                               fill: prev
-                              keys: [ts,s]
-                              values: [first(v)]
-                                Async Filter workers: 1
-                                  filter: s='B'
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: tab
-                                          intervals: [("2022-12-01T00:00:00.000001Z","MAX")]
+                                Sample By
+                                  keys: [ts,s]
+                                  values: [first(v)]
+                                    Async Filter workers: 1
+                                      filter: s='B'
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: tab
+                                              intervals: [("2022-12-01T00:00:00.000001Z","MAX")]
                             """);
 
             assertQuery(query)
@@ -16948,7 +16952,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE")
-                .fails(43, "Invalid column: zz");
+                .fails(43, "invalid fill value: zz");
     }
 
     @Test
@@ -16963,7 +16967,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE")
-                .fails(43, "Invalid column: zz");
+                .fails(43, "invalid fill value: zz");
     }
 
     @Test
@@ -17801,10 +17805,10 @@ public class SampleByTest extends AbstractCairoTest {
 
     private static String sampleByPushdownPlan(String fill, String align) {
         // The unified fill cursor (SampleByFillRecordCursorFactory) handles null/prev fills
-        // on the GROUP BY fast path, except when using "align to first observation" which
-        // takes a different code path through the old Sample By node.
-        boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
-                && !"align to first observation".equals(align);
+        // of both SAMPLE BY shapes: over the GROUP BY fast path, or over the Sample By node
+        // with "align to first observation".
+        final boolean isFilled = fill.equals("null") || fill.equals("prev");
+        boolean isFastPath = isFilled && !"align to first observation".equals(align);
         boolean isNoneFill = fill.isEmpty() || "none".equals(fill);
         if (isFastPath) {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)\n" +
@@ -17821,6 +17825,18 @@ public class SampleByTest extends AbstractCairoTest {
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: #TABLE#\n";
+        }
+        if (isFilled) {
+            return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
+                    "    Sample By Fill\n" +
+                    "      stride: '1m'\n" +
+                    "      fill: " + fill + "\n" +
+                    "        Sample By\n" +
+                    "          keys: [tstmp,sym]\n" +
+                    "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: #TABLE#\n";
         }
         return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                 "    Sample By\n" +

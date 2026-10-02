@@ -69,10 +69,10 @@ final class ColumnPruningPass implements Mutable {
     private final ObjList<BoundExpression> expressionScratch;
     private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ObjectPool<ProjectPlan> narrowingProjects;
-    private final ObjList<LogicalPlan> pruneAncestors = new ObjList<>();
+    private final ObjList<LogicalPlan> pruneAncestors;
     private final IntHashSet requiredColumnIds;
     private final IntList retainedColumnIndexes;
-    private final OutputSchema schemaScratch = new OutputSchema();
+    private final OutputSchema schemaScratch;
     private final ObjList<LogicalPlan> sharedSetOperations = new ObjList<>();
     private final IntList updateTypesScratch;
     private FunctionBinder functionBinder;
@@ -85,7 +85,9 @@ final class ColumnPruningPass implements Mutable {
             ObjectPool<ProjectPlan> narrowingProjects,
             IntList retainedColumnIndexes,
             IntList updateTypesScratch,
-            IntHashSet requiredColumnIds
+            IntHashSet requiredColumnIds,
+            ObjList<LogicalPlan> pruneAncestors,
+            OutputSchema schemaScratch
     ) {
         this.aggregateInputOrder = aggregateInputOrder;
         this.expressionScratch = expressionScratch;
@@ -94,6 +96,8 @@ final class ColumnPruningPass implements Mutable {
         this.retainedColumnIndexes = retainedColumnIndexes;
         this.updateTypesScratch = updateTypesScratch;
         this.requiredColumnIds = requiredColumnIds;
+        this.pruneAncestors = pruneAncestors;
+        this.schemaScratch = schemaScratch;
     }
 
     @Override
@@ -101,8 +105,6 @@ final class ColumnPruningPass implements Mutable {
         functionBinder = null;
         joinInputPlan = null;
         alignedPath.clear();
-        pruneAncestors.clear();
-        schemaScratch.clear();
         sharedSetOperations.clear();
     }
 
@@ -116,27 +118,6 @@ final class ColumnPruningPass implements Mutable {
         for (int i = 0, n = input.getColumnCount(); i < n; i++) {
             addColumn(output, input, i, alias);
         }
-    }
-
-    /**
-     * Lays out a full-fat temporal slave as the join exposes it: value columns in input order, then keys.
-     */
-    private static void addFullFatColumns(OutputSchema output, OutputSchema input, JoinInput step) {
-        final IntList keyIds = step.getSlaveKeyColumnIds();
-        final int timestampId = input.getTimestampColumnId();
-        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            final int columnId = input.getColumnId(i);
-            if (columnId == timestampId || keyIds.indexOf(columnId, 0, keyIds.size()) < 0) {
-                addColumn(output, input, i, step.getBindingAlias());
-            }
-        }
-        for (int i = 0, n = keyIds.size(); i < n; i++) {
-            final int columnId = keyIds.getQuick(i);
-            if (columnId != timestampId && keyIds.indexOf(columnId, 0, i) < 0) {
-                addColumn(output, input, input.getColumnIndexById(columnId), step.getBindingAlias());
-            }
-        }
-        LogicalPlans.retypeFullFatKeys(step, output);
     }
 
     private static boolean isCountInputMaterialized(LogicalPlan input) {
@@ -480,11 +461,7 @@ final class ColumnPruningPass implements Mutable {
                     }
                     final OutputSchema prefix = step.getOutput();
                     prefix.copyFrom(plan.getOutput());
-                    if (step.isFullFat()) {
-                        addFullFatColumns(prefix, input, step);
-                    } else {
-                        addColumns(prefix, input, step.getBindingAlias());
-                    }
+                    addColumns(prefix, input, step.getBindingAlias());
                     prefix.setTimestampIndex(prefix.getColumnIndexById(joinTimestampId));
                     plan.getOutput().copyFrom(prefix);
                 }
@@ -969,6 +946,7 @@ final class ColumnPruningPass implements Mutable {
     }
 
     void prune(LogicalPlan root) {
+        pruneAncestors.clear();
         requiredColumnIds.clear();
         for (int i = 0, n = root.getOutput().getColumnCount(); i < n; i++) {
             requiredColumnIds.add(root.getOutput().getColumnId(i));

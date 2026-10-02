@@ -196,9 +196,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
+    private final IntList indexScratch = new IntList();
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final SqlBinder logicalBinder;
     private final SqlOptimiser logicalOptimiser;
+    private final IntList masterKeyScratch = new IntList();
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getCMARWInstance();
     private final MessageBus messageBus;
@@ -210,10 +212,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final Path renamePath;
     private final IntHashSet scratchIds = new IntHashSet();
     private final StringSink scratchSink = new StringSink();
+    private final IntList slaveKeyScratch = new IntList();
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final IntList valueScratch = new IntList();
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private QueryModel boundModel;
@@ -249,7 +253,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
             this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, sqlNodePool, characterStore, asm,
-                    entityColumnFilter, emptySchema, scratchSink, scratchIds);
+                    entityColumnFilter, emptySchema, scratchSink, scratchIds, indexScratch, valueScratch, masterKeyScratch, slaveKeyScratch);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             registerKeywordBasedExecutors();
@@ -277,8 +281,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
             logicalBinder = new SqlBinder(configuration, functionParser, this);
             final BindContext planNodes = logicalBinder.ctx;
-            logicalOptimiser = new SqlOptimiser(characterStore, planNodes.columns, planNodes.constants, planNodes.filters,
-                    planNodes.limits, planNodes.projects, planNodes.sorts, scratchIds);
+            logicalOptimiser = new SqlOptimiser(characterStore, planNodes, scratchIds);
         } catch (Throwable th) {
             close();
             throw th;
@@ -588,11 +591,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public LogicalPlan getLogicalPlanForTesting() {
         return logicalBinder.getRoot();
-    }
-
-    @TestOnly
-    public int getLogicalSubqueryBinderDepthForTesting() {
-        return logicalBinder.getRetainedSubqueryDepthForTesting();
     }
 
     @Override
@@ -5960,8 +5958,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      */
     void compileLogicalPlan(SqlBinder binder, QueryModel model, SqlParserCallback parserCallback,
                             SqlExecutionContext executionContext) throws SqlException {
-        final LogicalPlan plan = binder.bind(model, parserCallback, codeGenerator.isFullFatJoins(), executionContext);
-        binder.setRoot(logicalOptimiser.optimise(plan, binder.getFunctionBinder(), binder.getNextColumnId(), executionContext));
+        final LogicalPlan plan = binder.bind(model, parserCallback, executionContext);
+        binder.setRoot(logicalOptimiser.optimise(plan, binder.getFunctionBinder(), binder.getFunctionSources(), binder.getNextColumnId(), executionContext));
     }
 
     protected AlterOperationBuilder createAlterOperationBuilder() {
@@ -6076,6 +6074,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return entityColumnFilter;
     }
 
+    IntList getIndexScratch() {
+        return indexScratch;
+    }
+
+    IntList getMasterKeyScratch() {
+        return masterKeyScratch;
+    }
+
     IntHashSet getScratchIds() {
         return scratchIds;
     }
@@ -6084,8 +6090,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return scratchSink;
     }
 
+    IntList getSlaveKeyScratch() {
+        return slaveKeyScratch;
+    }
+
     ObjectPool<ExpressionNode> getSqlNodePool() {
         return sqlNodePool;
+    }
+
+    IntList getValueScratch() {
+        return valueScratch;
     }
 
     protected void lexerToFirstToken(GenericLexer lexer, int rollbackPosition) throws SqlException {

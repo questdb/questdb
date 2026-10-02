@@ -58,7 +58,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 
-import static io.questdb.griffin.BindContext.findGroupingColumn;
 import static io.questdb.griffin.BindContext.sourceAlias;
 import static io.questdb.griffin.TemporalJoinBinder.horizonJoinIndex;
 import static io.questdb.griffin.TemporalJoinBinder.rejectWindowJoinSlaveColumn;
@@ -69,7 +68,6 @@ final class PivotBinder implements Mutable {
     private final SqlBinder binder;
     private final BindContext ctx;
     private final JoinBinder joinBinder;
-    private final LateralBinder lateralBinder;
     private final LowerCaseCharSequenceHashSet pivotAliases;
     private final LowerCaseCharSequenceIntHashMap pivotAliasSequences;
     private final ObjList<CharSequence> pivotForAliases = new ObjList<>();
@@ -90,7 +88,6 @@ final class PivotBinder implements Mutable {
             TemporalJoinBinder temporalJoinBinder,
             AggregateBinder aggregateBinder,
             JoinBinder joinBinder,
-            LateralBinder lateralBinder,
             StringSink pivotValueSink
     ) {
         this.ctx = ctx;
@@ -99,7 +96,6 @@ final class PivotBinder implements Mutable {
         this.temporalJoinBinder = temporalJoinBinder;
         this.aggregateBinder = aggregateBinder;
         this.joinBinder = joinBinder;
-        this.lateralBinder = lateralBinder;
         this.pivotValueSink = pivotValueSink;
         this.pivotAliases = ctx.aliases;
         this.pivotAliasSequences = ctx.aliasSequences;
@@ -648,21 +644,14 @@ final class PivotBinder implements Mutable {
         } else {
             source = binder.bindSource(pivot, input, executionContext);
         }
-        if (ctx.lateralScopes.size() > 0 && input.getJoinModels().size() == 1) {
-            source = lateralBinder.correlateSource(pivot, input, input.getJoinModels().size() > 1 ? null : sourceAlias(input), source, where, executionContext);
-            where = ctx.correlatedWhere;
-        }
         final LatestByPlan latest = input.getLatestBy().size() > 0 ? binder.bindLatestBy(source, input) : null;
-        final boolean isCorrelatedLatest = latest != null && ctx.lateralScopes.size() > 0 && source.getOutput().getCorrelatedAliasCount() > 0;
         if (where != null && source.getType() != LogicalPlan.Type.JOIN) {
             final BoundExpression predicate = binder.bindPredicate(where, source, input, executionContext);
             final FilterPlan filter = ctx.filters.next().of(source, predicate, predicate.getPosition());
             filter.getOutput().copyFrom(source.getOutput());
             source = filter;
         }
-        if (isCorrelatedLatest) {
-            source = windowBinder.bindLatestWindow(source, latest, pivot, input.getModelPosition(), executionContext);
-        } else if (latest != null) {
+        if (latest != null) {
             latest.replaceInput(0, source);
             source = latest;
         }
@@ -693,12 +682,6 @@ final class PivotBinder implements Mutable {
             addPivotKey(grouped, expression, alias, input, executionContext);
         }
         final int keyCount = grouped.getGroupingExpressions().size();
-        lateralBinder.addCorrelatedKeys(grouped, source.getOutput(), pivot);
-        final OutputSchema sourceOutput = source.getOutput();
-        for (int i = 0, n = sourceOutput.getCorrelatedAliasCount(); i < n; i++) {
-            grouped.getOutput().addCorrelatedAlias(sourceOutput.getCorrelatedAliasQualifier(i), sourceOutput.getCorrelatedAliasName(i),
-                    findGroupingColumn(grouped, sourceOutput.getColumnId(sourceOutput.getCorrelatedAliasIndex(i))));
-        }
         final ObjList<QueryColumn> measures = pivot.getPivotGroupByColumns();
         for (int i = 0, n = measures.size(); i < n; i++) {
             final ExpressionNode measure = measures.getQuick(i).getAst();
@@ -741,7 +724,6 @@ final class PivotBinder implements Mutable {
             for (int i = 0, n = measures.size(); i < n; i++) {
                 addPivotMeasureProjection(project, measures.getQuick(i), input, grouped, executionContext);
             }
-            lateralBinder.exposeCorrelated(project, grouped.getOutput(), null);
             measured = project;
         }
 
@@ -751,14 +733,6 @@ final class PivotBinder implements Mutable {
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             pivoted.getGroupingExpressions().add(ctx.columns.next().of(measuredOutput.getColumnId(i), measuredOutput.getColumnType(i), groupBy.getQuick(i).position));
             pivoted.getOutput().add(ctx.nextColumnId++, measuredOutput.getColumnName(i), measuredOutput.getColumnType(i), measuredOutput.getMetadata(i), true);
-        }
-        for (int i = 0, n = measuredOutput.getCorrelatedAliasCount(); i < n; i++) {
-            final int index = measuredOutput.getCorrelatedAliasIndex(i);
-            pivoted.getGroupingExpressions().add(ctx.columns.next().of(measuredOutput.getColumnId(index), measuredOutput.getColumnType(index), pivot.getModelPosition()));
-            pivoted.getOutput().add(ctx.nextColumnId, lateralBinder.correlatedName(), measuredOutput.getColumnType(index), measuredOutput.getMetadata(index), false);
-            ctx.nextColumnId++;
-            pivoted.getOutput().addCorrelatedAlias(measuredOutput.getCorrelatedAliasQualifier(i), measuredOutput.getCorrelatedAliasName(i),
-                    pivoted.getOutput().getColumnCount() - 1);
         }
         pivotIndexes.setAll(forColumns.size(), 0);
         for (int combination = 0; combination < combinations; combination++) {
@@ -797,7 +771,7 @@ final class PivotBinder implements Mutable {
                 if (!pivot.isPivotGroupByColumnHasNoAlias()) {
                     name.put('_').put(SqlUtil.toColumnName(measures.getQuick(k).getAlias()));
                 }
-                final int index = pivoted.getOutput().getColumnCount() - groupBy.size() - measuredOutput.getCorrelatedAliasCount();
+                final int index = pivoted.getOutput().getColumnCount() - groupBy.size();
                 final CharSequence columnName = name.toImmutable();
                 pivoted.getOutput().add(ctx.nextColumnId++, columnName, pivoted.getAggregates().getQuick(index).getDataType(), true);
                 if (SqlUtil.protectColumnAlias(ctx.characterStore, columnName) != columnName) {

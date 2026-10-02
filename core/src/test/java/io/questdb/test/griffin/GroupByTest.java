@@ -3614,16 +3614,18 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [ref0]
-                                VirtualRecord
-                                  functions: [dateadd('h',1,created)]
-                                    Async JIT Group By workers: 1
-                                      keys: [created]
-                                      filter: null!=created
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                                Distinct
+                                  keys: ref0
+                                    VirtualRecord
+                                      functions: [dateadd('h',1,created)]
+                                        Async JIT Group By workers: 1
+                                          keys: [created]
+                                          filter: null!=created
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
                             """);
 
             assertQuery(query)

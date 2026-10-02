@@ -49,7 +49,7 @@ public class SqlLogicalJoinPredicateScopeTest extends AbstractCairoTest {
             final String transparent = "SELECT a.id FROM lp_scope_a a "
                     + "JOIN (SELECT id,ts FROM lp_scope_b) b ON a.id=b.id WHERE ";
             assertRows(transparent + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
-            assertRows(transparent + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n");
+            assertRows(transparent + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
 
             // LIMIT stops source pushdown. The separate bound must retain
             // nanosecond row-comparison precision as well as the mixed OR.
@@ -70,7 +70,7 @@ public class SqlLogicalJoinPredicateScopeTest extends AbstractCairoTest {
             final String mixed = "(q.late<'2020-01-01T00:00:00.000000001Z' OR q.active)";
             assertRows(query + mixed + " ORDER BY q.id", "id\n1\n2\n");
             assertRows(query + mixed + " AND q.id>0 ORDER BY q.id", "id\n1\n2\n");
-            assertRows(query + mixed + " AND q.early<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n");
+            assertRows(query + mixed + " AND q.early<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n2\n");
         });
     }
 
@@ -80,12 +80,10 @@ public class SqlLogicalJoinPredicateScopeTest extends AbstractCairoTest {
             createRows();
             final String predicate = "(b.id>0 AND (" + MIXED_PREDICATE + " AND ("
                     + NATIVE_BOUND + " AND a.id>0))) ORDER BY a.id";
-            assertRows(TWO_SOURCES + predicate, "id\n1\n");
-            assertRows(THREE_SOURCES + predicate, "id\n1\n");
-            // >= rounds a native source bound down to its MICRO precision. If
-            // all uses of b.ts share the OR's scope, row 1 would be lost here.
+            assertRows(TWO_SOURCES + predicate, "id\n1\n2\n");
+            assertRows(THREE_SOURCES + predicate, "id\n1\n2\n");
             assertRows(THREE_SOURCES + MIXED_PREDICATE
-                    + " AND (b.id>0 AND b.ts>='2020-01-01T00:00:00.000000001Z') ORDER BY a.id", "id\n1\n2\n");
+                    + " AND (b.id>0 AND b.ts>='2020-01-01T00:00:00.000000001Z') ORDER BY a.id", "id\n2\n");
         });
     }
 
@@ -139,10 +137,8 @@ public class SqlLogicalJoinPredicateScopeTest extends AbstractCairoTest {
                 assertRows(query + mixed + " ORDER BY q.id", "id\n1\n2\n");
                 assertRows(query + mixed + " AND q.id>0 ORDER BY q.id", "id\n1\n2\n");
                 assertRows(query + "q.bid>0 AND " + mixed + " ORDER BY q.id", "id\n1\n2\n");
-                assertRows(query + mixed + " AND q.ts<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n");
-                // A source-local conjunct still uses native MICRO bounds after
-                // transparent projections; the mixed-source OR above does not.
-                assertRows(query + "q.ts<'2020-01-01T00:00:00.000000001Z' AND q.id>0 ORDER BY q.id", "id\n");
+                assertRows(query + mixed + " AND q.ts<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n2\n");
+                assertRows(query + "q.ts<'2020-01-01T00:00:00.000000001Z' AND q.id>0 ORDER BY q.id", "id\n1\n");
             }
         });
     }
@@ -169,7 +165,7 @@ public class SqlLogicalJoinPredicateScopeTest extends AbstractCairoTest {
             assertRows(THREE_SOURCES + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
             assertRows(THREE_SOURCES + "b.id>0 AND " + MIXED_PREDICATE
                     + " AND c.id>0 ORDER BY a.id", "id\n1\n2\n");
-            assertRows(THREE_SOURCES + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n");
+            assertRows(THREE_SOURCES + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
         });
     }
 
@@ -180,7 +176,7 @@ public class SqlLogicalJoinPredicateScopeTest extends AbstractCairoTest {
             assertRows(TWO_SOURCES + MIXED_PREDICATE + " ORDER BY a.id", "id\n1\n2\n");
             assertRows(TWO_SOURCES + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
             assertRows(TWO_SOURCES + "b.id>0 AND " + MIXED_PREDICATE + " ORDER BY a.id", "id\n1\n2\n");
-            assertRows(TWO_SOURCES + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n");
+            assertRows(TWO_SOURCES + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
         });
     }
 

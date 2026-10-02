@@ -115,23 +115,23 @@ public class SqlLogicalMonotonicIntervalTest extends AbstractCairoTest {
                 final String[][] textBound = nanos ? new String[][]{
                         {"E:", "I:1 2 3 4", "I:1 2 3 4", "I:5 6 7 8 9", "I:5 6 7 8 9"},
                         {"E:", "I:1 2 3 4", "I:1 2 3 4", "I:5 6 7 8 9", "I:5 6 7 8 9"},
-                        {"IF:", "IF:1 2 3 4", "IF:1 2 3 4", "IF:5 6 7 8 9", "IF:5 6 7 8 9"},
+                        {"E:", "IF:1 2 3 4", "IF:1 2 3 4", "IF:5 6 7 8 9", "IF:5 6 7 8 9"},
                         {"I:4", "I:1 2 3", "I:1 2 3 4", "I:5 6 7 8 9", "I:4 5 6 7 8 9"}
                 } : new String[][]{
-                        {"I:3 4", "I:1 2", "I:1 2 3 4", "I:5 6 7 8 9", "I:3 4 5 6 7 8 9"},
-                        {"I:3", "I:1 2", "I:1 2 3", "I:4 5 6 7 8 9", "I:3 4 5 6 7 8 9"},
-                        {"I:3", "I:1 2", "I:1 2 3", "I:4 5 6 7 8 9", "I:3 4 5 6 7 8 9"},
+                        {"E:", "I:1 2 3 4", "I:1 2 3 4", "I:5 6 7 8 9", "I:5 6 7 8 9"},
+                        {"E:", "I:1 2 3", "I:1 2 3", "I:4 5 6 7 8 9", "I:4 5 6 7 8 9"},
+                        {"E:", "I:1 2 3", "I:1 2 3", "I:4 5 6 7 8 9", "I:4 5 6 7 8 9"},
                         {"E:", "I:1 2 3", "I:1 2 3", "IF:4 5 6 7 8 9", "IF:4 5 6 7 8 9"}
                 };
                 final String[][] typedBound = nanos ? new String[][]{
                         {"E:", "I:1 2 3 4", "I:1 2 3 4", "I:5 6 7 8 9", "I:5 6 7 8 9"},
                         {"E:", "I:1 2 3 4", "I:1 2 3 4", "I:5 6 7 8 9", "I:5 6 7 8 9"},
-                        {"IF:", "IF:1 2 3 4", "IF:1 2 3 4", "IF:5 6 7 8 9", "IF:5 6 7 8 9"},
+                        {"E:", "IF:1 2 3 4", "IF:1 2 3 4", "IF:5 6 7 8 9", "IF:5 6 7 8 9"},
                         {"I:4", "I:1 2 3", "I:1 2 3 4", "I:5 6 7 8 9", "I:4 5 6 7 8 9"}
                 } : new String[][]{
-                        {"I:3 4", "I:1 2", "I:1 2 3 4", "I:5 6 7 8 9", "I:3 4 5 6 7 8 9"},
-                        {"I:3", "I:1 2", "I:1 2 3", "I:4 5 6 7 8 9", "I:3 4 5 6 7 8 9"},
-                        {"I:3", "I:1 2", "I:1 2 3", "I:4 5 6 7 8 9", "I:3 4 5 6 7 8 9"},
+                        {"E:", "I:1 2 3 4", "I:1 2 3 4", "I:5 6 7 8 9", "I:5 6 7 8 9"},
+                        {"E:", "I:1 2 3", "I:1 2 3", "I:4 5 6 7 8 9", "I:4 5 6 7 8 9"},
+                        {"E:", "I:1 2 3", "I:1 2 3", "I:4 5 6 7 8 9", "I:4 5 6 7 8 9"},
                         {"E:", "I:1 2 3", "I:1 2 3", "IF:4 5 6 7 8 9", "IF:4 5 6 7 8 9"}
                 };
                 for (int e = 0; e < expressions.length; e++) {
@@ -279,16 +279,16 @@ public class SqlLogicalMonotonicIntervalTest extends AbstractCairoTest {
 
 
     @Test
-    public void testNegativeEpochTextAndTypedBoundsUseTheirExistingRounding() throws Exception {
+    public void testNegativeEpochTextAndTypedBoundsCompareExactly() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_monotonic(id INT,ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO lp_monotonic VALUES (1,'1970-01-01T00:00:00.000000Z')");
             final String textBound = "SELECT id FROM lp_monotonic WHERE ts-1L<'1969-12-31T23:59:59.999999999Z'";
             final String typedBound = "SELECT id FROM lp_monotonic WHERE ts-1L<CAST('1969-12-31T23:59:59.999999999Z' AS TIMESTAMP_NS)";
-            assertScan(textBound, "I", "id\n");
+            assertScan(textBound, "I", "id\n1\n");
             assertScan(typedBound, "I", "id\n1\n");
             for (String type : new String[]{"STRING", "VARCHAR"}) {
-                assertScan("SELECT id FROM lp_monotonic WHERE ts-1L<CAST('1969-12-31T23:59:59.999999999Z' AS " + type + ')', "I", "id\n");
+                assertScan("SELECT id FROM lp_monotonic WHERE ts-1L<CAST('1969-12-31T23:59:59.999999999Z' AS " + type + ')', "I", "id\n1\n");
             }
         });
     }

@@ -32,14 +32,19 @@ import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.engine.functions.bool.AndFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
+import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -165,6 +170,54 @@ public class LogicalPlanTest {
         Assert.assertEquals(47, schema.getTimestampColumnId());
         Assert.assertEquals(12, timestamp.getPosition());
         Assert.assertTrue(schema.isVisible(0));
+    }
+
+    @Test
+    public void testDependentStepPrintsOuterReferencesOfItsInput() {
+        final ScanPlan outer = scan();
+        outer.getOutput().add(1, "k", ColumnType.INT, true);
+        final ScanPlan source = scan();
+        source.getOutput().add(2, "v", ColumnType.INT, true);
+        final ProjectPlan body = new ProjectPlan().of(source, 4);
+        body.getExpressions().add(new OuterColumnExpression().of(1, ColumnType.INT, 5));
+        body.getExpressions().add(new ColumnExpression().of(2, ColumnType.INT, 6));
+        body.getOutput().add(3, "ok", ColumnType.INT, true);
+        body.getOutput().add(7, "v", ColumnType.INT, true);
+        final JoinPlan join = new JoinPlan().of(8);
+        join.getInputs().add(new JoinInput().of(outer, QueryModel.JOIN_CROSS, "t", 0));
+        final JoinInput step = new JoinInput().of(body, QueryModel.JOIN_CROSS, "l", 9);
+        step.setDependent(true);
+        join.getInputs().add(step);
+        join.getOutput().add(1, "k", ColumnType.INT, null, true, "t");
+        join.getOutput().add(3, "ok", ColumnType.INT, null, true, "l");
+        join.getOutput().add(7, "v", ColumnType.INT, null, true, "l");
+        TestUtils.assertEquals("""
+                Join
+                  Master t
+                    Scan
+                      table: trades
+                      columns: [k]
+                  DEPENDENT CROSS l
+                    Project
+                      columns: [outer(t.k) AS ok, v]
+                      Scan
+                        table: trades
+                        columns: [v]
+                """, new LogicalPlanPrinter().print(join));
+    }
+
+    @Test
+    public void testOuterColumnExpressionKeepsIdentityUntilReset() {
+        final ObjectPool<OuterColumnExpression> references = new ObjectPool<>(OuterColumnExpression.FACTORY, 1);
+        final OuterColumnExpression reference = references.next().of(12, ColumnType.SYMBOL, 9);
+        Assert.assertEquals(12, reference.getColumnId());
+        Assert.assertEquals(ColumnType.SYMBOL, reference.getDataType());
+        Assert.assertEquals(9, reference.getPosition());
+        Assert.assertThrows(IllegalArgumentException.class, () -> new OuterColumnExpression().of(-1, ColumnType.INT, 0));
+        references.clear();
+        Assert.assertSame(reference, references.next());
+        Assert.assertEquals(-1, reference.getColumnId());
+        Assert.assertEquals(ColumnType.UNDEFINED, reference.getDataType());
     }
 
     @Test

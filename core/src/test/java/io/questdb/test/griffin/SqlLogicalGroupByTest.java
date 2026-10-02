@@ -184,7 +184,6 @@ public class SqlLogicalGroupByTest extends AbstractCairoTest {
     public void testDefaultDistinctGroupsOnlyTheVisibleTuple() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            Assert.assertTrue(configuration.isSqlDistinctGroupByRewriteEnabled());
             assertQueryRows("SELECT DISTINCT k FROM lp_group ORDER BY k", """
                     k
                     null
@@ -220,15 +219,7 @@ public class SqlLogicalGroupByTest extends AbstractCairoTest {
                     2
                     3
                     """);
-            assertQueryRows("SELECT DISTINCT k FROM lp_group ORDER BY i+1,k", """
-                    k
-                    null
-                    2
-                    3
-                    1
-                    1
-                    2
-                    """);
+            assertError("SELECT DISTINCT k FROM lp_group ORDER BY i+1,k", 41, "ORDER BY expressions must appear in select list. Invalid column: i");
             assertQueryRows(
                     "SELECT DISTINCT 7 AS fixed,k AS key FROM lp_group ORDER BY key DESC LIMIT 2",
                     """
@@ -281,24 +272,14 @@ public class SqlLogicalGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctOverAggregationKeepsExistingTupleAndProjection() throws Exception {
+    public void testDistinctOverAggregationAppliesToSelectedTuple() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
-                    "SELECT DISTINCT sum(i) AS total FROM lp_group GROUP BY k ORDER BY total,k",
-                    """
-                            total
-                            null
-                            null
-                            6
-                            8
-                            """
-            );
+            assertError("SELECT DISTINCT sum(i) AS total FROM lp_group GROUP BY k ORDER BY total,k", 72, "ORDER BY expressions must appear in select list. Invalid column: k");
             assertQueryRows(
                     "SELECT DISTINCT sum(i)+1 AS total FROM lp_group GROUP BY k ORDER BY total",
                     """
                             total
-                            null
                             null
                             7
                             9
@@ -307,11 +288,11 @@ public class SqlLogicalGroupByTest extends AbstractCairoTest {
             assertQueryRows(
                     "SELECT DISTINCT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i)+1,k",
                     """
-                            k	total	column
-                            null	null	null
-                            3	null	null
-                            1	6	7
-                            2	8	9
+                            k	total
+                            null	null
+                            3	null
+                            1	6
+                            2	8
                             """
             );
             assertQueryRows(
@@ -347,25 +328,25 @@ public class SqlLogicalGroupByTest extends AbstractCairoTest {
             assertQueryRows(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY k ORDER BY total",
                     """
-                            k	total
-                            1	6
-                            2	8
+                            total
+                            6
+                            8
                             """
             );
             assertQueryRows(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY lp_group.k ORDER BY total",
                     """
-                            k	total
-                            1	6
-                            2	8
+                            total
+                            6
+                            8
                             """
             );
             assertQueryRows(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY K ORDER BY total",
                     """
-                            K	total
-                            1	6
-                            2	8
+                            total
+                            6
+                            8
                             """
             );
             assertQueryRows(
@@ -393,17 +374,12 @@ public class SqlLogicalGroupByTest extends AbstractCairoTest {
                     """
                             fixed
                             7
-                            7
-                            7
-                            7
                             """
             );
             assertQueryRows("SELECT DISTINCT k FROM lp_group GROUP BY k,i ORDER BY k", """
                     k
                     null
                     1
-                    1
-                    2
                     2
                     3
                     """);
@@ -413,50 +389,110 @@ public class SqlLogicalGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDistinctExposesComputedGroupingKeysWithExistingNames() throws Exception {
+    public void testDistinctOverGroupingKeepsOnlySelectedColumns() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
+            assertQueryRows("SELECT DISTINCT count() c FROM lp_group GROUP BY k ORDER BY c", """
+                    c
+                    1
+                    2
+                    """);
+            assertQueryRows("SELECT DISTINCT count() FROM lp_group GROUP BY s ORDER BY 1", """
+                    count
+                    1
+                    2
+                    3
+                    """);
+            assertQueryRows("SELECT DISTINCT k % 2 AS parity FROM lp_group GROUP BY k ORDER BY parity", """
+                    parity
+                    null
+                    0
+                    1
+                    """);
+            assertQueryRows("SELECT DISTINCT active FROM lp_group GROUP BY active, k ORDER BY active", """
+                    active
+                    false
+                    true
+                    """);
+            assertQueryRows("SELECT count() FROM (SELECT DISTINCT count() c FROM lp_group GROUP BY k)", """
+                    count
+                    2
+                    """);
             assertQueryRows(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY k+1 ORDER BY total",
                     """
-                            column	total
-                            2	6
-                            3	8
+                            total
+                            6
+                            8
                             """
             );
             assertQueryRows(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY 1+k,k*2 ORDER BY total",
                     """
-                            column	column1	total
-                            2	2	6
-                            3	4	8
+                            total
+                            6
+                            8
                             """
             );
             assertQueryRows(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group GROUP BY 7+1 ORDER BY total",
                     """
-                            column	total
-                            8	14
+                            total
+                            14
                             """
             );
             assertQueryRows(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY k,7+1 ORDER BY total",
                     """
-                            k	total
-                            1	6
-                            2	8
+                            total
+                            6
+                            8
                             """
             );
-            assertQueryRows(
-                    "SELECT DISTINCT sum(i) AS total FROM lp_group GROUP BY k+1,k*2 ORDER BY total,k+1",
-                    """
-                            total	column
-                            null	null
-                            null	4
-                            6	2
-                            8	3
-                            """
-            );
+            assertError("SELECT DISTINCT sum(i) AS total FROM lp_group GROUP BY k+1,k*2 ORDER BY total,k+1", 78, "ORDER BY expressions must appear in select list. Invalid column: k");
+        });
+    }
+
+    @Test
+    public void testDistinctOrderMustBeDeterminedBySelectList() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertError("SELECT DISTINCT k FROM lp_group ORDER BY k+i", 43, "ORDER BY expressions must appear in select list. Invalid column: i");
+            assertError("SELECT DISTINCT k FROM lp_group ORDER BY s", 41, "ORDER BY expressions must appear in select list. Invalid column: s");
+            assertError("SELECT DISTINCT count() c FROM lp_group GROUP BY k ORDER BY k", 60, "ORDER BY expressions must appear in select list. Invalid column: k");
+            assertError("SELECT DISTINCT k FROM lp_group GROUP BY k, s ORDER BY s", 55, "ORDER BY expressions must appear in select list. Invalid column: s");
+            assertError("SELECT DISTINCT k FROM lp_group GROUP BY k, s ORDER BY count()", 55, "ORDER BY expressions must appear in select list. Invalid column: count");
+            assertError("SELECT DISTINCT k, sum(i) total FROM lp_group GROUP BY k, s ORDER BY max(i)", 69, "ORDER BY expressions must appear in select list. Invalid column: max");
+            assertError("SELECT DISTINCT k, max(i) OVER () m FROM lp_group ORDER BY i", 59, "ORDER BY expressions must appear in select list. Invalid column: i");
+            assertError("SELECT DISTINCT k, max(i) OVER () m FROM lp_group ORDER BY k+i", 61, "ORDER BY expressions must appear in select list. Invalid column: i");
+            assertError("SELECT DISTINCT sum(i) total FROM lp_group SAMPLE BY 1d ORDER BY count()", 65, "ORDER BY expressions must appear in select list. Invalid column: count");
+            assertQueryRows("SELECT DISTINCT s FROM lp_group ORDER BY count(), s", """
+                    s
+                    
+                    b
+                    a
+                    """);
+            assertQueryRows("SELECT DISTINCT k, s FROM lp_group ORDER BY k+1, 2", """
+                    k\ts
+                    null\t
+                    1\ta
+                    2\tb
+                    3\ta
+                    """);
+            assertQueryRows("SELECT DISTINCT k AS key FROM lp_group ORDER BY lp_group.k DESC", """
+                    key
+                    3
+                    2
+                    1
+                    null
+                    """);
+            assertQueryRows("SELECT DISTINCT k, max(i) OVER () m FROM lp_group ORDER BY m, k+1", """
+                    k\tm
+                    null\t8
+                    1\t8
+                    2\t8
+                    3\t8
+                    """);
         });
     }
 
@@ -465,73 +501,73 @@ public class SqlLogicalGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             assertQueryRows(
-                    "SELECT DISTINCT sum(i*2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
+                    "SELECT DISTINCT k,sum(i*2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
                     """
-                            total
-                            null
-                            null
-                            12
-                            16
-                            """
-            );
-            assertQueryRows(
-                    "SELECT DISTINCT sum(2*i) AS total FROM lp_group GROUP BY k ORDER BY total,k",
-                    """
-                            total
-                            null
-                            null
-                            12
-                            16
-                            """
-            );
-            assertQueryRows(
-                    "SELECT DISTINCT sum(i+2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
-                    """
-                            total
-                            null
-                            null
-                            10
-                            10
-                            """
-            );
-            assertQueryRows(
-                    "SELECT DISTINCT sum(2-i) AS total FROM lp_group GROUP BY k ORDER BY total,k",
-                    """
-                            total
-                            null
-                            null
-                            -6
-                            -2
-                            """
-            );
-            assertQueryRows(
-                    "SELECT DISTINCT sum(i/2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
-                    """
-                            total
-                            null
-                            null
-                            3
-                            4
-                            """
-            );
-            assertQueryRows(
-                    "SELECT DISTINCT sum(i*2) AS total FROM lp_group GROUP BY k ORDER BY sum(i*2)+1,k",
-                    """
-                            total	column
+                            k	total
                             null	null
-                            null	null
-                            12	13
-                            16	17
+                            3	null
+                            1	12
+                            2	16
                             """
             );
             assertQueryRows(
-                    "SELECT DISTINCT sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i*2),k",
+                    "SELECT DISTINCT k,sum(2*i) AS total FROM lp_group GROUP BY k ORDER BY total,k",
                     """
-                            total	sum
+                            k	total
                             null	null
+                            3	null
+                            1	12
+                            2	16
+                            """
+            );
+            assertQueryRows(
+                    "SELECT DISTINCT k,sum(i+2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
+                    """
+                            k	total
                             null	null
-                            6	12
-                            8	16
+                            3	null
+                            1	10
+                            2	10
+                            """
+            );
+            assertQueryRows(
+                    "SELECT DISTINCT k,sum(2-i) AS total FROM lp_group GROUP BY k ORDER BY total,k",
+                    """
+                            k	total
+                            null	null
+                            3	null
+                            2	-6
+                            1	-2
+                            """
+            );
+            assertQueryRows(
+                    "SELECT DISTINCT k,sum(i/2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
+                    """
+                            k	total
+                            null	null
+                            3	null
+                            1	3
+                            2	4
+                            """
+            );
+            assertQueryRows(
+                    "SELECT DISTINCT k,sum(i*2) AS total FROM lp_group GROUP BY k ORDER BY sum(i*2)+1,k",
+                    """
+                            k	total
+                            null	null
+                            3	null
+                            1	12
+                            2	16
+                            """
+            );
+            assertQueryRows(
+                    "SELECT DISTINCT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i*2),k",
+                    """
+                            k	total
+                            null	null
+                            3	null
+                            1	6
+                            2	8
                             """
             );
             assertQueryRows(

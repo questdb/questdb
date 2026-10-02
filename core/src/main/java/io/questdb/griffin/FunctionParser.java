@@ -238,6 +238,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     /**
+     * Whether a timestamp in the given year cannot be represented at nanosecond precision.
+     */
+    public static boolean isBeyondNanoRange(int year) {
+        return year >= 2262;
+    }
+
+    /**
      * Determines the appropriate timestamp type based on the string precision and year range.
      * If the string contains nanosecond precision (more than 6 digits after seconds) and
      * the year is within nano timestamp range (< 2262), returns nano type;
@@ -253,9 +260,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         // Extract year from timestamp string to check nano range
-        int year = extractYearFromTimestamp(timestampStr);
-        if (year >= 2262) {
-            // Year is beyond nano timestamp range, use original type
+        if (isBeyondNanoRange(extractYearFromTimestamp(timestampStr))) {
             return FunctionFactoryDescriptor.toType(sigArgType);
         }
 
@@ -1489,12 +1494,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         int position = argPositions.getQuick(k);
                         CharSequence timestampStr = arg.getStrA(null);
                         // Adaptive precision: prefer nano if the string has nanosecond precision
-                        int adaptiveType = getAdaptiveTimestampType(timestampStr, sigArgType);
-                        final long timestamp;
-                        if (binding != null) {
-                            adaptiveType = binding.timestampConstantType(node, k, adaptiveType, args);
-                        }
-                        timestamp = parseTimestamp(adaptiveType, timestampStr, position);
+                        final int adaptiveType = getAdaptiveTimestampType(timestampStr, sigArgType);
+                        final long timestamp = parseTimestamp(adaptiveType, timestampStr, position);
                         args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType));
                     } else if (sigArgTypeTag == ColumnType.DATE) {
                         int position = argPositions.getQuick(k);

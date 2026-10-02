@@ -25,11 +25,13 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 /**
  * Immutable published value; full timestamp types retain their precision.
@@ -55,6 +57,14 @@ public final class ConstantExpression extends BoundExpression {
         source = null;
         longValue = 0;
         value = null;
+    }
+
+    /** Both constants hold the same value of the same type. */
+    public boolean isSameValue(ConstantExpression that) {
+        return getDataType() == that.getDataType() && longValue == that.longValue && hh == that.hh && hl == that.hl && lh == that.lh
+                && (value == that.value
+                || value instanceof CharSequence text && that.value instanceof CharSequence other && Chars.equals(text, other)
+                || value instanceof Utf8Sequence text && that.value instanceof Utf8Sequence other && Utf8s.equals(text, other));
     }
 
     /** The value is spelled in SQL as a literal, optionally negated, rather than folded from an expression. */

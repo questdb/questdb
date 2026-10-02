@@ -145,7 +145,7 @@ public class SqlLogicalFilterTest extends AbstractCairoTest {
             createRows();
             assertModes("SELECT id FROM lp_filter WHERE nullif(i,0)>0", false);
             assertModes("SELECT id FROM lp_filter WHERE label='a'", false);
-            assertModes("SELECT id FROM lp_filter WHERE ts<'2020-01-01T00:00:00.000000001Z'", false);
+            assertModes("SELECT id FROM lp_filter WHERE ts<'2020-01-01T00:00:00.000000001Z'", true);
             assertModes("SELECT id FROM lp_filter WHERE ts<'2020-01-01T00:00:00.000001Z'", true);
             bindVariableService.setBoolean(0, true);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {

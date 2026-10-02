@@ -35,6 +35,103 @@ import org.junit.Test;
 
 public class SqlLogicalWindowOptimiserTest extends AbstractCairoTest {
     @Test
+    public void testEqualCallsOfNestedAndTopLevelWindowsComputeOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT id, sum(v) OVER (ORDER BY id) a, sum(sum(v) OVER (ORDER BY id)) OVER (ORDER BY id) b FROM lp_window_prune")
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindowLight
+                              orderedFunctions: [[id] => [sum(sum) over (rows between unbounded preceding and current row)]]
+                                CachedWindowLight
+                                  orderedFunctions: [[id] => [sum(v) over (rows between unbounded preceding and current row)]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_window_prune
+                            """)
+                    .returns("""
+                            id\ta\tb
+                            3\t60.0\t100.0
+                            1\t10.0\t10.0
+                            2\t30.0\t40.0
+                            4\t100.0\t200.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testEqualCallsWithComputedOrderShareOrderColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT id, sum(v) OVER (ORDER BY id + 1) a, sum(v) OVER (ORDER BY id + 1) b FROM lp_window_prune")
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                CachedWindowLight
+                                  orderedFunctions: [[__window_order] => [sum(v) over (rows between unbounded preceding and current row)]]
+                                    VirtualRecord
+                                      functions: [id,v,id+1]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_window_prune
+                            """)
+                    .returns("""
+                            id\ta\tb
+                            3\t60.0\t60.0
+                            1\t10.0\t10.0
+                            2\t30.0\t30.0
+                            4\t100.0\t100.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testEqualWindowCallsComputeOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT id, sum(v) OVER (PARTITION BY grp) a, sum(v) OVER (PARTITION BY grp) b, sum(lp_window_prune.v) OVER (PARTITION BY grp) c FROM lp_window_prune")
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                CachedWindowLight
+                                  unorderedFunctions: [sum(v) over (partition by [grp])]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_window_prune
+                            """)
+                    .returns("""
+                            id\ta\tb\tc
+                            3\t40.0\t40.0\t40.0
+                            1\t40.0\t40.0\t40.0
+                            2\t60.0\t60.0\t60.0
+                            4\t60.0\t60.0\t60.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testEqualWindowCallsMergeUnderFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT * FROM (SELECT id, row_number() OVER (ORDER BY v) a, row_number() OVER (ORDER BY v) b FROM lp_window_prune) WHERE b > 2")
+                    .withPlan("""
+                            SelectedRecord
+                                Filter filter: 2<a
+                                    CachedWindowLight
+                                      orderedFunctions: [[v] => [row_number()]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_window_prune
+                            """)
+                    .returns("""
+                            id\ta\tb
+                            3\t3\t3
+                            4\t4\t4
+                            """);
+        });
+    }
+
+    @Test
     public void testFilterCannotChangeWindowPartition() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -81,6 +178,30 @@ public class SqlLogicalWindowOptimiserTest extends AbstractCairoTest {
             createRows();
             assertQueryBothPaths("SELECT id,rn,lag(rn) OVER (ORDER BY id) prev FROM (SELECT id,row_number() OVER (PARTITION BY grp ORDER BY v) rn FROM lp_window_prune) ORDER BY id",
                     "id\trn\tprev\n1\t1\tnull\n2\t1\t1\n3\t2\t1\n4\t2\t2\n");
+        });
+    }
+
+    @Test
+    public void testVolatileWindowCallsDoNotMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQuery("SELECT a = b eq, count() FROM (SELECT first_value(rnd_int(1, 1_000_000, 0)) OVER (ORDER BY id ROWS CURRENT ROW) a, " +
+                    "first_value(rnd_int(1, 1_000_000, 0)) OVER (ORDER BY id ROWS CURRENT ROW) b FROM lp_window_prune)")
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              keys: [eq]
+                              values: [count(*)]
+                                CachedWindowLight
+                                  orderedFunctions: [[id] => [first_value(rnd_int(1,1000000,0)) over (),first_value(rnd_int(1,1000000,0)) over ()]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_window_prune
+                            """)
+                    .returns("""
+                            eq\tcount
+                            false\t4
+                            """);
         });
     }
 

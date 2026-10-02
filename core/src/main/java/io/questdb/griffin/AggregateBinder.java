@@ -47,20 +47,16 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 
 import static io.questdb.griffin.BindContext.blockGroupBy;
-import static io.questdb.griffin.BindContext.copyCorrelatedAliases;
 import static io.questdb.griffin.BindContext.findGroupingColumn;
 import static io.questdb.griffin.BindContext.getColumnIndexQuiet;
 import static io.questdb.griffin.BindContext.hasComputedProjection;
-import static io.questdb.griffin.BindContext.hasLiteral;
 import static io.questdb.griffin.BindContext.isPlainColumnProjection;
 import static io.questdb.griffin.BindContext.isRowCount;
-import static io.questdb.griffin.BindContext.isTrivialCondition;
 import static io.questdb.griffin.BindContext.isWildcard;
+import static io.questdb.griffin.BindContext.orderNotSelected;
 import static io.questdb.griffin.BindContext.sourceAlias;
-import static io.questdb.griffin.LateralBinder.hasOnlyCorrelatedKeys;
 import static io.questdb.griffin.OrderBinder.orderProjectionIndex;
 
 final class AggregateBinder implements Mutable {
@@ -69,7 +65,6 @@ final class AggregateBinder implements Mutable {
     private final IntList aggregateProjectionIndexes = new IntList();
     private final SqlBinder binder;
     private final BindContext ctx;
-    private final ObjectPool<DistinctPlan> distincts = new ObjectPool<>(DistinctPlan.FACTORY, 4);
     private final OrderBinder orderBinder;
     private final IntList orderOutputIndexes;
 
@@ -82,7 +77,6 @@ final class AggregateBinder implements Mutable {
 
     @Override
     public void clear() {
-        distincts.clear();
         aggregateNodeStack.clear();
         aggregateOrderExpressions.clear();
         aggregateProjectionIndexes.clear();
@@ -125,6 +119,39 @@ final class AggregateBinder implements Mutable {
             }
         }
         return true;
+    }
+
+    private static boolean isProjectingAllGroupingKeys(AggregatePlan aggregate, ProjectPlan project) {
+        final OutputSchema output = aggregate.getOutput();
+        for (int k = 0, n = aggregate.getGroupingExpressions().size(); k < n; k++) {
+            final int keyId = output.getColumnId(k);
+            boolean isProjected = false;
+            for (int i = 0, m = project.getExpressions().size(); i < m && !isProjected; i++) {
+                isProjected = project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == keyId;
+            }
+            if (!isProjected) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isSameColumn(ExpressionNode left, ExpressionNode right, OutputSchema input, QueryModel source) {
+        final int index = FunctionBinder.findColumn(left, input, sourceAlias(source));
+        return index >= 0 && index == FunctionBinder.findColumn(right, input, sourceAlias(source));
+    }
+
+    private static boolean isSelectAlias(ExpressionNode literal, QueryModel model) {
+        if (Chars.indexOfLastUnquoted(literal.token, '.') >= 0) {
+            return false;
+        }
+        final CharSequence name = GenericLexer.unquote(literal.token);
+        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(model.getBottomUpColumns().getQuick(i).getName(), name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isSelectedExpression(ExpressionNode expression, QueryModel model) {
@@ -253,7 +280,6 @@ final class AggregateBinder implements Mutable {
                         visible.getOutput().add(ctx.nextColumnId++, output.getColumnName(i), output.getColumnType(i), output.getMetadata(i), output.isVisible(i));
                         visible.getOutput().setSymbolTableStatic(i, output.isSymbolTableStatic(i));
                     }
-                    copyCorrelatedAliases(output, visible.getOutput(), visibleCount);
                     result = visible;
                 }
             }
@@ -322,7 +348,6 @@ final class AggregateBinder implements Mutable {
                             ordering.getOutput().add(output.getColumnId(k), output.getColumnName(k), output.getColumnType(k), output.getMetadata(k), output.isVisible(k));
                             ordering.getOutput().setSymbolTableStatic(ordering.getOutput().getColumnCount() - 1, output.isSymbolTableStatic(k));
                         }
-                        copyCorrelatedAliases(project.getOutput(), ordering.getOutput(), visibleCount);
                         if (isSingleRow) {
                             ordering.getOutput().setTimestampIndex(project.getOutput().getTimestampIndex());
                         }
@@ -378,7 +403,6 @@ final class AggregateBinder implements Mutable {
                         }
                     }
                 }
-                binder.lateralBinder.exposeCorrelated(visible, output, null);
                 result = visible;
             }
         }
@@ -395,9 +419,6 @@ final class AggregateBinder implements Mutable {
         if (hasOuterProjection) {
             tuple = selected;
         } else {
-            // The DISTINCT factory consumes its complete child's tuple.
-            // An explicit GROUP BY does not itself force a narrowing projection
-            // under DISTINCT, so unselected keys can remain observable here.
             tuple = ctx.projects.next().of(aggregate, selected.getPosition());
             ctx.aliases.clear();
             ctx.aliasSequences.clear();
@@ -407,13 +428,6 @@ final class AggregateBinder implements Mutable {
                         ? distinctGroupingName(i, model, source, aggregate) : output.getColumnName(i);
                 ctx.addProjection(tuple, ctx.columns.next().of(output.getColumnId(i), output.getColumnType(i), aggregate.getPosition()),
                         output.getMetadata(i), name, true);
-            }
-            final OutputSchema selectedOutput = selected.getOutput();
-            for (int i = 0, n = selectedOutput.getCorrelatedAliasCount(); i < n; i++) {
-                final int index = findAggregateProjection(tuple, selected.getExpressions().getQuick(selectedOutput.getCorrelatedAliasIndex(i)));
-                if (index >= 0) {
-                    tuple.getOutput().addCorrelatedAlias(selectedOutput.getCorrelatedAliasQualifier(i), selectedOutput.getCorrelatedAliasName(i), index);
-                }
             }
         }
         final ProjectPlan visible = ctx.projects.next().of(tuple, selected.getPosition());
@@ -446,9 +460,6 @@ final class AggregateBinder implements Mutable {
                     }
                 }
                 if (index < 0) {
-                    if (order.type == ExpressionNode.LITERAL && findGroupingExpression(order, source, aggregate) < 0) {
-                        throw SqlException.$(order.position, "ORDER BY expressions must appear in select list. Invalid column: ").put(order.token);
-                    }
                     final BoundExpression expression = bindAggregateOutput(order, source, aggregate, executionContext);
                     index = findAggregateProjection(tuple, expression);
                     // An ORDER reference to a selected source column needs no
@@ -464,15 +475,6 @@ final class AggregateBinder implements Mutable {
                         index = tuple.getExpressions().size();
                         ctx.addProjection(tuple, expression, null, name, false);
                     }
-                    if (projected < 0 && (!ctx.isAggregate(order) || isNormalisedSum(order, aggregate))
-                            && (order.type == ExpressionNode.FUNCTION || order.type == ExpressionNode.OPERATION)) {
-                        // The DISTINCT equality tuple includes this computed ORDER BY key;
-                        // publishing it keeps the distinct rows distinguishable.
-                        final OutputSchema output = tuple.getOutput();
-                        visible.getExpressions().add(ctx.columns.next().of(output.getColumnId(index), output.getColumnType(index), order.position));
-                        visible.getOutput().add(ctx.nextColumnId++, output.getColumnName(index), output.getColumnType(index), output.getMetadata(index), true);
-                        visible.getOutput().setSymbolTableStatic(visible.getOutput().getColumnCount() - 1, output.isSymbolTableStatic(index));
-                    }
                 }
                 final int type = tuple.getOutput().getColumnType(index);
                 if (!ColumnType.isComparable(type)) {
@@ -481,7 +483,7 @@ final class AggregateBinder implements Mutable {
                 orderOutputIndexes.add(index);
             }
         }
-        final DistinctPlan distinct = distincts.next().of(tuple, model.getModelPosition());
+        final DistinctPlan distinct = ctx.distincts.next().of(tuple, model.getModelPosition());
         distinct.getOutput().copyFrom(tuple.getOutput());
         ctx.stopTimestampIntrinsics(distinct.getOutput());
         LogicalPlan result = distinct;
@@ -576,7 +578,7 @@ final class AggregateBinder implements Mutable {
             return;
         }
         if (expression.type == ExpressionNode.LITERAL) {
-            throw SqlException.$(expression.position, "ORDER BY expressions must appear in select list. Invalid column: ").put(expression.token);
+            throw orderNotSelected(expression);
         }
         if (expression.paramCount < 3) {
             collectAggregateOrderSubstitutions(expression.lhs, source, aggregate, project, visibleCount);
@@ -620,7 +622,12 @@ final class AggregateBinder implements Mutable {
             return false;
         }
         if (left.type == ExpressionNode.LITERAL) {
-            return ctx.bindColumnIndex(left, input, source) == ctx.bindColumnIndex(right, input, source);
+            final boolean isLeftOuter = ctx.functionBinder.isOuterColumn(left, input, sourceAlias(source));
+            final boolean isRightOuter = ctx.functionBinder.isOuterColumn(right, input, sourceAlias(source));
+            if (isLeftOuter || isRightOuter) {
+                return isLeftOuter && isRightOuter && Chars.equalsIgnoreCase(left.token, right.token);
+            }
+            return isSameColumn(left, right, input, source);
         }
         if (left.type == ExpressionNode.CONSTANT ? !Chars.equals(left.token, right.token) : !Chars.equalsIgnoreCase(left.token, right.token)) {
             return false;
@@ -707,16 +714,6 @@ final class AggregateBinder implements Mutable {
         return false;
     }
 
-    private boolean hasOnlyAggregateSelections(QueryModel model, OutputSchema scope, CharSequence alias) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode expression = ctx.aggregateSelectExpressions.getQuick(i);
-            if (!ctx.hasAggregate(expression) && hasLiteral(expression) && !binder.lateralBinder.isOuterOnly(expression, scope, alias)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private boolean hasTimestampComputation(OutputSchema input, QueryModel source) throws SqlException {
         for (int i = 0, n = ctx.aggregateSelectExpressions.size(); i < n; i++) {
             final ExpressionNode expression = ctx.aggregateSelectExpressions.getQuick(i);
@@ -782,6 +779,30 @@ final class AggregateBinder implements Mutable {
     }
 
     /**
+     * The selected tuple determines the groups: every grouping key, including the SAMPLE BY bucket, is selected.
+     */
+    private boolean isDistinctGroupingSelected(QueryModel model, QueryModel source, OutputSchema input) throws SqlException {
+        if (source.getSampleBy() != null) {
+            final int timestampIndex = input.getTimestampIndex();
+            for (int i = 0, n = model.getBottomUpColumns().size(); i < n && timestampIndex >= 0; i++) {
+                final ExpressionNode column = model.getBottomUpColumns().getQuick(i).getAst();
+                if (column.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(column, input, sourceAlias(source)) == timestampIndex) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            final ExpressionNode group = resolveGroupBy(groupBy.getQuick(i), model);
+            if (!isSelectedExpression(group, model) && (group.type != ExpressionNode.LITERAL || !isSelectedColumn(group, model, source, input))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * The aggregate is a sum the optimiser computes above the aggregate, see
      * {@link LogicalPlans#normalisableSumOperation}, so it is a computed value of the DISTINCT tuple.
      */
@@ -796,15 +817,32 @@ final class AggregateBinder implements Mutable {
         }
         final OutputSchema input = aggregate.getInput().getType() == LogicalPlan.Type.WINDOW
                 ? ctx.windowBindingScope(aggregate.getInput().getOutput()) : aggregate.getInput().getOutput();
-        final int index = FunctionBinder.findColumn(left, input, sourceAlias(source));
-        return index >= 0 && index == FunctionBinder.findColumn(right, input, sourceAlias(source));
+        return isSameColumn(left, right, input, source);
+    }
+
+    /**
+     * The literal does not name a source column the select list leaves out; a select alias or an
+     * unknown name passes, and binding reports the unknown one.
+     */
+    private boolean isSelectedColumn(ExpressionNode literal, QueryModel model, QueryModel source, OutputSchema input) {
+        final int index = FunctionBinder.findColumn(literal, input, sourceAlias(source));
+        if (index < 0) {
+            return true;
+        }
+        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+            final ExpressionNode column = model.getBottomUpColumns().getQuick(i).getAst();
+            if (isWildcard(column) || column.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(column, input, sourceAlias(source)) == index) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean needsDistinctAggregateProjection(
             QueryModel model, QueryModel source, AggregatePlan aggregate, ProjectPlan selected, boolean isOrderEnabled
     ) throws SqlException {
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
-        if (groupBy.size() == 0) {
+        if (groupBy.size() == 0 || !isProjectingAllGroupingKeys(aggregate, selected)) {
             return true;
         }
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
@@ -916,7 +954,7 @@ final class AggregateBinder implements Mutable {
     private boolean rewriteCountDistinct(
             QueryModel model, QueryModel source, AggregatePlan aggregate, SqlExecutionContext executionContext
     ) throws SqlException {
-        if (source.getNestedModel() != null
+        if (source.getNestedModel() != null || LogicalPlans.hasOuterColumn(aggregate.getInput(), ctx.outerColumnScratch)
                 || source.getTableName() == null || source.getJoinModels().size() != 1
                 || model.getJoinModels().size() != 1 || model.getWhereClause() != null
                 || model.getSampleBy() != null || source.getSampleBy() != null
@@ -989,6 +1027,37 @@ final class AggregateBinder implements Mutable {
         return false;
     }
 
+    private void validateDistinctOrder(
+            ExpressionNode node, QueryModel model, QueryModel source, OutputSchema input, boolean isGroupingSelected
+    ) throws SqlException {
+        if (node == null || isSelectedExpression(node, model)) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            if (!isSelectedColumn(node, model, source, input)) {
+                throw orderNotSelected(node);
+            }
+            return;
+        }
+        if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION) {
+            return;
+        }
+        if (ctx.isAggregate(node)) {
+            if (!isGroupingSelected) {
+                throw orderNotSelected(node);
+            }
+            return;
+        }
+        if (node.paramCount < 3) {
+            validateDistinctOrder(node.lhs, model, source, input, isGroupingSelected);
+            validateDistinctOrder(node.rhs, model, source, input, isGroupingSelected);
+        } else {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                validateDistinctOrder(node.args.getQuick(i), model, source, input, isGroupingSelected);
+            }
+        }
+    }
+
     static boolean hasAggregateReference(ExpressionNode node, QueryModel model) {
         if (node.type == ExpressionNode.LITERAL) {
             final int dot = Chars.indexOfLastUnquoted(node.token, '.');
@@ -1056,7 +1125,7 @@ final class AggregateBinder implements Mutable {
         }
         final OutputSchema bindingScope = aggregate.getInput().getType() == LogicalPlan.Type.WINDOW ? ctx.windowBindingScope(input) : input;
         final BoundExpression bound;
-        if (expression.type == ExpressionNode.LITERAL) {
+        if (expression.type == ExpressionNode.LITERAL && !ctx.functionBinder.isOuterColumn(expression, bindingScope, sourceAlias(source))) {
             final int index = ctx.bindColumnIndex(expression, bindingScope, source);
             bound = ctx.columns.next().of(input.getColumnId(index), input.getColumnType(index), expression.position);
         } else {
@@ -1098,14 +1167,14 @@ final class AggregateBinder implements Mutable {
         final boolean retainDistinct = model.isDistinct() && !isDistinctRewritten(model, source, isOrderAndLimitEnabled);
         ctx.aggregateSelectExpressions.clear();
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode expression = binder.lateralBinder.substituteLateralCounts(selectExpressions == null
-                    ? model.getBottomUpColumns().getQuick(i).getAst() : selectExpressions.getQuick(i), input.getOutput());
+            final ExpressionNode expression = selectExpressions == null
+                    ? model.getBottomUpColumns().getQuick(i).getAst() : selectExpressions.getQuick(i);
             ctx.aggregateSelectExpressions.add(hasSampleByFill ? ExpressionNode.deepClone(ctx.bindingExpressions, expression) : expression);
         }
         aggregateOrderExpressions.clear();
         final ObjList<ExpressionNode> orders = selectExpressions == null ? source.getOrderBy() : ctx.windowOrderExpressions;
         for (int i = 0, n = orders.size(); i < n; i++) {
-            aggregateOrderExpressions.add(binder.lateralBinder.substituteLateralCounts(orders.getQuick(i), input.getOutput()));
+            aggregateOrderExpressions.add(orders.getQuick(i));
         }
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
         aggregate.setExplicitGrouping(groupBy.size() > 0);
@@ -1120,7 +1189,7 @@ final class AggregateBinder implements Mutable {
             int remainingGroups = groupBy.size();
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 final ExpressionNode group = groupBy.getQuick(i);
-                final ExpressionNode expression = binder.lateralBinder.substituteLateralCounts(resolveGroupBy(group, model), input.getOutput());
+                final ExpressionNode expression = resolveGroupBy(group, model);
                 if (isWildcard(expression)) {
                     throw SqlException.$(expression.position, "'*' is not allowed in GROUP BY");
                 }
@@ -1175,21 +1244,12 @@ final class AggregateBinder implements Mutable {
                 }
             }
         }
-        binder.lateralBinder.addCorrelatedKeys(aggregate, input.getOutput(), model);
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             collectAggregateNodes(ctx.aggregateSelectExpressions.getQuick(i), !hasSampleByFill);
         }
         if (isOrderAndLimitEnabled) {
             for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
                 collectAggregateNodes(aggregateOrderExpressions.getQuick(i), true);
-            }
-        }
-        if (ctx.lateralScopes.size() > 0) {
-            for (int i = 0, n = ctx.aggregateNodes.size(); i < n; i++) {
-                final ExpressionNode node = ctx.aggregateNodes.getQuick(i);
-                if (hasLiteral(node) && binder.lateralBinder.isOuterOnly(node, input.getOutput(), sourceAlias(source))) {
-                    throw SqlException.$(node.position, "aggregate functions are not allowed in FROM clause of their own query level");
-                }
             }
         }
 
@@ -1202,6 +1262,9 @@ final class AggregateBinder implements Mutable {
                       ? ctx.normalizedCount.of(ExpressionNode.FUNCTION, expression.token, expression.precedence, expression.position) : expression;
             final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, selectExpressions == null ? aggregate.getInput().getOutput() : ctx.windowBindingScope(aggregate.getInput().getOutput()), sourceAlias(source), executionContext);
             if (bound instanceof FunctionExpression function && function.isAggregate()) {
+                if (LogicalPlans.readsOnlyOuterColumns(function)) {
+                    throw SqlException.$(expression.position, "aggregate functions are not allowed in FROM clause of their own query level");
+                }
                 aggregate.getAggregates().add(function);
                 i++;
             } else {
@@ -1226,7 +1289,7 @@ final class AggregateBinder implements Mutable {
         }
 
         if (sampleBy != null) {
-            binder.sampleByBinder.bindSampleByFill(source, sampleBy);
+            binder.sampleByBinder.bindSampleByFill(source, sampleBy, executionContext);
         }
 
         ctx.aliases.clear();
@@ -1236,8 +1299,10 @@ final class AggregateBinder implements Mutable {
             aggregate.getOutput().setTimestampIndex(0);
         }
         LogicalPlan aggregation = aggregate;
-        if (sampleByBucket != null && hasSampleByFill) {
-            aggregation = binder.sampleByBinder.bindFill(source, aggregate, sampleByBucket, executionContext);
+        if ((sampleByBucket != null || sampleBy != null) && SampleByBinder.isFillPlanned(source)) {
+            final int timestampIndex = sampleBy == null ? aggregate.getGroupingExpressions().indexOf(sampleByBucket)
+                    : findGroupingColumn(sampleBy, sampleBy.getTimestampColumnId());
+            aggregation = binder.sampleByBinder.bindFill(source, aggregate, timestampIndex, executionContext);
         }
         if (sampleByBucket != null && source.getOrderBy().size() == 0) {
             final int timestampIndex = aggregate.getGroupingExpressions().indexOf(sampleByBucket);
@@ -1287,14 +1352,6 @@ final class AggregateBinder implements Mutable {
                 ctx.addProjection(project, bound, index < 0 ? null : aggregate.getOutput().getMetadata(index), column.getName(), true);
             }
         }
-        binder.lateralBinder.exposeCorrelated(project, input.getOutput(), aggregate);
-        final boolean isCorrelatedScalar = groupBy.size() == 0 && hasOnlyAggregateSelections(model, input.getOutput(), sourceAlias(source)) && hasOnlyCorrelatedKeys(aggregate, input.getOutput()) && !retainDistinct && sampleBy == null && sampleByBucket == null
-                && aggregate.getGroupingExpressions().size() > 0 && model.getUnionModel() == null;
-        final boolean isBodyScalar = isCorrelatedScalar && model == binder.lateralBinder.lateralBodyModel && binder.lateralBinder.isCorrelatedToInnermostLateral(project.getOutput());
-        if (isBodyScalar) {
-            binder.lateralBinder.registerScalarBodyTemplates(model, aggregate, project);
-        }
-
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (project.getExpressions().getQuick(i) instanceof ColumnExpression column
                     && (sampleBy == null || column.isDirectReference())
@@ -1302,35 +1359,13 @@ final class AggregateBinder implements Mutable {
                 project.getOutput().setTimestampIndex(i);
             }
         }
-        final LogicalPlan result = retainDistinct
+        final boolean isDistinctBound = retainDistinct
+                || model.isDistinct() && groupBy.size() > 0 && !isProjectingAllGroupingKeys(aggregate, project);
+        final LogicalPlan result = isDistinctBound
                 ? bindDistinctAggregation(model, source, aggregate, project, isOrderAndLimitEnabled, executionContext)
                 : bindAggregateOrder(model, source, aggregate, project, orders, isOrderAndLimitEnabled, executionContext);
         if (sampleBy != null) {
             binder.sampleByBinder.projectSampleByKeys(sampleBy, model, source.getJoinModels().size() > 1);
-        }
-        if (isCorrelatedScalar && !isBodyScalar) {
-            if (result == project) {
-                final QueryModel occurrence = binder.lateralBinder.innerLateralOccurrence(model);
-                if (occurrence != null && binder.lateralBinder.isWrapperRejectingZeroCount(model)) {
-                    return result;
-                }
-                if (occurrence != null && isTrivialCondition(occurrence.getJoinCriteria())
-                        && binder.lateralBinder.isCorrelatedToInnermostLateral(project.getOutput()) && binder.lateralBinder.isWrappedScalarBody(model)) {
-                    binder.lateralBinder.isLateralScalarBody = true;
-                    return result;
-                }
-                return binder.lateralBinder.compensateScalarAggregate(model, aggregate, project, executionContext);
-            }
-            if (model.getLimitLo() != null || model.getLimitHi() != null) {
-                final ExpressionNode guard = binder.lateralBinder.scalarLimitGuard(model, false);
-                final LogicalPlan compensated = binder.lateralBinder.compensateScalarAggregate(model, aggregate, project, executionContext);
-                if (compensated != project) {
-                    final BoundExpression bound = ctx.functionBinder.bind(guard, compensated.getOutput(), null, executionContext);
-                    final FilterPlan filter = ctx.filters.next().of(compensated, bound, project.getPosition());
-                    filter.getOutput().copyFrom(compensated.getOutput());
-                    return filter;
-                }
-            }
         }
         return result;
     }
@@ -1357,7 +1392,7 @@ final class AggregateBinder implements Mutable {
                         }
                     }
                     if (index < 0) {
-                        throw SqlException.$(order.position, "ORDER BY expressions must appear in select list. Invalid column: ").put(order.token);
+                        throw orderNotSelected(order);
                     }
                 } else if (index < 0) {
                     int outputIndex = 0;
@@ -1376,9 +1411,7 @@ final class AggregateBinder implements Mutable {
                         }
                     }
                     if (index < 0) {
-                        // DISTINCT includes unselected ORDER BY expressions in its
-                        // visible equality tuple. Alias references
-                        // evaluate above the original projection, just as SELECT aliases do.
+                        // A computed ORDER BY key evaluates above the DISTINCT, over the selected tuple.
                         if (project == original) {
                             project = ctx.projects.next().of(original, original.getPosition());
                             ctx.aliases.clear();
@@ -1389,7 +1422,6 @@ final class AggregateBinder implements Mutable {
                                                 original.getExpressions().getQuick(k).getPosition()),
                                         inputSchema.getMetadata(k), inputSchema.getColumnName(k), inputSchema.isVisible(k));
                             }
-                            copyCorrelatedAliases(original.getOutput(), project.getOutput(), visibleCount);
                             project.getOutput().setTimestampIndex(original.getOutput().getTimestampIndex());
                         }
                         ctx.substitutionNodes.clear();
@@ -1400,7 +1432,7 @@ final class AggregateBinder implements Mutable {
                         final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, order.token,
                                 Chars.indexOfLastUnquoted(order.token, '.'), ctx.aliases, ctx.aliasSequences, true);
                         index = project.getExpressions().size();
-                        ctx.addProjection(project, bound, null, name, true);
+                        ctx.addProjection(project, bound, null, name, false);
                     }
                 }
                 final int type = project.getOutput().getColumnType(index);
@@ -1410,22 +1442,29 @@ final class AggregateBinder implements Mutable {
                 orderOutputIndexes.add(index);
             }
         }
-        final DistinctPlan distinct = distincts.next().of(project, model.getModelPosition());
-        distinct.getOutput().copyFrom(project.getOutput());
+        final DistinctPlan distinct = ctx.distincts.next().of(original, model.getModelPosition());
+        distinct.getOutput().copyFrom(original.getOutput());
         ctx.stopTimestampIntrinsics(distinct.getOutput());
         if (orderOutputIndexes.size() == 0) {
             return distinct;
         }
-        final SortPlan sort = ctx.sorts.next().of(distinct, source.getOrderByPosition());
+        final LogicalPlan sortInput;
+        if (project == original) {
+            sortInput = distinct;
+        } else {
+            project.replaceInput(0, distinct);
+            sortInput = project;
+        }
+        final SortPlan sort = ctx.sorts.next().of(sortInput, source.getOrderByPosition());
         for (int i = 0, n = orderOutputIndexes.size(); i < n; i++) {
-            final int columnId = distinct.getOutput().getColumnId(orderOutputIndexes.getQuick(i));
+            final int columnId = sortInput.getOutput().getColumnId(orderOutputIndexes.getQuick(i));
             if (!sort.getColumnIds().contains(columnId)) {
                 sort.getColumnIds().add(columnId);
                 sort.getDirections().add(source.getOrderByDirection().getQuick(i));
             }
         }
         sort.deriveOutput();
-        return sort;
+        return project == original ? sort : orderBinder.projectVisible(sort, project.getOutput(), project, visibleCount);
     }
 
     /**
@@ -1547,7 +1586,8 @@ final class AggregateBinder implements Mutable {
                 return i;
             }
         }
-        if (expression.type == ExpressionNode.LITERAL && !isWildcard(expression)) {
+        if (expression.type == ExpressionNode.LITERAL && !isWildcard(expression)
+                && !ctx.functionBinder.isOuterColumn(expression, bindingScope, sourceAlias(source))) {
             final int index = ctx.bindColumnIndex(expression, bindingScope, source);
             return findGroupingColumn(aggregate, bindingScope.getColumnId(index));
         }
@@ -1572,9 +1612,6 @@ final class AggregateBinder implements Mutable {
     }
 
     boolean isDistinctRewritten(QueryModel model, QueryModel source, boolean isOrderEnabled) {
-        if (!ctx.configuration.isSqlDistinctGroupByRewriteEnabled()) {
-            return false;
-        }
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final QueryColumn column = model.getBottomUpColumns().getQuick(i);
             if (column.isWindowExpression() || ctx.isAggregate(column.getAst())) {
@@ -1599,6 +1636,21 @@ final class AggregateBinder implements Mutable {
             }
         }
         return SqlException.$(model.getModelPosition(), "Unsupported SQL complexity for the UPDATE statement");
+    }
+
+    /**
+     * Rejects an ORDER BY expression of a SELECT DISTINCT that the selected tuple does not determine:
+     * one that reads a source column the select list leaves out, or an aggregate whose groups the
+     * select list does not fix.
+     */
+    void validateDistinctOrder(QueryModel model, QueryModel source, OutputSchema input) throws SqlException {
+        final boolean isGroupingSelected = isDistinctGroupingSelected(model, source, input);
+        for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
+            final ExpressionNode order = source.getOrderBy().getQuick(i);
+            if (order.type != ExpressionNode.LITERAL || !isSelectAlias(order, model)) {
+                validateDistinctOrder(order, model, source, input, isGroupingSelected);
+            }
+        }
     }
 
     void validateGroupByKeys(QueryModel model, QueryModel source) throws SqlException {

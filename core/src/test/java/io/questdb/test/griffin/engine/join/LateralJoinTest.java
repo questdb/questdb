@@ -638,7 +638,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining(
                             "Hash Left Outer Join Light",
-                            "condition: l2.__qdb_outer_ref__1_a=t1.k"
+                            "condition: l2.__qdb_outer_ref__0_k=t1.k"
                     )
                     .withPlanNotContaining("filter: true")
                     .returns("""
@@ -664,7 +664,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining(
                             "Hash Left Outer Join Light",
-                            "condition: l2.__qdb_outer_ref__2_a=__qdb_count_driver__1.__qdb_count_driver__1_a"
+                            "condition: __qdb_outer_ref__0_a=__qdb_outer_ref__0_a"
                     )
                     .withPlanNotContaining("filter: true")
                     .returns("""
@@ -673,6 +673,87 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t2\t1
                             2\t1\t0
                             2\t2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarAggregateConstantTrueOnKeepsEmptyRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 20)");
+
+            final String expected = """
+                    k\ts
+                    1\t30
+                    2\tnull
+                    """;
+            assertQuery("SELECT t1.k, l.s FROM t1 JOIN LATERAL (SELECT sum(v) AS s FROM t2 WHERE t2.k = t1.k) l ON 1 = 1 ORDER BY t1.k")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light")
+                    .returns(expected);
+            assertQuery("SELECT t1.k, l.s FROM t1 JOIN LATERAL (SELECT sum(v) AS s FROM t2 WHERE t2.k = t1.k) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testInnerLateralSameTypeCastOfOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k LONG)");
+            execute("INSERT INTO o VALUES (1), (2), (3)");
+            assertQuery("SELECT o.k, x.c FROM o CROSS JOIN LATERAL (SELECT CAST(o.k AS LONG) c FROM long_sequence(2)) x ORDER BY o.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tc
+                            1\t1
+                            1\t1
+                            2\t2
+                            2\t2
+                            3\t3
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarPivotKeepsEmptyRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT)");
+            execute("INSERT INTO orders VALUES (1), (2)");
+            execute("CREATE TABLE trades (order_id INT, side SYMBOL, qty DOUBLE)");
+            execute("INSERT INTO trades VALUES (1, 'buy', 10.0), (1, 'sell', 20.0)");
+
+            assertQuery("SELECT * FROM (SELECT side, sum(qty) AS total FROM trades WHERE order_id = 2 GROUP BY side) PIVOT (sum(total) FOR side IN ('buy', 'sell'))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            buy\tsell
+                            null\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, t.buy, t.sell
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT side, sum(qty) AS total
+                            FROM trades
+                            WHERE order_id = o.id
+                            GROUP BY side
+                        ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tbuy\tsell
+                            1\t10.0\t20.0
+                            2\tnull\tnull
                             """);
         });
     }
@@ -14462,6 +14543,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ) t
                     ORDER BY o.id
                     """)
+                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             id\tqty
@@ -15818,7 +15900,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                 GroupBy vectorized: false
                                                   keys: [__qdb_outer_ref__0_id]
                                                   values: [count(*)]
-                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Cross Join
                                                             PageFrame
                                                                 Row forward scan
@@ -15887,7 +15969,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                 GroupBy vectorized: false
                                                   keys: [__qdb_outer_ref__0_id]
                                                   values: [count(*)]
-                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Cross Join
                                                             PageFrame
                                                                 Row forward scan
@@ -15954,7 +16036,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 VirtualRecord
                                   functions: [t1.id,t2.category,coalesce(sub.cnt,0)]
                                     Hash Left Outer Join Light
-                                      condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
+                                      condition: sub.__qdb_outer_ref__0_id=t1.id and sub.__qdb_outer_ref__0_category=t2.category
                                       symbolKeyJoin: true
                                         Hash Join Light
                                           condition: t2.t1_id=t1.id
@@ -15972,28 +16054,27 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                 GroupBy vectorized: false
                                                   keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_category]
                                                   values: [count(*)]
-                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Hash Join Light
-                                                          condition: __qdb_outer_ref__0_category=t3.b
+                                                          condition: __qdb_outer_ref__0_category=b
                                                           symbolKeyJoin: true
                                                             PageFrame
                                                                 Row forward scan
                                                                 Frame forward scan on: t3
                                                             Hash
                                                                 GroupBy vectorized: false
-                                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                                                    SelectedRecord
-                                                                        Hash Join Light
-                                                                          condition: t2.t1_id=t1.id
-                                                                            Async JIT Filter workers: 1
-                                                                              filter: status='ACTIVE'
-                                                                                PageFrame
-                                                                                    Row forward scan
-                                                                                    Frame forward scan on: t1
-                                                                            Hash
-                                                                                PageFrame
-                                                                                    Row forward scan
-                                                                                    Frame forward scan on: t2
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_category]
+                                                                    Hash Join Light
+                                                                      condition: t2.t1_id=t1.id
+                                                                        Async JIT Filter workers: 1
+                                                                          filter: status='ACTIVE'
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t1
+                                                                        Hash
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t2
                             """)
                     .returns("""
                             id\tcategory\tcnt
@@ -16050,7 +16131,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 VirtualRecord
                                   functions: [t1.id,t2.val,coalesce(sub.cnt,0)]
                                     Hash Left Outer Join Light
-                                      condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
+                                      condition: sub.__qdb_outer_ref__0_id=t1.id and sub.__qdb_outer_ref__0_val1=t2.val
                                         Filter filter: t2.val<t1.val
                                             Hash Join Light
                                               condition: t2.t1_id=t1.id
@@ -16064,18 +16145,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                                         Hash
                                             SelectedRecord
                                                 GroupBy vectorized: false
-                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_val]
+                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_val1]
                                                   values: [count(*)]
-                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Hash Join Light
-                                                          condition: __qdb_outer_ref__0_val=t3.b
+                                                          condition: __qdb_outer_ref__0_val1=b
                                                             PageFrame
                                                                 Row forward scan
                                                                 Frame forward scan on: t3
                                                             Hash
                                                                 GroupBy vectorized: false
-                                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                                                    SelectedRecord
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_val1]
+                                                                    Filter filter: t2.val<t1.val
                                                                         Hash Join Light
                                                                           condition: t2.t1_id=t1.id
                                                                             PageFrame
