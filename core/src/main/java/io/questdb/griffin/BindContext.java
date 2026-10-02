@@ -66,15 +66,15 @@ import io.questdb.std.ObjectPool;
 
 final class BindContext implements Mutable {
     final ObjList<ExpressionNode> aggregateNodes = new ObjList<>();
-    final ObjectPool<AggregatePlan> aggregates = new ObjectPool<>(AggregatePlan.FACTORY, 4);
     final ObjList<ExpressionNode> aggregateSelectExpressions = new ObjList<>();
-    final LowerCaseCharSequenceHashSet aliases = new LowerCaseCharSequenceHashSet();
+    final ObjectPool<AggregatePlan> aggregates = new ObjectPool<>(AggregatePlan.FACTORY, 4);
     final LowerCaseCharSequenceIntHashMap aliasSequences = new LowerCaseCharSequenceIntHashMap();
+    final LowerCaseCharSequenceHashSet aliases = new LowerCaseCharSequenceHashSet();
     final IntHashSet ambiguousTimestampColumnIds = new IntHashSet();
     final ObjectPool<ExpressionNode> bindingExpressions;
     final CharacterStore characterStore = new CharacterStore(1024, 16);
-    final ObjectPool<ColumnExpression> columns = new ObjectPool<>(ColumnExpression.FACTORY, 16);
     final IntObjHashMap<ExpressionNode> columnSpellings = new IntObjHashMap<>();
+    final ObjectPool<ColumnExpression> columns = new ObjectPool<>(ColumnExpression.FACTORY, 16);
     final CairoConfiguration configuration;
     final ObjectPool<ConstantExpression> constants = new ObjectPool<>(ConstantExpression.FACTORY, 4);
     final ObjList<ColumnExpression> cursorColumns = new ObjList<>();
@@ -519,7 +519,9 @@ final class BindContext implements Mutable {
         return windowBindingScope(input, false);
     }
 
-    /** Window calls and specs read the input column a computed column of the same name would shadow. */
+    /**
+     * Window calls and specs read the input column a computed column of the same name would shadow.
+     */
     OutputSchema windowBindingScope(OutputSchema input, boolean isShadowingExcluded) {
         windowBindingSchema.clear();
         for (int i = 0, n = input.getColumnCount(); i < n; i++) {
