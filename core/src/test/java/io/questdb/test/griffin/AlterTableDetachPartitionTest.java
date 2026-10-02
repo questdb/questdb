@@ -728,6 +728,61 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachPartitionWithKnownSizeSkipsSymbolDataScan() throws Exception {
+        final SymbolDataOpenCountingFilesFacade ff = new SymbolDataOpenCountingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, 'B'), ('2024-01-02T00:00:00Z', 3, 'C')");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            try (TableWriter writer = getWriter("tab")) {
+                ff.isCounting = true;
+                try {
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestampType.getDriver().parseFloorLiteral("2024-01-01"), 2));
+                } finally {
+                    ff.isCounting = false;
+                }
+            }
+            Assert.assertEquals(0, ff.dataOpenCount);
+            Assert.assertFalse(containsSymbolNullValue("tab", "sym"));
+            assertQuery("SELECT x, sym FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n");
+        });
+    }
+
+    @Test
+    public void testAttachPartitionWithoutMetadataReadsSymbolDataOnce() throws Exception {
+        final SymbolDataOpenCountingFilesFacade ff = new SymbolDataOpenCountingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            for (boolean hasNulls : new boolean[]{true, false}) {
+                execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, " + (hasNulls ? "NULL" : "'B'")
+                        + "), ('2024-01-02T00:00:00Z', 3, 'C')");
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                unsetSymbolNullFlag("tab", "sym");
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(engine.verifyTableName("tab")).concat("2024-01-01").put(DETACHED_DIR_MARKER).concat(META_FILE_NAME);
+                    Assert.assertTrue(TestUtils.remove(path.$()));
+                }
+                renameDetachedToAttachable("tab", "2024-01-01");
+                ff.dataOpenCount = 0;
+                ff.isCounting = true;
+                try {
+                    execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                } finally {
+                    ff.isCounting = false;
+                }
+                Assert.assertEquals(1, ff.dataOpenCount);
+                Assert.assertEquals(hasNulls, containsSymbolNullValue("tab", "sym"));
+                assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
+                        .noLeakCheck().inferRandomAccess().sizeMayVary()
+                        .returns(hasNulls ? "x\tsym\n1\tA\n2\t\n3\tC\n" : "x\tsym\n1\tA\n2\tB\n3\tC\n");
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
     public void testAttachPartitionCommits() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tab";
@@ -3529,6 +3584,19 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         public long openRO(LPSZ name) {
             if (isFailing && (Utf8s.endsWithAscii(name, "sym.k") || Utf8s.endsWithAscii(name, "sym.pk"))) {
                 return -1;
+            }
+            return super.openRO(name);
+        }
+    }
+
+    private static class SymbolDataOpenCountingFilesFacade extends TestFilesFacadeImpl {
+        private int dataOpenCount;
+        private boolean isCounting;
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isCounting && Utf8s.endsWithAscii(name, "sym.d")) {
+                dataOpenCount++;
             }
             return super.openRO(name);
         }

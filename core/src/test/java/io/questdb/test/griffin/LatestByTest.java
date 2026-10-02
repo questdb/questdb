@@ -3354,21 +3354,27 @@ public class LatestByTest extends AbstractCairoTest {
                 "SELECT v FROM " + table + " WHERE g = 'aa' AND v > 0",
                 "SELECT v FROM " + table + " WHERE g IN ('aa', 'bb')",
                 "SELECT v FROM " + table + " WHERE status = 'target'",
+                "SELECT v FROM " + table + " WHERE g != 'cc'",
+                "SELECT v FROM " + table + " WHERE g NOT IN ('cc')",
         };
         final String[] before = {
                 "v\n10\n", "v\n10\n", "v\n10\n", "v\n10\n", "v\n10\n", "v\n10\n20\n",
-                "v\n10\n20\n", "v\n10\n", "v\n10\n", "v\n10\n20\n", "v\n10\n",
+                "v\n10\n20\n", "v\n10\n", "v\n10\n", "v\n10\n20\n", "v\n10\n", "v\n10\n20\n", "v\n10\n20\n",
         };
         final String[] after = {
                 "v\n50\n60\n", "v\n50\n", "v\n50\n", "v\n60\n", "v\n60\n", "v\n50\n60\n",
-                "v\n50\n60\n", "v\n50\n", "v\n50\n", "v\n50\n60\n", "v\n50\n60\n",
+                "v\n50\n60\n", "v\n50\n", "v\n50\n", "v\n50\n60\n", "v\n50\n60\n", "v\n40\n50\n60\n", "v\n40\n50\n60\n",
         };
-        final boolean[] isKeyLookup = {false, true, true, false, false, true, true, true, true, true, false};
+        final boolean[] isKeyLookup = {false, true, true, false, false, true, true, true, true, true, false, false, false};
+        final boolean[] isExcludedKeyLookup = {false, false, false, false, false, false, false, false, false, false, false, true, true};
         final ObjList<RecordCursorFactory> factories = new ObjList<>();
         try {
             for (int i = 0; i < queries.length; i++) {
                 if (isCovering && isKeyLookup[i]) {
                     assertQuery(queries[i]).noLeakCheck().inferRandomAccess().sizeMayVary().withPlanContaining("CoveringIndex").returns(before[i]);
+                }
+                if (isExcludedKeyLookup[i]) {
+                    assertQuery(queries[i]).noLeakCheck().inferRandomAccess().sizeMayVary().withPlanContaining("FilterOnExcludedValues").returns(before[i]);
                 }
                 final RecordCursorFactory factory = select(queries[i]);
                 factories.add(factory);

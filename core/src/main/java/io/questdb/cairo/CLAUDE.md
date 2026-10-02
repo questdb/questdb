@@ -221,15 +221,19 @@ Every write path sets the flag: `SymbolMapWriter.put(null)`, WAL apply through
 parquet decode when statistics are absent. For an indexed column of a native partition, attach
 reads the index instead of the data: a NULL entry sets the flag, and the absence of one counts
 only when the index max value reaches the last row. Otherwise, or when the index cannot be
-read, attach scans the data. `Mig1002` repairs existing databases from column
-tops, parquet chunk null counts and bitmap index NULL entries only. It never reads column data,
-so an upgrade costs no scan proportional to table size.
+read, attach scans the data. Two attach paths skip the index probe and that scan: an attach
+without `_dmeta` takes the answer from its column validation pass, which already maps the data,
+and a parallel `COPY` attach relies on `SymbolMapWriter.mergeSymbols()` having set the flag from
+the imported symbol tables. `Mig1002` repairs existing databases from column tops, parquet chunk
+null counts and bitmap index NULL entries only. It never reads column data, so an upgrade
+costs no scan proportional to table size.
 
 ### Accepted residual
 
-A database written before this repair can still carry an unset flag on an unindexed native
-partition, or on a parquet partition written without statistics, that gained NULL rows through
-`DETACH` -> `TRUNCATE` -> `ATTACH` or through a parquet round trip of a converted column.
+A database written before this repair can still carry an unset flag on a native partition
+without a BITMAP index, or on a parquet partition written without statistics, that gained NULL
+rows through `DETACH` -> `TRUNCATE` -> `ATTACH` or through a parquet round trip of a converted
+column.
 An unfiltered `LATEST ON` over such a column comes up one group short when other symbols
 exist; the all-NULL case still resolves because the scan no longer stops on a zero target. A
 requested NULL key matches nothing.

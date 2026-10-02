@@ -94,6 +94,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -213,6 +214,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
     private final IntObjHashMap<AsyncWriterCommand> asyncCommandCache = new IntObjHashMap<>();
+    private final BitSet attachSymbolNullColumns = new BitSet();
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -986,7 +988,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Attaches a partition to the table. If size is given, partition file data is not validated.
+     * Attaches a partition to the table. If size is given, partition file data is not validated
+     * and the caller must have already set the symbol null flags.
      *
      * @param timestamp     partition timestamp
      * @param partitionSize partition size in rows. Negative means unknown size.
@@ -1059,8 +1062,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     return AttachDetachStatus.ATTACH_ERR_EMPTY_PARTITION;
                 }
 
+                attachSymbolNullColumns.clear();
+                boolean isSymbolNullKnown = !forceRenamePartitionDir;
                 if (forceRenamePartitionDir && !attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen)) {
                     attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
+                    isSymbolNullKnown = true;
                 }
 
                 // the main columnVersionWriter is now aligned with the detached partition values read from the partition _cv file
@@ -1141,7 +1147,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetFileSize = ff.length(path.$());
                     }
                     path.trimTo(partitionPathLen);
-                    attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize);
+                    attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize, isSymbolNullKnown);
                     checkPassed = true;
                 } finally {
                     path.trimTo(partitionPathLen);
@@ -5053,6 +5059,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(minKey)
                             .put(']');
                 }
+                if (!symbolMapWriters.getQuick(columnIndex).getNullFlag() && symbolDataHasNulls(address, columnSize)) {
+                    attachSymbolNullColumns.set(columnIndex);
+                }
             } finally {
                 ff.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
             }
@@ -5197,7 +5206,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void attachPartitionUpdateSymbolNullFlags(long partitionTimestamp, long partitionSize, long parquetFileSize) {
+    private void attachPartitionUpdateSymbolNullFlags(
+            long partitionTimestamp,
+            long partitionSize,
+            long parquetFileSize,
+            boolean isSymbolNullKnown
+    ) {
         final int partitionPathLen = path.size();
         boolean isParquetMetaOpen = false;
         long parquetAddr = 0;
@@ -5218,7 +5232,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 final boolean hasNulls;
                 if (parquetFileSize < 0) {
-                    hasNulls = attachPartitionNativeSymbolHasNulls(partitionTimestamp, partitionSize, i, partitionPathLen);
+                    hasNulls = isSymbolNullKnown
+                            ? attachSymbolNullColumns.get(i)
+                            : attachPartitionNativeSymbolHasNulls(partitionTimestamp, partitionSize, i, partitionPathLen);
                 } else {
                     if (!isParquetMetaOpen) {
                         openParquetMetadataOrThrow(path, partitionPathLen, parquetFileSize);

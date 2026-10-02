@@ -2744,16 +2744,20 @@ public final class TableUtils {
         }
         final long address = mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
         try {
-            for (long lo = 0; lo < rowCount; lo += MAX_SYMBOL_NULL_SCAN_ROWS) {
-                final long count = Math.min(MAX_SYMBOL_NULL_SCAN_ROWS, rowCount - lo);
-                if (Vect.countInt(address + lo * Integer.BYTES, count) < count) {
-                    return true;
-                }
-            }
-            return false;
+            return symbolDataHasNulls(address, rowCount);
         } finally {
             ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);
         }
+    }
+
+    public static boolean symbolDataHasNulls(long address, long rowCount) {
+        for (long lo = 0; lo < rowCount; lo += MAX_SYMBOL_NULL_SCAN_ROWS) {
+            final long count = Math.min(MAX_SYMBOL_NULL_SCAN_ROWS, rowCount - lo);
+            if (Vect.countInt(address + lo * Integer.BYTES, count) < count) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static int toIndexKey(int symbolKey) {

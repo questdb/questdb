@@ -58,8 +58,9 @@ import static io.questdb.cairo.view.ViewDefinition.VIEW_DEFINITION_FILE_NAME;
  * converted a column whose partitions carried column tops, when {@code ATTACH PARTITION} brought
  * in NULL rows, and when a parquet conversion collapsed such column tops to zero.
  * <p>
- * The migration never reads column data. An unindexed native partition, or a parquet partition
- * written without statistics, contributes no evidence; see "Symbol null flag" in cairo/CLAUDE.md.
+ * The migration never reads column data. A native partition without a BITMAP index, or a parquet
+ * partition written without statistics, contributes no evidence; see "Symbol null flag" in
+ * cairo/CLAUDE.md.
  */
 public final class Mig1002 {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
