@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.security;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
@@ -44,6 +45,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -133,6 +135,25 @@ public class TableVisibilityTest extends AbstractCairoTest {
                         Assert.assertTrue(sql + '\n' + sink, Chars.contains(sink, "secret"));
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyToFailsLikeMissingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE secret_t (x INT)");
+            Assert.assertNotNull(engine.getTableTokenIfExists("secret_t"));
+            Assert.assertNull(engine.getTableTokenIfExists(missingNameOf("secret_t")));
+            try (SqlExecutionContext hidingContext = new SqlExecutionContextImpl(engine, 1).with(new HidingSecurityContext() {
+                @Override
+                public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+                    throw CairoException.authorization().put("select denied");
+                }
+            })) {
+                final String sql = "COPY %s TO 'out' WITH FORMAT PARQUET";
+                TestUtils.assertContains(failureOf(String.format(sql, missingNameOf("secret_t")), hidingContext), "table does not exist");
+                assertMaskedLikeMissing(sql, "secret_t", hidingContext);
             }
         });
     }
@@ -579,6 +600,12 @@ public class TableVisibilityTest extends AbstractCairoTest {
                 assertExecutionMaskedLikeMissing("ALTER TABLE %s REBASE WAL", "secret_t", denied);
             }
         });
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, temp.newFolder("export").getAbsolutePath());
+        AbstractCairoTest.setUpStatic();
     }
 
     private static void assertCursorFails(CharSequence sql, SqlExecutionContext context, String expectedMessage, StringSink sink) throws Exception {
