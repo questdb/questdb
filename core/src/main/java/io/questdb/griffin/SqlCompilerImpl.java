@@ -4425,9 +4425,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
-                    sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
+                    // Like SELECT, EXPLAIN registers when it opens its base cursor, so the open runs
+                    // under the query memory tracker.
+                    final RecordCursorFactory explainFactory = generateExplain((ExplainModel) executionModel, executionContext);
+                    compiledQuery.ofExplain(generateProgressLogger
+                            ? new QueryProgress(queryRegistry, sqlText, explainFactory)
+                            : explainFactory);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 case ExecutionModel.COMPILE_VIEW:
@@ -4451,9 +4455,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             short type = compiledQuery.getType();
-            if (type == CompiledQuery.EXPLAIN
-                    || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
-            ) {
+            if (type == CompiledQuery.RENAME_TABLE) { // non-wal rename table is complete at this point
                 queryRegistry.unregister(sqlId, executionContext);
             }
         } catch (Throwable th) {

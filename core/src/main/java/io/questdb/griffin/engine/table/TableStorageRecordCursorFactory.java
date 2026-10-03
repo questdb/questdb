@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -86,6 +87,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.circuitBreaker = executionContext.getCircuitBreaker();
+        cursor.executionContext = executionContext;
         return cursor.initialize();
     }
 
@@ -103,11 +105,13 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         private final TableStorageRecord record = new TableStorageRecord();
         private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private SqlExecutionContext executionContext;
         private int tableIndex = -1;
 
         @Override
         public void close() {
             tableBucket.clear();
+            executionContext = null;
             // The factory nulls txReader once it is freed; a cursor closed after the
             // factory (late close on an error path) must not dereference it.
             final TxReader txReader = TableStorageRecordCursorFactory.this.txReader;
@@ -233,6 +237,13 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 TableUtils.setTxReaderPath(txReader, path, timestampType, partitionBy); // modifies path
                 rowCount = txReader.unsafeLoadRowCount();
                 partitionCount = txReader.getPartitionCount();
+                if (rowCount >= 0 && txReader.hasAnyDelta()) {
+                    // Both values must describe the snapshot whose Delta catalogs we read.
+                    try (TableReader reader = executionContext.getReader(token)) {
+                        rowCount = reader.getLogicalRowCount();
+                        partitionCount = reader.getPartitionCount();
+                    }
+                }
             }
 
         }

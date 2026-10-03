@@ -82,7 +82,7 @@ pub const MAX_SCRATCHPAD_SIZE: usize = 1 << 20;
 /// Apply-time `seqTxn` stamped into the `_pm` footer's SEQ_TXN section.
 /// `-1` is the unset sentinel; any other value (including other negative
 /// values) is a real `seqTxn`.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct SeqTxn(i64);
 

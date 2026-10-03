@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDeltaStats;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -153,6 +154,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     private class ShowPartitionsRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
+        private final PartitionDeltaStats deltaStats = new PartitionDeltaStats();
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
@@ -286,6 +288,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionName.clear();
             dynamicPartitionIndex = partitionIndex;
             CharSequence dynamicTsColName = tsColName;
+            boolean hasDelta = false;
+            long detachedSeqTxn = -1;
             path.trimTo(rootLen).$();
 
             TxReader tableTxReader = tableReader.getTxFile();
@@ -316,6 +320,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 // converted partition doesn't show 0 where its native form shows nothing.
                 seqTxn = resolvedSeqTxn > 0 ? resolvedSeqTxn : Numbers.LONG_NULL;
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
+                hasDelta = tableTxReader.getPartitionHasDelta(partitionIndex);
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
                 isDetached = true;
@@ -358,6 +363,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     int pIndex = detachedTxReader.getPartitionIndex(timestamp);
                                     // could set dynamicPartitionIndex to -pIndex
                                     numRows = detachedTxReader.getPartitionSize(pIndex);
+                                    hasDelta = detachedTxReader.getPartitionHasDelta(pIndex);
+                                    detachedSeqTxn = detachedTxReader.getSeqTxn();
+                                    isParquet = detachedTxReader.isPartitionParquet(pIndex);
+                                    if (isParquet) {
+                                        parquetFileSize = detachedTxReader.getPartitionParquetFileSize(pIndex);
+                                    }
                                     if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                                         int tsIndex = detachedMetaReader.getTimestampIndex();
                                         dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
@@ -382,12 +393,17 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
                 }
                 path.parent();
+                if (isParquet) {
+                    openParquetMeta(path, parquetFileSize);
+                }
             }
 
+            final long baseRows = numRows;
+            final int partitionPathLen = path.size();
             partitionSize = ff.getDirSize(path);
             partitionSizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
-            if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
+            if (PartitionBy.isPartitioned(partitionBy) && baseRows > 0L) {
                 if (isParquet && parquetMetaReader != null && parquetMetaReader.isOpen()) {
                     int tsIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
                     int rowGroupCount = parquetMetaReader.getRowGroupCount();
@@ -401,7 +417,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     long fd = -1;
                     try {
                         fd = TableUtils.openRO(ff, path.$(), LOG);
-                        long lastOffset = (numRows - 1) * Long.BYTES; // timestamp size
+                        long lastOffset = (baseRows - 1) * Long.BYTES; // timestamp size
                         minTimestamp = ff.readNonNegativeLong(fd, 0);
                         maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
                     } catch (CairoException e) {
@@ -415,6 +431,25 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 } else {
                     minTimestamp = Long.MIN_VALUE;
                     maxTimestamp = Long.MIN_VALUE;
+                }
+            }
+            path.trimTo(partitionPathLen);
+            if (hasDelta) {
+                if (isDetached) {
+                    tableReader.readDetachedDeltaStats(path, detachedSeqTxn, baseRows, deltaStats);
+                } else {
+                    tableReader.readDeltaStats(partitionIndex, deltaStats);
+                }
+                numRows = deltaStats.getRowCount();
+                // Preserve unknown base bounds when its timestamp source is unavailable.
+                if (baseRows == 0) {
+                    if (deltaStats.getMinTimestamp() != Long.MAX_VALUE) {
+                        minTimestamp = deltaStats.getMinTimestamp();
+                        maxTimestamp = deltaStats.getMaxTimestamp();
+                    }
+                } else if (minTimestamp != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
+                    minTimestamp = Math.min(minTimestamp, deltaStats.getMinTimestamp());
+                    maxTimestamp = Math.max(maxTimestamp, deltaStats.getMaxTimestamp());
                 }
             }
         }

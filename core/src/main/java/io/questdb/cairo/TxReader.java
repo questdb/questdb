@@ -46,7 +46,12 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
+    // bit 60 within the offset-3 reserved flag region: delta-write mode
+    public static final long PARTITION_DELTA_WRITE_BIT = 1L << 60;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
+    // Bit 61 routes reads through the local Delta catalog after publication.
+    // It is independent of delta-write mode; catalog purge does not clear this bit.
+    public static final long PARTITION_HAS_DELTA_BIT = 1L << 61;
     // Flag in the high byte of the offset-3 partition-version word: a remote copy of the
     // partition's parquet data exists. Set on parquet partitions and on native partitions
     // uploaded while native (upload-while-native keeps the format bit 0).
@@ -85,9 +90,9 @@ public class TxReader implements Closeable, Mutable {
     // the last long (PARTITION_VERSION_OFFSET) holds, for a parquet partition the parquet file
     // size, for a native one its last-modifying seqTxn:
     //
-    // |  remote  |  valid   | reserved | value (parquet file size / native seqTxn) |
-    // +----------+----------+----------+-------------------------------------------+
-    // |  1 bit   |  1 bit   |  6 bits  |                 56 bits                   |
+    // | remote | valid | has_delta | delta-write | reserved | parquet size / native seqTxn |
+    // +--------+-------+-----------+-------------+----------+------------------------------+
+    // | 1 bit  | 1 bit |   1 bit   |    1 bit    |  4 bits  |           56 bits            |
     //
     // remote is cleared by the value writes that supersede the bytes (setPartitionParquetFileSize, setPartitionSeqTxn),
     // so it can't outlive them; setPartitionFormat preserves it, leaving REMOTE to caller discipline on a format flip.
@@ -95,6 +100,9 @@ public class TxReader implements Closeable, Mutable {
     // untrusted and reads as -1 (quarantines the released-binary file-size poison). A 0 stamp writes the cleared word,
     // so "valid with value 0" is unrepresentable. setPartitionFormat sets it flipping to native, clears it flipping to
     // parquet (a parquet word is valid without it).
+    // has_delta (PARTITION_HAS_DELTA_BIT, bit 61) selects the catalog read path after the first Delta commit.
+    // delta-write (PARTITION_DELTA_WRITE_BIT, bit 60) is the replicated mode gate, set before any Delta data exists.
+    // Value writes preserve both flags across file-size/seqTxn rewrites.
     // legacy: a cleared slot reads as 0L (written today) or -1L (older binaries), both folded by isPartitionOffset3Cleared().
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_VERSION_OFFSET = 3;
@@ -113,6 +121,8 @@ public class TxReader implements Closeable, Mutable {
     protected long maxTimestamp;
     protected long minTimestamp;
     protected int partitionBy;
+    // In-memory aggregate of attachedPartitions, maintained by loads and TxWriter mutations.
+    protected int partitionDeltaCount;
     protected long partitionTableVersion;
     protected long seqTxn;
     protected long structureVersion;
@@ -402,6 +412,15 @@ public class TxReader implements Closeable, Mutable {
                 : DEFAULT_PARTITION_TIMESTAMP;
     }
 
+    public boolean getPartitionHasDelta(int partitionIndex) {
+        return getPartitionHasDeltaByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean getPartitionHasDeltaByRawIndex(int indexRaw) {
+        final long raw = attachedPartitions.getQuick(indexRaw + PARTITION_VERSION_OFFSET);
+        return raw != -1L && (raw & PARTITION_HAS_DELTA_BIT) != 0;
+    }
+
     public int getPartitionIndex(long ts) {
         int index = findAttachedPartitionRawIndexByLoTimestamp(getPartitionTimestampByTimestamp(ts));
         if (index > -1) {
@@ -433,6 +452,13 @@ public class TxReader implements Closeable, Mutable {
     public long getPartitionParquetFileSize(int partitionIndex) {
         assert isPartitionParquet(partitionIndex) : "parquet file size read on a native partition";
         final long fileSize = getPartitionVersionByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        assert fileSize > 0;
+        return fileSize;
+    }
+
+    public long getPartitionParquetFileSizeByRawIndex(int indexRaw) {
+        assert isPartitionParquetByRawIndex(indexRaw) : "parquet file size read on a native partition";
+        final long fileSize = getPartitionVersionByRawIndex(indexRaw);
         assert fileSize > 0;
         return fileSize;
     }
@@ -522,6 +548,10 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
+    public boolean hasAnyDelta() {
+        return partitionDeltaCount > 0;
+    }
+
     public boolean hasParquetPartitions() {
         for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
             if (isPartitionParquetByRawIndex(i)) {
@@ -539,6 +569,7 @@ public class TxReader implements Closeable, Mutable {
 
         if (!PartitionBy.isPartitioned(partitionBy)) {
             // Add transient row count as the only partition in attached partitions list
+            partitionDeltaCount = 0;
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
         }
@@ -550,6 +581,22 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isLagOrdered() {
         return lagOrdered;
+    }
+
+    public boolean isPartitionDeltaActive(int i) {
+        return isPartitionDeltaActiveByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionDeltaActiveByPartitionTimestamp(long ts) {
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1) {
+            return isPartitionDeltaActiveByRawIndex(indexRaw);
+        }
+        return false;
+    }
+
+    public boolean isPartitionDeltaActiveByRawIndex(int indexRaw) {
+        return (getPartitionOffset3(indexRaw) & PARTITION_DELTA_WRITE_BIT) != 0;
     }
 
     public boolean isPartitionParquet(int i) {
@@ -649,6 +696,7 @@ public class TxReader implements Closeable, Mutable {
 
         attachedPartitions.clear();
         attachedPartitions.addAll(srcReader.attachedPartitions);
+        partitionDeltaCount = srcReader.partitionDeltaCount;
     }
 
     public TxReader ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
@@ -881,8 +929,15 @@ public class TxReader implements Closeable, Mutable {
             if (txAttachedPartitionsSize > 0) {
                 if (prevPartitionTableVersion != partitionTableVersion || prevColumnVersion != columnVersion) {
                     attachedPartitions.clear();
+                    partitionDeltaCount = 0;
                     unsafeLoadPartitions0(0, txAttachedPartitionsSize);
                 } else {
+                    // A writer reload can discard an uncommitted tail without a version change.
+                    if (partitionDeltaCount > 0) {
+                        for (int i = txAttachedPartitionsSize, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+                            partitionDeltaCount -= getPartitionHasDeltaByRawIndex(i) ? 1 : 0;
+                        }
+                    }
                     if (attachedPartitionsSize < txAttachedPartitionsSize) {
                         unsafeLoadPartitions0(
                                 Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0),
@@ -894,10 +949,12 @@ public class TxReader implements Closeable, Mutable {
                 final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount) + Integer.BYTES;
                 // WAL appends can update the active partition's offset-1 flags and offset-3 word
                 // without changing partitionTableVersion, so refresh them alongside the transient row count.
+                partitionDeltaCount -= getPartitionHasDeltaByRawIndex(lastPartitionRawIndex) ? 1 : 0;
                 attachedPartitions.setQuick(
                         lastPartitionRawIndex + PARTITION_VERSION_OFFSET,
                         getLong(partitionTableOffset + (lastPartitionRawIndex + PARTITION_VERSION_OFFSET) * Long.BYTES)
                 );
+                partitionDeltaCount += getPartitionHasDeltaByRawIndex(lastPartitionRawIndex) ? 1 : 0;
                 final int sizeOffset = lastPartitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
                 final long mask = getLong(partitionTableOffset + 8L * sizeOffset) & PARTITION_FLAGS_MASK;
                 attachedPartitions.setQuick(sizeOffset, mask | (transientRowCount & PARTITION_SIZE_MASK)); // preserve mask
@@ -905,10 +962,12 @@ public class TxReader implements Closeable, Mutable {
             } else {
                 attachedPartitionsSize = 0;
                 attachedPartitions.clear();
+                partitionDeltaCount = 0;
             }
         } else {
             // If partitionBy is NONE, we have no partitions, but we still need to
             // have a single partition with transient row count.
+            partitionDeltaCount = 0;
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
             attachedPartitionsSize = 1;
@@ -916,10 +975,20 @@ public class TxReader implements Closeable, Mutable {
     }
 
     private void unsafeLoadPartitions0(int lo, int hi) {
+        final int previousSize = attachedPartitions.size();
         attachedPartitions.setPos(hi);
         final long baseOffset = getPartitionTableSizeOffset(symbolColumnCount) + Integer.BYTES;
-        for (int i = lo; i < hi; i++) {
-            attachedPartitions.setQuick(i, getLong(baseOffset + 8L * i));
+        for (int i = lo; i < hi; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            // An incremental load also replaces the former last partition.
+            if (i < previousSize && getPartitionHasDeltaByRawIndex(i)) {
+                partitionDeltaCount--;
+            }
+            final long partitionOffset = baseOffset + (long) Long.BYTES * i;
+            attachedPartitions.setQuick(i + PARTITION_TS_OFFSET, getLong(partitionOffset + Long.BYTES * PARTITION_TS_OFFSET));
+            attachedPartitions.setQuick(i + PARTITION_MASKED_SIZE_OFFSET, getLong(partitionOffset + Long.BYTES * PARTITION_MASKED_SIZE_OFFSET));
+            attachedPartitions.setQuick(i + PARTITION_NAME_TX_OFFSET, getLong(partitionOffset + Long.BYTES * PARTITION_NAME_TX_OFFSET));
+            attachedPartitions.setQuick(i + PARTITION_VERSION_OFFSET, getLong(partitionOffset + Long.BYTES * PARTITION_VERSION_OFFSET));
+            partitionDeltaCount += getPartitionHasDeltaByRawIndex(i) ? 1 : 0;
         }
         attachedPartitionsSize = hi;
     }
@@ -955,6 +1024,7 @@ public class TxReader implements Closeable, Mutable {
         partitionTableVersion = -1;
         attachedPartitionsSize = -1;
         attachedPartitions.clear();
+        partitionDeltaCount = 0;
         version = -1;
         txn = -1;
         seqTxn = -1;

@@ -109,6 +109,9 @@ public final class TableUtils {
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
+    // Delta state of one partition version: <partition>/_delta/_catalog.
+    public static final String DELTA_CATALOG_FILE_NAME = "_catalog";
+    public static final String DELTA_DIR_NAME = "_delta";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";

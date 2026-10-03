@@ -54,6 +54,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
     private final CairoConfiguration configuration;
+    private final PartitionDeltaWriter deltaWriter;
     private final CairoEngine engine;
     private final Utf8StringSink fileNameSink;
     private final AtomicBoolean halted = new AtomicBoolean(false);
@@ -71,6 +72,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     MemoryTag.NATIVE_O3
             );
             this.txnReader = new TxReader(configuration.getFilesFacade());
+            this.deltaWriter = configuration.newPartitionDeltaWriter();
         } catch (Throwable th) {
             close();
             throw th;
@@ -91,6 +93,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         if (halted.compareAndSet(false, true)) {
             Misc.free(partitionList);
             Misc.free(txnReader);
+            Misc.free(deltaWriter);
         }
     }
 
@@ -444,7 +447,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 TableToken lastToken = engine.getUpdatedTableToken(tableToken);
                 if (lastToken == tableToken) {
                     LOG.info().$(message).$substr(pathFrom, path).I$();
-                    ff.unlinkOrRemove(path, LOG);
+                    // Delta files that remain keep the directory for the next purge pass.
+                    if (deltaWriter == null || deltaWriter.purge(path)) {
+                        ff.unlinkOrRemove(path, LOG);
+                    }
                 } else {
                     // the table is dropped and recreated since we started processing it.
                     // abort the table processing

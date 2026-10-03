@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -326,6 +327,46 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
+        final int frameIndex = timeFrame.getFrameIndex();
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        int rowIndex = frameMemory.getSourceRowResolver().find(timestamp, sourceRowRef);
+        if (rowIndex < 0 && sourceRowRef >= 0) {
+            rowIndex = resolveBaseRow(frameIndex, sourceRowRef);
+        }
+        if (rowIndex < 0) {
+            return false;
+        }
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryRecord.init(frameMemory);
+        frameMemoryRecord.setRowIndex(rowIndex);
+        return true;
+    }
+
+    private int resolveBaseRow(int frameIndex, long baseRow) {
+        final long partitionState = frameAddressCache.getPartitionFrameState(frameIndex);
+        if (partitionState == 0) {
+            return -1;
+        }
+        long baseLo = 0;
+        long logicalLo = 0;
+        for (int window = 0, n = PartitionFrameState.getWindowCount(partitionState); window < n; window++) {
+            final long baseRows = PartitionFrameState.getBaseRowCount(partitionState, window);
+            if (baseRow >= baseLo && baseRow < baseLo + baseRows) {
+                if (PartitionFrameState.requiresMaterialization(partitionState, window)) {
+                    return -1;
+                }
+                final long frameLo = Rows.toLocalRowID(frameAddressCache.getRowIdOffset(frameIndex));
+                final long row = logicalLo + baseRow - baseLo - frameLo;
+                return row >= 0 && row < frameRowCounts.get(frameIndex) ? (int) row : -1;
+            }
+            baseLo += baseRows;
+            logicalLo += PartitionFrameState.getLogicalRowCount(partitionState, window);
+        }
+        return -1;
+    }
+
+    @Override
     public void recordAtRowIndex(Record record, long rowIndex) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryRecord.setRowIndex(rowIndex);
@@ -511,8 +552,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameRowCounts.reopen();
         frameRowCounts.clear();
 
-        if (frameCursor.hasIntervalFilter()) {
-            // Interval filtering makes frame counts unpredictable from metadata.
+        if (frameCursor.hasIntervalFilter() || tableReader.hasAnyDelta()) {
+            // Interval filters and delta merges make logical frame counts unpredictable from base metadata.
             // Fall back to eager enumeration of all page frames.
             buildFrameCacheEagerly();
         } else {

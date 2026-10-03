@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.RecentWriteTracker;
@@ -181,7 +182,7 @@ public class TablesFunctionFactory implements FunctionFactory {
             // Reconciles against the table registry before snapshotting, so the
             // catalogue is complete even mid startup hydration.
             tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
-            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI(), executionContext.getCircuitBreaker());
+            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI(), executionContext);
             cursor.toTop();
             return cursor;
         }
@@ -217,6 +218,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
+                record.executionContext = null;
             }
 
             @Override
@@ -234,10 +236,11 @@ public class TablesFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI, SqlExecutionCircuitBreaker circuitBreaker) {
+            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI, SqlExecutionContext executionContext) {
                 this.recentWriteTracker = recentWriteTracker;
                 this.tableSequencerAPI = tableSequencerAPI;
-                this.circuitBreaker = circuitBreaker;
+                this.circuitBreaker = executionContext.getCircuitBreaker();
+                record.executionContext = executionContext;
                 // can is refreshed every time cursor is refreshed
                 this.iteratorLim = tableCache.size() - 1;
             }
@@ -258,11 +261,18 @@ public class TablesFunctionFactory implements FunctionFactory {
             }
 
             private static class TableListRecord implements Record {
+                private SqlExecutionContext executionContext;
+                private boolean hasDelta;
+                private boolean hasTableStats;
                 private StringSink lazyStringSink = null;
+                private long rowCount;
                 private CairoTable table;
+                private long tableMaxTimestamp;
+                private long tableMinTimestamp;
                 private TableSequencerAPI tableSequencerAPI;
                 private TimestampDriver timestampDriver;
                 private RecentWriteTracker.WriteStats writeStats;
+                private long writerTxn;
 
                 @Override
                 public boolean getBool(int col) {
@@ -343,6 +353,10 @@ public class TablesFunctionFactory implements FunctionFactory {
                                 || col == REPLICA_BATCH_SIZE_P90_COLUMN || col == REPLICA_BATCH_SIZE_P99_COLUMN
                                 || col == REPLICA_BATCH_SIZE_MAX_COLUMN ? 0 : Numbers.LONG_NULL;
                     }
+                    if (hasDelta && (col == TABLE_ROW_COUNT_COLUMN || col == TABLE_TXN_COLUMN)) {
+                        loadTableStats();
+                        return col == TABLE_ROW_COUNT_COLUMN ? rowCount : writerTxn;
+                    }
                     return switch (col) {
                         case TABLE_ROW_COUNT_COLUMN -> writeStats.getRowCount();
                         case TABLE_TXN_COLUMN -> writeStats.getWriterTxn();
@@ -406,6 +420,10 @@ public class TablesFunctionFactory implements FunctionFactory {
                     if (writeStats == null) {
                         return Numbers.LONG_NULL;
                     }
+                    if (hasDelta && (col == TABLE_MIN_TIMESTAMP_COLUMN || col == TABLE_MAX_TIMESTAMP_COLUMN)) {
+                        loadTableStats();
+                        return timestampDriver.toMicros(col == TABLE_MIN_TIMESTAMP_COLUMN ? tableMinTimestamp : tableMaxTimestamp);
+                    }
                     return switch (col) {
                         case TABLE_MIN_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getTableMinTimestamp());
                         case TABLE_MAX_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getTableMaxTimestamp());
@@ -416,11 +434,30 @@ public class TablesFunctionFactory implements FunctionFactory {
                     };
                 }
 
+                private void loadTableStats() {
+                    if (hasTableStats) {
+                        return;
+                    }
+                    // Resolve only requested statistics, once per record, at one reader snapshot.
+                    try (TableReader reader = executionContext.getReader(table.getTableToken())) {
+                        rowCount = reader.getLogicalRowCount();
+                        writerTxn = reader.getSeqTxn();
+                        tableMinTimestamp = reader.getMinTimestamp();
+                        if (tableMinTimestamp == Long.MAX_VALUE) {
+                            tableMinTimestamp = Numbers.LONG_NULL;
+                        }
+                        tableMaxTimestamp = reader.getMaxTimestamp();
+                    }
+                    hasTableStats = true;
+                }
+
                 private void of(CairoTable table, RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI) {
                     this.table = table;
                     this.tableSequencerAPI = tableSequencerAPI;
                     this.writeStats = recentWriteTracker.getWriteStats(table.getTableToken());
                     this.timestampDriver = ColumnType.getTimestampDriver(table.getTimestampType());
+                    this.hasDelta = writeStats != null && writeStats.hasDelta();
+                    this.hasTableStats = false;
                 }
             }
         }
