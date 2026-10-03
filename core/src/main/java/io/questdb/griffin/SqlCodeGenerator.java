@@ -565,6 +565,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    // the base model of the GROUP BY being generated, see generateGroupByBase()
+    private IQueryModel groupByBaseModel;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
@@ -735,6 +737,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
         whereClauseParserDepth = 0;
+        groupByBaseModel = null;
         symbolEstimator.clear();
         intListPool.clear();
         pushdownFilterExtractor.clear();
@@ -10016,7 +10019,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final RecordMetadata metadata = isCountKeyword(columnName)
                             ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
                             new GenericRecordMetadata().add(new TableColumnMetadata(SqlUtil.toColumnName(columnName), LONG));
-                    return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
+                    return new CountRecordCursorFactory(metadata, generateGroupByBase(model, executionContext));
                 }
             }
 
@@ -10187,7 +10190,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (hourIndex != -1) {
-                factory = generateSubQuery(model, executionContext);
+                factory = generateGroupByBase(model, executionContext);
                 pageFramingSupported = factory.supportsPageFrameCursor();
                 if (pageFramingSupported) {
                     columnExpr = columns.getQuick(hourIndex).getAst();
@@ -10207,7 +10210,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (hourIndex != -1) {
                     IQueryModel.restoreWhereClause(expressionNodePool, model);
                 }
-                factory = generateSubQuery(model, executionContext);
+                factory = generateGroupByBase(model, executionContext);
                 pageFramingSupported = factory.supportsPageFrameCursor();
             }
 
@@ -10325,7 +10328,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 factory = Misc.free(factory);
                 // create factory on top level model
                 IQueryModel.restoreWhereClause(expressionNodePool, model);
-                factory = generateSubQuery(model, executionContext);
+                factory = generateGroupByBase(model, executionContext);
                 // and reset baseMetadata
                 baseMetadata = factory.getMetadata();
             }
@@ -12013,6 +12016,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Generates the base of a GROUP BY. The GROUP BY does not consume its base's row order, but the
+     * ORDER BY advice still reaches the base's table scan; remembering the base lets the index scan
+     * skip the key-major path there, which would replace no sort and only rule out other scans.
+     */
+    private RecordCursorFactory generateGroupByBase(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final IQueryModel prevGroupByBaseModel = groupByBaseModel;
+        groupByBaseModel = model.getNestedModel();
+        try {
+            return generateSubQuery(model, executionContext);
+        } finally {
+            groupByBaseModel = prevGroupByBaseModel;
+        }
+    }
+
     private RecordCursorFactory generateSubQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
         return generateQuery(model.getNestedModel(), executionContext, true);
@@ -12401,10 +12419,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         // in key and timestamp order already. As before, one partition.
                                         orderByKeyColumn = intervalHitsOnlyOnePartition;
                                     } else if (model.getOrderByAdviceMnemonic() == OrderByMnemonic.ORDER_BY_INVARIANT
-                                            // Only a consumer that takes the scan's order (INVARIANT) gets the
-                                            // key-major cursor; under e.g. a GROUP BY the scan merges keys into
-                                            // row order, so claiming the key order here would only drop the
-                                            // designated timestamp and turn covering off for nothing.
+                                            // Only a consumer that takes the scan's order gets the key-major
+                                            // cursor. Under a GROUP BY the advice still arrives (INVARIANT when
+                                            // the aggregates are order-insensitive, else the heap cursor is
+                                            // used), but nothing reads the scan's order there: claiming it would
+                                            // replace no sort and only turn covering off.
+                                            && model != groupByBaseModel
                                             && (nKeyExcludedValues == 0 || isNotEqualsIndexScanUsable(reader, columnIndexes.getQuick(keyColumnIndex)))
                                             && isKeyMajorScanAffordable(
                                             reader,

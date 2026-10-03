@@ -293,6 +293,13 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
                             + ", x long, ts timestamp) timestamp(ts) partition by DAY"
             );
             execute("insert into g select case when x % 3 = 1 then 'A' when x % 3 = 2 then 'B' else 'C' end, x, ((x - 1) * " + (2 * HOUR) + ")::timestamp from long_sequence(" + ROWS + ")");
+            // order-insensitive aggregates: the advice arrives as INVARIANT
+            assertQuery("select sym, avg(x), count() from g where sym in ('A', 'B') order by sym")
+                    .withPlanNotContaining("keyMajor")
+                    .withPlanContaining("posting".equals(indexType) ? "CoveringIndex" : "FilterOnValues")
+                    .sizeMayVary()
+                    .returns("sym\tavg\tcount\nA\t11.5\t8\nB\t12.5\t8\n");
+            // order-sensitive aggregates: the heap cursor
             final String firstQuery = "select sym, first(x) from g where sym in ('A', 'B') order by sym";
             assertQuery(firstQuery)
                     .withPlanNotContaining("keyMajor")
