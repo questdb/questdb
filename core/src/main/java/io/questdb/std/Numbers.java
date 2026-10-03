@@ -1238,14 +1238,65 @@ public final class Numbers {
     }
 
     public static int parseIPv4Quiet(CharSequence sequence) {
-        try {
-            if (sequence == null || Chars.equals("null", sequence)) {
-                return IPv4_NULL;
-            }
-            return parseIPv4(sequence);
-        } catch (NumericException e) {
+        if (sequence == null || Chars.equals("null", sequence)) {
             return IPv4_NULL;
         }
+        int lim = sequence.length();
+        if (lim == 0) {
+            return IPv4_NULL;
+        }
+
+        int hi;
+        int lo = 0;
+        int num;
+        int ipv4 = 0;
+        int count = 0;
+
+        final char sign = sequence.charAt(lo);
+
+        if (notDigit(sign)) {
+            if (sign == '.') {
+                do {
+                    lo++;
+                } while (lo < lim && sequence.charAt(lo) == '.');
+            } else {
+                return IPv4_NULL;
+            }
+        }
+
+        while ((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
+            num = parseIntQuiet(sequence, lo, hi);
+            if (num == Numbers.INT_NULL || num > 255 || num < 0) {
+                return IPv4_NULL;
+            }
+            ipv4 = (ipv4 << 8) | num;
+            count++;
+            lo = hi + 1;
+        }
+
+        if (count != 3) {
+            return IPv4_NULL;
+        }
+
+        if ((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+            num = parseIntQuiet(sequence, lo, hi);
+            hi++;
+            while (hi < lim) {
+                if (sequence.charAt(hi) == '.') {
+                    hi++;
+                } else {
+                    return IPv4_NULL;
+                }
+            }
+        } else {
+            num = parseIntQuiet(sequence, lo, lim);
+        }
+
+        if (num == Numbers.INT_NULL || num > 255 || num < 0) {
+            return IPv4_NULL;
+        }
+
+        return (ipv4 << 8) | num;
     }
 
     public static int parseIPv4UDP(CharSequence sequence) throws NumericException {
@@ -1394,15 +1445,56 @@ public final class Numbers {
     }
 
     public static int parseIntQuiet(CharSequence sequence) {
-        try {
-            if (sequence == null || Chars.equals("NaN", sequence)) {
-                return Numbers.INT_NULL;
-            }
-            return parseInt0(sequence, 0, sequence.length());
-        } catch (NumericException e) {
+        if (sequence == null || Chars.equals("NaN", sequence)) {
+            return Numbers.INT_NULL;
+        }
+        return parseIntQuiet(sequence, 0, sequence.length());
+    }
+
+    public static int parseIntQuiet(CharSequence sequence, int p, int lim) {
+        if (lim == p) {
             return Numbers.INT_NULL;
         }
 
+        final char sign = sequence.charAt(p);
+        final boolean negative = sign == '-';
+        int i = p;
+        if (negative || sign == '+') {
+            i++;
+        }
+
+        if (i >= lim) {
+            return Numbers.INT_NULL;
+        }
+
+        int digitCounter = 0;
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+            if (c == '_') {
+                if (digitCounter == 0) {
+                    return Numbers.INT_NULL;
+                }
+                digitCounter = 0;
+            } else if (c < '0' || c > '9') {
+                return Numbers.INT_NULL;
+            } else {
+                if (val < (Integer.MIN_VALUE / 10)) {
+                    return Numbers.INT_NULL;
+                }
+                int r = (val << 3) + (val << 1) - (c - '0');
+                if (r > val) {
+                    return Numbers.INT_NULL;
+                }
+                val = r;
+                digitCounter++;
+            }
+        }
+
+        if ((val == Integer.MIN_VALUE && !negative) || digitCounter == 0) {
+            return Numbers.INT_NULL;
+        }
+        return negative ? val : -val;
     }
 
     public static long parseIntSafely(CharSequence sequence, final int p, int lim) throws NumericException {
@@ -1678,13 +1770,59 @@ public final class Numbers {
 
     public static long parseLongQuiet(CharSequence sequence) {
         if (sequence == null) {
-            return LONG_NULL;
+            return Numbers.LONG_NULL;
         }
-        try {
-            return parseLong0(sequence, 0, sequence.length());
-        } catch (NumericException e) {
-            return LONG_NULL;
+        return parseLongQuiet(sequence, 0, sequence.length());
+    }
+
+    public static long parseLongQuiet(CharSequence sequence, int p, int lim) {
+        if (lim == p) {
+            return Numbers.LONG_NULL;
         }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            return Numbers.LONG_NULL;
+        }
+
+        int digitCounter = 0;
+        long val = 0;
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
+            switch (c | 32) {
+                case 'l':
+                    if (i == 0 || i + 1 < lim) {
+                        return Numbers.LONG_NULL;
+                    }
+                    break;
+                case 127: // '_'
+                    if (digitCounter == 0) {
+                        return Numbers.LONG_NULL;
+                    }
+                    digitCounter = 0;
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        return Numbers.LONG_NULL;
+                    }
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        return Numbers.LONG_NULL;
+                    }
+                    val = r;
+                    digitCounter++;
+            }
+        }
+
+        if ((val == Long.MIN_VALUE && !negative) || digitCounter == 0) {
+            return Numbers.LONG_NULL;
+        }
+        return negative ? val : -val;
     }
 
     public static long parseLongSize(CharSequence sequence) throws NumericException {
