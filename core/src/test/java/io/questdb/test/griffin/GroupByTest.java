@@ -1978,48 +1978,48 @@ public class GroupByTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(expectedResult);
+                final String fusedPlan1 = "Encode sort light lo: 10000\n" +
+                        "  keys: [fact_table__avg_radiation desc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                        "        Async Hash Join Group By workers: 1\n" +
+                        "          logicalJoinType: right outer\n" +
+                        "          physicalJoinType: left outer\n" +
+                        "          inputSwapped: true\n" +
+                        "          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                        "          buildStrategy: shared\n" +
+                        "          buildPayload: copied when the probe is large enough\n" +
+                        "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
+                        "          keyFunctions: [timestamp_floor('day',to_timezone(fact_table.date_time))]\n" +
+                        "          values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
+                        "            Probe\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: dim_apTemperature\n" +
+                        "            Build\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: fact_table\n";
+                final String ordinaryPlan1 = "Encode sort light lo: 10000\n" +
+                        "  keys: [fact_table__avg_radiation desc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
+                        "          values: [avg(radiation),avg(energy_power)]\n" +
+                        "            SelectedRecord\n" +
+                        "                Hash " + joinType + " Outer Join Light\n" +
+                        "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: fact_table\n" +
+                        "                    Hash\n" +
+                        "                        PageFrame\n" +
+                        "                            Row forward scan\n" +
+                        "                            Frame forward scan on: dim_apTemperature\n";
                 assertQuery(query1)
                         .noLeakCheck()
-                        .assertsPlan(joinType.equals("Right")
-                                ? "Encode sort light lo: 10000\n" +
-                                        "  keys: [fact_table__avg_radiation desc]\n" +
-                                        "    VirtualRecord\n" +
-                                        "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
-                                        "        Async Hash Join Group By workers: 1\n" +
-                                        "          logicalJoinType: right outer\n" +
-                                        "          physicalJoinType: left outer\n" +
-                                        "          inputSwapped: true\n" +
-                                        "          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                        "          buildStrategy: shared\n" +
-                                        "          buildPayload: copied when the probe is large enough\n" +
-                                        "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
-                                        "          keyFunctions: [timestamp_floor('day',to_timezone(fact_table.date_time))]\n" +
-                                        "          values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
-                                        "            Probe\n" +
-                                        "                PageFrame\n" +
-                                        "                    Row forward scan\n" +
-                                        "                    Frame forward scan on: dim_apTemperature\n" +
-                                        "            Build\n" +
-                                        "                PageFrame\n" +
-                                        "                    Row forward scan\n" +
-                                        "                    Frame forward scan on: fact_table\n"
-                                : "Encode sort light lo: 10000\n" +
-                                "  keys: [fact_table__avg_radiation desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
-                                "        GroupBy vectorized: false\n" +
-                                "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
-                                "          values: [avg(radiation),avg(energy_power)]\n" +
-                                "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                        .assertsPlan(joinType.equals("Right") ? fusedPlan1 : ordinaryPlan1);
 
                 // With no aliases in GROUP BY clause - 1
                 final String query2 = "SELECT\n" +
@@ -2041,48 +2041,48 @@ public class GroupByTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(expectedResult);
+                final String fusedPlan2 = "Encode sort light lo: 10000\n" +
+                        "  keys: [fact_table__avg_radiation desc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                        "        Async Hash Join Group By workers: 1\n" +
+                        "          logicalJoinType: right outer\n" +
+                        "          physicalJoinType: left outer\n" +
+                        "          inputSwapped: true\n" +
+                        "          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                        "          buildStrategy: shared\n" +
+                        "          buildPayload: copied when the probe is large enough\n" +
+                        "          keys: [category,timestamp_floor]\n" +
+                        "          keyFunctions: [timestamp_floor('day',to_timezone(fact_table.date_time))]\n" +
+                        "          values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
+                        "            Probe\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: dim_apTemperature\n" +
+                        "            Build\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: fact_table\n";
+                final String ordinaryPlan2 = "Encode sort light lo: 10000\n" +
+                        "  keys: [fact_table__avg_radiation desc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [category,timestamp_floor]\n" +
+                        "          values: [avg(radiation),avg(energy_power)]\n" +
+                        "            SelectedRecord\n" +
+                        "                Hash " + joinType + " Outer Join Light\n" +
+                        "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: fact_table\n" +
+                        "                    Hash\n" +
+                        "                        PageFrame\n" +
+                        "                            Row forward scan\n" +
+                        "                            Frame forward scan on: dim_apTemperature\n";
                 assertQuery(query2)
                         .noLeakCheck()
-                        .assertsPlan(joinType.equals("Right")
-                                ? "Encode sort light lo: 10000\n" +
-                                        "  keys: [fact_table__avg_radiation desc]\n" +
-                                        "    VirtualRecord\n" +
-                                        "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
-                                        "        Async Hash Join Group By workers: 1\n" +
-                                        "          logicalJoinType: right outer\n" +
-                                        "          physicalJoinType: left outer\n" +
-                                        "          inputSwapped: true\n" +
-                                        "          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                        "          buildStrategy: shared\n" +
-                                        "          buildPayload: copied when the probe is large enough\n" +
-                                        "          keys: [category,timestamp_floor]\n" +
-                                        "          keyFunctions: [timestamp_floor('day',to_timezone(fact_table.date_time))]\n" +
-                                        "          values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
-                                        "            Probe\n" +
-                                        "                PageFrame\n" +
-                                        "                    Row forward scan\n" +
-                                        "                    Frame forward scan on: dim_apTemperature\n" +
-                                        "            Build\n" +
-                                        "                PageFrame\n" +
-                                        "                    Row forward scan\n" +
-                                        "                    Frame forward scan on: fact_table\n"
-                                : "Encode sort light lo: 10000\n" +
-                                "  keys: [fact_table__avg_radiation desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
-                                "        GroupBy vectorized: false\n" +
-                                "          keys: [category,timestamp_floor]\n" +
-                                "          values: [avg(radiation),avg(energy_power)]\n" +
-                                "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                        .assertsPlan(joinType.equals("Right") ? fusedPlan2 : ordinaryPlan2);
 
                 // With no aliases in GROUP BY clause - 2
                 final String query3 = "SELECT\n" +
@@ -2104,48 +2104,48 @@ public class GroupByTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(expectedResult);
+                final String fusedPlan3 = "Encode sort light lo: 10000\n" +
+                        "  keys: [fact_table__avg_radiation desc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                        "        Async Hash Join Group By workers: 1\n" +
+                        "          logicalJoinType: right outer\n" +
+                        "          physicalJoinType: left outer\n" +
+                        "          inputSwapped: true\n" +
+                        "          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                        "          buildStrategy: shared\n" +
+                        "          buildPayload: copied when the probe is large enough\n" +
+                        "          keys: [category,timestamp_floor]\n" +
+                        "          keyFunctions: [timestamp_floor('day',to_timezone(fact_table.date_time))]\n" +
+                        "          values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
+                        "            Probe\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: dim_apTemperature\n" +
+                        "            Build\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: fact_table\n";
+                final String ordinaryPlan3 = "Encode sort light lo: 10000\n" +
+                        "  keys: [fact_table__avg_radiation desc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [category,timestamp_floor]\n" +
+                        "          values: [avg(radiation),avg(energy_power)]\n" +
+                        "            SelectedRecord\n" +
+                        "                Hash " + joinType + " Outer Join Light\n" +
+                        "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: fact_table\n" +
+                        "                    Hash\n" +
+                        "                        PageFrame\n" +
+                        "                            Row forward scan\n" +
+                        "                            Frame forward scan on: dim_apTemperature\n";
                 assertQuery(query3)
                         .noLeakCheck()
-                        .assertsPlan(joinType.equals("Right")
-                                ? "Encode sort light lo: 10000\n" +
-                                        "  keys: [fact_table__avg_radiation desc]\n" +
-                                        "    VirtualRecord\n" +
-                                        "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
-                                        "        Async Hash Join Group By workers: 1\n" +
-                                        "          logicalJoinType: right outer\n" +
-                                        "          physicalJoinType: left outer\n" +
-                                        "          inputSwapped: true\n" +
-                                        "          condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                        "          buildStrategy: shared\n" +
-                                        "          buildPayload: copied when the probe is large enough\n" +
-                                        "          keys: [category,timestamp_floor]\n" +
-                                        "          keyFunctions: [timestamp_floor('day',to_timezone(fact_table.date_time))]\n" +
-                                        "          values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
-                                        "            Probe\n" +
-                                        "                PageFrame\n" +
-                                        "                    Row forward scan\n" +
-                                        "                    Frame forward scan on: dim_apTemperature\n" +
-                                        "            Build\n" +
-                                        "                PageFrame\n" +
-                                        "                    Row forward scan\n" +
-                                        "                    Frame forward scan on: fact_table\n"
-                                : "Encode sort light lo: 10000\n" +
-                                "  keys: [fact_table__avg_radiation desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
-                                "        GroupBy vectorized: false\n" +
-                                "          keys: [category,timestamp_floor]\n" +
-                                "          values: [avg(radiation),avg(energy_power)]\n" +
-                                "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                        .assertsPlan(joinType.equals("Right") ? fusedPlan3 : ordinaryPlan3);
 
                 // Without GROUP BY clause
                 final String query4 = "SELECT\n" +
@@ -2164,44 +2164,44 @@ public class GroupByTest extends AbstractCairoTest {
                         .expectSize()
                         .noLeakCheck()
                         .returns(expectedResult);
+                final String fusedPlan4 = "Encode sort light lo: 10000\n" +
+                        "  keys: [fact_table__avg_radiation desc]\n" +
+                        "    Async Hash Join Group By workers: 1\n" +
+                        "      logicalJoinType: right outer\n" +
+                        "      physicalJoinType: left outer\n" +
+                        "      inputSwapped: true\n" +
+                        "      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                        "      buildStrategy: shared\n" +
+                        "      buildPayload: copied when the probe is large enough\n" +
+                        "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
+                        "      keyFunctions: [timestamp_floor('day',to_timezone(fact_table.date_time))]\n" +
+                        "      values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
+                        "        Probe\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: dim_apTemperature\n" +
+                        "        Build\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: fact_table\n";
+                final String ordinaryPlan4 = "Encode sort light lo: 10000\n" +
+                        "  keys: [fact_table__avg_radiation desc]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
+                        "      values: [avg(radiation),avg(energy_power)]\n" +
+                        "        SelectedRecord\n" +
+                        "            Hash " + joinType + " Outer Join Light\n" +
+                        "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: fact_table\n" +
+                        "                Hash\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: dim_apTemperature\n";
                 assertQuery(query4)
                         .noLeakCheck()
-                        .assertsPlan(joinType.equals("Right")
-                                ? "Encode sort light lo: 10000\n" +
-                                        "  keys: [fact_table__avg_radiation desc]\n" +
-                                        "    Async Hash Join Group By workers: 1\n" +
-                                        "      logicalJoinType: right outer\n" +
-                                        "      physicalJoinType: left outer\n" +
-                                        "      inputSwapped: true\n" +
-                                        "      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                        "      buildStrategy: shared\n" +
-                                        "      buildPayload: copied when the probe is large enough\n" +
-                                        "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
-                                        "      keyFunctions: [timestamp_floor('day',to_timezone(fact_table.date_time))]\n" +
-                                        "      values: [avg(fact_table.radiation),avg(fact_table.energy_power)]\n" +
-                                        "        Probe\n" +
-                                        "            PageFrame\n" +
-                                        "                Row forward scan\n" +
-                                        "                Frame forward scan on: dim_apTemperature\n" +
-                                        "        Build\n" +
-                                        "            PageFrame\n" +
-                                        "                Row forward scan\n" +
-                                        "                Frame forward scan on: fact_table\n"
-                                : "Encode sort light lo: 10000\n" +
-                                "  keys: [fact_table__avg_radiation desc]\n" +
-                                "    GroupBy vectorized: false\n" +
-                                "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
-                                "      values: [avg(radiation),avg(energy_power)]\n" +
-                                "        SelectedRecord\n" +
-                                "            Hash " + joinType + " Outer Join Light\n" +
-                                "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: fact_table\n" +
-                                "                Hash\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: dim_apTemperature\n");
+                        .assertsPlan(joinType.equals("Right") ? fusedPlan4 : ordinaryPlan4);
             }
         });
     }

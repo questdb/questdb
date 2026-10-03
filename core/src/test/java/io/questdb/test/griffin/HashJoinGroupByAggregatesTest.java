@@ -78,9 +78,74 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     // "Async JIT Hash Join Group By" for a JIT-compiled probe filter.
     private static final String FUSED = "Hash Join Group By";
     private static final String[] JOINS = {" JOIN ", " LEFT JOIN ", " RIGHT JOIN "};
+    // Type bounds and large values. BYTE and SHORT alternate between their bounds, INT between +-MAX (MIN is
+    // NULL), LONG between +-2^62. FLOAT mixes 3e38 with non-dyadic values (1/3, 0.1 * x, -12345.678), so a
+    // DOUBLE sum of FLOAT arguments rounds; the large values share a sign, so no sum cancels catastrophically.
+    private static final NumericValues EXTREME_VALUES = new NumericValues(
+            "CASE WHEN $ % 3 = 0 THEN -128 WHEN $ % 3 = 1 THEN 127 ELSE $ % 5 - 2 END",
+            "CASE WHEN $ % 3 = 0 THEN -32768 WHEN $ % 3 = 1 THEN 32767 ELSE $ % 9 - 4 END",
+            "CASE WHEN $ % 3 = 0 THEN 2147483647 WHEN $ % 3 = 1 THEN -2147483647 ELSE $ % 13 - 6 END",
+            "CASE WHEN $ % 3 = 0 THEN 4611686018427387904 WHEN $ % 3 = 1 THEN -4611686018427387904 ELSE $ * 3 - 50 END",
+            "CASE WHEN $ % 4 = 0 THEN 3.0e38 WHEN $ % 4 = 1 THEN 1.0 / 3 WHEN $ % 4 = 2 THEN 0.1 * $ ELSE -12345.678 END"
+    );
+    private static final NumericValues LARGE_OFFSET_VALUES = new NumericValues(
+            "$ % 7 - 3",
+            "$ % 9 - 4",
+            "$ % 13 - 6",
+            "100_000_000_000_000 + $ * 7",
+            "($ % 17) * 0.25 - 2"
+    );
+    // Measured on this data, as the largest relative difference between the plans over every join, side,
+    // key and sharding variant: offset 1e9 -> 6e-9, 1e12 -> 5e-6, 1e14 -> 6.8e-4, 4e15 -> 0.23. The bound
+    // leaves a 7x margin at 1e14.
+    private static final double LARGE_OFFSET_TOLERANCE = 5e-3;
+    private static final NumericValues SMALL_VALUES = new NumericValues(
+            "$ % 7 - 3",
+            "$ % 9 - 4",
+            "$ % 13 - 6",
+            "$ * 3 - 50",
+            "($ % 17) * 0.25 - 2"
+    );
     // The narrower numeric columns that the function parser passes to a DOUBLE parameter without a cast.
     private static final String[] NUMERIC_COLUMNS = {"y", "h", "i", "l", "f"};
     private static final short[] NUMERIC_TYPES = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT};
+
+    @Test
+    public void testArgumentReadingBothJoinSides() throws Exception {
+        // The argument expression reads a probe and a build column, so an outer join's null-extended rows
+        // reach it as NULL (FLOAT, INT, LONG) on one side only.
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(pool, (db, compiler, ctx) -> {
+                createTables(db, ctx);
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    context.changePageFrameSizes(1, 4);
+                    String[] arguments = {"r.f - p.f", "p.f * r.y", "r.i + p.i", "p.h - r.i", "r.l - p.l"};
+                    short[] types = {ColumnType.FLOAT, ColumnType.FLOAT, ColumnType.INT, ColumnType.INT, ColumnType.LONG};
+                    for (String join : JOINS) {
+                        String from = " FROM r" + join + "p ON r.k = p.k";
+                        for (String function : new String[]{"stddev_pop", "stddev_samp", "var_pop", "var_samp", "skewness",
+                                "kurtosis", "ksum", "avg"}) {
+                            for (int a = 0; a < arguments.length; a++) {
+                                // avg(INT) and avg(LONG) have exact classes; only avg(FLOAT) is new.
+                                if (function.equals("avg") && types[a] != ColumnType.FLOAT) {
+                                    continue;
+                                }
+                                String aggregate = function + "(" + arguments[a] + ") v";
+                                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, Integer.MAX_VALUE);
+                                assertNumericArgumentFuses("SELECT " + aggregate + ", count() pairs" + from, context, types[a]);
+                                for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                                    assertNumericArgumentFuses("SELECT " + aggregate + ", r.g rg, p.g pg, count() pairs" + from
+                                            + " ORDER BY rg, pg", context, types[a]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
 
     @Test
     public void testAvgByteArgument() throws Exception {
@@ -92,6 +157,38 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     public void testAvgFloatArgument() throws Exception {
         // avg() has no FLOAT overload, so AvgDoubleGroupByFunction reads the FLOAT column.
         assertNumericArgument("avg", "f", ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testConstantNumericArguments() throws Exception {
+        // A constant narrower than DOUBLE reaches the aggregate uncast, like a column. geomean() of a
+        // constant folds to a constant at compile time, so it is not an aggregate here.
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(pool, (db, compiler, ctx) -> {
+                createTables(db, ctx);
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    context.changePageFrameSizes(1, 4);
+                    String[] aggregates = {"stddev_pop(1)", "stddev_samp(7)", "var_pop(10_000_000_000)", "var_samp(3::SHORT)",
+                            "skewness(5::BYTE)", "kurtosis_pop(2)", "ksum(3)", "nsum(4_000_000_000)",
+                            "avg(3::BYTE)", "sum(3::BYTE)", "min(3::BYTE)", "max(3::BYTE)", "count(3::SHORT)"};
+                    short[] types = {ColumnType.INT, ColumnType.INT, ColumnType.LONG, ColumnType.SHORT,
+                            ColumnType.BYTE, ColumnType.INT, ColumnType.INT, ColumnType.LONG,
+                            ColumnType.BYTE, ColumnType.BYTE, ColumnType.BYTE, ColumnType.BYTE, ColumnType.SHORT};
+                    for (String join : JOINS) {
+                        String from = " FROM r" + join + "p ON r.k = p.k";
+                        for (int a = 0; a < aggregates.length; a++) {
+                            for (String where : new String[]{"", " WHERE r.k > 100"}) {
+                                assertNumericArgumentFuses("SELECT " + aggregates[a] + " v, count() pairs" + from + where,
+                                        context, types[a]);
+                                assertNumericArgumentFuses("SELECT " + aggregates[a] + " v, r.g rg, p.g pg, count() pairs" + from
+                                        + where + " ORDER BY rg, pg", context, types[a]);
+                            }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
     }
 
     @Test
@@ -198,6 +295,44 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtremeValuesDoubleParameterAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(pool, (db, compiler, ctx) -> {
+                createTables(db, ctx, EXTREME_VALUES);
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    context.changePageFrameSizes(1, 4);
+                    for (String function : new String[]{"stddev_pop", "stddev_samp", "var_pop", "var_samp", "skewness_pop",
+                            "skewness_samp", "kurtosis_pop", "kurtosis_samp", "ksum", "nsum", "geomean"}) {
+                        for (int i = 0; i < NUMERIC_COLUMNS.length; i++) {
+                            assertNumericArgument(function, NUMERIC_COLUMNS[i], NUMERIC_TYPES[i], context);
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testExtremeValuesNarrowerOverloads() throws Exception {
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(pool, (db, compiler, ctx) -> {
+                createTables(db, ctx, EXTREME_VALUES);
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    context.changePageFrameSizes(1, 4);
+                    // avg(FLOAT) sums 3e38 and non-dyadic values in DOUBLE, in a different order per plan.
+                    assertNumericArgument("avg", "f", ColumnType.FLOAT, context);
+                    for (String function : new String[]{"avg", "sum", "min", "max", "count"}) {
+                        assertNumericArgument(function, "y", ColumnType.BYTE, context);
+                    }
+                    assertNumericArgument("count", "h", ColumnType.SHORT, context);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testGeomeanNumericArguments() throws Exception {
         assertNumericArguments("geomean");
     }
@@ -220,6 +355,28 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     @Test
     public void testKurtosisSampNumericArguments() throws Exception {
         assertNumericArguments("kurtosis_samp");
+    }
+
+    @Test
+    public void testLargeOffsetLongMomentsAgreeWithinTolerance() throws Exception {
+        // LONG values far from zero (ids, epoch values) with a small spread. The moment aggregates merge
+        // partial results with Chan's formula, and both that and the serial Welford update lose precision
+        // when the mean is large relative to the spread, each in its own way. This predates the admission of
+        // LONG arguments: a DOUBLE argument with the same values diverges the same way. Both plans are
+        // inaccurate here, so the results only agree within LARGE_OFFSET_TOLERANCE, not 1e-9.
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(pool, (db, compiler, ctx) -> {
+                createTables(db, ctx, LARGE_OFFSET_VALUES);
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    context.changePageFrameSizes(1, 4);
+                    for (String function : new String[]{"stddev_pop", "stddev_samp", "var_pop", "var_samp", "skewness_pop",
+                            "skewness_samp", "kurtosis_pop", "kurtosis_samp"}) {
+                        assertNumericArgument(function, "l", ColumnType.LONG, context, LARGE_OFFSET_TOLERANCE);
+                    }
+                }
+            }, configuration, LOG);
+        });
     }
 
     @Test
@@ -321,11 +478,16 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                     for (String join : JOINS) {
                         String from = " FROM r" + join + "p ON r.k = p.k";
                         for (String function : new String[]{"stddev_pop", "stddev_samp", "var_pop", "var_samp", "avg"}) {
-                            for (String where : new String[]{"", " WHERE r.f > 0", " WHERE r.k > 100"}) {
+                            // WHERE r.f IS NULL leaves groups whose spreads are all NULL.
+                            for (String where : new String[]{"", " WHERE r.f > 0", " WHERE r.f IS NULL", " WHERE r.k > 100"}) {
                                 String sql = "SELECT " + function + "(r.f - r.y) spread_stat, coalesce(p.g, '') ex, count() n,"
                                         + " max(r.f - r.y) mx, weighted_avg(r.f - r.y, r.h + r.i) wavg"
                                         + from + where + " ORDER BY ex";
-                                assertNumericArgumentFuses(sql, context, ColumnType.FLOAT);
+                                // Threshold 1 shards the keyed maps, so partial results also merge per shard.
+                                for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                                    assertNumericArgumentFuses(sql, context, ColumnType.FLOAT);
+                                }
                             }
                         }
                     }
@@ -508,6 +670,16 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
             short argType,
             SqlExecutionContextImpl context
     ) throws SqlException {
+        assertNumericArgument(function, column, argType, context, DOUBLE_TOLERANCE);
+    }
+
+    private void assertNumericArgument(
+            String function,
+            String column,
+            short argType,
+            SqlExecutionContextImpl context,
+            double tolerance
+    ) throws SqlException {
         // BYTE and SHORT hold no NULL, and the null-extended rows of an outer join read them as 0.
         boolean isNullable = argType != ColumnType.BYTE && argType != ColumnType.SHORT;
         for (String join : JOINS) {
@@ -523,12 +695,12 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                         continue;
                     }
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, Integer.MAX_VALUE);
-                    assertNumericArgumentFuses("SELECT " + aggregate + ", count() pairs" + from + where, context, argType);
+                    assertNumericArgumentFuses("SELECT " + aggregate + ", count() pairs" + from + where, context, argType, tolerance);
                     // Threshold 1 shards the keyed maps, so partial results also merge per shard.
                     for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
                         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
                         assertNumericArgumentFuses("SELECT " + aggregate + ", r.g rg, p.g pg, count() pairs" + from + where
-                                + " ORDER BY rg, pg", context, argType);
+                                + " ORDER BY rg, pg", context, argType, tolerance);
                     }
                 }
             }
@@ -538,6 +710,15 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     // Asserts that the first aggregate reads an argument of the given type without a cast, that the
     // query compiles to the fused operator, and that its results equal those of the ordinary plan.
     private static void assertNumericArgumentFuses(String sql, SqlExecutionContextImpl context, short argType) throws SqlException {
+        assertNumericArgumentFuses(sql, context, argType, DOUBLE_TOLERANCE);
+    }
+
+    private static void assertNumericArgumentFuses(
+            String sql,
+            SqlExecutionContextImpl context,
+            short argType,
+            double tolerance
+    ) throws SqlException {
         context.setParallelHashJoinGroupByEnabled(true);
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             String plan = plan(factory, context);
@@ -546,7 +727,7 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
             Assert.assertTrue(sql, aggregate instanceof UnaryFunction);
             Assert.assertEquals(sql, ColumnType.nameOf(argType), ColumnType.nameOf(((UnaryFunction) aggregate).getArg().getType()));
         }
-        assertFusedMatchesOrdinary(sql, context, new ObjHashSet<>());
+        assertFusedMatchesOrdinary(sql, context, new ObjHashSet<>(), tolerance);
     }
 
     private void assertNumericArguments(String function) throws Exception {
@@ -594,6 +775,15 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
             SqlExecutionContextImpl context,
             ObjHashSet<Class<?>> fusedClasses
     ) throws SqlException {
+        assertFusedMatchesOrdinary(sql, context, fusedClasses, DOUBLE_TOLERANCE);
+    }
+
+    private static void assertFusedMatchesOrdinary(
+            String sql,
+            SqlExecutionContextImpl context,
+            ObjHashSet<Class<?>> fusedClasses,
+            double tolerance
+    ) throws SqlException {
         ObjList<Object> expected;
         context.setParallelHashJoinGroupByEnabled(false);
         try (RecordCursorFactory baseline = context.getCairoEngine().select(sql, context)) {
@@ -616,7 +806,7 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                 for (int read = 0; read < 2; read++) {
                     ObjList<Object> actual = cells(factory, context);
                     Assert.assertEquals(sql + "\n" + format(expected, metadata) + "\n" + format(actual, metadata),
-                            "", mismatches(expected, actual, metadata));
+                            "", mismatches(expected, actual, metadata, tolerance));
                 }
             }
         } finally {
@@ -647,6 +837,10 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     }
 
     private static void createTables(CairoEngine engine, SqlExecutionContext context) throws SqlException {
+        createTables(engine, context, SMALL_VALUES);
+    }
+
+    private static void createTables(CairoEngine engine, SqlExecutionContext context, NumericValues values) throws SqlException {
         // Keys repeat on both sides. Key 4 exists only in r and key 7 only in p, so LEFT and RIGHT joins
         // null-extend rows. Every other nullable column holds NULLs, and r's day partitions hold 3, 45 and 12
         // rows. CHAR holds digits and no NULL, because a CHAR argument converts to DOUBLE by parsing the digit.
@@ -655,8 +849,8 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                     + " l LONG, dt DATE, t TIMESTAMP, ns TIMESTAMP_NS, f FLOAT, d DOUBLE, s SYMBOL, ts TIMESTAMP)"
                     + " TIMESTAMP(ts) PARTITION BY DAY", context);
         }
-        insertRows(engine, context, "r", 60, "CASE WHEN x % 11 = 0 THEN NULL ELSE (x % 5)::INT END", 0);
-        insertRows(engine, context, "p", 40, "CASE WHEN x % 9 = 0 THEN NULL WHEN x % 13 = 0 THEN 7 ELSE (x % 4)::INT END", 1);
+        insertRows(engine, context, "r", 60, "CASE WHEN x % 11 = 0 THEN NULL ELSE (x % 5)::INT END", 0, values);
+        insertRows(engine, context, "p", 40, "CASE WHEN x % 9 = 0 THEN NULL WHEN x % 13 = 0 THEN 7 ELSE (x % 4)::INT END", 1, values);
     }
 
     private static String format(ObjList<Object> cells, RecordMetadata metadata) {
@@ -675,36 +869,50 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
             String key,
             int shift
     ) throws SqlException {
+        insertRows(engine, context, table, rows, key, shift, SMALL_VALUES);
+    }
+
+    // The values columns are templates over $, which stands for x shifted per table.
+    private static void insertRows(
+            CairoEngine engine,
+            SqlExecutionContext context,
+            String table,
+            int rows,
+            String key,
+            int shift,
+            NumericValues values
+    ) throws SqlException {
+        final String x = "(x + " + shift + ")";
         engine.execute("INSERT INTO " + table + " SELECT " + key + ", ('g' || ((x + " + shift + ") % 3))::SYMBOL,"
-                + " (x + " + shift + ") % 3 = 0, ((x + " + shift + ") % 7 - 3)::BYTE, ((x + " + shift + ") % 9 - 4)::SHORT,"
+                + " (x + " + shift + ") % 3 = 0, (" + values.y.replace("$", x) + ")::BYTE, (" + values.h.replace("$", x) + ")::SHORT,"
                 + " (48 + (x + " + shift + ") % 5)::INT::CHAR,"
-                + " CASE WHEN x % 7 = 0 THEN NULL ELSE ((x + " + shift + ") % 13 - 6)::INT END,"
-                + " CASE WHEN x % 8 = 0 THEN NULL ELSE (x + " + shift + ") * 3 - 50 END,"
+                + " CASE WHEN x % 7 = 0 THEN NULL ELSE (" + values.i.replace("$", x) + ")::INT END,"
+                + " CASE WHEN x % 8 = 0 THEN NULL ELSE (" + values.l.replace("$", x) + ")::LONG END,"
                 + " CASE WHEN x % 9 = 0 THEN NULL ELSE ((x + " + shift + ") * 1_000)::DATE END,"
                 + " CASE WHEN x % 12 = 0 THEN NULL ELSE ((x + " + shift + ") * 1_000)::TIMESTAMP END,"
                 + " CASE WHEN x % 10 = 0 THEN NULL ELSE ((x + " + shift + ") * 1_000_000_123)::TIMESTAMP_NS END,"
-                + " CASE WHEN x % 6 = 1 THEN NULL ELSE (((x + " + shift + ") % 17) * 0.25 - 2)::FLOAT END,"
+                + " CASE WHEN x % 6 = 1 THEN NULL ELSE (" + values.f.replace("$", x) + ")::FLOAT END,"
                 + " CASE WHEN x % 5 = 0 THEN NULL ELSE ((x + " + shift + ") % 23) * 0.5 - 5 END,"
                 + " (CASE WHEN x % 4 = 0 THEN NULL ELSE 's' || ((x + " + shift + ") % 6) END)::SYMBOL,"
                 + " ((CASE WHEN x <= 3 THEN x WHEN x <= 48 THEN 86_400 + x * 60 ELSE 172_800 + x * 60 END) * 1_000_000)::TIMESTAMP"
                 + " FROM long_sequence(" + rows + ")", context);
     }
 
-    private static boolean isClose(Object expected, Object actual) {
+    private static boolean isClose(Object expected, Object actual, double tolerance) {
         if (expected instanceof Double e && actual instanceof Double a
                 && !Double.isNaN(e) && !Double.isNaN(a) && !Double.isInfinite(e) && !Double.isInfinite(a)) {
-            return Math.abs(e - a) <= DOUBLE_TOLERANCE * Math.max(1.0, Math.max(Math.abs(e), Math.abs(a)));
+            return Math.abs(e - a) <= tolerance * Math.max(1.0, Math.max(Math.abs(e), Math.abs(a)));
         }
         return expected.equals(actual);
     }
 
-    private static String mismatches(ObjList<Object> expected, ObjList<Object> actual, RecordMetadata metadata) {
+    private static String mismatches(ObjList<Object> expected, ObjList<Object> actual, RecordMetadata metadata, double tolerance) {
         if (expected.size() != actual.size()) {
             return "cell count: " + expected.size() + " != " + actual.size();
         }
         StringBuilder sb = new StringBuilder();
         for (int i = 0, n = expected.size(), columns = metadata.getColumnCount(); i < n; i++) {
-            if (!isClose(expected.getQuick(i), actual.getQuick(i))) {
+            if (!isClose(expected.getQuick(i), actual.getQuick(i), tolerance)) {
                 sb.append("row ").append(i / columns).append(' ').append(metadata.getColumnName(i % columns))
                         .append(": ").append(expected.getQuick(i)).append(" != ").append(actual.getQuick(i)).append('\n');
             }
@@ -728,5 +936,8 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
         } finally {
             context.setParallelHashJoinGroupByEnabled(true);
         }
+    }
+
+    private record NumericValues(String y, String h, String i, String l, String f) {
     }
 }
