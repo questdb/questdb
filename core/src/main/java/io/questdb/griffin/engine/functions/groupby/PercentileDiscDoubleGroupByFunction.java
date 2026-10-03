@@ -159,6 +159,11 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

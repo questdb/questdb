@@ -158,6 +158,11 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }
