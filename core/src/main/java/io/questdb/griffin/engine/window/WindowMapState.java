@@ -275,6 +275,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
 
     @Override
     public void close() {
+        lastValue = null;
         Misc.free(map);
     }
 

@@ -71,6 +71,8 @@ import org.jetbrains.annotations.Nullable;
  * the TLB on nearly every column of every row. The cursor therefore takes row ids from the index
  * in batches and loads the batch's column cache lines in one tight loop before it emits the rows,
  * which lets those misses overlap instead of being paid one row at a time by the consumer.
+ * A consumer that stops early (LIMIT) leaves up to one batch of rows per (key, frame) read
+ * from the index, residual filter included, and touched for nothing.
  */
 public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor {
     // Row ids drained from the row cursor ahead of emission. Their column cache lines are loaded
@@ -376,7 +378,12 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             final int shift = touchShifts[c];
             for (int i = 0; i < n; i++) {
                 final long offset = buf[i] << shift;
-                if (offset < limit) {
+                // A touched column has data for every row of the frame, so a row out of range
+                // means the address or the limit was derived wrongly. That loses the prefetch
+                // but changes no result, so only an assertion can catch it. Unsigned, so that a
+                // negative row id can never read below the column.
+                assert Long.compareUnsigned(offset, limit) < 0 : "touch out of range [offset=" + offset + ", limit=" + limit + ']';
+                if (Long.compareUnsigned(offset, limit) < 0) {
                     sink += Unsafe.getByte(address + offset);
                 }
             }
