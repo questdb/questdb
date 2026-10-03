@@ -300,9 +300,26 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // seqTxn and a later commit would make those rows overtake their call-site order.
             commit();
             lastSegmentTxn = events.appendCustomEvent(txnType, payload);
-            return getSequencerTxn();
+            // Same adaptive protocol as a DATA commit: make this txn's private event files durable
+            // before the shared sequencer records it, then join the pending batch (W>0) so the
+            // sequencer's pin is released by this writer's flush, or publish the durable txn (W=0).
+            final int syncedMode = syncAdaptiveEventsBeforeSequencing();
+            final long seqTxn = getSequencerTxn();
+            if (syncedMode == CommitMode.ADAPTIVE) {
+                if (deferDeviceFlush()) {
+                    recordPendingDurable(seqTxn);
+                } else {
+                    checkDistressed();
+                    seqTxnTracker.setLocalDurableSeqTxn(seqTxn);
+                }
+            }
+            return seqTxn;
         } catch (Throwable th) {
             distressed = true;
+            if (CairoException.isDataSyncFailure(th)) {
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
             throw th;
         }
     }

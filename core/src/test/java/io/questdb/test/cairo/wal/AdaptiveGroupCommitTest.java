@@ -85,6 +85,7 @@ import java.util.function.Function;
  */
 public class AdaptiveGroupCommitTest extends AbstractCairoTest {
 
+    private static final byte CUSTOM_EVENT_TYPE = 64;
     private static final long WINDOW_US = 1_000_000L; // 1s window, driven by the test microsecond clock
 
     @Test
@@ -271,6 +272,124 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                 }
             } finally {
                 factoryField.set(seqApi, originalFactory);
+            }
+        });
+    }
+
+    /**
+     * A custom event appended after a still-pending DATA commit joins that batch. Its private event files must
+     * be made durable before it is sequenced: the batch's later sequencer flush covers the custom event's
+     * record and drops the pin, so without that sync the frontier would claim an event never flushed.
+     */
+    @Test
+    public void testCustomEventJoiningPendingBatchSyncsEventsBeforeSequencing() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            // warmup through the pool: allocates file pages, and the release flushes the commit
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 0)");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            final long customSeqTxn;
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                commitRow(w, 60_000_000L, 1);
+                final long dataSeqTxn = tracker.getSeqTxn();
+                Assert.assertTrue("data commit must be pending", tracker.getLocalDurableSeqTxn() < dataSeqTxn);
+
+                ff.reset();
+                customSeqTxn = w.appendCustomEvent(CUSTOM_EVENT_TYPE, mem -> mem.putLong(42L));
+                Assert.assertEquals(dataSeqTxn + 1, customSeqTxn);
+                Assert.assertTrue(
+                        "custom event's private event file must be fdatasync'd before sequencing",
+                        ff.eventFdatasyncs() > 0
+                );
+                Assert.assertEquals("custom event must not flush the shared sequencer", 0, ff.sequencerFdatasyncs());
+                Assert.assertTrue("custom event must stay pending", tracker.getLocalDurableSeqTxn() < dataSeqTxn);
+            }
+
+            Assert.assertEquals(customSeqTxn, tracker.getLocalDurableSeqTxn());
+            Assert.assertEquals(0, tracker.getPendingWriterPinCount());
+        });
+    }
+
+    /**
+     * W&gt;0: a custom event on an otherwise idle writer (the ENT partition-seal shape) is pinned by the
+     * sequencer. It must enter the writer's pending batch so the pool-return flush releases that pin;
+     * otherwise the durable frontier freezes below the event while peers keep committing.
+     */
+    @Test
+    public void testCustomEventOnIdleWriterIsFlushedOnRelease() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 0)");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            Assert.assertEquals(tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
+
+            final long customSeqTxn;
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                ff.reset();
+                customSeqTxn = w.appendCustomEvent(CUSTOM_EVENT_TYPE, mem -> mem.putLong(42L));
+                Assert.assertTrue(
+                        "custom event's private event file must be fdatasync'd before sequencing",
+                        ff.eventFdatasyncs() > 0
+                );
+                Assert.assertTrue("custom event must stay pending", tracker.getLocalDurableSeqTxn() < customSeqTxn);
+                Assert.assertEquals(1, tracker.getPendingWriterPinCount());
+            }
+
+            // the clean handoff must flush the pending custom event and release its pin
+            Assert.assertEquals(customSeqTxn, tracker.getLocalDurableSeqTxn());
+            Assert.assertEquals(0, tracker.getPendingWriterPinCount());
+
+            // a peer's later commit must carry the frontier past the custom event
+            execute("insert into x values ('2024-01-01T00:01:00.000000Z', 1)");
+            Assert.assertEquals(tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn());
+        });
+    }
+
+    /**
+     * W=0: the custom event's private event file must reach the device before its sequencer record, and the
+     * already-durable event then publishes the frontier synchronously, as a W=0 DATA commit does.
+     */
+    @Test
+    public void testCustomEventWindowZeroSyncsEventsBeforeSequencer() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 0)");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                ff.reset();
+                final long customSeqTxn = w.appendCustomEvent(CUSTOM_EVENT_TYPE, mem -> mem.putLong(42L));
+                final int eventIdx = ff.firstEventFdatasyncIndex();
+                final int seqIdx = ff.firstSequencerFdatasyncIndex();
+                Assert.assertTrue("custom event's private event file must be fdatasync'd", eventIdx > -1);
+                Assert.assertTrue("W=0 must fdatasync the sequencer record", seqIdx > -1);
+                Assert.assertTrue(
+                        "event file must be fdatasync'd before the sequencer [eventIdx=" + eventIdx + ", seqIdx=" + seqIdx + ']',
+                        eventIdx < seqIdx
+                );
+                Assert.assertEquals(customSeqTxn, tracker.getLocalDurableSeqTxn());
+                Assert.assertEquals(0, tracker.getPendingWriterPinCount());
             }
         });
     }
@@ -1250,6 +1369,25 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                 }
             }
             return c;
+        }
+
+        public int firstEventFdatasyncIndex() {
+            for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
+                final String p = fdatasyncPaths.get(i);
+                if (p.endsWith(WalUtils.EVENT_FILE_NAME) || p.endsWith(WalUtils.EVENT_FILE_NAME + ".")) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        public int firstSequencerFdatasyncIndex() {
+            for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
+                if (isSequencerFile(fdatasyncPaths.get(i))) {
+                    return i;
+                }
+            }
+            return -1;
         }
 
         public void reset() {
