@@ -27,6 +27,7 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -796,6 +797,74 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd);
     }
 
+    /**
+     * Partition compaction defaults to off - {@code Overrides} only turns merge-append itself on - so
+     * without this, no fuzz run here ever exercises it. One run in three leaves it off, exactly like
+     * every fuzz run before this method existed. The rest turn it on and draw its budgets independently,
+     * each LOG-UNIFORM (its exponent, not the value itself, is what is drawn uniformly) so
+     * a run is as likely to land tight as generous at every scale in between, rather than clustering near
+     * the middle the way a plain {@code nextInt} over the same range would:
+     * <ul>
+     *     <li>{@code pieceThreshold}: 1 to 10,000. The piece-count rule's cap is
+     *     {@code max(pieceThreshold, liveRows / avgRowsPieceLim)} (see
+     *     {@code PartitionCompactionPolicy.effectiveMaxPieces}) - this is the flat floor half of that
+     *     formula. At the low end - single digits - this is what makes {@code
+     *     O3PartitionJob#shouldAssembleFreshPartitionVersion}'s proactive check fire routinely instead of
+     *     only on the rare generation-exhausted case, so its interaction with dedup, replace-range,
+     *     column-top backfill and every other fuzzed transaction kind gets covered. At the high end it
+     *     never fires for a fuzz-sized table on its own, leaving the scaled half of the formula (below) and
+     *     {@code runCompaction}'s other rules covered instead;</li>
+     *     <li>{@code avgRowsPieceLim}: 1 to 10,000,000 - the scaled half of the same cap, {@code liveRows /
+     *     this}. The LOW end (near 1) makes the scaled term track liveRows itself, so {@code pieceThreshold}
+     *     alone decides the cap. The HIGH end (comfortably above every {@code setFuzzCounts} total row
+     *     count in this class) drives the scaled term to 0, so it never out-competes {@code pieceThreshold}
+     *     either - the interesting middle of the range is where the scaled term can exceed a small
+     *     {@code pieceThreshold} draw and take over as the effective cap;</li>
+     *     <li>{@code deadRowsRatio}: 0 to 999. The waste-ratio rule fires on dead rows exceeding a whole
+     *     MULTIPLE of live rows, not a percentage, so 0 - dead exceeding zero times live, the tightest
+     *     this can express - is one decade of the draw rather than a special case;</li>
+     *     <li>{@code deadMinSize}: 100,000 to ~1,000,000,000,000 (1T) bytes, the floor below which the
+     *     waste-ratio rule does not fire regardless of the ratio. Starts at 100K rather than single bytes
+     *     so a tight draw still means "a meaningful stride of dead rows", not "one row".</li>
+     *     <li>{@code prefixMinPercent}: the shipped default (50) nine runs out of ten, so that value - the
+     *     one every production table actually runs under - stays the best-tested. The tenth run draws
+     *     uniformly from 1 to 40, comfortably under the front share a typical fuzz workload's narrow
+     *     backdated strides leave behind, so MOVE-TAIL wins over REWRITE close to every time a folder
+     *     qualifies instead of only when the default happens to clear the bar - giving MOVE-TAIL, and the
+     *     MAKE-PLAIN it immediately chains into, real odds of firing without dominating every run.</li>
+     *     <li>{@code tableDeadThreshold}: zero four runs in five, so the table-pressure rule keeps firing off
+     *     a mere handful of dead rows exactly like every fuzz run before this floor existed - fuzz tables
+     *     are small, and a floor anywhere near the 50MB shipped default would suppress table-pressure on
+     *     almost all of them, losing the coverage it currently gives REWRITE, MOVE-TAIL and MAKE-PLAIN.
+     *     The fifth run draws LOG-UNIFORM from 1 byte up to that 50MB default, covering both the
+     *     suppression itself and, at the top of the range, the value a production table actually runs
+     *     under.</li>
+     * </ul>
+     */
+    private static void setRndPartitionCompactionProperties(Rnd rnd) {
+        final int pieceThreshold = (int) Math.round(Math.pow(10, rnd.nextDouble() * 4));
+        final long avgRowsPieceLim = Math.round(Math.pow(10, rnd.nextDouble() * 7));
+        final int deadRowsRatio = (int) Math.round(Math.pow(10, rnd.nextDouble() * 3)) - 1;
+        final long deadMinSize = Math.round(Math.pow(10, 5 + rnd.nextDouble() * 7));
+        final int prefixMinPercent = rnd.nextInt(10) == 0 ? 1 + rnd.nextInt(40) : 50;
+        final long tableDeadThreshold = rnd.nextInt(5) == 0
+                ? Math.round(Math.pow(10, rnd.nextDouble() * Math.log10(50 * Numbers.SIZE_1MB)))
+                : 0;
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, pieceThreshold);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, avgRowsPieceLim);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, deadRowsRatio);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, deadMinSize);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT, prefixMinPercent);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, tableDeadThreshold);
+        LOG.info().$("partition compaction fuzz mode [pieceThreshold=").$(pieceThreshold)
+                .$(", avgRowsPieceLim=").$(avgRowsPieceLim)
+                .$(", deadRowsRatio=").$(deadRowsRatio)
+                .$(", deadMinSize=").$(deadMinSize)
+                .$(", prefixMinPercent=").$(prefixMinPercent)
+                .$(", tableDeadThreshold=").$(tableDeadThreshold)
+                .I$();
+    }
+
     private void setTestParams(Rnd rnd) throws Exception {
         int newScoreboardVersion = rnd.nextBoolean() ? 1 : 2;
         boolean newAsyncMunmapEnabled = Os.isPosix() && rnd.nextBoolean(); // windows does not support async munmap
@@ -824,5 +893,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         super.setFuzzProperties(rnd);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1 + rnd.nextLong(engine.getConfiguration().getWalSegmentRolloverRowCount()));
+        // Production ships this OFF, the test defaults (Overrides) turn it ON. A 50/50 coin here keeps
+        // both configurations fuzzed: with it ON the table takes no WAL lag and tryFastAppendInOrderBlock
+        // returns before its body, so those two paths - both load-bearing on a default deployment - are
+        // only reached by the runs that draw false.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, rnd.nextBoolean());
+        setRndPartitionCompactionProperties(rnd);
     }
 }

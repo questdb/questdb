@@ -192,6 +192,10 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                                 finishPartitionUpdate(partitionIndex, affectedColumnCount, prevRow, minRow, tableMetadata);
                             }
 
+                            // A composite (multi-piece) partition has no row where "live position" and "physical file
+                            // position" coincide in general, which this row-by-row streaming rewrite assumes
+                            tableWriter.compactPartitionNoCommit(rowPartitionIndex);
+
                             openColumns(srcColumns, rowPartitionIndex, false);
                             openColumns(dstColumns, rowPartitionIndex, true);
 

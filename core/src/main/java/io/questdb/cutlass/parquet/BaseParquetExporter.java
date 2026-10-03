@@ -101,8 +101,14 @@ public abstract class BaseParquetExporter {
         return totalRows;
     }
 
+    /**
+     * Drops the temp table an export materialized into. {@code tempTableName} names that temp table, which is not
+     * always {@code task.getTableName()}: an export that started out as a direct table read and only found out on
+     * the worker that it has to materialize keeps the user's own table name on the task.
+     */
     protected void dropTempTable(
             CopyExportContext.ExportTaskEntry entry,
+            CharSequence tempTableName,
             TableToken tableToken
     ) {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
@@ -111,7 +117,7 @@ public abstract class BaseParquetExporter {
         final CairoEngine cairoEngine = engine;
         try {
             if (tableToken == null) {
-                tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
+                tableToken = cairoEngine.getTableTokenIfExists(tempTableName);
             }
             if (tableToken != null) {
                 cairoEngine.dropTableOrViewOrMatView(Path.getThreadLocal(""), tableToken);

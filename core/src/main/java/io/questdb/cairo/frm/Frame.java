@@ -31,19 +31,117 @@ import java.io.Closeable;
  */
 public interface Frame extends Closeable {
 
+    /**
+     * Appends {@code [sourceLo, sourceHi)} of {@code source} to this frame's tail, one column at a time.
+     *
+     * @param upcomingTableTxn tags posting-index chain entries published during this append, so a partial publish is
+     *                         droppable by recovery.
+     */
+    void appendColumns(Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode);
+
     void close();
 
     int columnCount();
 
+    /**
+     * Forwards {@link ColumnTopSink#commitColumnTops()} to this frame's sink, if it has one.
+     */
+    void commitColumnTops();
+
     FrameColumn createColumn(int columnIndex);
+
+    default void setDeferCoveredIndexing(boolean deferCoveredIndexing) {
+    }
+
+    /**
+     * How many of this frame's rows are LIVE - rows something still points at - as opposed to
+     * {@link #getRowCount()}, which is where the next append writes. The two differ only for a COMPOSITE
+     * partition, whose pieces have moved off part of its extent and left dead rows behind.
+     */
+    long getLiveRowCount();
 
     long getOffset();
 
+    /**
+     * This frame's physical extent {@code E}: the file row an append starts at, and the row count it reports
+     * back once the append has landed. For a PLAIN partition this is also its live row count.
+     */
     long getRowCount();
 
+    /**
+     * The end of the logical row window {@link #shift} last pointed this frame at, {@code Long.MAX_VALUE} until then.
+     */
+    long getWindowHi();
+
+    /**
+     * The start of the logical row window {@link #shift} last pointed this frame at, {@code 0} until then.
+     */
+    long getWindowLo();
+
+    /**
+     * Appends the MERGE of two sources to this frame's tail, interleaved by {@code mergeIndexAddr}.
+     */
+    void mergeColumns(
+            Frame source1,
+            long source1Lo,
+            long source1Hi,
+            Frame source2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            long upcomingTableTxn,
+            int commitMode
+    );
+
+    /**
+     * One operation's view of column {@code columnIndex}: this frame's own kept-open column while
+     * {@link #setKeepColumnsOpen} is on, otherwise a fresh one. A read-only file column reads through the
+     * window {@link #shift} set. Pair every call with {@link #releaseColumn}, which closes only a fresh column.
+     */
+    FrameColumn openColumn(int columnIndex);
+
+    /**
+     * Reports every column's self-tracked top to {@code sink}, one {@link ColumnTopSink#setColumnTop} call per column
+     * this frame actually wrote through (see {@link #saveChanges}).
+     */
+    void publishColumnTops(ColumnTopSink sink);
+
+    /**
+     * The counterpart of {@link #openColumn}: closes {@code column} unless this frame keeps its columns open.
+     */
+    void releaseColumn(FrameColumn column);
+
     void saveChanges(FrameColumn column);
+
+    /**
+     * When on, every column {@link #openColumn} hands out stays open until {@link #close()}, so a caller that runs
+     * several appends or merges against the same partition - a composite partition plan, piece after piece - opens
+     * each column file once, and a read-only column maps the frame's whole extent once. Scoped to the open that set
+     * it: {@link #close()} turns it off. A frame wider than one batch of columns ignores it.
+     */
+    void setKeepColumnsOpen(boolean isKeepColumnsOpen);
+
+    /**
+     * States how many of the rows this frame was opened over are LIVE. An opener that opens a COMPOSITE
+     * partition at its extent {@code E} states its live count here, because {@code E} counts the dead rows
+     * its pieces have moved off as well. A PLAIN partition needs no call: its live count is the row count it
+     * was opened at, which is what this defaults to.
+     * <p>
+     * The gap is what is remembered, so every append that follows advances the live count with the extent -
+     * the rows an append lands are live. Scoped to the open that set it: {@link #close()} drops it.
+     */
+    void setLiveRowCount(long liveRowCount);
 
     void setOffset(long offset);
 
     void setRowCount(long rowCount);
+
+    /**
+     * Points this frame at the logical row window {@code [rowLo, rowHi)} of its extent, in place of opening a new
+     * frame at {@code rowHi}: a read-only column reports its top as no higher than {@code rowHi}, exactly as a frame
+     * opened at that row count did, and every operation reading this frame must stay inside the window. Scoped to
+     * the open that set it: {@link #close()} drops it.
+     */
+    void shift(long rowLo, long rowHi);
 }

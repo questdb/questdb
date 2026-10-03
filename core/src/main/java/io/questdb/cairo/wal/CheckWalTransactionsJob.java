@@ -35,25 +35,29 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-public class CheckWalTransactionsJob extends SynchronizedJob {
+public class CheckWalTransactionsJob extends SynchronizedJob implements QuietCloseable {
     private final long checkInterval;
     private final TableSequencerAPI.TableSequencerCallback checkNotifyOutstandingTxnInWalRef;
     private final CharSequence dbRoot;
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
+    private final long minScanInterval;
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     // Empty list means that all tables should be checked.
     private final TxReader txReader;
     private long lastProcessedCount = 0;
     private long lastRunMs;
+    private long lastScanMs;
     private boolean notificationQueueIsFull = false;
     private Path threadLocalPath;
 
@@ -66,7 +70,14 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
         checkNotifyOutstandingTxnInWalRef = (tableId, token, txn) -> checkNotifyOutstandingTxnInWal(token, txn);
         checkInterval = engine.getConfiguration().getSequencerCheckInterval();
+        minScanInterval = engine.getConfiguration().getSequencerCheckMinInterval();
         lastRunMs = millisecondClock.getTicks();
+        lastScanMs = lastRunMs - minScanInterval;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(txReader);
     }
 
     private void checkMissingWalTransactions() {
@@ -131,6 +142,14 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             }
             return false;
         }
+        // The scan below reads every table off disk, and a moved counter alone used to start one on the
+        // very next poll. Under load the counter moves constantly, so it ran back to back. A skipped scan
+        // leaves lastProcessedCount where it is, so this defers the work rather than dropping it.
+        final long now = millisecondClock.getTicks();
+        if (now - lastScanMs < minScanInterval) {
+            return false;
+        }
+        lastScanMs = now;
         checkMissingWalTransactions();
         lastProcessedCount = unpublishedWalTxnCount;
         return !notificationQueueIsFull;

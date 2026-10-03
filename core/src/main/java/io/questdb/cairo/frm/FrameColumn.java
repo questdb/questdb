@@ -51,6 +51,25 @@ public interface FrameColumn extends Closeable {
      */
     void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
 
+    /**
+     * Appends the MERGE of two sources to this column's tail, interleaved by {@code mergeIndexAddr}.
+     *
+     * @param mergeIndexAddr native address of the merge index
+     * @param mergeIndexRows number of rows the index describes, which is the number of rows appended
+     */
+    void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            long source1Hi,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    );
+
     void appendNulls(long rowCount, long sourceColumnTop, int commitMode);
 
     void close();
@@ -70,6 +89,24 @@ public interface FrameColumn extends Closeable {
     long getSecondaryFd();
 
     int getStorageType();
+
+    default boolean isTimestampIndex() {
+        return false;
+    }
+
+    /**
+     * Read-only file columns only, a no-op for every other kind. Lets one column serve several operations of a
+     * frame opened once over a whole partition, each reading one piece of it.
+     *
+     * @param logicalRowHi the end of the row window the next operation reads. The column reports its top as no
+     *                     higher than this, exactly as a column opened at this row count did, so code sizing the
+     *                     rows below a top sees the same numbers either way. {@code Long.MAX_VALUE} for no window.
+     * @param mapRowHi     how far the column's first mapping reaches at the least, so a column kept open across
+     *                     operations maps the whole frame once rather than growing piece by piece. {@code 0} maps
+     *                     only the rows asked for.
+     */
+    default void setReadWindow(long logicalRowHi, long mapRowHi) {
+    }
 
     void setRecycleBin(RecycleBin<FrameColumn> pool);
 
