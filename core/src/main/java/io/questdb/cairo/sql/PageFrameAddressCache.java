@@ -45,9 +45,9 @@ import java.util.Arrays;
  * Holds formats, addresses and sizes for page frames.
  * <p>
  * For native (mmapped) page frames we store the column-vector descriptor's
- * fields for each column: the aux/data vector addresses and sizes and the
- * validity fields (see {@link ColumnVectorDescriptor}). For parquet page frames
- * we store addresses of mmapped files, as well as the list of row groups.
+ * fields for each column: the aux/data vector addresses and sizes (see
+ * {@link ColumnVectorDescriptor}). For parquet page frames we store addresses
+ * of mmapped files, as well as the list of row groups.
  * <p>
  * Once initialized, this cache is thread-safe.
  * <p>
@@ -88,9 +88,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final LongList coveredRowLos = new LongList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
-    // The descriptor's validity fields, flat like the page addresses. No column has a
-    // validity bitmap yet: every entry holds address 0, bit offset 0 and NULL count -1.
-    private final DirectLongList nullCounts;
     private final DirectLongList pageAddresses;
     private final DirectLongList pageSizes;
     private final ObjList<ParquetDecoder> parquetDecoders = new ObjList<>();
@@ -99,8 +96,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final IntList parquetRowGroups = new IntList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
-    private final DirectLongList validityAddresses;
-    private final DirectLongList validityBitOffsets;
     private int columnCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
@@ -112,9 +107,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         this.auxPageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.pageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.pageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
-        this.validityAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
-        this.validityBitOffsets = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
-        this.nullCounts = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
     }
 
     public void add(int frameIndex, @Transient PageFrame frame) {
@@ -131,14 +123,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         boolean[] covered = null;
         int[] columnInclude = null;
         final byte format = frame.getFormat();
-        // The validity lists take the frame's block in one reservation and plain writes, not a
-        // DirectLongList.add() per value: more add() calls from here tipped C2 into inlining the
-        // capacity check of add() into the row loops that append row ids, which slowed the
-        // interpreted filter on a 16-bit column by 3.6% (S14a benchmarks).
-        final long validityPos = validityAddresses.size();
-        validityAddresses.ensureCapacity(columnCount);
-        validityBitOffsets.ensureCapacity(columnCount);
-        nullCounts.ensureCapacity(columnCount);
         if (format == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getDataAddress(columnIndex));
@@ -150,9 +134,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                     auxPageAddresses.add(0);
                     auxPageSizes.add(0);
                 }
-                validityAddresses.set(validityPos + columnIndex, frame.getValidityAddress(columnIndex));
-                validityBitOffsets.set(validityPos + columnIndex, frame.getValidityBitOffset(columnIndex));
-                nullCounts.set(validityPos + columnIndex, frame.getNullCount(columnIndex));
                 if (frame.getColumnSource(columnIndex) == DataSource.COVERED) {
                     if (covered == null) {
                         covered = new boolean[columnCount];
@@ -171,15 +152,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 pageSizes.add(0);
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
-                validityAddresses.set(validityPos + columnIndex, 0);
-                validityBitOffsets.set(validityPos + columnIndex, 0);
-                nullCounts.set(validityPos + columnIndex, -1);
             }
             hasParquetFrames = true;
         }
-        validityAddresses.setPos(validityPos + columnCount);
-        validityBitOffsets.setPos(validityPos + columnCount);
-        nullCounts.setPos(validityPos + columnCount);
 
         // Defensive consistency check: a covering frame produces its per-column
         // DataSource.COVERED flags and its per-frame covered accessors together, so the
@@ -278,9 +253,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         auxPageAddresses.clear();
         pageSizes.clear();
         auxPageSizes.clear();
-        validityAddresses.clear();
-        validityBitOffsets.clear();
-        nullCounts.clear();
         rowIdOffsets.clear();
         external = false;
         hasCoveredFrames = false;
@@ -293,9 +265,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageSizes.close();
         auxPageAddresses.close();
         auxPageSizes.close();
-        validityAddresses.close();
-        validityBitOffsets.close();
-        nullCounts.close();
     }
 
     /**
@@ -308,9 +277,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 pageSizes,
                 auxPageAddresses,
                 auxPageSizes,
-                validityAddresses,
-                validityBitOffsets,
-                nullCounts,
                 columnNullPolicies,
                 frameIndex * columnCount,
                 columnCount
@@ -516,9 +482,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             pageSizes.reopen();
             auxPageAddresses.reopen();
             auxPageSizes.reopen();
-            validityAddresses.reopen();
-            validityBitOffsets.reopen();
-            nullCounts.reopen();
         } catch (Throwable th) {
             close();
             throw th;
@@ -553,9 +516,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                     auxPageAddresses.set(offset + columnIndex, frame.getAuxAddress(columnIndex));
                     auxPageSizes.set(offset + columnIndex, frame.getAuxSize(columnIndex));
                 }
-                validityAddresses.set(offset + columnIndex, frame.getValidityAddress(columnIndex));
-                validityBitOffsets.set(offset + columnIndex, frame.getValidityBitOffset(columnIndex));
-                nullCounts.set(offset + columnIndex, frame.getNullCount(columnIndex));
             }
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());

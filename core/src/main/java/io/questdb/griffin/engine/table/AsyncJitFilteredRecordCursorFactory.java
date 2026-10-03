@@ -447,7 +447,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         dataAddresses.getAddress(),
                         dataAddresses.size(),
                         auxAddresses.getAddress(),
-                        task.getValidityLists().getAddress(),
+                        0, // validity lists: no column has a validity bitmap
                         atom.bindVarMemory.getAddress(),
                         atom.bindVarFunctions.size(),
                         frameRowCount
@@ -458,7 +458,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         dataAddresses.getAddress(),
                         dataAddresses.size(),
                         auxAddresses.getAddress(),
-                        task.getValidityLists().getAddress(),
+                        0, // validity lists: no column has a validity bitmap
                         atom.bindVarMemory.getAddress(),
                         atom.bindVarFunctions.size(),
                         rows.getAddress(),

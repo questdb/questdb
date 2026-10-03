@@ -54,12 +54,10 @@ import org.junit.Test;
  */
 public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
 
-    // Ceiling range the buildRosti drain sweep walks. The drain allocates ~55 KiB: ~32 KiB of rosti
-    // and decode work, plus the page-frame address cache's validity address, bit offset and NULL
-    // count lists (24 B per column per frame; 500 frames of 2 columns here), so the sweep crosses
-    // its whole OOM/success transition with room to spare; the armed-drain assertion below fails
-    // loudly if an allocation-path change ever pushes the transition past this.
-    private static final int ROSTI_BUILD_SLACK_MAX = 96 * 1024;
+    // Ceiling range the buildRosti drain sweep walks. The drain allocates ~32 KiB, so the sweep
+    // crosses its whole OOM/success transition with room to spare; the armed-drain assertion below
+    // fails loudly if an allocation-path change ever pushes the transition past this.
+    private static final int ROSTI_BUILD_SLACK_MAX = 48 * 1024;
     // The faulting allocations here are 128 B and larger, so a 64-byte step lands inside every one of
     // their windows many times over.
     private static final int ROSTI_BUILD_SLACK_STEP = 64;

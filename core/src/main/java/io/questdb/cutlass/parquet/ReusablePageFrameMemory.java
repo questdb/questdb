@@ -48,11 +48,8 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     private final DirectLongList auxPageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final ObjList<NullPolicy> columnNullPolicies = new ObjList<>();
     private final ColumnVectorDescriptor columnVectors = new ColumnVectorDescriptor();
-    private final DirectLongList nullCounts = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final DirectLongList pageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final DirectLongList pageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-    private final DirectLongList validityAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-    private final DirectLongList validityBitOffsets = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private int columnCount;
     private boolean hasColumnTops;
     private long rowIdOffset;
@@ -63,9 +60,6 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
         auxPageAddresses.clear();
         pageSizes.clear();
         auxPageSizes.clear();
-        validityAddresses.clear();
-        validityBitOffsets.clear();
-        nullCounts.clear();
         columnVectors.clear();
     }
 
@@ -75,9 +69,6 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
         Misc.free(auxPageAddresses);
         Misc.free(pageSizes);
         Misc.free(auxPageSizes);
-        Misc.free(validityAddresses);
-        Misc.free(validityBitOffsets);
-        Misc.free(nullCounts);
         columnVectors.clear();
     }
 
@@ -143,9 +134,6 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
         auxPageAddresses.clear();
         pageSizes.clear();
         auxPageSizes.clear();
-        validityAddresses.clear();
-        validityBitOffsets.clear();
-        nullCounts.clear();
 
         hasColumnTops = false;
         for (int col = 0; col < columnCount; col++) {
@@ -154,9 +142,6 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
             pageSizes.add(frame.getDataSize(col));
             auxPageAddresses.add(frame.getAuxAddress(col));
             auxPageSizes.add(frame.getAuxSize(col));
-            validityAddresses.add(frame.getValidityAddress(col));
-            validityBitOffsets.add(frame.getValidityBitOffset(col));
-            nullCounts.add(frame.getNullCount(col));
             if (addr == 0) {
                 hasColumnTops = true;
             }
@@ -166,9 +151,6 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
                 pageSizes,
                 auxPageAddresses,
                 auxPageSizes,
-                validityAddresses,
-                validityBitOffsets,
-                nullCounts,
                 columnNullPolicies,
                 0,
                 columnCount

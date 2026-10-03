@@ -50,8 +50,7 @@ import io.questdb.std.ObjList;
  * The descriptor is a view over flat per-column lists that its builder owns: the address cache
  * for native frames, the pool's decode buffers for Parquet and covered frames. The builder
  * points it at a frame with {@link #of}, once per frame; nothing is allocated per frame or per
- * row. The three validity lists may be null, when the builder carries no validity for the
- * frame; the column then answers validity address 0, bit offset 0 and NULL count -1.
+ * row.
  * <p>
  * A record owns its own descriptor and takes a frame's with {@link #copyFrom}, which copies
  * every field, so a record copy cannot leave a field behind. The record also keeps the lists
@@ -66,9 +65,6 @@ public final class ColumnVectorDescriptor implements Mutable {
     private DirectLongList dataAddresses;
     private DirectLongList dataSizes;
     private ObjList<NullPolicy> nullPolicies;
-    private DirectLongList nullCounts;
-    private DirectLongList validityAddresses;
-    private DirectLongList validityBitOffsets;
 
     @Override
     public void clear() {
@@ -79,9 +75,6 @@ public final class ColumnVectorDescriptor implements Mutable {
         dataAddresses = null;
         dataSizes = null;
         nullPolicies = null;
-        nullCounts = null;
-        validityAddresses = null;
-        validityBitOffsets = null;
     }
 
     public void copyFrom(ColumnVectorDescriptor other) {
@@ -92,9 +85,6 @@ public final class ColumnVectorDescriptor implements Mutable {
         dataAddresses = other.dataAddresses;
         dataSizes = other.dataSizes;
         nullPolicies = other.nullPolicies;
-        nullCounts = other.nullCounts;
-        validityAddresses = other.validityAddresses;
-        validityBitOffsets = other.validityBitOffsets;
     }
 
     /**
@@ -136,7 +126,7 @@ public final class ColumnVectorDescriptor implements Mutable {
      * The NULL count of the column in this frame, -1 when unknown.
      */
     public long getNullCount(int columnIndex) {
-        return nullCounts != null ? nullCounts.get(columnOffset + columnIndex) : -1;
+        return -1;
     }
 
     /**
@@ -151,14 +141,14 @@ public final class ColumnVectorDescriptor implements Mutable {
      * no validity bitmap for the column.
      */
     public long getValidityAddress(int columnIndex) {
-        return validityAddresses != null ? validityAddresses.get(columnOffset + columnIndex) : 0;
+        return 0;
     }
 
     /**
      * The position of the frame's first row within the word at the validity address.
      */
     public long getValidityBitOffset(int columnIndex) {
-        return validityBitOffsets != null ? validityBitOffsets.get(columnOffset + columnIndex) : 0;
+        return 0;
     }
 
     // the lists behind the per-column answers, for a record's per-row reads (same package)
@@ -186,9 +176,6 @@ public final class ColumnVectorDescriptor implements Mutable {
             DirectLongList dataSizes,
             DirectLongList auxAddresses,
             DirectLongList auxSizes,
-            DirectLongList validityAddresses,
-            DirectLongList validityBitOffsets,
-            DirectLongList nullCounts,
             ObjList<NullPolicy> nullPolicies,
             int columnOffset,
             int columnCount
@@ -197,9 +184,6 @@ public final class ColumnVectorDescriptor implements Mutable {
         this.dataSizes = dataSizes;
         this.auxAddresses = auxAddresses;
         this.auxSizes = auxSizes;
-        this.validityAddresses = validityAddresses;
-        this.validityBitOffsets = validityBitOffsets;
-        this.nullCounts = nullCounts;
         this.nullPolicies = nullPolicies;
         this.columnOffset = columnOffset;
         this.columnCount = columnCount;

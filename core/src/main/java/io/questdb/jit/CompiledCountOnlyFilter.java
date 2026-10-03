@@ -58,8 +58,8 @@ public class CompiledCountOnlyFilter implements Closeable {
      * @param dataAddress          address of the column data pointers array
      * @param dataSize             number of columns
      * @param varSizeAuxAddress    address of variable-size column auxiliary data (binary/string/varchar)
-     * @param validityListsAddress address of the columns' validity fields: three parallel blocks of
-     *                             validity addresses, bit offsets and NULL counts; not read yet
+     * @param validityListsAddress reserved for the columns' validity fields; callers pass 0, since no
+     *                             column has a validity bitmap, and the native filter does not read it
      * @param varsAddress          address of bind variables array
      * @param varsSize             number of bind variables
      * @param rowsCount            total number of rows to filter
