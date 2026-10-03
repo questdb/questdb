@@ -35,11 +35,8 @@ import io.questdb.std.Numbers;
 public class PGOids {
 
     public static final int BINARY_TYPE_ARRAY = (1 << 31) | ColumnType.ARRAY;
-    public static final int BINARY_TYPE_ARRAY_STRING = (1 << 31) | ColumnType.ARRAY_STRING;
-    public static final int BINARY_TYPE_BINARY = (1 << 31) | ColumnType.BINARY;
     public static final int BINARY_TYPE_BOOLEAN = (1 << 31) | ColumnType.BOOLEAN;
     public static final int BINARY_TYPE_BYTE = (1 << 31) | ColumnType.BYTE;
-    public static final int BINARY_TYPE_CHAR = (1 << 31) | ColumnType.CHAR;
     public static final int BINARY_TYPE_DATE = (1 << 31) | ColumnType.DATE;
     public static final int BINARY_TYPE_DECIMAL128 = (1 << 31) | ColumnType.DECIMAL128;
     public static final int BINARY_TYPE_DECIMAL16 = (1 << 31) | ColumnType.DECIMAL16;
@@ -49,23 +46,11 @@ public class PGOids {
     public static final int BINARY_TYPE_DECIMAL8 = (1 << 31) | ColumnType.DECIMAL8;
     public static final int BINARY_TYPE_DOUBLE = (1 << 31) | ColumnType.DOUBLE;
     public static final int BINARY_TYPE_FLOAT = (1 << 31) | ColumnType.FLOAT;
-    public static final int BINARY_TYPE_GEOBYTE = (1 << 31) | ColumnType.GEOBYTE;
-    public static final int BINARY_TYPE_GEOINT = (1 << 31) | ColumnType.GEOINT;
-    public static final int BINARY_TYPE_GEOLONG = (1 << 31) | ColumnType.GEOLONG;
-    public static final int BINARY_TYPE_GEOSHORT = (1 << 31) | ColumnType.GEOSHORT;
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
-    public static final int BINARY_TYPE_INTERVAL = (1 << 31) | ColumnType.INTERVAL;
-    public static final int BINARY_TYPE_IPv4 = (1 << 31) | ColumnType.IPv4;
     public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
-    public static final int BINARY_TYPE_LONG128 = (1 << 31) | ColumnType.LONG128;
-    public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
-    public static final int BINARY_TYPE_NULL = (1 << 31) | ColumnType.NULL;
     public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
-    public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
-    public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
-    public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
     /**
      * We cannot know in advance the actual type of the decimal, so we make a default one that
      * should be large enough to hold decimals.
