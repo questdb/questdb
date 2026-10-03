@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -134,11 +135,24 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      */
     private final VirtualRecord keyRecord;
     private final RecordSink keySink;
+    /**
+     * The record column of a key that is one direct SYMBOL or INT column, or -1. Such a key is
+     * compared to the previous row's before it is looked up: rows that repeat the previous key
+     * reuse its value handle and skip the hash and the probe. Input grouped by the key - a
+     * key-major index scan feeding {@code PARTITION BY sym} - then probes once per key run
+     * rather than once per row. The reuse is correct for any input order; only its payoff
+     * depends on the grouping.
+     */
+    private final int lastKeyColumnIndex;
     private final Map map;
     private final WindowAccumulatorPlan plan;
     private final int projectionCount;
     private final int unorderedMapMaxEntrySize;
+    private int lastKey;
+    // the value handle of lastKey, or null when there is none to reuse
+    private MapValue lastValue;
     private long lookupCount;
+    private long probeCount;
     private long projectionWriteCount;
     private long updateCount;
 
@@ -183,6 +197,13 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
                 // types rather than the filtered subset's.
                 keyColumnFilter.add(spec.getPartitionColumnIndex(i) + 1);
             }
+        }
+        if (keyFunctions == null && spec.getPartitionColumnCount() == 1) {
+            final int columnIndex = spec.getPartitionColumnIndex(0);
+            final int columnTag = ColumnType.tagOf(recordTypes.getColumnType(columnIndex));
+            this.lastKeyColumnIndex = columnTag == ColumnType.SYMBOL || columnTag == ColumnType.INT ? columnIndex : -1;
+        } else {
+            this.lastKeyColumnIndex = -1;
         }
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         plan.buildMapValueTypes(valueTypes);
@@ -245,6 +266,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * the same shared state seen several times.
      */
     public void clear() {
+        lastValue = null;
         if (map.isOpen()) {
             map.clear();
         }
@@ -270,8 +292,12 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      *     <li><b>contributors run before projections, in two loops.</b> One component may
      *     serve several outputs, so interleaving them would make an output's value depend on
      *     where its call sits in the SELECT list;</li>
-     *     <li><b>the value handle is used and dropped.</b> Nothing here rebuilds or rehashes
-     *     the map behind the loops, so the handle stays valid for the whole row.</li>
+     *     <li><b>the value handle is kept only while nothing else touches the map.</b> Nothing
+     *     here rebuilds or rehashes the map behind the loops, so the handle stays valid for the
+     *     whole row. A row that repeats the previous row's single-column key reuses it (see
+     *     {@link #lastKeyColumnIndex}): no other key was inserted in between, so the map has not
+     *     moved. Every other lookup of the map ({@link #projectPass2}, {@link #clear}, the
+     *     map's open and close) drops the handle.</li>
      * </ul>
      * <p>
      * A <b>two-pass group</b> - one whose functions read the whole partition rather than the
@@ -283,13 +309,18 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * choice.
      */
     public void computeNext(Record record) {
-        final MapKey key = map.withKey();
-        putKey(key, record);
-        final MapValue value = key.createValue();
-        if (value.isNew()) {
-            for (int c = 0; c < componentCount; c++) {
-                plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
+        final MapValue value;
+        if (lastKeyColumnIndex > -1) {
+            final int k = record.getInt(lastKeyColumnIndex);
+            if (lastValue != null && k == lastKey) {
+                value = lastValue;
+            } else {
+                value = lookup(record);
+                lastKey = k;
+                lastValue = value;
             }
+        } else {
+            value = lookup(record);
         }
         for (int c = 0; c < componentCount; c++) {
             plan.getContributor(c).accumulateWindowState(record, value);
@@ -337,6 +368,15 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
 
     public WindowAccumulatorPlan getPlan() {
         return plan;
+    }
+
+    /**
+     * The number of hash lookups the group made. Below {@link #getLookupCount()} when rows
+     * repeated the previous row's key and reused its value.
+     */
+    @TestOnly
+    public long getProbeCount() {
+        return probeCount;
     }
 
     @TestOnly
@@ -388,6 +428,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * random access and its second drain need.
      */
     public void projectPass2(Record record) {
+        lastValue = null;
         final MapKey key = map.withKey();
         putKey(key, record);
         final MapValue value = key.findValue();
@@ -407,6 +448,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      */
     @Override
     public void reopen() {
+        lastValue = null;
         map.reopen();
         resetStructuralCounters();
     }
@@ -416,6 +458,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * subsequent {@link #reopen()} allocates it again under whatever tracker is bound then.
      */
     public void reset() {
+        lastValue = null;
         map.close();
         resetStructuralCounters();
     }
@@ -441,6 +484,20 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         }
     }
 
+    // Finds or creates the row's entry, putting a new one's components to identity.
+    private MapValue lookup(Record record) {
+        final MapKey key = map.withKey();
+        putKey(key, record);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            for (int c = 0; c < componentCount; c++) {
+                plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
+            }
+        }
+        probeCount++;
+        return value;
+    }
+
     /**
      * Writes the row's key onto {@code key}, through the compiled PARTITION BY terms where the
      * key is an expression and off the record's own columns where it is not.
@@ -459,6 +516,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
 
     private void resetStructuralCounters() {
         lookupCount = 0;
+        probeCount = 0;
         updateCount = 0;
         projectionWriteCount = 0;
     }

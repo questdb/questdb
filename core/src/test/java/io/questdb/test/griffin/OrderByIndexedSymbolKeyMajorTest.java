@@ -28,6 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowMapState;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -790,6 +793,48 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowOverKeyMajorScanMatchesGeneralPath() throws Exception {
+        // A PARTITION BY sym window over the key-major scan sees each key's rows as one run, in
+        // the order the general path sees them, so its values must match the twin's: the same
+        // window over a table-order scan, sorted afterwards. The uneven fixture puts key changes
+        // inside page frames and on their boundaries, keys missing from whole frames, and NULLs.
+        // avg(x) and sum(x) share one fused map group, which reuses a run's map value instead of
+        // probing for every row; the expression argument keeps avg(x * 2 + 1) on its own map.
+        assertMemoryLeak(() -> {
+            final String w = " over (partition by sym rows between 2 preceding and current row)";
+            final String columns = "sym, x, ts, avg(x)" + w + " a, sum(x)" + w + " s, avg(x * 2 + 1)" + w + " e";
+            for (String partitionBy : PARTITION_BYS) {
+                createUnevenTables(partitionBy);
+                for (String[] c : new String[][]{
+                        {"sym in (null, 'A', 'B', 'D') order by sym", "sym in (null, 'A', 'B', 'D') order by sym, ts"},
+                        {"sym in ('C', 'A', null) order by sym desc", "sym in ('C', 'A', null) order by sym desc, ts"},
+                        {"sym != 'B' order by sym", "sym != 'B' order by sym, ts"},
+                }) {
+                    final String query = "select " + columns + " from u where " + c[0];
+                    final String expected = oracle("select " + columns + " from u_twin where " + c[1]);
+                    assertQuery(query).noRandomAccess().sizeMayVary().returns(expected);
+                    assertKeyMajorPlan(query, true);
+                    // one probe per key run: the number of times sym changes in the output
+                    long runs = 0;
+                    String prev = null;
+                    final String[] lines = expected.split("\n");
+                    for (int i = 1; i < lines.length; i++) {
+                        final String sym = lines[i].substring(0, lines[i].indexOf('\t'));
+                        if (!sym.equals(prev)) {
+                            runs++;
+                            prev = sym;
+                        }
+                    }
+                    Assert.assertTrue(runs > 1);
+                    Assert.assertEquals(query, runs, drainAndCountProbes(query));
+                    // the general path's table-order input changes key more often than once per key
+                    Assert.assertTrue(drainAndCountProbes("select " + columns + " from u_twin where " + c[1]) > runs);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnevenSortedSymbolIndexWithNulls() throws Exception {
         assertMemoryLeak(() -> {
             createUnevenTables("DAY");
@@ -870,6 +915,27 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
                     .returns(expected);
             assertKeyMajorPlan(query, true);
         });
+    }
+
+    private long drainAndCountProbes(String query) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            RecordCursorFactory f = factory;
+            while (!(f instanceof WindowRecordCursorFactory)) {
+                f = f.getBaseFactory();
+                Assert.assertNotNull("no window factory: " + query, f);
+            }
+            final ObjList<WindowMapState> states = ((WindowRecordCursorFactory) f).getWindowMapStates();
+            Assert.assertNotNull("no fused window group: " + query, states);
+            Assert.assertEquals(1, states.size());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                long rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
+                return states.getQuick(0).getProbeCount();
+            }
+        }
     }
 
     private void assertDifferential(String where, String twinWhere, boolean expectKeyMajor) throws Exception {
