@@ -46,6 +46,10 @@ import org.jetbrains.annotations.Nullable;
 public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
+    // extend0() reserved disk space for [0, allocatedSize) since this instance last mapped the file. It starts
+    // at 0 because a file this instance did not grow may have holes, e.g. from an ftruncate() that grew it,
+    // so the first extend after mapping reserves from offset 0.
+    private long allocatedSize = 0;
     private long appendAddress = 0;
     // When true this memory is strictly append-only (no in-place put*(offset,..) below the
     // high-water mark), so sync() may narrow the msync to the appended range and skip when
@@ -143,6 +147,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             fd = -1;
         }
         size = 0;
+        allocatedSize = 0;
         ff = null;
         // Drop the append bounds of the mapping we no longer own. checkAndExtend() returns
         // early for any address at or below lim, so a stale lim lets jumpTo()/appendAddressFor()
@@ -334,6 +339,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         this.closeFdOnClose = other.closeFdOnClose;
         other.closeFdOnClose = tCof;
 
+        long tAllocated = this.allocatedSize;
+        this.allocatedSize = other.allocatedSize;
+        other.allocatedSize = tAllocated;
+
         long tLastSynced = this.lastSyncedSize;
         this.lastSyncedSize = other.lastSyncedSize;
         other.lastSyncedSize = tLastSynced;
@@ -464,6 +473,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void truncate() {
+        allocatedSize = 0;
         if (pageAddress != 0) {
             // try to remap to min size
             final long fileSize = ff.length(fd);
@@ -542,7 +552,18 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         long offset = appendAddress - pageAddress;
         long previousSize = size;
         assert size > 0;
-        TableUtils.allocateDiskSpace(ff, fd, newSize);
+        // Reserve only what this instance has not reserved yet. posix_fallocate() visits every extent of the
+        // range it is given, so reserving [0, newSize) on each 4 KiB step of a long-lived, fragmented file
+        // costs more with every call. The minimum with the file length keeps the range covered after a
+        // shrink through another fd.
+        final long fileSize = ff.length(fd);
+        if (fileSize < newSize) {
+            final long allocatedLo = Math.min(allocatedSize, fileSize);
+            if (!(allocatedLo > 0 ? ff.allocateRange(fd, allocatedLo, newSize) : ff.allocate(fd, newSize))) {
+                throw CairoException.critical(ff.errno()).put("No space left [size=").put(newSize).put(", fd=").put(fd).put(']');
+            }
+            allocatedSize = newSize;
+        }
         try {
             this.pageAddress = TableUtils.mremap(
                     ff,
@@ -583,6 +604,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     protected void map(FilesFacade ff, @Nullable Utf8Sequence name, long size, int memoryTag) {
         this.memoryTag = memoryTag;
+        this.allocatedSize = 0;
         // file either did not exist when length() was called or empty
         if (size < 1) {
             this.size = minMappedMemorySize;

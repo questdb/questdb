@@ -35,6 +35,8 @@ public interface FilesFacade {
 
     boolean allocate(long fd, long size);
 
+    boolean allocateRange(long fd, long offset, long size);
+
     boolean allowMixedIO(CharSequence root);
 
     long append(long fd, long buf, long len);

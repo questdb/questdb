@@ -70,6 +70,14 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public boolean allocateRange(long fd, long offset, long size) {
+        if (checkForFailure()) {
+            return false;
+        }
+        return ff.allocateRange(fd, offset, size);
+    }
+
+    @Override
     public boolean allowMixedIO(CharSequence root) {
         return ff.allowMixedIO(root);
     }
