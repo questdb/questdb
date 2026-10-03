@@ -44,7 +44,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         return sum + element;
     }
 
-    public static double value(double sum, int count) {
+    public static double finish(double sum, int count) {
         return sum / count;
     }
 
@@ -90,7 +90,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
             count = 0;
             sum = 0d;
             calculateRecursive(arr, 0, 0);
-            return value(sum, count);
+            return finish(sum, count);
         }
 
         @Override

@@ -83,15 +83,15 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
      * A sliding frame removes a product by negating its first factor: (-x) * y is -(x * y)
      * exactly, and sum - p is sum + (-p), so the result does not change.
      */
-    public static double value(double sum, double x, double y) {
+    public static double accumulateProduct(double sum, double x, double y) {
         return sum + x * y;
     }
 
-    public static double value(double mean, double next, long count) {
+    public static double advanceMean(double mean, double next, long count) {
         return mean + (next - mean) / count;
     }
 
-    public static double value(double m2, double next, double mean, double oldMean) {
+    public static double advanceM2(double m2, double next, double mean, double oldMean) {
         return m2 + (next - mean) * (next - oldMean);
     }
 
@@ -469,8 +469,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 } else {
                     long count = mapValue.getLong(2) + 1;
                     double oldMean = mapValue.getDouble(0);
-                    double newMean = value(oldMean, d, count);
-                    double m2 = value(mapValue.getDouble(1), d, newMean, oldMean);
+                    double newMean = advanceMean(oldMean, d, count);
+                    double m2 = advanceM2(mapValue.getDouble(1), d, newMean, oldMean);
                     mapValue.putDouble(0, newMean);
                     mapValue.putDouble(1, m2);
                     mapValue.putLong(2, count);
@@ -670,7 +670,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                         if (diff <= maxDiff && diff >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             sum = value(sum, val);
-                            sumSq = value(sumSq, val, val);
+                            sumSq = accumulateProduct(sumSq, val, val);
                             count++;
                         } else {
                             break;
@@ -684,7 +684,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                         if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             sum = value(sum, val);
-                            sumSq = value(sumSq, val, val);
+                            sumSq = accumulateProduct(sumSq, val, val);
                             count++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -880,7 +880,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 if (Numbers.isFinite(hiValue)) {
                     count++;
                     sum = value(sum, hiValue);
-                    sumSq = value(sumSq, hiValue, hiValue);
+                    sumSq = accumulateProduct(sumSq, hiValue, hiValue);
                 }
 
                 stddev = computeResult(sum, sumSq, count, isSample, isSqrt);
@@ -1120,7 +1120,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     if (diff <= maxDiff && diff >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         sum = value(sum, val);
-                        sumSq = value(sumSq, val, val);
+                        sumSq = accumulateProduct(sumSq, val, val);
                         count++;
                     } else {
                         break;
@@ -1134,7 +1134,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         sum = value(sum, val);
-                        sumSq = value(sumSq, val, val);
+                        sumSq = accumulateProduct(sumSq, val, val);
                         count++;
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
@@ -1284,7 +1284,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
             if (Numbers.isFinite(hiValue)) {
                 sum = value(sum, hiValue);
-                sumSq = value(sumSq, hiValue, hiValue);
+                sumSq = accumulateProduct(sumSq, hiValue, hiValue);
                 count++;
             }
 
@@ -1455,11 +1455,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             if (Numbers.isFinite(d)) {
                 final long count = mapValue.getLong(windowStateNonNullCountSlot) + 1;
                 final double oldMean = mapValue.getDouble(windowStateMeanSlot);
-                final double mean = value(oldMean, d, count);
+                final double mean = advanceMean(oldMean, d, count);
                 mapValue.putDouble(windowStateMeanSlot, mean);
                 mapValue.putDouble(
                         windowStateM2Slot,
-                        value(mapValue.getDouble(windowStateM2Slot), d, mean, oldMean)
+                        advanceM2(mapValue.getDouble(windowStateM2Slot), d, mean, oldMean)
                 );
                 mapValue.putLong(windowStateNonNullCountSlot, count);
             }
@@ -1541,8 +1541,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             if (Numbers.isFinite(d)) {
                 count++;
                 double oldMean = mean;
-                mean = value(mean, d, count);
-                m2 = value(m2, d, mean, oldMean);
+                mean = advanceMean(mean, d, count);
+                m2 = advanceM2(m2, d, mean, oldMean);
             }
 
             value.putDouble(0, mean);
@@ -1715,8 +1715,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             if (Numbers.isFinite(d)) {
                 count++;
                 double oldMean = mean;
-                mean = value(mean, d, count);
-                m2 = value(m2, d, mean, oldMean);
+                mean = advanceMean(mean, d, count);
+                m2 = advanceM2(m2, d, mean, oldMean);
             }
 
             stddev = computeResultWelford(m2, count, isSample, isSqrt);
@@ -1803,8 +1803,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             if (Numbers.isFinite(d)) {
                 count++;
                 double oldMean = mean;
-                mean = value(mean, d, count);
-                m2 = value(m2, d, mean, oldMean);
+                mean = advanceMean(mean, d, count);
+                m2 = advanceM2(m2, d, mean, oldMean);
             }
         }
 

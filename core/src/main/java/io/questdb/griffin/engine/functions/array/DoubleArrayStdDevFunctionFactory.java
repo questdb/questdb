@@ -30,8 +30,8 @@ public class DoubleArrayStdDevFunctionFactory extends DoubleArrayStdDevSampFunct
         return DoubleArrayStdDevSampFunctionFactory.value(mean, element, count);
     }
 
-    public static double value(double deltaSquaredSum, double element, double oldMean, double newMean) {
-        return DoubleArrayStdDevSampFunctionFactory.value(deltaSquaredSum, element, oldMean, newMean);
+    public static double advanceM2(double deltaSquaredSum, double element, double oldMean, double newMean) {
+        return DoubleArrayStdDevSampFunctionFactory.advanceM2(deltaSquaredSum, element, oldMean, newMean);
     }
 
     @Override

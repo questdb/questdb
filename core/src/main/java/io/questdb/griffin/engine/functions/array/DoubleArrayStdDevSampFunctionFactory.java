@@ -49,7 +49,7 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
         return mean + (element - mean) / count;
     }
 
-    public static double value(double deltaSquaredSum, double element, double oldMean, double newMean) {
+    public static double advanceM2(double deltaSquaredSum, double element, double oldMean, double newMean) {
         return deltaSquaredSum + (element - newMean) * (element - oldMean);
     }
 
@@ -105,7 +105,7 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
                         count++;
                         double oldMean = mean;
                         mean = value(mean, v, count);
-                        deltaSquaredSum = value(deltaSquaredSum, v, oldMean, mean);
+                        deltaSquaredSum = advanceM2(deltaSquaredSum, v, oldMean, mean);
                     }
                 }
             } else {
@@ -148,7 +148,7 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
                         this.count++;
                         double oldMean = mean;
                         mean = value(mean, v, this.count);
-                        deltaSquaredSum = value(deltaSquaredSum, v, oldMean, mean);
+                        deltaSquaredSum = advanceM2(deltaSquaredSum, v, oldMean, mean);
                     }
                     flatIndex += stride;
                 }

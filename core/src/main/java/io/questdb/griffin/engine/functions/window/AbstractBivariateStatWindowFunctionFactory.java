@@ -81,15 +81,15 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
      * A sliding frame removes a product by negating its first factor: (-x) * y is -(x * y)
      * exactly, and sum - p is sum + (-p), so the result does not change.
      */
-    public static double value(double sum, double x, double y) {
+    public static double accumulateProduct(double sum, double x, double y) {
         return sum + x * y;
     }
 
-    public static double value(double mean, double next, long count) {
+    public static double advanceMean(double mean, double next, long count) {
         return mean + (next - mean) / count;
     }
 
-    public static double value(double comoment, double x, double meanX, double y, double oldMeanY) {
+    public static double advanceComoment(double comoment, double x, double meanX, double y, double oldMeanY) {
         return comoment + (x - meanX) * (y - oldMeanY);
     }
 
@@ -537,12 +537,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 } else {
                     long count = mapValue.getLong(5) + 1;
                     double oldMeanX = mapValue.getDouble(0);
-                    double newMeanX = value(oldMeanX, x, count);
+                    double newMeanX = advanceMean(oldMeanX, x, count);
                     double oldMeanY = mapValue.getDouble(2);
-                    double newMeanY = value(oldMeanY, y, count);
-                    double sumXX = value(mapValue.getDouble(1), x, newMeanX, x, oldMeanX);
-                    double sumYY = value(mapValue.getDouble(3), y, newMeanY, y, oldMeanY);
-                    double sumXY = value(mapValue.getDouble(4), x, newMeanX, y, oldMeanY);
+                    double newMeanY = advanceMean(oldMeanY, y, count);
+                    double sumXX = advanceComoment(mapValue.getDouble(1), x, newMeanX, x, oldMeanX);
+                    double sumYY = advanceComoment(mapValue.getDouble(3), y, newMeanY, y, oldMeanY);
+                    double sumXY = advanceComoment(mapValue.getDouble(4), x, newMeanX, y, oldMeanY);
                     mapValue.putDouble(0, newMeanX);
                     mapValue.putDouble(1, sumXX);
                     mapValue.putDouble(2, newMeanY);
@@ -793,10 +793,10 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                             double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             double valY = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES + Double.BYTES);
                             sumX = value(sumX, valX);
-                            sumXX = value(sumXX, valX, valX);
+                            sumXX = accumulateProduct(sumXX, valX, valX);
                             sumY = value(sumY, valY);
-                            sumYY = value(sumYY, valY, valY);
-                            sumXY = value(sumXY, valX, valY);
+                            sumYY = accumulateProduct(sumYY, valY, valY);
+                            sumXY = accumulateProduct(sumXY, valX, valY);
                             count++;
                         } else {
                             break;
@@ -811,10 +811,10 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                             double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             double valY = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES + Double.BYTES);
                             sumX = value(sumX, valX);
-                            sumXX = value(sumXX, valX, valX);
+                            sumXX = accumulateProduct(sumXX, valX, valX);
                             sumY = value(sumY, valY);
-                            sumYY = value(sumYY, valY, valY);
-                            sumXY = value(sumXY, valX, valY);
+                            sumYY = accumulateProduct(sumYY, valY, valY);
+                            sumXY = accumulateProduct(sumXY, valX, valY);
                             count++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -1043,10 +1043,10 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 if (Numbers.isFinite(hiX) && Numbers.isFinite(hiY)) {
                     count++;
                     sumX = value(sumX, hiX);
-                    sumXX = value(sumXX, hiX, hiX);
+                    sumXX = accumulateProduct(sumXX, hiX, hiX);
                     sumY = value(sumY, hiY);
-                    sumYY = value(sumYY, hiY, hiY);
-                    sumXY = value(sumXY, hiX, hiY);
+                    sumYY = accumulateProduct(sumYY, hiY, hiY);
+                    sumXY = accumulateProduct(sumXY, hiX, hiY);
                 }
 
                 result = computeResultNaive(sumXY, sumXX, sumYY, sumX, sumY, count, isCorrelation, isSample);
@@ -1317,10 +1317,10 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                         double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         double valY = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES + Double.BYTES);
                         sumX = value(sumX, valX);
-                        sumXX = value(sumXX, valX, valX);
+                        sumXX = accumulateProduct(sumXX, valX, valX);
                         sumY = value(sumY, valY);
-                        sumYY = value(sumYY, valY, valY);
-                        sumXY = value(sumXY, valX, valY);
+                        sumYY = accumulateProduct(sumYY, valY, valY);
+                        sumXY = accumulateProduct(sumXY, valX, valY);
                         count++;
                     } else {
                         break;
@@ -1335,10 +1335,10 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                         double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         double valY = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES + Double.BYTES);
                         sumX = value(sumX, valX);
-                        sumXX = value(sumXX, valX, valX);
+                        sumXX = accumulateProduct(sumXX, valX, valX);
                         sumY = value(sumY, valY);
-                        sumYY = value(sumYY, valY, valY);
-                        sumXY = value(sumXY, valX, valY);
+                        sumYY = accumulateProduct(sumYY, valY, valY);
+                        sumXY = accumulateProduct(sumXY, valX, valY);
                         count++;
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
@@ -1517,10 +1517,10 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
             if (Numbers.isFinite(hiX) && Numbers.isFinite(hiY)) {
                 sumX = value(sumX, hiX);
-                sumXX = value(sumXX, hiX, hiX);
+                sumXX = accumulateProduct(sumXX, hiX, hiX);
                 sumY = value(sumY, hiY);
-                sumYY = value(sumYY, hiY, hiY);
-                sumXY = value(sumXY, hiX, hiY);
+                sumYY = accumulateProduct(sumYY, hiY, hiY);
+                sumXY = accumulateProduct(sumXY, hiX, hiY);
                 count++;
             }
 
@@ -1732,12 +1732,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                 count++;
                 double oldMeanX = meanX;
-                meanX = value(meanX, x, count);
+                meanX = advanceMean(meanX, x, count);
                 double oldMeanY = meanY;
-                meanY = value(meanY, y, count);
-                sumXX = value(sumXX, x, meanX, x, oldMeanX);
-                sumYY = value(sumYY, y, meanY, y, oldMeanY);
-                sumXY = value(sumXY, x, meanX, y, oldMeanY);
+                meanY = advanceMean(meanY, y, count);
+                sumXX = advanceComoment(sumXX, x, meanX, x, oldMeanX);
+                sumYY = advanceComoment(sumYY, y, meanY, y, oldMeanY);
+                sumXY = advanceComoment(sumXY, x, meanX, y, oldMeanY);
             }
 
             value.putDouble(0, meanX);
@@ -1905,12 +1905,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                 count++;
                 double oldMeanX = meanX;
-                meanX = value(meanX, x, count);
+                meanX = advanceMean(meanX, x, count);
                 double oldMeanY = meanY;
-                meanY = value(meanY, y, count);
-                sumXX = value(sumXX, x, meanX, x, oldMeanX);
-                sumYY = value(sumYY, y, meanY, y, oldMeanY);
-                sumXY = value(sumXY, x, meanX, y, oldMeanY);
+                meanY = advanceMean(meanY, y, count);
+                sumXX = advanceComoment(sumXX, x, meanX, x, oldMeanX);
+                sumYY = advanceComoment(sumYY, y, meanY, y, oldMeanY);
+                sumXY = advanceComoment(sumXY, x, meanX, y, oldMeanY);
             }
 
             if (isCorrelation) {
@@ -2013,12 +2013,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                 count++;
                 double oldMeanX = meanX;
-                meanX = value(meanX, x, count);
+                meanX = advanceMean(meanX, x, count);
                 double oldMeanY = meanY;
-                meanY = value(meanY, y, count);
-                sumXX = value(sumXX, x, meanX, x, oldMeanX);
-                sumYY = value(sumYY, y, meanY, y, oldMeanY);
-                sumXY = value(sumXY, x, meanX, y, oldMeanY);
+                meanY = advanceMean(meanY, y, count);
+                sumXX = advanceComoment(sumXX, x, meanX, x, oldMeanX);
+                sumYY = advanceComoment(sumYY, y, meanY, y, oldMeanY);
+                sumXY = advanceComoment(sumXY, x, meanX, y, oldMeanY);
             }
         }
 

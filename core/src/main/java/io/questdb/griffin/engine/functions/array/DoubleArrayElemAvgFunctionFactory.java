@@ -40,7 +40,7 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
         return DoubleArrayElemSumFunctionFactory.value(sum, element);
     }
 
-    public static double value(double sum, int count) {
+    public static double finish(double sum, int count) {
         return sum / count;
     }
 
@@ -96,7 +96,7 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
             for (int i = 0; i < totalFlatLen; i++) {
                 int c = counts.getQuick(i);
                 if (c > 0) {
-                    arrayOut.putDouble(i, value(arrayOut.getDouble(i), c));
+                    arrayOut.putDouble(i, finish(arrayOut.getDouble(i), c));
                 }
             }
         }

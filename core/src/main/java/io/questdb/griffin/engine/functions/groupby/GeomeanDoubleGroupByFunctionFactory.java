@@ -46,7 +46,7 @@ public class GeomeanDoubleGroupByFunctionFactory implements FunctionFactory {
     /**
      * Undefined for a zero count (an empty group): the function gives NULL there.
      */
-    public static double value(double sumLn, long count) {
+    public static double finish(double sumLn, long count) {
         return Math.exp(sumLn / count);
     }
 

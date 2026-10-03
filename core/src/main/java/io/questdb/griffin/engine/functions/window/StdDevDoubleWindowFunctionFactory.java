@@ -30,16 +30,16 @@ public class StdDevDoubleWindowFunctionFactory extends StdDevSampDoubleWindowFun
         return AbstractStdDevDoubleWindowFunctionFactory.value(sum, delta);
     }
 
-    public static double value(double sum, double x, double y) {
-        return AbstractStdDevDoubleWindowFunctionFactory.value(sum, x, y);
+    public static double accumulateProduct(double sum, double x, double y) {
+        return AbstractStdDevDoubleWindowFunctionFactory.accumulateProduct(sum, x, y);
     }
 
-    public static double value(double mean, double next, long count) {
-        return AbstractStdDevDoubleWindowFunctionFactory.value(mean, next, count);
+    public static double advanceMean(double mean, double next, long count) {
+        return AbstractStdDevDoubleWindowFunctionFactory.advanceMean(mean, next, count);
     }
 
-    public static double value(double m2, double next, double mean, double oldMean) {
-        return AbstractStdDevDoubleWindowFunctionFactory.value(m2, next, mean, oldMean);
+    public static double advanceM2(double m2, double next, double mean, double oldMean) {
+        return AbstractStdDevDoubleWindowFunctionFactory.advanceM2(m2, next, mean, oldMean);
     }
 
     @Override

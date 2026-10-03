@@ -110,7 +110,7 @@ public class GeomeanDoubleGroupByFunction extends DoubleFunction implements Grou
             // Invalid value was encountered
             return Double.NaN;
         }
-        return GeomeanDoubleGroupByFunctionFactory.value(sumLn, count);
+        return GeomeanDoubleGroupByFunctionFactory.finish(sumLn, count);
     }
 
     @Override

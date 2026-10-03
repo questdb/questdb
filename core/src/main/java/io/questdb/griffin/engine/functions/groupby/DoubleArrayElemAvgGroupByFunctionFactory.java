@@ -54,7 +54,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
     /**
      * Undefined for a zero count: the function gives NULL there, as for a position with no value.
      */
-    public static double value(double sum, long count) {
+    public static double finish(double sum, long count) {
         return sum / count;
     }
 
@@ -134,7 +134,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                 double sum = Unsafe.getDouble(dataPtr + (long) i * Double.BYTES);
                 if (Numbers.isFinite(sum)) {
                     long c = Unsafe.getLong(countPtr + (long) i * Long.BYTES);
-                    arrayOut.putDouble(i, c > 0 ? value(sum, c) : Double.NaN);
+                    arrayOut.putDouble(i, c > 0 ? finish(sum, c) : Double.NaN);
                 } else {
                     arrayOut.putDouble(i, Double.NaN);
                 }
