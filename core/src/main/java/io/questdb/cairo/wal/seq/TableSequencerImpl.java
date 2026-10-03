@@ -363,7 +363,14 @@ public class TableSequencerImpl implements TableSequencer {
     public long fdatasyncTxnLog() {
         assert !closed;
         final long coveredSeqTxn = seqTxnTracker.getSeqTxn();
-        tableTransactionLog.fdatasyncTxnLog();
+        try {
+            tableTransactionLog.fdatasyncTxnLog();
+        } catch (Throwable th) {
+            // Fence while the caller still holds the WRITE lock: the next writer to take it would fdatasync the
+            // same file, and the kernel has already reported this error, so that call can return 0.
+            seqTxnTracker.fenceDurableFrontier(th);
+            throw th;
+        }
         return coveredSeqTxn;
     }
 
@@ -430,6 +437,7 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (Throwable th) {
             distressed = true;
+            seqTxnTracker.fenceDurableFrontier(th);
             LOG.critical().$("could not apply structure change to WAL table sequencer [table=").$(tableToken)
                     .$(", error=").$safe(th.getMessage())
                     .I$();
@@ -462,7 +470,10 @@ public class TableSequencerImpl implements TableSequencer {
                 return NO_TXN;
             }
         } catch (Throwable th) {
+            // Under ADAPTIVE W=0 the txn log is fdatasync'd inline, so this is the same barrier failure that
+            // fdatasyncTxnLog fences, and the reopened sequencer's fresh fd would not report it again.
             distressed = true;
+            seqTxnTracker.fenceDurableFrontier(th);
             LOG.critical().$("could not apply transaction to WAL table sequencer [table=").$(tableToken)
                     .$(", error=").$safe(th.getMessage())
                     .I$();

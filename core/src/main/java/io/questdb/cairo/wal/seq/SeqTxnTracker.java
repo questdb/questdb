@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.wal.TableWriterPressureControl;
@@ -112,6 +113,15 @@ public class SeqTxnTracker {
     // frontier lower. A running max rather than the latest value: a txn covered by a peer's earlier fdatasync
     // stays claimable after the pin that held it back is released. Guarded by durableFrontierLock.
     private long maxCoveredSeqTxn = UNINITIALIZED_TXN;
+    // Set by fenceDurableFrontier when a device flush of this table's sequencer txn log fails, and never
+    // cleared. Linux reports a writeback error on a file only once, so a LATER fdatasync of the same log, by a
+    // peer writer or on a reopened fd, can return 0 although the pages it should have carried were dropped.
+    // From then on no barrier can prove the log durable, so the frontier must not move. Lives here rather
+    // than on the sequencer because a distressed sequencer is reopened, and the tracker survives that.
+    // Guarded by durableFrontierLock, together with the errno and operation of the failure that set it.
+    private boolean frontierFenced;
+    private int frontierFenceErrno;
+    private String frontierFenceOperation;
     // Live-view dedup-base signal. The apply
     // worker is the single writer per table, so plain volatile suffices (no CAS). A
     // coupled dedup-base live view reads these to decide whether an applied seqTxn range
@@ -417,6 +427,7 @@ public class SeqTxnTracker {
      */
     public void setLocalDurableSeqTxn(long seqTxn) {
         synchronized (durableFrontierLock) {
+            checkFrontierFencedLocked();
             setLocalDurableSeqTxnLocked(seqTxn);
         }
     }
@@ -537,9 +548,15 @@ public class SeqTxnTracker {
      * point and holding them any longer would stall the frontier for no durability benefit. Orphans are cleared
      * ONLY here (and by {@link #resetDurableFrontier()}) — never on the teardown path itself, where the batch is
      * still volatile.
+     *
+     * <p>Throws a data-sync failure, leaving every pin in place, once {@link #fenceDurableFrontier(Throwable)}
+     * has run: the caller's fdatasync may have returned 0 only because the error was already reported to the
+     * writer whose flush failed.
      */
     public void markWriterDurable(int walId, long orphanSweepMark, long coveredSeqTxn) {
         synchronized (durableFrontierLock) {
+            // Before touching the pins: a rejected flush must leave its pin for the caller to orphan.
+            checkFrontierFencedLocked();
             final int idx = indexOfPendingWalId(walId);
             if (idx > -1) {
                 removePendingIndex(idx);
@@ -564,10 +581,39 @@ public class SeqTxnTracker {
     }
 
     /**
+     * Freezes the durable-ack frontier after a failed device flush of this table's sequencer txn log. Must be
+     * called while the sequencer WRITE lock is still held, so that no peer can run its own fdatasync of the
+     * log, and see a 0 that hides the error, before the fence is up. Every later
+     * {@link #markWriterDurable(int, long, long)} and {@link #setLocalDurableSeqTxn(long)} then throws. A no-op
+     * unless {@code failure} is, or is caused by, a data-sync failure.
+     */
+    public void fenceDurableFrontier(Throwable failure) {
+        for (Throwable cursor = failure; cursor != null; cursor = cursor.getCause()) {
+            if (cursor instanceof CairoException e && e.isDataSyncFailure()) {
+                synchronized (durableFrontierLock) {
+                    if (!frontierFenced) {
+                        frontierFenced = true;
+                        frontierFenceErrno = e.getErrno();
+                        frontierFenceOperation = e.getDataSyncOperation();
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    public boolean isDurableFrontierFenced() {
+        synchronized (durableFrontierLock) {
+            return frontierFenced;
+        }
+    }
+
+    /**
      * Recovery / reboot reset (paired with the tracker's other reset paths): clear every pending-writer pin
      * and drop the durable frontier back to the uninitialised -1, keeping the engine-wide durable-frontier
      * gauge honest so a post-reset re-advance from -1 does not double-count. Clears stale pins that a
-     * distressed/crash-torn writer left behind, so a reused/fresh writer recomputes from an empty map.
+     * distressed/crash-torn writer left behind, so a reused/fresh writer recomputes from an empty map. Keeps the
+     * fence set by {@link #fenceDurableFrontier(Throwable)}: a failed barrier is final for the process.
      */
     public void resetDurableFrontier() {
         clearPinnedEpoch();
@@ -582,6 +628,13 @@ public class SeqTxnTracker {
                 metrics.walMetrics().addLocalDurableSeqTxn(-current);
             }
             localDurableSeqTxn = -1L;
+        }
+    }
+
+    private void checkFrontierFencedLocked() {
+        if (frontierFenced) {
+            throw CairoException.dataSyncFailure(frontierFenceErrno, frontierFenceOperation)
+                    .put("durable frontier is fenced by a failed sequencer barrier");
         }
     }
 

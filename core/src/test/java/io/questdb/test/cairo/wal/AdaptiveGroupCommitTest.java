@@ -159,6 +159,111 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     }
 
     /**
+     * W=0 variant of {@link #testPeerFlushAfterFailedSequencerBarrierDoesNotAdvanceFrontier()}. The txn log is
+     * fdatasync'd inline, inside the sequencer's append, so the failure distresses the sequencer and the peer's
+     * commit reopens it on a FRESH fd. That fd does not report the error either, so the fence has to live on
+     * the tracker, which outlives the sequencer instance.
+     */
+    @Test
+    public void testPeerCommitAfterFailedInlineSequencerBarrierDoesNotAdvanceFrontier() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+
+        final FailingSeqFdatasyncFacade ff = new FailingSeqFdatasyncFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("x");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+                try (WalWriter a = engine.getWalWriter(tt); WalWriter c = engine.getWalWriter(tt)) {
+                    commitRow(a, 0, 1);
+                    commitRow(c, 1, 2);
+                    final long frontierBefore = tracker.getLocalDurableSeqTxn();
+                    Assert.assertEquals("test setup: W=0 publishes every commit", tracker.getSeqTxn(), frontierBefore);
+
+                    ff.failNextSequencerFdatasync();
+                    assertDataSyncFailure(() -> commitRow(c, 2, 3));
+                    Assert.assertTrue("test setup: C's sequencer fdatasync must have failed", ff.injected);
+                    Assert.assertTrue(tracker.isDurableFrontierFenced());
+
+                    // Reopen the window before the failed writer's poison lands.
+                    engine.resetDurabilityFailure();
+                    final int seqSyncsBefore = ff.sequencerFdatasyncs();
+                    assertDataSyncFailure(() -> commitRow(a, 3, 4));
+                    Assert.assertTrue("test setup: A's own sequencer fdatasync must have returned 0",
+                            ff.sequencerFdatasyncs() > seqSyncsBefore);
+
+                    Assert.assertEquals("a barrier after the failed one must not move the frontier",
+                            frontierBefore, tracker.getLocalDurableSeqTxn());
+                    Assert.assertTrue("the rejected peer must poison the engine itself", engine.isDurabilityFailed());
+                }
+            });
+        } finally {
+            engine.resetDurabilityFailure();
+        }
+    }
+
+    /**
+     * A failed sequencer barrier poisons the engine only after the failing writer has released the sequencer
+     * write lock. A peer that flushes in that window fdatasyncs the same file, and since the kernel reports a
+     * writeback error once, its call returns 0 over the dropped pages. Before the fence, the peer then reaped
+     * the failed writer's orphaned pin and published the whole log as durable, so QWP could ack seqTxn 5 while
+     * C's seqTxn 3 and 4 were gone.
+     *
+     * <p>The window is reopened deterministically by clearing the poison after C fails: that is exactly the
+     * state a peer sees while C is between {@code unlockWrite} and the poison CAS.
+     */
+    @Test
+    public void testPeerFlushAfterFailedSequencerBarrierDoesNotAdvanceFrontier() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        final FailingSeqFdatasyncFacade ff = new FailingSeqFdatasyncFacade();
+        try {
+            assertMemoryLeak(ff, () -> {
+                setCurrentMicros(1_000_000L);
+                execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("x");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+                try (WalWriter a = engine.getWalWriter(tt); WalWriter c = engine.getWalWriter(tt)) {
+                    commitRow(a, 0, 1);
+                    commitRow(a, 1, 2);
+                    commitRow(c, 2, 3);
+                    final long frontierBefore = tracker.getLocalDurableSeqTxn();
+                    Assert.assertTrue("test setup: all three commits must be pending",
+                            frontierBefore < tracker.getSeqTxn() - 2);
+                    setCurrentMicros(1_000_000L + WINDOW_US + 1);
+
+                    // C's commit-driven flush: its sequencer fdatasync fails.
+                    ff.failNextSequencerFdatasync();
+                    assertDataSyncFailure(() -> commitRow(c, 3, 4));
+                    Assert.assertTrue("test setup: C's sequencer fdatasync must have failed", ff.injected);
+                    Assert.assertTrue(tracker.isDurableFrontierFenced());
+
+                    // Reopen the window before C's poison lands. A's commit-driven flush runs a sequencer
+                    // fdatasync that returns 0, as the kernel's would once it has reported the error to C.
+                    engine.resetDurabilityFailure();
+                    final int seqSyncsBefore = ff.sequencerFdatasyncs();
+                    assertDataSyncFailure(() -> commitRow(a, 4, 5));
+                    Assert.assertTrue("test setup: A's own sequencer fdatasync must have returned 0",
+                            ff.sequencerFdatasyncs() > seqSyncsBefore);
+
+                    Assert.assertEquals("a barrier after the failed one must not move the frontier",
+                            frontierBefore, tracker.getLocalDurableSeqTxn());
+                    Assert.assertEquals("the durable-ack registry must not report the unproven frontier",
+                            -1L, engine.getDurableAckRegistry().getLocalDurableSeqTxn(tt.getDirName()));
+                    Assert.assertTrue("the rejected peer must poison the engine itself", engine.isDurabilityFailed());
+                }
+            });
+        } finally {
+            engine.resetDurabilityFailure();
+        }
+    }
+
+    /**
      * The background flusher must not claim the writer's OWN next commit as durable. {@code fdatasyncTxnLog}
      * releases the sequencer write lock before {@code markWriterDurable} runs, and {@code getSequencerTxn} runs
      * outside the writer monitor, so the ingest thread can sequence txn N+1 in that gap. Dropping the pin then
@@ -1214,6 +1319,15 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertDataSyncFailure(Runnable commit) {
+        try {
+            commit.run();
+            Assert.fail("a failed sequencer barrier must be fatal");
+        } catch (CairoException | CairoError expected) {
+            Assert.assertTrue(String.valueOf(expected), CairoException.isDataSyncFailure(expected));
+        }
+    }
+
     /**
      * Append one (ts, v) row to a HELD WalWriter and commit it (one WAL txn, writer NOT released).
      */
@@ -1237,6 +1351,30 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
 
         public boolean flushNow() {
             return runSerially();
+        }
+    }
+
+    /**
+     * Fails the next {@code fdatasync} of a sequencer file once, after issuing it, then lets every later one
+     * through: the way the kernel reports a writeback error on a file once and then reports success.
+     */
+    static class FailingSeqFdatasyncFacade extends WalFdatasyncFacade {
+        private boolean armed;
+        private boolean injected;
+
+        @Override
+        public void fdatasync(long fd) {
+            super.fdatasync(fd);
+            final String p = fdToPath.get(fd);
+            if (armed && p != null && WalFdatasyncFacade.isSequencerFile(p)) {
+                armed = false;
+                injected = true;
+                throw CairoException.dataSyncFailure(5, "fdatasync").put("injected sequencer fdatasync failure");
+            }
+        }
+
+        void failNextSequencerFdatasync() {
+            armed = true;
         }
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -35,7 +36,9 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Direct unit tests for the adaptive group-commit CONTIGUOUS DURABLE PREFIX frontier (CRITICAL 2). Under
@@ -280,6 +283,49 @@ public class SeqTxnTrackerContiguousFrontierTest {
         tracker.markWriterDurable(4, tracker.snapshotOrphanSweepMark(), tracker.getSeqTxn());
         assertEquals("a dropped writer's un-flushed pin holds the durable frontier behind it",
                 9, tracker.getLocalDurableSeqTxn());
+    }
+
+    /**
+     * Once a sequencer barrier has failed, no later barrier can prove the log durable: the kernel reports a
+     * writeback error once, so a peer's fdatasync of the same file returns 0 over the dropped pages. The fence
+     * must stop both publication routes, leave the rejected writer's pin in place for it to orphan, and keep
+     * the frontier exactly where the last good barrier left it. Only a data-sync failure may set it.
+     */
+    @Test
+    public void testFailedSequencerBarrierFencesFrontier() {
+        final SeqTxnTracker tracker = newTracker();
+        tracker.initTxns(0, 2, false);
+        tracker.registerWriterPending(1, 1);
+        tracker.markWriterDurable(1, tracker.snapshotOrphanSweepMark(), tracker.getSeqTxn());
+        assertEquals(2, tracker.getLocalDurableSeqTxn());
+
+        tracker.fenceDurableFrontier(CairoException.critical(5).put("not a barrier failure"));
+        assertFalse("only a data-sync failure may fence the frontier", tracker.isDurableFrontierFenced());
+
+        tracker.notifyOnCommit(5);
+        tracker.registerWriterPending(2, 3);
+        tracker.registerWriterPending(3, 5);
+        tracker.fenceDurableFrontier(new RuntimeException(
+                CairoException.dataSyncFailure(5, "fdatasync").put("injected sequencer fdatasync failure")));
+        assertTrue("a data-sync failure in the cause chain must fence", tracker.isDurableFrontierFenced());
+
+        try {
+            tracker.markWriterDurable(2, tracker.snapshotOrphanSweepMark(), tracker.getSeqTxn());
+            fail("a barrier after the failed one must not publish");
+        } catch (CairoException e) {
+            assertTrue(e.isDataSyncFailure());
+            assertEquals(5, e.getErrno());
+            assertEquals("fdatasync", e.getDataSyncOperation());
+        }
+        assertEquals("the rejected writer's pin must stay for it to orphan", 2, tracker.getPendingWriterPinCount());
+
+        try {
+            tracker.setLocalDurableSeqTxn(5);
+            fail("the W=0 and epoch route must be fenced too");
+        } catch (CairoException e) {
+            assertTrue(e.isDataSyncFailure());
+        }
+        assertEquals("the frontier must stay at the last good barrier", 2, tracker.getLocalDurableSeqTxn());
     }
 
     /**

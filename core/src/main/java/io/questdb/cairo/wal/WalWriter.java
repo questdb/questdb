@@ -2706,7 +2706,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // peer's still-unflushed lower seqTxn (CRITICAL 2), and not to the live seqTxn either: the sequencer
             // lock is free again, and our own next commit may already be sequenced (getSequencerTxn runs outside
             // the writer monitor). flushTo above only gates the nothing-pending early return. Re-check process
-            // poison after the barriers and before publication.
+            // poison after the barriers and before publication. The poison lands only after a failed peer has
+            // released the sequencer lock, so markWriterDurable also refuses a tracker that the failed peer
+            // fenced under that lock: our fdatasync above may have returned 0 on an error already reported.
             checkDistressed();
             seqTxnTracker.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
             pendingDurableSeqTxn = -1L;
