@@ -1,0 +1,54 @@
+case_id	input_kind	input	outcome	expected_raw	feature
+java_null	TEXT	<NULL>	NULL		java_null
+empty	TEXT	<EMPTY>	INVALID		empty
+raw_zero	TEXT	0	VALID	0	raw_millis
+raw_negative	TEXT	-1	VALID	-1	raw_millis
+raw_suffix	TEXT	1577836800000L	VALID	1577836800000	raw_suffix
+raw_underscore	TEXT	1_000	VALID	1000	raw_underscore
+raw_null_sentinel	TEXT	-9223372036854775808	NULL		raw_null_sentinel
+raw_max	TEXT	9223372036854775807	VALID	9223372036854775807	raw_boundary
+raw_overflow	TEXT	9223372036854775808	INVALID		raw_overflow
+epoch_date	TEXT	1970-01-01	VALID	0	pg_date
+pre_epoch_date	TEXT	1969-12-31	VALID	-86400000	pg_date
+leap_date	TEXT	2000-02-29	VALID	951782400000	pg_date
+non_leap_date	TEXT	1900-02-29	INVALID		calendar_validation
+date_time_utc	TEXT	2020-01-01 00:00:00UTC	VALID	1577836800000	pg_datetime
+date_zone_utc	TEXT	2020-01-01 UTC	VALID	1577836800000	pg_date_zone
+fraction_one	TEXT	2020-01-01 00:00:00.1UTC	VALID	1577836800100	greedy_millis
+fraction_two	TEXT	2020-01-01 00:00:00.12UTC	VALID	1577836800120	greedy_millis
+fraction_three	TEXT	2020-01-01 00:00:00.123UTC	VALID	1577836800123	greedy_millis
+fraction_negative	TEXT	2020-01-01 00:00:00.-1UTC	VALID	1577836799990	greedy_millis
+fraction_four	TEXT	2020-01-01 00:00:00.1234UTC	INVALID		greedy_millis
+iso_z	TEXT	2020-01-01T00:00:00.123Z	VALID	1577836800123	utc_format
+iso_named_utc	TEXT	2020-01-01T00:00:00.123UTC	VALID	1577836800123	utc_format
+iso_offset	TEXT	2020-01-01T00:00:00.123+02:30	VALID	1577827800123	utc_format
+iso_without_millis	TEXT	2020-01-01T00:00:00Z	INVALID		utc_format
+iso_two_millis	TEXT	2020-01-01T00:00:00.12Z	INVALID		utc_format
+iso_four_millis	TEXT	2020-01-01T00:00:00.1234Z	INVALID		utc_format
+offset_datetime	TEXT	2020-01-01 00:00:00+02:00	VALID	1577829600000	numeric_zone
+offset_date	TEXT	2020-01-01 +02:00	VALID	1577829600000	numeric_zone
+berlin_winter	TEXT	2020-01-01 12:00:00Europe/Berlin	VALID	1577876400000	named_zone
+berlin_summer	TEXT	2020-07-01 12:00:00Europe/Berlin	VALID	1593597600000	named_zone
+berlin_gap	TEXT	2020-03-29 02:30:00Europe/Berlin	VALID	1585441800000	zone_transition
+berlin_overlap	TEXT	2020-10-25 02:30:00Europe/Berlin	VALID	1603589400000	zone_transition
+hour_24	TEXT	2020-01-01 24:59:59UTC	VALID	1577840399000	hour_24_wrap
+hour_25	TEXT	2020-01-01 25:00:00UTC	INVALID		time_validation
+minute_60	TEXT	2020-01-01 00:60:00UTC	INVALID		time_validation
+second_60	TEXT	2020-01-01 00:00:60UTC	INVALID		time_validation
+year_zero	TEXT	0000-01-01	VALID	-62167219200000	proleptic_year
+negative_year	TEXT	-0001-01-01	VALID	-62198755200000	proleptic_year
+max_int_year	TEXT	2147483647-01-01	VALID	-6019000092841406464	year_wrap
+min_int_year	TEXT	-2147483648-01-01	VALID	6018875726867006464	year_wrap
+negative_year_named_zone_wrap	TEXT	-1000000000-01-01 00:00:00Europe/London	INVALID		server_unchecked_guard
+year_overflow	TEXT	2147483648-01-01	INVALID		year_overflow
+plus_year	TEXT	+1-01-01	INVALID		strict_year
+underscore_year	TEXT	2_0-01-01	INVALID		strict_year
+bad_month	TEXT	2020-13-01	INVALID		calendar_validation
+bad_day	TEXT	2020-02-30	INVALID		calendar_validation
+missing_zone	TEXT	2020-01-01 00:00:00	INVALID		zone_required
+unknown_zone	TEXT	2020-01-01 Mars/Base	INVALID		zone_validation
+trailing_date_space	TEXT	2020-01-01 	INVALID		no_tail
+trailing_zone_space	TEXT	2020-01-01 UTC 	INVALID		no_tail
+raw_trailing_text	TEXT	1_000x	INVALID		no_tail
+unicode_digits	UTF16_HEX	ff11,ff12,ff13	INVALID		ascii_only
+plain_text	TEXT	not-a-date	INVALID		invalid_text

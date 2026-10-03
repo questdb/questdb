@@ -36,6 +36,8 @@ import io.questdb.std.str.Utf8s;
  * <p>Thread safety: This class is thread-safe as it contains no mutable state.
  */
 public final class WebSocketFrameWriter {
+    // Largest unmasked header: 2 bytes plus a 64-bit extended payload length
+    public static final int MAX_UNMASKED_HEADER_SIZE = 10;
     // Frame header bits
     private static final int FIN_BIT = 0x80;
     private static final int MASK_BIT = 0x80;

@@ -21,8 +21,31 @@ jobs:
       - name: Detect local client profile
         id: client
         uses: ./.github/actions/detect-local-client
+      - name: Build local client native library
+        if: contains(steps.client.outputs.client_profile, 'local-client')
+        run: |
+          set -eux
+          git submodule update --init --recursive java-questdb-client
+          if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y cmake nasm build-essential
+          fi
+          export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}"
+          cd java-questdb-client/core
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          cmake --build cmake-build-release --config Release --parallel
+          case "$(uname -m)" in
+            aarch64|arm64) plat=linux-aarch64 ;;
+            *)             plat=linux-x86-64 ;;
+          esac
+          mkdir -p "src/main/resources/io/questdb/client/bin/$plat"
+          cp target/classes/io/questdb/client/bin-local/libquestdb.so \
+             "src/main/resources/io/questdb/client/bin/$plat/libquestdb.so"
       - name: Build distribution
         run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks' ${{ steps.client.outputs.client_profile }}
+      - name: Run QWP client/server binary compatibility
+        timeout-minutes: 5
+        run: ./compat/src/test/qwp/run-qwp-schema-compat.sh
       - name: Unpack distribution
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
@@ -67,4 +90,11 @@ jobs:
         with:
           path: ~/.questdb/log/*
           name: logs
+          retention-days: 5
+      - name: Upload QWP compatibility logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          path: compat/target/qwp-schema-compat
+          name: qwp-schema-compatibility-logs
           retention-days: 5

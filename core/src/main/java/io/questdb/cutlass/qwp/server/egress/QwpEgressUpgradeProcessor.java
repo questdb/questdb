@@ -1114,7 +1114,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
         } catch (QwpParseException e) {
             LOG.error().$("Egress CANCEL malformed [fd=").$(context.getFd())
-                    .$(", error=").$(e.getFlyweightMessage()).I$();
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
         }
     }
 
@@ -1219,7 +1219,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
         } catch (QwpParseException e) {
             LOG.error().$("Egress CREDIT malformed [fd=").$(context.getFd())
-                    .$(", error=").$(e.getFlyweightMessage()).I$();
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
         }
     }
 

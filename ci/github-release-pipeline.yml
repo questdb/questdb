@@ -115,6 +115,23 @@ stages:
               javaHomeOption: 'Path'
               jdkDirectory: '$(GRAALVM_HOME)'
 
+          - bash: |
+              mkdir -p compat/target/qwp-schema-compat
+              echo "##vso[task.setvariable variable=QWP_COMPAT_GATE_STARTED]true"
+              compat/src/test/qwp/run-qwp-schema-compat.sh
+            displayName: "QWP client/server binary compatibility"
+            condition: and(succeeded(), eq(variables['os'], 'Linux'))
+            timeoutInMinutes: 5
+            env:
+              JAVA_HOME: $(GRAALVM_HOME)
+
+          - task: PublishBuildArtifacts@1
+            displayName: "QWP compatibility failed -- upload logs"
+            condition: and(failed(), eq(variables['os'], 'Linux'), eq(variables['QWP_COMPAT_GATE_STARTED'], 'true'))
+            inputs:
+              pathToPublish: '$(Build.SourcesDirectory)/compat/target/qwp-schema-compat'
+              artifactName: 'QwpSchemaCompatibilityLogs'
+
           - task: CopyFiles@2
             inputs:
               SourceFolder: '$(build.sourcesDirectory)/core/target'

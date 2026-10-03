@@ -239,21 +239,26 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
 
     /**
      * Exercises {@link QwpWebSocketSender#getTotalErrorNotificationsDelivered()}.
-     * Send a string into a column that was first created as DOUBLE; the server
-     * rejects with SCHEMA_MISMATCH (a latched TERMINAL under NACK policy v2),
-     * the error handler fires, and the delivered counter advances past zero.
+     * Target a live view, which QwpTudCache permanently refuses to hand the sender
+     * a writer for: the server rejects with SCHEMA_MISMATCH (a latched TERMINAL
+     * under NACK policy v2), the error handler fires, and the delivered counter
+     * advances past zero.
+     * <p>
+     * The rejection has to come from the server. This test used to write a string
+     * into a DOUBLE column, but schema-aware senders convert against the server
+     * schema before buffering, so that input now fails locally in
+     * {@code stringColumn()} and no frame -- and therefore no NACK and no
+     * notification -- ever reaches the wire.
      */
     @Test
     public void testGetTotalErrorNotificationsDeliveredAfterSchemaMismatch() throws Exception {
         runInContext((port) -> {
-            String table = "err_notif_delivered";
+            String table = "err_notif_delivered_lv";
 
-            // First seed the table with a DOUBLE column.
-            try (QwpWebSocketSender seed = connectWs(port)) {
-                seed.table(table).doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
-                seed.flush();
-            }
-            drainWalQueue();
+            execute("CREATE TABLE err_notif_base (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW " + table + " FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT val, ts, count(*) OVER (PARTITION BY val ORDER BY ts "
+                    + "ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM err_notif_base");
 
             CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
             CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
@@ -265,7 +270,7 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
             });
             SenderError.Category expectedTerminalCategory = null;
             try {
-                sender.table(table).stringColumn("v", "not-a-double").at(2_000_000L, ChronoUnit.MICROS);
+                sender.table(table).longColumn("val", 1L).at(2_000_000L, ChronoUnit.MICROS);
                 try {
                     sender.flush();
                 } catch (LineSenderServerException ignored) {
