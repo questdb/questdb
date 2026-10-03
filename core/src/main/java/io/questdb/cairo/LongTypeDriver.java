@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.LongTypeConstant;
 import io.questdb.std.Numbers;
@@ -41,101 +36,35 @@ import io.questdb.std.Vect;
  */
 public final class LongTypeDriver extends FixedSizeTypeDriver {
     public static final LongTypeDriver INSTANCE = new LongTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.LONG, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL};
 
     private LongTypeDriver() {
         super(
-                ColumnTypeTag.LONG,
-                PhysicalDescriptor.Movement.W8,
-                PhysicalDescriptor.Arithmetic.I64,
-                PhysicalDescriptor.Accessor.LONG
+                new TypeFacts(
+                        ColumnTypeTag.LONG,
+                        PhysicalDescriptor.Movement.W8,
+                        PhysicalDescriptor.Arithmetic.I64,
+                        PhysicalDescriptor.Accessor.LONG,
+                        NullPolicy.SENTINEL,
+                        WireKind.LONG,
+                        RelationKind.INT,
+                        64,
+                        new short[]{ColumnType.LONG, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL},
+                        PgTypeOids.PG_INT8,
+                        'l',
+                        0,
+                        Numbers.LONG_NULL,
+                        CastTarget.ALWAYS,
+                        "LONG"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setLong(index);
+                    return columnType;
+                },
+                columnType -> LongConstant.NULL,
+                columnType -> columnType == ColumnType.LONG ? LongTypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> LongColumn.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putLong(Numbers.LONG_NULL),
+                (addr, count) -> Vect.setMemoryLong(addr, Numbers.LONG_NULL, count)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setLong(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.LONG, "LONG");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return LongConstant.NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_INT8;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 64;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.INT;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'l';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.LONG ? LongTypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.LONG;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return LongColumn.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putLong(Numbers.LONG_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count);
     }
 }

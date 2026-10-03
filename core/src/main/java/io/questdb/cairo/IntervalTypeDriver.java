@@ -22,16 +22,11 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.columns.IntervalColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.IntervalTypeConstant;
 import io.questdb.griffin.model.IntervalUtils;
@@ -46,27 +41,49 @@ import io.questdb.std.Vect;
  */
 public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     public static final IntervalTypeDriver INSTANCE = new IntervalTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.INTERVAL, ColumnType.STRING};
 
     private IntervalTypeDriver() {
         super(
-                ColumnTypeTag.INTERVAL,
-                PhysicalDescriptor.Movement.W16,
-                PhysicalDescriptor.Arithmetic.NONE,
-                PhysicalDescriptor.Accessor.INTERVAL
+                new TypeFacts(
+                        ColumnTypeTag.INTERVAL,
+                        PhysicalDescriptor.Movement.W16,
+                        PhysicalDescriptor.Arithmetic.NONE,
+                        PhysicalDescriptor.Accessor.INTERVAL,
+                        NullPolicy.SENTINEL,
+                        WireKind.INTERVAL,
+                        RelationKind.INTERVAL,
+                        0,
+                        new short[]{ColumnType.INTERVAL, ColumnType.STRING},
+                        // the interval travels as its text
+                        PgTypeOids.PG_VARCHAR,
+                        'δ',
+                        0,
+                        Numbers.LONG_NULL,
+                        // the parser takes INTERVAL as a CAST target from NULL only
+                        CastTarget.FROM_NULL_ONLY,
+                        "INTERVAL"
+                ),
+                (service, index, columnType, position) -> {
+                    // no bind variable holds an INTERVAL
+                    throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
+                },
+                // an interval type carries its timestamp precision; the bare tag is the raw interval
+                columnType -> {
+                    if (columnType != ColumnType.INTERVAL) {
+                        return IntervalUtils.getTimestampDriverByIntervalType(columnType).getIntervalConstantNull();
+                    }
+                    return IntervalConstant.RAW_NULL;
+                },
+                columnType -> switch (columnType) {
+                    case ColumnType.INTERVAL_RAW -> IntervalTypeConstant.RAW_INSTANCE;
+                    case ColumnType.INTERVAL_TIMESTAMP_MICRO -> IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE;
+                    case ColumnType.INTERVAL_TIMESTAMP_NANO -> IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE;
+                    default -> null;
+                },
+                (columnIndex, columnType) -> IntervalColumn.newInstance(columnIndex, columnType),
+                (dataMem, auxMem) -> () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL),
+                (addr, count) -> Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        // no bind variable holds an INTERVAL
-        throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
     }
 
     /**
@@ -79,88 +96,5 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
                     "INTERVAL";
             default -> ColumnType.UNKNOWN_NAME;
         };
-    }
-
-    /**
-     * An interval type carries its timestamp precision; the bare tag is the raw interval.
-     */
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        if (columnType != ColumnType.INTERVAL) {
-            return IntervalUtils.getTimestampDriverByIntervalType(columnType).getIntervalConstantNull();
-        }
-        return IntervalConstant.RAW_NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    // the interval travels as its text
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_VARCHAR;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 0;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.INTERVAL;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'δ';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return switch (columnType) {
-            case ColumnType.INTERVAL_RAW -> IntervalTypeConstant.RAW_INSTANCE;
-            case ColumnType.INTERVAL_TIMESTAMP_MICRO -> IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE;
-            case ColumnType.INTERVAL_TIMESTAMP_NANO -> IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE;
-            default -> null;
-        };
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.INTERVAL;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        // the parser takes INTERVAL as a CAST target from NULL only
-        return isFromNull;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return IntervalColumn.newInstance(columnIndex, columnType);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
     }
 }

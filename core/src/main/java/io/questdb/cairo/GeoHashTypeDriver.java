@@ -22,19 +22,14 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactoryDescriptor;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
 import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
 import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
 import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
 import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
@@ -46,70 +41,140 @@ import io.questdb.std.Vect;
  * Type driver for the geohash family: GEOBYTE, GEOSHORT, GEOINT and GEOLONG are one type
  * stored at four widths, so they share one class with one instance per tag. The number of
  * bits is part of the encoded column type and is passed as an argument where a method
- * needs it. NULL is -1 at every width.
+ * needs it. NULL is -1 at every width. A NULL constant is typed by the encoded bit count,
+ * from the {@link Constants} cache; a bare tag (no bits) yields the tag's untyped NULL constant.
+ * <p>
+ * Every width travels on PostgreSQL wire as its text. The GEOHASH pseudo tag names the widths
+ * in function signatures and in CAST, with its bits (GeoHashTypeConstant), so a width has no
+ * signature character and no type constant of its own and is no CAST target.
  */
 public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     public static final GeoHashTypeDriver GEOBYTE = new GeoHashTypeDriver(
-            ColumnTypeTag.GEOBYTE,
-            PhysicalDescriptor.Movement.W1,
-            PhysicalDescriptor.Arithmetic.I8,
-            PhysicalDescriptor.Accessor.GEOBYTE,
-            WireKind.GEOBYTE,
-            new short[]{ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
+            new TypeFacts(
+                    ColumnTypeTag.GEOBYTE,
+                    PhysicalDescriptor.Movement.W1,
+                    PhysicalDescriptor.Arithmetic.I8,
+                    PhysicalDescriptor.Accessor.GEOBYTE,
+                    NullPolicy.SENTINEL,
+                    WireKind.GEOBYTE,
+                    RelationKind.GEO,
+                    8,
+                    new short[]{ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH},
+                    PgTypeOids.PG_VARCHAR,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    GeoHashes.NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            columnType -> {
+                final int bits = ColumnType.getGeoHashBits(columnType);
+                return bits != 0 ? Constants.getGeoHashNullConstant(bits) : GeoByteConstant.NULL;
+            },
+            (columnIndex, columnType) -> GeoByteColumn.newInstance(columnIndex, columnType),
+            (dataMem, auxMem) -> () -> dataMem.putByte(GeoHashes.BYTE_NULL),
+            (addr, count) -> Vect.memset(addr, count, GeoHashes.BYTE_NULL)
     );
     public static final GeoHashTypeDriver GEOINT = new GeoHashTypeDriver(
-            ColumnTypeTag.GEOINT,
-            PhysicalDescriptor.Movement.W4,
-            PhysicalDescriptor.Arithmetic.I32,
-            PhysicalDescriptor.Accessor.GEOINT,
-            WireKind.GEOINT,
-            new short[]{ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
+            new TypeFacts(
+                    ColumnTypeTag.GEOINT,
+                    PhysicalDescriptor.Movement.W4,
+                    PhysicalDescriptor.Arithmetic.I32,
+                    PhysicalDescriptor.Accessor.GEOINT,
+                    NullPolicy.SENTINEL,
+                    WireKind.GEOINT,
+                    RelationKind.GEO,
+                    32,
+                    new short[]{ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH},
+                    PgTypeOids.PG_VARCHAR,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    GeoHashes.NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            columnType -> {
+                final int bits = ColumnType.getGeoHashBits(columnType);
+                return bits != 0 ? Constants.getGeoHashNullConstant(bits) : GeoIntConstant.NULL;
+            },
+            (columnIndex, columnType) -> GeoIntColumn.newInstance(columnIndex, columnType),
+            (dataMem, auxMem) -> () -> dataMem.putInt(GeoHashes.INT_NULL),
+            (addr, count) -> Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count)
     );
     public static final GeoHashTypeDriver GEOLONG = new GeoHashTypeDriver(
-            ColumnTypeTag.GEOLONG,
-            PhysicalDescriptor.Movement.W8,
-            PhysicalDescriptor.Arithmetic.I64,
-            PhysicalDescriptor.Accessor.GEOLONG,
-            WireKind.GEOLONG,
-            new short[]{ColumnType.GEOLONG, ColumnType.GEOHASH}
+            new TypeFacts(
+                    ColumnTypeTag.GEOLONG,
+                    PhysicalDescriptor.Movement.W8,
+                    PhysicalDescriptor.Arithmetic.I64,
+                    PhysicalDescriptor.Accessor.GEOLONG,
+                    NullPolicy.SENTINEL,
+                    WireKind.GEOLONG,
+                    RelationKind.GEO,
+                    64,
+                    new short[]{ColumnType.GEOLONG, ColumnType.GEOHASH},
+                    PgTypeOids.PG_VARCHAR,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    GeoHashes.NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            columnType -> {
+                final int bits = ColumnType.getGeoHashBits(columnType);
+                return bits != 0 ? Constants.getGeoHashNullConstant(bits) : GeoLongConstant.NULL;
+            },
+            (columnIndex, columnType) -> GeoLongColumn.newInstance(columnIndex, columnType),
+            (dataMem, auxMem) -> () -> dataMem.putLong(GeoHashes.NULL),
+            (addr, count) -> Vect.setMemoryLong(addr, GeoHashes.NULL, count)
     );
     public static final GeoHashTypeDriver GEOSHORT = new GeoHashTypeDriver(
-            ColumnTypeTag.GEOSHORT,
-            PhysicalDescriptor.Movement.W2,
-            PhysicalDescriptor.Arithmetic.I16,
-            PhysicalDescriptor.Accessor.GEOSHORT,
-            WireKind.GEOSHORT,
-            new short[]{ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
+            new TypeFacts(
+                    ColumnTypeTag.GEOSHORT,
+                    PhysicalDescriptor.Movement.W2,
+                    PhysicalDescriptor.Arithmetic.I16,
+                    PhysicalDescriptor.Accessor.GEOSHORT,
+                    NullPolicy.SENTINEL,
+                    WireKind.GEOSHORT,
+                    RelationKind.GEO,
+                    16,
+                    new short[]{ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH},
+                    PgTypeOids.PG_VARCHAR,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    GeoHashes.NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            columnType -> {
+                final int bits = ColumnType.getGeoHashBits(columnType);
+                return bits != 0 ? Constants.getGeoHashNullConstant(bits) : GeoShortConstant.NULL;
+            },
+            (columnIndex, columnType) -> GeoShortColumn.newInstance(columnIndex, columnType),
+            (dataMem, auxMem) -> () -> dataMem.putShort(GeoHashes.SHORT_NULL),
+            (addr, count) -> Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count)
     );
     // by bit count: GEOHASH(<n>c) for a multiple of 5 bits, GEOHASH(<n>b) otherwise
     private static final String[] NAMES = new String[ColumnType.GEOLONG_MAX_BITS + 1];
 
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private final short[] implicitCasts;
-    private final WireKind wireKind;
-
     private GeoHashTypeDriver(
-            ColumnTypeTag tag,
-            PhysicalDescriptor.Movement movement,
-            PhysicalDescriptor.Arithmetic arithmetic,
-            PhysicalDescriptor.Accessor accessor,
-            WireKind wireKind,
-            short[] implicitCasts
+            TypeFacts facts,
+            NullConstantSource nullConstantSource,
+            ColumnFunctionFactory columnFunctionFactory,
+            NullAppenderFactory nullAppenderFactory,
+            NullFiller nullFiller
     ) {
-        super(tag, movement, arithmetic, accessor);
-        this.implicitCasts = implicitCasts;
-        this.wireKind = wireKind;
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setGeoHash(index, columnType);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return implicitCasts;
+        super(
+                facts,
+                (service, index, columnType, position) -> {
+                    service.setGeoHash(index, columnType);
+                    return columnType;
+                },
+                nullConstantSource,
+                columnType -> null,
+                columnFunctionFactory,
+                nullAppenderFactory,
+                nullFiller
+        );
     }
 
     /**
@@ -122,111 +187,6 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
             return ColumnType.UNKNOWN_NAME;
         }
         return NAMES[bits];
-    }
-
-    /**
-     * Typed by the encoded bit count, from the {@link Constants} cache; a bare tag (no bits)
-     * yields the tag's untyped NULL constant.
-     */
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        final int bits = ColumnType.getGeoHashBits(columnType);
-        if (bits != 0) {
-            return Constants.getGeoHashNullConstant(bits);
-        }
-        return switch (getPow2Width()) {
-            case 0 -> GeoByteConstant.NULL;
-            case 1 -> GeoShortConstant.NULL;
-            case 2 -> GeoIntConstant.NULL;
-            case 3 -> GeoLongConstant.NULL;
-            default -> throw new IllegalStateException("no geohash width " + getPow2Width());
-        };
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return GeoHashes.NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    // a geohash travels as its text
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_VARCHAR;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return getWidth() * Byte.SIZE;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.GEO;
-    }
-
-    // the geohash widths are named by the GEOHASH pseudo tag
-    @Override
-    public char getSignatureChar() {
-        return FunctionFactoryDescriptor.NO_SIGNATURE_CHAR;
-    }
-
-    // a geohash CAST names the GEOHASH pseudo type with its bits (GeoHashTypeConstant); the bare tag is no CAST target
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return wireKind;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return false;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return switch (getPow2Width()) {
-            case 0 -> GeoByteColumn.newInstance(columnIndex, columnType);
-            case 1 -> GeoShortColumn.newInstance(columnIndex, columnType);
-            case 2 -> GeoIntColumn.newInstance(columnIndex, columnType);
-            case 3 -> GeoLongColumn.newInstance(columnIndex, columnType);
-            default -> throw new IllegalStateException("no geohash width " + getPow2Width());
-        };
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return switch (getPow2Width()) {
-            case 0 -> () -> dataMem.putByte(GeoHashes.BYTE_NULL);
-            case 1 -> () -> dataMem.putShort(GeoHashes.SHORT_NULL);
-            case 2 -> () -> dataMem.putInt(GeoHashes.INT_NULL);
-            case 3 -> () -> dataMem.putLong(GeoHashes.NULL);
-            default -> throw new IllegalStateException("no geohash width " + getPow2Width());
-        };
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        switch (getPow2Width()) {
-            case 0 -> Vect.memset(addr, count, GeoHashes.BYTE_NULL);
-            case 1 -> Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);
-            case 2 -> Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);
-            case 3 -> Vect.setMemoryLong(addr, GeoHashes.NULL, count);
-            default -> throw new IllegalStateException("no geohash width " + getPow2Width());
-        }
     }
 
     static {

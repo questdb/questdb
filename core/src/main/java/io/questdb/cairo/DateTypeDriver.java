@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.DateTypeConstant;
 import io.questdb.std.Numbers;
@@ -44,102 +39,36 @@ import io.questdb.std.Vect;
  */
 public final class DateTypeDriver extends FixedSizeTypeDriver {
     public static final DateTypeDriver INSTANCE = new DateTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.DOUBLE};
 
     private DateTypeDriver() {
         super(
-                ColumnTypeTag.DATE,
-                PhysicalDescriptor.Movement.W8,
-                PhysicalDescriptor.Arithmetic.I64,
-                PhysicalDescriptor.Accessor.DATE
+                new TypeFacts(
+                        ColumnTypeTag.DATE,
+                        PhysicalDescriptor.Movement.W8,
+                        PhysicalDescriptor.Arithmetic.I64,
+                        PhysicalDescriptor.Accessor.DATE,
+                        NullPolicy.SENTINEL,
+                        WireKind.DATE,
+                        RelationKind.TEMPORAL,
+                        64,
+                        new short[]{ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.DOUBLE},
+                        // PostgreSQL DATE has day precision, so DATE travels as TIMESTAMP (millisecond precision kept)
+                        PgTypeOids.PG_TIMESTAMP,
+                        'm',
+                        0,
+                        Numbers.LONG_NULL,
+                        CastTarget.ALWAYS,
+                        "DATE"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setDate(index);
+                    return columnType;
+                },
+                columnType -> DateConstant.NULL,
+                columnType -> columnType == ColumnType.DATE ? DateTypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> DateColumn.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putLong(Numbers.LONG_NULL),
+                (addr, count) -> Vect.setMemoryLong(addr, Numbers.LONG_NULL, count)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setDate(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.DATE, "DATE");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return DateConstant.NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    // PostgreSQL DATE has day precision, so DATE travels as TIMESTAMP (millisecond precision kept)
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_TIMESTAMP;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 64;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.TEMPORAL;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'm';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.DATE ? DateTypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.DATE;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return DateColumn.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putLong(Numbers.LONG_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count);
     }
 }

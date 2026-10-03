@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.constants.FloatTypeConstant;
 import io.questdb.std.Numbers;
@@ -41,101 +36,35 @@ import io.questdb.std.Vect;
  */
 public final class FloatTypeDriver extends FixedSizeTypeDriver {
     public static final FloatTypeDriver INSTANCE = new FloatTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.FLOAT, ColumnType.DOUBLE};
 
     private FloatTypeDriver() {
         super(
-                ColumnTypeTag.FLOAT,
-                PhysicalDescriptor.Movement.W4,
-                PhysicalDescriptor.Arithmetic.F32,
-                PhysicalDescriptor.Accessor.FLOAT
+                new TypeFacts(
+                        ColumnTypeTag.FLOAT,
+                        PhysicalDescriptor.Movement.W4,
+                        PhysicalDescriptor.Arithmetic.F32,
+                        PhysicalDescriptor.Accessor.FLOAT,
+                        NullPolicy.SENTINEL,
+                        WireKind.FLOAT,
+                        RelationKind.FLOAT,
+                        32,
+                        new short[]{ColumnType.FLOAT, ColumnType.DOUBLE},
+                        PgTypeOids.PG_FLOAT4,
+                        'f',
+                        0,
+                        Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN)),
+                        CastTarget.ALWAYS,
+                        "FLOAT"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setFloat(index);
+                    return columnType;
+                },
+                columnType -> FloatConstant.NULL,
+                columnType -> columnType == ColumnType.FLOAT ? FloatTypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> FloatColumn.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putFloat(Float.NaN),
+                (addr, count) -> Vect.setMemoryFloat(addr, Float.NaN, count)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setFloat(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.FLOAT, "FLOAT");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return FloatConstant.NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_FLOAT4;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 32;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.FLOAT;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'f';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.FLOAT ? FloatTypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.FLOAT;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return FloatColumn.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putFloat(Float.NaN);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryFloat(addr, Float.NaN, count);
     }
 }

@@ -22,17 +22,12 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanTypeConstant;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Vect;
 
 /**
@@ -40,101 +35,35 @@ import io.questdb.std.Vect;
  */
 public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     public static final BooleanTypeDriver INSTANCE = new BooleanTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.BOOLEAN};
 
     private BooleanTypeDriver() {
         super(
-                ColumnTypeTag.BOOLEAN,
-                PhysicalDescriptor.Movement.W1,
-                PhysicalDescriptor.Arithmetic.U8,
-                PhysicalDescriptor.Accessor.BOOLEAN
+                new TypeFacts(
+                        ColumnTypeTag.BOOLEAN,
+                        PhysicalDescriptor.Movement.W1,
+                        PhysicalDescriptor.Arithmetic.U8,
+                        PhysicalDescriptor.Accessor.BOOLEAN,
+                        NullPolicy.NONE,
+                        WireKind.BOOLEAN,
+                        RelationKind.BOOL,
+                        1,
+                        new short[]{ColumnType.BOOLEAN},
+                        PgTypeOids.PG_BOOL,
+                        't',
+                        0,
+                        0L,
+                        CastTarget.ALWAYS,
+                        "BOOLEAN"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setBoolean(index);
+                    return columnType;
+                },
+                columnType -> BooleanConstant.FALSE,
+                columnType -> columnType == ColumnType.BOOLEAN ? BooleanTypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> BooleanColumn.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putByte((byte) 0),
+                (addr, count) -> Vect.memset(addr, count, 0)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setBoolean(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.BOOLEAN, "BOOLEAN");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return BooleanConstant.FALSE;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return 0L;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.NONE;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_BOOL;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 1;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.BOOL;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 't';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.BOOLEAN ? BooleanTypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.BOOLEAN;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return BooleanColumn.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putByte((byte) 0);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.memset(addr, count, 0);
     }
 }

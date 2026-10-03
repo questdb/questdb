@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleTypeConstant;
 import io.questdb.std.Vect;
@@ -40,101 +35,35 @@ import io.questdb.std.Vect;
  */
 public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     public static final DoubleTypeDriver INSTANCE = new DoubleTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.DOUBLE};
 
     private DoubleTypeDriver() {
         super(
-                ColumnTypeTag.DOUBLE,
-                PhysicalDescriptor.Movement.W8,
-                PhysicalDescriptor.Arithmetic.F64,
-                PhysicalDescriptor.Accessor.DOUBLE
+                new TypeFacts(
+                        ColumnTypeTag.DOUBLE,
+                        PhysicalDescriptor.Movement.W8,
+                        PhysicalDescriptor.Arithmetic.F64,
+                        PhysicalDescriptor.Accessor.DOUBLE,
+                        NullPolicy.SENTINEL,
+                        WireKind.DOUBLE,
+                        RelationKind.FLOAT,
+                        64,
+                        new short[]{ColumnType.DOUBLE},
+                        PgTypeOids.PG_FLOAT8,
+                        'd',
+                        PgTypeOids.PG_ARR_FLOAT8,
+                        Double.doubleToLongBits(Double.NaN),
+                        CastTarget.ALWAYS,
+                        "DOUBLE"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setDouble(index);
+                    return columnType;
+                },
+                columnType -> DoubleConstant.NULL,
+                columnType -> columnType == ColumnType.DOUBLE ? DoubleTypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> DoubleColumn.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putDouble(Double.NaN),
+                (addr, count) -> Vect.setMemoryDouble(addr, Double.NaN, count)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setDouble(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.DOUBLE, "DOUBLE");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return DoubleConstant.NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Double.doubleToLongBits(Double.NaN);
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return PgTypeOids.PG_ARR_FLOAT8;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_FLOAT8;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 64;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.FLOAT;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'd';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.DOUBLE ? DoubleTypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.DOUBLE;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return DoubleColumn.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putDouble(Double.NaN);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryDouble(addr, Double.NaN, count);
     }
 }

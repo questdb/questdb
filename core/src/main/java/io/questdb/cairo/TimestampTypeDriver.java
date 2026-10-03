@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampTypeConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
@@ -44,27 +39,40 @@ import io.questdb.std.Vect;
  */
 public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     public static final TimestampTypeDriver INSTANCE = new TimestampTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.DATE, ColumnType.DOUBLE};
 
     private TimestampTypeDriver() {
         super(
-                ColumnTypeTag.TIMESTAMP,
-                PhysicalDescriptor.Movement.W8,
-                PhysicalDescriptor.Arithmetic.I64,
-                PhysicalDescriptor.Accessor.TIMESTAMP
+                new TypeFacts(
+                        ColumnTypeTag.TIMESTAMP,
+                        PhysicalDescriptor.Movement.W8,
+                        PhysicalDescriptor.Arithmetic.I64,
+                        PhysicalDescriptor.Accessor.TIMESTAMP,
+                        NullPolicy.SENTINEL,
+                        WireKind.TIMESTAMP,
+                        RelationKind.TEMPORAL,
+                        64,
+                        new short[]{ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.DATE, ColumnType.DOUBLE},
+                        PgTypeOids.PG_TIMESTAMP,
+                        'n',
+                        0,
+                        Numbers.LONG_NULL,
+                        CastTarget.ALWAYS,
+                        "TIMESTAMP"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setTimestampWithType(index, columnType, Numbers.LONG_NULL);
+                    return columnType;
+                },
+                columnType -> ColumnType.getTimestampDriver(columnType).getTimestampConstantNull(),
+                columnType -> switch (columnType) {
+                    case ColumnType.TIMESTAMP_MICRO -> TimestampTypeConstant.TIMESTAMP_MS_CONSTANT;
+                    case ColumnType.TIMESTAMP_NANO -> TimestampTypeConstant.TIMESTAMP_NS_CONSTANT;
+                    default -> null;
+                },
+                (columnIndex, columnType) -> TimestampColumn.newInstance(columnIndex, columnType),
+                (dataMem, auxMem) -> () -> dataMem.putLong(Numbers.LONG_NULL),
+                (addr, count) -> Vect.setMemoryLong(addr, Numbers.LONG_NULL, count)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setTimestampWithType(index, columnType, Numbers.LONG_NULL);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
     }
 
     /**
@@ -77,79 +85,5 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
             case ColumnType.TIMESTAMP_NANO -> "TIMESTAMP_NS";
             default -> ColumnType.UNKNOWN_NAME;
         };
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return ColumnType.getTimestampDriver(columnType).getTimestampConstantNull();
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_TIMESTAMP;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 64;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.TEMPORAL;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'n';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return switch (columnType) {
-            case ColumnType.TIMESTAMP_MICRO -> TimestampTypeConstant.TIMESTAMP_MS_CONSTANT;
-            case ColumnType.TIMESTAMP_NANO -> TimestampTypeConstant.TIMESTAMP_NS_CONSTANT;
-            default -> null;
-        };
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.TIMESTAMP;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return TimestampColumn.newInstance(columnIndex, columnType);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putLong(Numbers.LONG_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count);
     }
 }

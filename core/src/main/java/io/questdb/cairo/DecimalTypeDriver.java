@@ -22,17 +22,12 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactoryDescriptor;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.DecimalColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Decimals;
 import io.questdb.std.Vect;
 
@@ -41,85 +36,159 @@ import io.questdb.std.Vect;
  * six widths, so they share one class with one instance per tag. Precision and scale are part
  * of the encoded column type and are passed as an argument where a method needs them. The
  * DECIMAL pseudo tag, which only resolves function overloads, has no driver.
+ * <p>
+ * The DECIMAL pseudo tag names the widths in function signatures and in CAST, with its
+ * precision and scale, so a width has no signature character and no type constant of its own
+ * and is no CAST target.
  */
 public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     public static final DecimalTypeDriver DECIMAL128 = new DecimalTypeDriver(
-            ColumnTypeTag.DECIMAL128,
-            PhysicalDescriptor.Movement.W16,
-            PhysicalDescriptor.Arithmetic.WIDE,
-            PhysicalDescriptor.Accessor.DECIMAL128,
-            WireKind.DECIMAL128,
-            new short[]{ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
+            new TypeFacts(
+                    ColumnTypeTag.DECIMAL128,
+                    PhysicalDescriptor.Movement.W16,
+                    PhysicalDescriptor.Arithmetic.WIDE,
+                    PhysicalDescriptor.Accessor.DECIMAL128,
+                    NullPolicy.SENTINEL,
+                    WireKind.DECIMAL128,
+                    RelationKind.DECIMAL,
+                    128,
+                    new short[]{ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL},
+                    PgTypeOids.PG_NUMERIC,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    Decimals.DECIMAL128_HI_NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            (dataMem, auxMem) -> () -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL),
+            (addr, count) -> Vect.setMemoryLong128(addr, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, count)
     );
     public static final DecimalTypeDriver DECIMAL16 = new DecimalTypeDriver(
-            ColumnTypeTag.DECIMAL16,
-            PhysicalDescriptor.Movement.W2,
-            PhysicalDescriptor.Arithmetic.I16,
-            PhysicalDescriptor.Accessor.DECIMAL16,
-            WireKind.DECIMAL16,
-            new short[]{ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
+            new TypeFacts(
+                    ColumnTypeTag.DECIMAL16,
+                    PhysicalDescriptor.Movement.W2,
+                    PhysicalDescriptor.Arithmetic.I16,
+                    PhysicalDescriptor.Accessor.DECIMAL16,
+                    NullPolicy.SENTINEL,
+                    WireKind.DECIMAL16,
+                    RelationKind.DECIMAL,
+                    16,
+                    new short[]{ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL},
+                    PgTypeOids.PG_NUMERIC,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    Decimals.DECIMAL16_NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            (dataMem, auxMem) -> () -> dataMem.putShort(Decimals.DECIMAL16_NULL),
+            (addr, count) -> Vect.setMemoryShort(addr, Decimals.DECIMAL16_NULL, count)
     );
     public static final DecimalTypeDriver DECIMAL256 = new DecimalTypeDriver(
-            ColumnTypeTag.DECIMAL256,
-            PhysicalDescriptor.Movement.W32,
-            PhysicalDescriptor.Arithmetic.WIDE,
-            PhysicalDescriptor.Accessor.DECIMAL256,
-            WireKind.DECIMAL256,
-            new short[]{ColumnType.DECIMAL256, ColumnType.DECIMAL}
+            new TypeFacts(
+                    ColumnTypeTag.DECIMAL256,
+                    PhysicalDescriptor.Movement.W32,
+                    PhysicalDescriptor.Arithmetic.WIDE,
+                    PhysicalDescriptor.Accessor.DECIMAL256,
+                    NullPolicy.SENTINEL,
+                    WireKind.DECIMAL256,
+                    RelationKind.DECIMAL,
+                    256,
+                    new short[]{ColumnType.DECIMAL256, ColumnType.DECIMAL},
+                    PgTypeOids.PG_NUMERIC,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    Decimals.DECIMAL256_HH_NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            (dataMem, auxMem) -> () -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL),
+            (addr, count) -> Vect.setMemoryLong256(addr, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                    Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, count)
     );
     public static final DecimalTypeDriver DECIMAL32 = new DecimalTypeDriver(
-            ColumnTypeTag.DECIMAL32,
-            PhysicalDescriptor.Movement.W4,
-            PhysicalDescriptor.Arithmetic.I32,
-            PhysicalDescriptor.Accessor.DECIMAL32,
-            WireKind.DECIMAL32,
-            new short[]{ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
+            new TypeFacts(
+                    ColumnTypeTag.DECIMAL32,
+                    PhysicalDescriptor.Movement.W4,
+                    PhysicalDescriptor.Arithmetic.I32,
+                    PhysicalDescriptor.Accessor.DECIMAL32,
+                    NullPolicy.SENTINEL,
+                    WireKind.DECIMAL32,
+                    RelationKind.DECIMAL,
+                    32,
+                    new short[]{ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL},
+                    PgTypeOids.PG_NUMERIC,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    Decimals.DECIMAL32_NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            (dataMem, auxMem) -> () -> dataMem.putInt(Decimals.DECIMAL32_NULL),
+            (addr, count) -> Vect.setMemoryInt(addr, Decimals.DECIMAL32_NULL, count)
     );
     public static final DecimalTypeDriver DECIMAL64 = new DecimalTypeDriver(
-            ColumnTypeTag.DECIMAL64,
-            PhysicalDescriptor.Movement.W8,
-            PhysicalDescriptor.Arithmetic.I64,
-            PhysicalDescriptor.Accessor.DECIMAL64,
-            WireKind.DECIMAL64,
-            new short[]{ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
+            new TypeFacts(
+                    ColumnTypeTag.DECIMAL64,
+                    PhysicalDescriptor.Movement.W8,
+                    PhysicalDescriptor.Arithmetic.I64,
+                    PhysicalDescriptor.Accessor.DECIMAL64,
+                    NullPolicy.SENTINEL,
+                    WireKind.DECIMAL64,
+                    RelationKind.DECIMAL,
+                    64,
+                    new short[]{ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL},
+                    PgTypeOids.PG_NUMERIC,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    Decimals.DECIMAL64_NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            (dataMem, auxMem) -> () -> dataMem.putLong(Decimals.DECIMAL64_NULL),
+            (addr, count) -> Vect.setMemoryLong(addr, Decimals.DECIMAL64_NULL, count)
     );
     public static final DecimalTypeDriver DECIMAL8 = new DecimalTypeDriver(
-            ColumnTypeTag.DECIMAL8,
-            PhysicalDescriptor.Movement.W1,
-            PhysicalDescriptor.Arithmetic.I8,
-            PhysicalDescriptor.Accessor.DECIMAL8,
-            WireKind.DECIMAL8,
-            new short[]{ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
+            new TypeFacts(
+                    ColumnTypeTag.DECIMAL8,
+                    PhysicalDescriptor.Movement.W1,
+                    PhysicalDescriptor.Arithmetic.I8,
+                    PhysicalDescriptor.Accessor.DECIMAL8,
+                    NullPolicy.SENTINEL,
+                    WireKind.DECIMAL8,
+                    RelationKind.DECIMAL,
+                    8,
+                    new short[]{ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL},
+                    PgTypeOids.PG_NUMERIC,
+                    FunctionFactoryDescriptor.NO_SIGNATURE_CHAR,
+                    0,
+                    Decimals.DECIMAL8_NULL,
+                    CastTarget.NEVER,
+                    ColumnType.UNKNOWN_NAME
+            ),
+            (dataMem, auxMem) -> () -> dataMem.putByte(Decimals.DECIMAL8_NULL),
+            (addr, count) -> Vect.memset(addr, count, Decimals.DECIMAL8_NULL)
     );
     // DECIMAL(<precision>,<scale>), built on first use: most of the 77 x 77 names are never printed
     private static final String[][] NAMES = new String[Decimals.MAX_PRECISION + 1][Decimals.MAX_SCALE + 1];
 
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private final short[] implicitCasts;
-    private final WireKind wireKind;
-
-    private DecimalTypeDriver(
-            ColumnTypeTag tag,
-            PhysicalDescriptor.Movement movement,
-            PhysicalDescriptor.Arithmetic arithmetic,
-            PhysicalDescriptor.Accessor accessor,
-            WireKind wireKind,
-            short[] implicitCasts
-    ) {
-        super(tag, movement, arithmetic, accessor);
-        this.implicitCasts = implicitCasts;
-        this.wireKind = wireKind;
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setDecimal(index, columnType);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return implicitCasts;
+    private DecimalTypeDriver(TypeFacts facts, NullAppenderFactory nullAppenderFactory, NullFiller nullFiller) {
+        super(
+                facts,
+                (service, index, columnType, position) -> {
+                    service.setDecimal(index, columnType);
+                    return columnType;
+                },
+                // typed by the encoded precision and scale
+                columnType -> DecimalUtil.createNullDecimalConstant(
+                        ColumnType.getDecimalPrecision(columnType),
+                        ColumnType.getDecimalScale(columnType)
+                ),
+                columnType -> null,
+                (columnIndex, columnType) -> DecimalColumn.newInstance(columnIndex, columnType),
+                nullAppenderFactory,
+                nullFiller
+        );
     }
 
     /**
@@ -142,16 +211,9 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     }
 
     /**
-     * Typed by the encoded precision and scale.
+     * The NULL of DECIMAL128 and DECIMAL256 differs from long to long, so the NULL word is only
+     * the first long.
      */
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return DecimalUtil.createNullDecimalConstant(
-                ColumnType.getDecimalPrecision(columnType),
-                ColumnType.getDecimalScale(columnType)
-        );
-    }
-
     @Override
     public long getNullLong(int longIndex) {
         return switch (getPow2Width()) {
@@ -168,85 +230,5 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
             };
             default -> throw new IllegalStateException("no decimal width " + getPow2Width());
         };
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_NUMERIC;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return getWidth() * Byte.SIZE;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.DECIMAL;
-    }
-
-    // the decimal widths are named by the DECIMAL pseudo tag
-    @Override
-    public char getSignatureChar() {
-        return FunctionFactoryDescriptor.NO_SIGNATURE_CHAR;
-    }
-
-    // a decimal CAST names the DECIMAL pseudo type with its precision and scale; the bare tag is no CAST target
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return wireKind;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return false;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return DecimalColumn.newInstance(columnIndex, columnType);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return switch (getPow2Width()) {
-            case 0 -> () -> dataMem.putByte(Decimals.DECIMAL8_NULL);
-            case 1 -> () -> dataMem.putShort(Decimals.DECIMAL16_NULL);
-            case 2 -> () -> dataMem.putInt(Decimals.DECIMAL32_NULL);
-            case 3 -> () -> dataMem.putLong(Decimals.DECIMAL64_NULL);
-            case 4 -> () -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
-            case 5 ->
-                    () -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
-            default -> throw new IllegalStateException("no decimal width " + getPow2Width());
-        };
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        switch (getPow2Width()) {
-            case 0 -> Vect.memset(addr, count, Decimals.DECIMAL8_NULL);
-            case 1 -> Vect.setMemoryShort(addr, Decimals.DECIMAL16_NULL, count);
-            case 2 -> Vect.setMemoryInt(addr, Decimals.DECIMAL32_NULL, count);
-            case 3 -> Vect.setMemoryLong(addr, Decimals.DECIMAL64_NULL, count);
-            case 4 -> Vect.setMemoryLong128(addr, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, count);
-            case 5 -> Vect.setMemoryLong256(addr, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
-                    Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, count);
-            default -> throw new IllegalStateException("no decimal width " + getPow2Width());
-        }
     }
 }

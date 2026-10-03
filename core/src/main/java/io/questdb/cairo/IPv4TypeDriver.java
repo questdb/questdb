@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IPv4TypeConstant;
 import io.questdb.std.Numbers;
@@ -41,102 +36,36 @@ import io.questdb.std.Vect;
  */
 public final class IPv4TypeDriver extends FixedSizeTypeDriver {
     public static final IPv4TypeDriver INSTANCE = new IPv4TypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR};
 
     private IPv4TypeDriver() {
         super(
-                ColumnTypeTag.IPv4,
-                PhysicalDescriptor.Movement.W4,
-                PhysicalDescriptor.Arithmetic.U32,
-                PhysicalDescriptor.Accessor.IPv4
+                new TypeFacts(
+                        ColumnTypeTag.IPv4,
+                        PhysicalDescriptor.Movement.W4,
+                        PhysicalDescriptor.Arithmetic.U32,
+                        PhysicalDescriptor.Accessor.IPv4,
+                        NullPolicy.SENTINEL,
+                        WireKind.IPV4,
+                        RelationKind.IPV4,
+                        32,
+                        new short[]{ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR},
+                        // the address travels as its dotted text
+                        PgTypeOids.PG_VARCHAR,
+                        'x',
+                        0,
+                        Numbers.IPv4_NULL,
+                        CastTarget.ALWAYS,
+                        "IPv4"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setIPv4(index);
+                    return columnType;
+                },
+                columnType -> IPv4Constant.NULL,
+                columnType -> columnType == ColumnType.IPv4 ? IPv4TypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> IPv4Column.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putInt(Numbers.IPv4_NULL),
+                (addr, count) -> Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setIPv4(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.IPv4, "IPv4");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return IPv4Constant.NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.IPv4_NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    // the address travels as its dotted text
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_VARCHAR;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 32;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.IPV4;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'x';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.IPv4 ? IPv4TypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.IPV4;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return IPv4Column.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putInt(Numbers.IPv4_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
     }
 }

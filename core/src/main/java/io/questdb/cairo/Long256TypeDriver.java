@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.constants.Long256TypeConstant;
 import io.questdb.std.Numbers;
@@ -43,102 +38,36 @@ import io.questdb.std.Vect;
  */
 public final class Long256TypeDriver extends FixedSizeTypeDriver {
     public static final Long256TypeDriver INSTANCE = new Long256TypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.LONG256, ColumnType.LONG};
 
     private Long256TypeDriver() {
         super(
-                ColumnTypeTag.LONG256,
-                PhysicalDescriptor.Movement.W32,
-                PhysicalDescriptor.Arithmetic.WIDE,
-                PhysicalDescriptor.Accessor.LONG256
+                new TypeFacts(
+                        ColumnTypeTag.LONG256,
+                        PhysicalDescriptor.Movement.W32,
+                        PhysicalDescriptor.Arithmetic.WIDE,
+                        PhysicalDescriptor.Accessor.LONG256,
+                        NullPolicy.SENTINEL,
+                        WireKind.LONG256,
+                        RelationKind.LONG256,
+                        256,
+                        new short[]{ColumnType.LONG256, ColumnType.LONG},
+                        // PostgreSQL has no 256-bit integer; the value travels as its hex text
+                        PgTypeOids.PG_VARCHAR,
+                        'h',
+                        0,
+                        Numbers.LONG_NULL,
+                        CastTarget.ALWAYS,
+                        "LONG256"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setLong256(index);
+                    return columnType;
+                },
+                columnType -> Long256NullConstant.INSTANCE,
+                columnType -> columnType == ColumnType.LONG256 ? Long256TypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> Long256Column.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL),
+                (addr, count) -> Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 4)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setLong256(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.LONG256, "LONG256");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return Long256NullConstant.INSTANCE;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    // PostgreSQL has no 256-bit integer; the value travels as its hex text
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_VARCHAR;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 256;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.LONG256;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'h';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.LONG256 ? Long256TypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.LONG256;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return Long256Column.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 4);
     }
 }

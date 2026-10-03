@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolTypeConstant;
 import io.questdb.std.Numbers;
@@ -46,28 +41,41 @@ import io.questdb.std.Vect;
  */
 public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     public static final SymbolTypeDriver INSTANCE = new SymbolTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.CHAR, ColumnType.INT, ColumnType.TIMESTAMP};
 
     private SymbolTypeDriver() {
         super(
-                ColumnTypeTag.SYMBOL,
-                PhysicalDescriptor.Movement.W4,
-                PhysicalDescriptor.Arithmetic.NONE,
-                PhysicalDescriptor.Accessor.SYMBOL
+                new TypeFacts(
+                        ColumnTypeTag.SYMBOL,
+                        PhysicalDescriptor.Movement.W4,
+                        PhysicalDescriptor.Arithmetic.NONE,
+                        PhysicalDescriptor.Accessor.SYMBOL,
+                        NullPolicy.SENTINEL,
+                        WireKind.SYMBOL,
+                        RelationKind.SYMBOL,
+                        0,
+                        new short[]{ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.CHAR, ColumnType.INT, ColumnType.TIMESTAMP},
+                        PgTypeOids.PG_VARCHAR,
+                        'k',
+                        0,
+                        Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL),
+                        CastTarget.ALWAYS,
+                        "SYMBOL"
+                ),
+                (service, index, columnType, position) -> {
+                    // a SYMBOL variable holds a string
+                    service.setStr(index);
+                    return ColumnType.STRING;
+                },
+                columnType -> SymbolConstant.NULL,
+                columnType -> columnType == ColumnType.SYMBOL ? SymbolTypeConstant.INSTANCE : null,
+                // a symbol column function needs the symbol table (static or not) and, in a GROUP BY, the
+                // map key slot; the callers that have them build it
+                (columnIndex, columnType) -> {
+                    throw new UnsupportedOperationException("SYMBOL column functions are built by the caller, which has the symbol table");
+                },
+                (dataMem, auxMem) -> () -> dataMem.putInt(SymbolTable.VALUE_IS_NULL),
+                (addr, count) -> Vect.setMemoryInt(addr, SymbolTable.VALUE_IS_NULL, count)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        // a SYMBOL variable holds a string
-        service.setStr(index);
-        return ColumnType.STRING;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
     }
 
     /**
@@ -75,86 +83,7 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
      * {@link SymbolTable#VALUE_IS_NULL}; both resolve to a null symbol. Kept as is.
      */
     @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.SYMBOL, "SYMBOL");
-    }
-
-    @Override
     public long getNullAsLong() {
         return Numbers.INT_NULL;
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return SymbolConstant.NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_VARCHAR;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 0;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.SYMBOL;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'k';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.SYMBOL ? SymbolTypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.SYMBOL;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    /**
-     * A symbol column function needs the symbol table (static or not) and, in a GROUP BY, the
-     * map key slot; the callers that have them build it.
-     */
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        throw new UnsupportedOperationException("SYMBOL column functions are built by the caller, which has the symbol table");
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryInt(addr, SymbolTable.VALUE_IS_NULL, count);
     }
 }

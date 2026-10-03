@@ -22,16 +22,11 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.columns.Long128Column;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
@@ -43,103 +38,37 @@ import io.questdb.std.Vect;
  */
 public final class Long128TypeDriver extends FixedSizeTypeDriver {
     public static final Long128TypeDriver INSTANCE = new Long128TypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.LONG128};
 
     private Long128TypeDriver() {
         super(
-                ColumnTypeTag.LONG128,
-                PhysicalDescriptor.Movement.W16,
-                PhysicalDescriptor.Arithmetic.WIDE,
-                PhysicalDescriptor.Accessor.LONG128
+                new TypeFacts(
+                        ColumnTypeTag.LONG128,
+                        PhysicalDescriptor.Movement.W16,
+                        PhysicalDescriptor.Arithmetic.WIDE,
+                        PhysicalDescriptor.Accessor.LONG128,
+                        NullPolicy.SENTINEL,
+                        WireKind.LONG128,
+                        RelationKind.LONG128,
+                        128,
+                        new short[]{ColumnType.LONG128},
+                        // PostgreSQL wire cannot send LONG128
+                        0,
+                        'j',
+                        0,
+                        Numbers.LONG_NULL,
+                        CastTarget.NEVER,
+                        "LONG128"
+                ),
+                (service, index, columnType, position) -> {
+                    // no bind variable holds a LONG128
+                    throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
+                },
+                columnType -> Long128Constant.NULL,
+                // LONG128 has no SQL type name to CAST to
+                columnType -> null,
+                (columnIndex, columnType) -> Long128Column.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL),
+                (addr, count) -> Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        // no bind variable holds a LONG128
-        throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.LONG128, "LONG128");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return Long128Constant.NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    // LONG128 has no SQL type name to CAST to
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    // PostgreSQL wire cannot send LONG128
-    @Override
-    public int getPgOid() {
-        return 0;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 128;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.LONG128;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'j';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.LONG128;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return false;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return Long128Column.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
     }
 }

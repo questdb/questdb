@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.ShortTypeConstant;
 import io.questdb.std.Vect;
@@ -40,101 +35,35 @@ import io.questdb.std.Vect;
  */
 public final class ShortTypeDriver extends FixedSizeTypeDriver {
     public static final ShortTypeDriver INSTANCE = new ShortTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.CHAR, ColumnType.DECIMAL};
 
     private ShortTypeDriver() {
         super(
-                ColumnTypeTag.SHORT,
-                PhysicalDescriptor.Movement.W2,
-                PhysicalDescriptor.Arithmetic.I16,
-                PhysicalDescriptor.Accessor.SHORT
+                new TypeFacts(
+                        ColumnTypeTag.SHORT,
+                        PhysicalDescriptor.Movement.W2,
+                        PhysicalDescriptor.Arithmetic.I16,
+                        PhysicalDescriptor.Accessor.SHORT,
+                        NullPolicy.NONE,
+                        WireKind.SHORT,
+                        RelationKind.INT,
+                        16,
+                        new short[]{ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.CHAR, ColumnType.DECIMAL},
+                        PgTypeOids.PG_INT2,
+                        'e',
+                        0,
+                        0L,
+                        CastTarget.ALWAYS,
+                        "SHORT"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setShort(index);
+                    return columnType;
+                },
+                columnType -> ShortConstant.ZERO,
+                columnType -> columnType == ColumnType.SHORT ? ShortTypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> ShortColumn.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putShort((short) 0),
+                (addr, count) -> Vect.setMemoryShort(addr, (short) 0, count)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setShort(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.SHORT, "SHORT");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return ShortConstant.ZERO;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return 0L;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.NONE;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_INT2;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 16;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.INT;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'e';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.SHORT ? ShortTypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.SHORT;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return ShortColumn.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putShort((short) 0);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryShort(addr, (short) 0, count);
     }
 }

@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.UuidTypeConstant;
 import io.questdb.std.Numbers;
@@ -43,101 +38,35 @@ import io.questdb.std.Vect;
  */
 public final class UuidTypeDriver extends FixedSizeTypeDriver {
     public static final UuidTypeDriver INSTANCE = new UuidTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
-    private static final short[] IMPLICIT_CASTS = {ColumnType.UUID, ColumnType.STRING};
 
     private UuidTypeDriver() {
         super(
-                ColumnTypeTag.UUID,
-                PhysicalDescriptor.Movement.W16,
-                PhysicalDescriptor.Arithmetic.WIDE,
-                PhysicalDescriptor.Accessor.UUID
+                new TypeFacts(
+                        ColumnTypeTag.UUID,
+                        PhysicalDescriptor.Movement.W16,
+                        PhysicalDescriptor.Arithmetic.WIDE,
+                        PhysicalDescriptor.Accessor.UUID,
+                        NullPolicy.SENTINEL,
+                        WireKind.UUID,
+                        RelationKind.UUID,
+                        128,
+                        new short[]{ColumnType.UUID, ColumnType.STRING},
+                        PgTypeOids.PG_UUID,
+                        'z',
+                        0,
+                        Numbers.LONG_NULL,
+                        CastTarget.ALWAYS,
+                        "UUID"
+                ),
+                (service, index, columnType, position) -> {
+                    service.setUuid(index);
+                    return columnType;
+                },
+                columnType -> UuidConstant.NULL,
+                columnType -> columnType == ColumnType.UUID ? UuidTypeConstant.INSTANCE : null,
+                (columnIndex, columnType) -> UuidColumn.newInstance(columnIndex),
+                (dataMem, auxMem) -> () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL),
+                (addr, count) -> Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2)
         );
-    }
-
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setUuid(index);
-        return columnType;
-    }
-
-    @Override
-    public short[] getImplicitCasts() {
-        return IMPLICIT_CASTS;
-    }
-
-    @Override
-    public String getName(int columnType) {
-        return nameOfBareTag(columnType, ColumnType.UUID, "UUID");
-    }
-
-    @Override
-    public ConstantFunction getNullConstant(int columnType) {
-        return UuidConstant.NULL;
-    }
-
-    @Override
-    public long getNullLong(int longIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public NullPolicy getNullPolicy() {
-        return NullPolicy.SENTINEL;
-    }
-
-    @Override
-    public int getPgArrayOid() {
-        return 0;
-    }
-
-    @Override
-    public int getPgOid() {
-        return PgTypeOids.PG_UUID;
-    }
-
-    @Override
-    public int getRelationBits() {
-        return 128;
-    }
-
-    @Override
-    public RelationKind getRelationKind() {
-        return RelationKind.UUID;
-    }
-
-    @Override
-    public char getSignatureChar() {
-        return 'z';
-    }
-
-    @Override
-    public TypeConstant getTypeConstant(int columnType) {
-        return columnType == ColumnType.UUID ? UuidTypeConstant.INSTANCE : null;
-    }
-
-    @Override
-    public WireKind getWireKind() {
-        return WireKind.UUID;
-    }
-
-    @Override
-    public boolean isCastTarget(boolean isFromNull) {
-        return true;
-    }
-
-    @Override
-    public Function newColumnFunction(int columnIndex, int columnType) {
-        return UuidColumn.newInstance(columnIndex);
-    }
-
-    @Override
-    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
-        return () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
-    }
-
-    @Override
-    public void setNull(long addr, long count) {
-        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
     }
 }
