@@ -97,7 +97,6 @@ public final class Constants {
      * arrays: DOUBLE arrays only, cached for up to ten dimensions; any other element type throws.
      */
     public static TypeConstant getArrayTypeConstant(int columnType) {
-        // ratchet-ok: an array's element type
         if (ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
             // dimension is 1-based, list offset is 0-based
             final int dims = ColumnType.decodeArrayDimensionality(columnType);

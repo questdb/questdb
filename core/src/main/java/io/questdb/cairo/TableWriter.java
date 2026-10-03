@@ -4000,7 +4000,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         short columnTag = ColumnType.tagOf(columnType);
-        // ratchet-ok: a SYMBOL NULL goes through the symbol map
         if (columnTag == ColumnType.SYMBOL) {
             nullers.add(() -> {
                 symbolWriters.getQuick(columnIndex).updateNullFlag(true);

@@ -114,7 +114,6 @@ public class RecordToRowCopierUtils {
     static int copyOpcode(int fromColumnType, int toColumnType) {
         final int toTag = ColumnType.tagOf(toColumnType);
         int fromTag = ColumnType.tagOf(fromColumnType);
-        // ratchet-ok: VARCHAR_SLICE copies as VARCHAR
         if (fromTag == ColumnType.VARCHAR_SLICE) {
             fromTag = ColumnType.VARCHAR;
         }
@@ -476,7 +475,7 @@ public class RecordToRowCopierUtils {
             if (fromTag != toTag) {
                 size += COMPLEX_TYPE_OVERHEAD;
             }
-        } else if (toTag == ColumnType.ARRAY) { // ratchet-ok: bytecode size of the ARRAY target's parser
+        } else if (toTag == ColumnType.ARRAY) {
             // ARRAY target type needs parser field access: aload(0) + getfield + extra stack setup
             size += COMPLEX_TYPE_OVERHEAD;
         }
@@ -795,7 +794,7 @@ public class RecordToRowCopierUtils {
                 // a NULL source reads through the target's arm, which puts the value as is
                 if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) {
                     timestampTypeRef = fromColumnType_0 + 2 * i;
-                } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != ColumnType.NULL && (fromColumnTypeTag == ColumnType.DATE || // ratchet-ok: copier pair, DATE, VARCHAR or STRING to TIMESTAMP
+                } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != ColumnType.NULL && (fromColumnTypeTag == ColumnType.DATE ||
                         fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING ||
                         (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) {
                     timestampTypeRef = toColumnType_0 + 2 * i;
@@ -1524,7 +1523,6 @@ public class RecordToRowCopierUtils {
                         break;
                     case ColumnType.GEOSHORT:
                         asm.invokeInterface(rGetGeoShort, 1);
-                        // ratchet-ok: copier pair, geohash narrowing
                         if (toColumnTypeTag == ColumnType.GEOBYTE) {
                             asm.i2l();
                             asm.ldc(fromColumnType_0 + i * 2);
@@ -1959,7 +1957,7 @@ public class RecordToRowCopierUtils {
             // A NULL source reads through the target's arm, which puts the value as is.
             if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) { // Timestamp -> Date
                 timestampTypeRef = fromColumnType_0 + 2 * i;
-            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != ColumnType.NULL && (fromColumnTypeTag == ColumnType.DATE || // Date -> Timestamp; ratchet-ok: copier pair, DATE, VARCHAR or STRING to TIMESTAMP
+            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != ColumnType.NULL && (fromColumnTypeTag == ColumnType.DATE || // Date -> Timestamp
                     fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING || // Varchar -> Timestamp or String -> Timestamp
                     (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Timestamp -> Timestamp
                 timestampTypeRef = toColumnType_0 + 2 * i;
@@ -2714,7 +2712,6 @@ public class RecordToRowCopierUtils {
                     break;
                 case ColumnType.GEOSHORT: // from
                     asm.invokeInterface(rGetGeoShort, 1);
-                    // ratchet-ok: copier pair, geohash narrowing
                     if (toColumnTypeTag == ColumnType.GEOBYTE) {
                         asm.i2l();
                         asm.ldc(fromColumnType_0 + i * 2);

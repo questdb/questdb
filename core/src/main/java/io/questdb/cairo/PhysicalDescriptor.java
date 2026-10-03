@@ -96,7 +96,6 @@ public final class PhysicalDescriptor {
      */
     public static @Nullable TypeDriver storedTypeDriverOf(int columnType) {
         final short tag = ColumnType.tagOf(columnType);
-        // ratchet-ok: VARCHAR_SLICE is never stored
         if (tag == ColumnType.VARCHAR_SLICE) {
             return null;
         }

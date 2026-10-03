@@ -624,7 +624,6 @@ public final class LiveViewSnapshotKeyCodec {
      * SYMBOL-partitioned LVs ride STRING keys end-to-end).
      */
     private static boolean isSupportedKeyType(int columnType) {
-        // ratchet-ok: compares the accessor family
         if (PhysicalDescriptor.accessorOpcodeOf(columnType) == ColumnType.STRING) {
             return true;
         }
