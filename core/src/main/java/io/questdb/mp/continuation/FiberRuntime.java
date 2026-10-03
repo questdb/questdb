@@ -332,6 +332,11 @@ public final class FiberRuntime {
         return GLOBAL_PROBE_INTERVAL;
     }
 
+    @TestOnly
+    public static long getOwnedDrainTimeBudgetNanosForTesting() {
+        return OWNED_DRAIN_TIME_BUDGET_NANOS;
+    }
+
     public void activateOwner(OwnerContext ownerContext) {
         final Shard shard = validateOwner(ownerContext);
         if (!shard.ownerState.compareAndSet(Shard.UNSTARTED, Shard.ACTIVE)) {
