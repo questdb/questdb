@@ -84,7 +84,6 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
         }
 
         int size = utf8Str.size();
-        int len = Utf8s.length(utf8Str);
 
         int start;
         int end;
@@ -102,7 +101,7 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
             end = Utf8s.indexOf(utf8Str, start, size, delimiter);
 
             if (end == -1) {
-                end = len;
+                end = size;
             }
         } else { // if index is negative, returns index-from-last field
             if (index == -1) {
