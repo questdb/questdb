@@ -58,7 +58,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private final boolean followedOrderByAdvice;
     private final boolean heapCursorUsed;
     private final int orderDirection;
-    private PageFrameRecordCursorImpl cursor;
+    private AbstractPageFrameRecordCursor cursor;
     private ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private Function filter;
     private RowCursorFactory rowCursorFactory;
@@ -98,13 +98,33 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             heapCursorUsed = false;
-            rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            final SequentialRowCursorFactory sequentialFactory = new SequentialRowCursorFactory(
+                    cursorFactories,
+                    cursorFactoriesIdx,
+                    columnIndex,
+                    indexDirection
+            );
+            rowCursorFactory = sequentialFactory;
+            if (orderByKeyColumn) {
+                // ORDER BY the key column: walk each key across all page frames, not just
+                // within one, so that the output is in key order as a whole
+                cursor = new KeyMajorPageFrameRecordCursor(
+                        configuration,
+                        metadata,
+                        sequentialFactory,
+                        partitionFrameCursorFactory.getOrder(),
+                        filter
+                );
+            } else {
+                cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
+            }
         } else {
             heapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         }
-        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
-        this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
+        // the heap cursor merges keys into row order, so it never follows ORDER BY the key column
+        this.followedOrderByAdvice = (orderByKeyColumn && !heapCursorUsed) || orderByTimestamp;
     }
 
     @Override
@@ -130,6 +150,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         sink.type("FilterOnValues");
         if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+        }
+        if (cursor instanceof KeyMajorPageFrameRecordCursor) {
+            sink.attr("keyMajor").val(true);
         }
         sink.child(rowCursorFactory);
         sink.child(partitionFrameCursorFactory);
@@ -226,7 +249,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
     @Override
     protected void _close() {
-        final PageFrameRecordCursorImpl cursor = this.cursor;
+        final AbstractPageFrameRecordCursor cursor = this.cursor;
         this.cursor = null;
         final ObjList<FunctionBasedRowCursorFactory> cursorFactories = this.cursorFactories;
         this.cursorFactories = null;

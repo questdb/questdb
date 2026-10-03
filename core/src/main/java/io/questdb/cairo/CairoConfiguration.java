@@ -918,6 +918,27 @@ public interface CairoConfiguration {
     int getSqlHorizonJoinMaxOffsets();
 
     /**
+     * Largest number of keys for which {@code ORDER BY <indexed symbol>} over an index key scan
+     * ({@code IN}, {@code !=}, {@code NOT IN}, or the sorted symbol index scan) walks each key
+     * across all page frames instead of sorting. The key-major scan comes back to every page frame
+     * once per key, so a table larger than the page cache can be read up to that many times. This
+     * caps re-visits within a partition and applies when a scanned partition spans more than one
+     * page frame; re-visits across partitions are capped by
+     * {@link #getSqlIndexKeyMajorMaxPartitionPasses()}. 0 disables the key-major scan, and every such
+     * query sorts.
+     */
+    int getSqlIndexKeyMajorMaxKeys();
+
+    /**
+     * Caps re-visits across the scan for a key-major index scan (see
+     * {@link #getSqlIndexKeyMajorMaxKeys()}): keys x scanned partitions, or keys x page frames when a
+     * single partition is scanned, so a large {@code PARTITION BY NONE} table is bounded like a
+     * partitioned one. All scanned partitions are also opened before the first row. 0 limits the
+     * key-major scan to a single partition of a single page frame.
+     */
+    long getSqlIndexKeyMajorMaxPartitionPasses();
+
+    /**
      * When the number of intervals exceeds this threshold during bracket expansion,
      * intervals are merged to prevent unbounded memory growth.
      */

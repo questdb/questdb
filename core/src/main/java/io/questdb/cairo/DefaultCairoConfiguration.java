@@ -1180,6 +1180,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIndexKeyMajorMaxKeys() {
+        return 1024;
+    }
+
+    @Override
+    public long getSqlIndexKeyMajorMaxPartitionPasses() {
+        return 100_000;
+    }
+
+    @Override
     public int getSqlIntervalIncrementalMergeThreshold() {
         return 256;
     }

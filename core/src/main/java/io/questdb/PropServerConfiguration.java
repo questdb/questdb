@@ -543,6 +543,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlHorizonJoinBwdScanMinGap;
     private final long sqlHorizonJoinBwdScanSwitchFactor;
     private final int sqlHorizonJoinMaxOffsets;
+    private final int sqlIndexKeyMajorMaxKeys;
+    private final long sqlIndexKeyMajorMaxPartitionPasses;
     private final long sqlInsertModelBatchSize;
     private final int sqlInsertModelPoolCapacity;
     private final int sqlIntervalIncrementalMergeThreshold;
@@ -1820,6 +1822,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
+            this.sqlIndexKeyMajorMaxKeys = getInt(properties, env, PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 1024);
+            this.sqlIndexKeyMajorMaxPartitionPasses = getLong(properties, env, PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 100_000);
             this.sqlSymbolPatternIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED, true);
             this.sqlSymbolPatternIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, 100);
             this.sqlAllPartitionOperationsAllowed = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ALL_PARTITION_OPERATIONS_ALLOWED, false);
@@ -5205,6 +5209,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlHorizonJoinMaxOffsets() {
             return sqlHorizonJoinMaxOffsets;
+        }
+
+        @Override
+        public int getSqlIndexKeyMajorMaxKeys() {
+            return sqlIndexKeyMajorMaxKeys;
+        }
+
+        @Override
+        public long getSqlIndexKeyMajorMaxPartitionPasses() {
+            return sqlIndexKeyMajorMaxPartitionPasses;
         }
 
         @Override

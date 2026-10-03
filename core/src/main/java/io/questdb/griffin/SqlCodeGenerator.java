@@ -56,6 +56,7 @@ import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -303,6 +304,7 @@ import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
@@ -567,6 +569,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    // the base model of the GROUP BY being generated, see generateGroupByBase()
+    private IQueryModel groupByBaseModel;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
@@ -737,6 +741,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
         whereClauseParserDepth = 0;
+        groupByBaseModel = null;
         symbolEstimator.clear();
         intListPool.clear();
         pushdownFilterExtractor.clear();
@@ -10650,7 +10655,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final RecordMetadata metadata = isCountKeyword(columnName)
                             ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
                             new GenericRecordMetadata().add(new TableColumnMetadata(SqlUtil.toColumnName(columnName), LONG));
-                    return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
+                    return new CountRecordCursorFactory(metadata, generateGroupByBase(model, executionContext));
                 }
             }
 
@@ -10821,7 +10826,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (hourIndex != -1) {
-                factory = generateSubQuery(model, executionContext);
+                factory = generateGroupByBase(model, executionContext);
                 pageFramingSupported = factory.supportsPageFrameCursor();
                 if (pageFramingSupported) {
                     columnExpr = columns.getQuick(hourIndex).getAst();
@@ -10841,7 +10846,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (hourIndex != -1) {
                     IQueryModel.restoreWhereClause(expressionNodePool, model);
                 }
-                factory = generateSubQuery(model, executionContext);
+                factory = generateGroupByBase(model, executionContext);
                 pageFramingSupported = factory.supportsPageFrameCursor();
             }
 
@@ -10989,7 +10994,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 factory = Misc.free(factory);
                 // create factory on top level model
                 IQueryModel.restoreWhereClause(expressionNodePool, model);
-                factory = generateSubQuery(model, executionContext);
+                factory = generateGroupByBase(model, executionContext);
                 // and reset baseMetadata
                 baseMetadata = factory.getMetadata();
             }
@@ -12760,6 +12765,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Generates the base of a GROUP BY. The GROUP BY does not consume its base's row order, but the
+     * ORDER BY advice still reaches the base's table scan; remembering the base lets the index scan
+     * skip the key-major path there, which would replace no sort and only rule out other scans.
+     */
+    private RecordCursorFactory generateGroupByBase(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final IQueryModel prevGroupByBaseModel = groupByBaseModel;
+        groupByBaseModel = model.getNestedModel();
+        try {
+            return generateSubQuery(model, executionContext);
+        } finally {
+            groupByBaseModel = prevGroupByBaseModel;
+        }
+    }
+
     private RecordCursorFactory generateSubQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
         return generateQuery(model.getNestedModel(), executionContext, true);
@@ -13089,9 +13109,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Non-final: covering paths null this after handing it to the
             // covering factory, so the outer catch will not double-free it.
             PartitionFrameCursorFactory dfcFactory;
+            // read-only view for the key-major cost estimate; dfcFactory owns it
+            RuntimeIntrinsicIntervalModel scanIntervalModel = null;
 
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
+                scanIntervalModel = intervalModel;
                 if (hasInterval == 0) {
                     executionContext.popIntervalModel();
                     executionContext.pushIntervalModel(intervalModel);
@@ -13162,27 +13185,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     assert nKeyValues > 0 || nKeyExcludedValues > 0;
 
                     boolean orderByKeyColumn = false;
+                    // a single key walked key-major: ORDER BY sym, ts DESC against the frames' direction
+                    boolean singleKeyMajor = false;
                     int indexDirection = IndexReader.DIR_FORWARD;
                     // Skip the order-by-key-column shortcut when an outer time-series join
                     // needs the master in timestamp order. Honoring the order-by advice would
                     // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
                     // /LT/WINDOW merge that assumes ts order.
-                    if (intervalHitsOnlyOnePartition && !executionContext.isTimestampRequired()) {
+                    if (!executionContext.isTimestampRequired()) {
                         final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                         final int orderByAdviceSize = orderByAdvice.size();
                         if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
-                            guardAgainstDotsInOrderByAdvice(model);
-                            // todo: when order by coincides with keyColumn and there is index we can incorporate
-                            //    ordering in the code that returns rows from index rather than having an
-                            //    "overhead" order by implementation, which would be trying to oder already ordered symbols
+                            if (intervalHitsOnlyOnePartition) {
+                                guardAgainstDotsInOrderByAdvice(model);
+                            }
                             if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
-                                queryMeta.setTimestampIndex(-1);
-                                if (orderByAdviceSize == 1) {
-                                    orderByKeyColumn = true;
-                                } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                    orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                        indexDirection = IndexReader.DIR_BACKWARD;
+                                if (intervalHitsOnlyOnePartition) {
+                                    queryMeta.setTimestampIndex(-1);
+                                }
+                                final ExpressionNode timestamp = model.getTimestamp();
+                                if (orderByAdviceSize == 1 || (timestamp != null && Chars.equals(orderByAdvice.getQuick(1).token, timestamp.token))) {
+                                    final int keyDirection = orderByAdviceSize == 2 && getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING
+                                            ? IndexReader.DIR_BACKWARD
+                                            : IndexReader.DIR_FORWARD;
+                                    final boolean singleKey = nKeyValues == 1 && nKeyExcludedValues == 0;
+                                    if (singleKey && (keyDirection == IndexReader.DIR_FORWARD) == (order != ORDER_DESC)) {
+                                        // One key scanned frame by frame, in the frames' direction, is
+                                        // in key and timestamp order already. As before, one partition.
+                                        orderByKeyColumn = intervalHitsOnlyOnePartition;
+                                    } else if (model.getOrderByAdviceMnemonic() == OrderByMnemonic.ORDER_BY_INVARIANT
+                                            // Only a consumer that takes the scan's order gets the key-major
+                                            // cursor. Under a GROUP BY the advice still arrives (INVARIANT when
+                                            // the aggregates are order-insensitive, else the heap cursor is
+                                            // used), but nothing reads the scan's order there: claiming it would
+                                            // replace no sort and only turn covering off.
+                                            && model != groupByBaseModel
+                                            && (nKeyExcludedValues == 0 || isNotEqualsIndexScanUsable(reader, columnIndexes.getQuick(keyColumnIndex)))
+                                            && isKeyMajorScanAffordable(
+                                            reader,
+                                            scanIntervalModel,
+                                            countIndexScanKeys(reader, columnIndexes.getQuick(keyColumnIndex), intrinsicModel.keyValueFuncs, nKeyExcludedValues),
+                                            executionContext
+                                    )) {
+                                        // KeyMajorPageFrameRecordCursor walks each key across all page
+                                        // frames of the scan, which is key order for any number of frames
+                                        // and partitions. A single key gets here when it is scanned against
+                                        // the frames' direction (ORDER BY sym, ts DESC): a backward index
+                                        // scan inside forward frames is not descending across them, but the
+                                        // key-major cursor walks the frames backward too.
+                                        orderByKeyColumn = true;
+                                        singleKeyMajor = singleKey;
+                                    }
+                                    if (orderByKeyColumn) {
+                                        queryMeta.setTimestampIndex(-1);
+                                        indexDirection = keyDirection;
                                     }
                                 }
                             }
@@ -13217,6 +13273,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             } finally {
                                 filter = Misc.free(filter);
                             }
+                        }
+
+                        if (nKeyValues == 1 && singleKeyMajor) {
+                            queryMeta.setTimestampIndex(-1);
+                            return new FilterOnValuesRecordCursorFactory(
+                                    configuration,
+                                    queryMeta,
+                                    dfcFactory,
+                                    intrinsicModel.keyValueFuncs,
+                                    keyColumnIndex,
+                                    reader,
+                                    filter,
+                                    model.getOrderByAdviceMnemonic(),
+                                    true,
+                                    false,
+                                    getOrderByDirectionOrDefault(model, 0),
+                                    indexDirection,
+                                    columnIndexes,
+                                    columnSizeShifts
+                            );
                         }
 
                         if (nKeyValues == 1) {
@@ -13582,8 +13658,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
 
-                            if (orderByKeyColumn) {
-                                // check that intrinsicModel.intervals hit only one partition
+                            // the sorted symbol index scan walks every symbol plus NULL
+                            if (orderByKeyColumn && isKeyMajorScanAffordable(
+                                    reader,
+                                    scanIntervalModel,
+                                    reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex)).getSymbolCount() + 1L,
+                                    executionContext
+                            )) {
                                 queryMeta.setTimestampIndex(-1);
                                 return new SortedSymbolIndexRecordCursorFactory(
                                         configuration,
@@ -14247,6 +14328,117 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (isFromTo) {
             throw SqlException.$(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
         }
+    }
+
+    private static boolean intervalsOverlap(LongList intervals, long lo, long hi) {
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            if (intervals.getQuick(i) <= hi && intervals.getQuick(i + 1) >= lo) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Number of keys a key-major index scan would walk: the IN-list keys present in the symbol
+     * table (a bind variable or other runtime value counts as one), or every symbol plus NULL for
+     * {@code !=} / {@code NOT IN}, an upper bound that ignores the excluded ones.
+     */
+    private static long countIndexScanKeys(TableReader reader, int keyReaderColumnIndex, ObjList<Function> keyValueFuncs, int nKeyExcludedValues) {
+        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyReaderColumnIndex);
+        if (nKeyExcludedValues > 0) {
+            return symbolMapReader.getSymbolCount() + 1L;
+        }
+        long keyCount = 0;
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final Function func = keyValueFuncs.getQuick(i);
+            if (!func.isConstant() || symbolMapReader.keyOf(func.getStrA(null)) != SymbolTable.VALUE_NOT_FOUND) {
+                keyCount++;
+            }
+        }
+        return keyCount;
+    }
+
+    /**
+     * Whether {@code ORDER BY <indexed symbol>} may walk the keys of an index scan one by one across
+     * all page frames ({@link io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor}) instead
+     * of sorting. The output is key-ordered either way; this weighs only what the key-major walk
+     * costs on top of the per-frame scan the sort would read from:
+     * <ul>
+     *     <li>Each key comes back to every page frame, so a table larger than the page cache can be
+     *     read once per key. Only one partition of one frame is free of re-visits.</li>
+     *     <li>Re-visits within a partition (it spans several frames) are bounded by
+     *     {@code cairo.sql.index.key.major.max.keys}.</li>
+     *     <li>Re-visits across the scan are bounded by
+     *     {@code cairo.sql.index.key.major.max.partition.passes}: keys x scanned partitions, or keys x
+     *     frames when one partition is scanned. All scanned partitions are also opened before the
+     *     first row.</li>
+     *     <li>A Parquet row group would be decoded again for every key that misses the decode cache,
+     *     so a Parquet partition among the scanned ones keeps the sort.</li>
+     * </ul>
+     * The estimate is taken at plan time, over the partitions a static interval hits or over the
+     * whole table. A cached plan stays correct if the table changes later; only the estimate goes
+     * stale.
+     */
+    private boolean isKeyMajorScanAffordable(
+            TableReader reader,
+            @Nullable RuntimeIntrinsicIntervalModel intervalModel,
+            long keyCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final int maxKeys = configuration.getSqlIndexKeyMajorMaxKeys();
+        if (maxKeys <= 0) {
+            return false;
+        }
+        final LongList intervals = intervalModel != null && intervalModel.isStatic()
+                ? intervalModel.calculateIntervals(executionContext)
+                : null;
+        final long minRows = executionContext.getPageFrameMinRows();
+        final long maxRows = executionContext.getPageFrameMaxRows();
+        final int partitionCount = reader.getPartitionCount();
+        long rowsLeft = reader.size();
+        int scannedPartitions = 0;
+        long lastPartitionFrames = 0;
+        boolean multiFramePartition = false;
+        for (int i = 0; i < partitionCount; i++) {
+            // the last partition's size lives in the transient row count, so take what is left
+            final long rows = i < partitionCount - 1 ? reader.getPartitionRowCountFromMetadata(i) : rowsLeft;
+            rowsLeft -= rows;
+            if (rows <= 0) {
+                continue;
+            }
+            if (intervals != null) {
+                final long lo = reader.getPartitionTimestampByIndex(i);
+                final long hi = i < partitionCount - 1 ? reader.getPartitionTimestampByIndex(i + 1) - 1 : Long.MAX_VALUE;
+                if (!intervalsOverlap(intervals, lo, hi)) {
+                    continue;
+                }
+            }
+            if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
+                return false;
+            }
+            scannedPartitions++;
+            // index scans run single-threaded: their frame cursor sizes frames for one worker
+            final long rowsPerFrame = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, rows, minRows, maxRows, 1);
+            lastPartitionFrames = (rows + rowsPerFrame - 1) / rowsPerFrame;
+            if (lastPartitionFrames > 1) {
+                multiFramePartition = true;
+            }
+        }
+        // re-visits within a partition: each key comes back to every frame of it
+        if (multiFramePartition && keyCount > maxKeys) {
+            return false;
+        }
+        // Re-visits across the scan: each key comes back to every partition, or to every frame
+        // when there is only one partition, so a huge PARTITION BY NONE table is bounded as a
+        // table partitioned by DAY is. One partition of one frame has no re-visits.
+        final long revisitUnits = scannedPartitions > 1 ? scannedPartitions : lastPartitionFrames;
+        return revisitUnits < 2 || keyCount * revisitUnits <= configuration.getSqlIndexKeyMajorMaxPartitionPasses();
+    }
+
+    private boolean isNotEqualsIndexScanUsable(TableReader reader, int keyReaderColumnIndex) {
+        // with this many symbols the code generator does not use the index for != / NOT IN at all
+        return reader.getSymbolMapReader(keyReaderColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount();
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {

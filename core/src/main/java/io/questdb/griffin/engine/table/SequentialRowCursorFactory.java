@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -40,18 +42,40 @@ import io.questdb.std.ObjList;
  * - first fetches and returns all records from first cursor
  * - then from second cursor, third, ...
  * until all cursors are exhausted.
+ * <p>
+ * That order holds within one page frame only. To walk each key across all page frames of the
+ * scan, drive the per-key cursors through {@link KeyedRowCursorFactory} with a
+ * {@link KeyMajorPageFrameRecordCursor}.
  */
-public class SequentialRowCursorFactory implements RowCursorFactory {
+public class SequentialRowCursorFactory implements KeyedRowCursorFactory {
     private final SequentialRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final ObjList<RowCursor> cursors;
+    private final int indexColumnIndex;
+    private final int indexDirection;
 
     public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
+        this(cursorFactories, cursorFactoriesIdx, -1, IndexReader.DIR_FORWARD);
+    }
+
+    /**
+     * @param indexColumnIndex column the per-key cursors scan the index of, or -1 when the
+     *                         factory is never driven key by key
+     * @param indexDirection   index direction of every per-key cursor
+     */
+    public SequentialRowCursorFactory(
+            ObjList<? extends RowCursorFactory> cursorFactories,
+            int[] cursorFactoriesIdx,
+            int indexColumnIndex,
+            int indexDirection
+    ) {
         this.cursorFactories = cursorFactories;
         cursors = new ObjList<>();
         cursor = new SequentialRowCursor();
         this.cursorFactoriesIdx = cursorFactoriesIdx;
+        this.indexColumnIndex = indexColumnIndex;
+        this.indexDirection = indexDirection;
     }
 
     @Override
@@ -67,6 +91,34 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         }
         cursor.init();
         return cursor;
+    }
+
+    @Override
+    public RowCursor getCursor(int keyIndex, PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        return cursorFactories.getQuick(keyIndex).getCursor(pageFrame, pageFrameMemory);
+    }
+
+    @Override
+    public int getIndexColumnIndex() {
+        return indexColumnIndex;
+    }
+
+    @Override
+    public int getIndexDirection() {
+        return indexDirection;
+    }
+
+    @Override
+    public int getIndexKey(int keyIndex) {
+        if (cursorFactories.getQuick(keyIndex) instanceof SymbolFunctionRowCursorFactory symbolFactory) {
+            return TableUtils.toIndexKey(symbolFactory.getSymbolKey());
+        }
+        return -1;
+    }
+
+    @Override
+    public int getKeyCount() {
+        return cursorFactoriesIdx[0];
     }
 
     @Override

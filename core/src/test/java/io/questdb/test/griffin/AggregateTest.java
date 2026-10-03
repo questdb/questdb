@@ -307,6 +307,7 @@ public class AggregateTest extends AbstractCairoTest {
                             "      keys: [account_uuid]\n" +
                             "      values: [sum(requests)]\n" +
                             "        SortedSymbolIndex\n" +
+                            "          keyMajor: true\n" +
                             "            Index forward scan on: account_uuid\n" +
                             "              symbolOrder: asc\n" +
                             "            Interval forward scan on: records\n" +

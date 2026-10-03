@@ -11569,6 +11569,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testEqFilterOnUnknownSymbolWithOrderBy() throws Exception {
+        // ORDER BY the key column would otherwise take the key-major index scan, which is preferred
+        // over covering; keep this test on the covering path it guards.
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 0);
         // Regression: an ORDER BY on a SYMBOL column wraps the base cursor in
         // EncodedSortRecordCursor, whose init() phase probes baseCursor.getSymbolTable()
         // before iteration to build symbol-rank maps. When the WHERE literal is

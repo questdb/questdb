@@ -1180,6 +1180,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIndexKeyMajorMaxKeys() {
+        return getDelegate().getSqlIndexKeyMajorMaxKeys();
+    }
+
+    @Override
+    public long getSqlIndexKeyMajorMaxPartitionPasses() {
+        return getDelegate().getSqlIndexKeyMajorMaxPartitionPasses();
+    }
+
+    @Override
     public int getSqlIntervalIncrementalMergeThreshold() {
         return getDelegate().getSqlIntervalIncrementalMergeThreshold();
     }
