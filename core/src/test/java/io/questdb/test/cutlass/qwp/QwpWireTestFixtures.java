@@ -38,6 +38,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 
 /**
  * Raw-wire building blocks for QWP tests that must drive the WebSocket byte
@@ -51,6 +52,16 @@ import java.util.Arrays;
  */
 public final class QwpWireTestFixtures {
     /**
+     * Minimal server.conf for live browser-origin tests: an ephemeral HTTP port
+     * and no other listeners.
+     */
+    public static final String QWP_ORIGINS_TEST_BOOT_CONFIG = """
+            http.bind.to=127.0.0.1:0
+            http.min.enabled=false
+            pg.enabled=false
+            line.tcp.enabled=false
+            """;
+    /**
      * RFC 6455 handshake nonce. A public protocol value, not a secret. This
      * repository exempts it through the blanket {@code (^|/)src/test/} path
      * allowlist in its own {@code .gitleaks.toml}; the enterprise repository,
@@ -60,6 +71,37 @@ public final class QwpWireTestFixtures {
     public static final String WEBSOCKET_KEY = "AQIDBAUGBwgJCgsMDQ4PEA==";
 
     private QwpWireTestFixtures() {
+    }
+
+    /**
+     * Asserts that a browser upgrade carrying a
+     * {@code questdb.qwp.authorization.*} credential switched protocols, and
+     * that its 101 selects {@code questdb.qwp.v1}, the dialect the browser
+     * offers alongside the credential. The 101 must not echo the credential
+     * back, and must not set a cookie, because a credential upgrade never
+     * creates or rotates a session.
+     */
+    public static void assertCredentialUpgradeSwitched(String response) {
+        Assert.assertTrue(response, response.startsWith("HTTP/1.1 101"));
+        Assert.assertTrue(response, response.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
+        Assert.assertFalse(response, response.contains("Set-Cookie:"));
+        Assert.assertFalse(response, response.contains("authorization."));
+    }
+
+    /**
+     * Sends a browser upgrade without a subprotocol offer from {@code origin} to
+     * {@code localhost:port} and asserts it switches protocols, or, when the
+     * Origin is not allowed, is rejected by the Origin check.
+     */
+    public static void assertQwpBrowserUpgrade(int port, String path, String origin, boolean isAllowed) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = browserUpgradeRequestWithOrigin(path, "localhost:" + port, origin, "");
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            String response = readHttpHeaders(socket.getInputStream());
+            Assert.assertTrue("unexpected QWP response for " + origin + " on " + path + ": " + response,
+                    response.startsWith(isAllowed ? "HTTP/1.1 101 Switching Protocols" : "HTTP/1.1 400 Bad Request"));
+        }
     }
 
     /**
@@ -80,6 +122,40 @@ public final class QwpWireTestFixtures {
     }
 
     /**
+     * Returns the Sec-WebSocket-Protocol offer a browser client sends to
+     * authenticate a QWP WebSocket: questdb.qwp.v1 plus the credential
+     * subprotocol carrying {@code authorizationValue}.
+     */
+    public static String browserCredentialOffer(String authorizationValue) {
+        return "questdb.qwp.v1, " + browserCredentialProtocol(authorizationValue);
+    }
+
+    /**
+     * Returns the credential subprotocol for an HTTP Authorization value, which
+     * a browser client sends unpadded base64url-encoded.
+     */
+    public static String browserCredentialProtocol(String authorizationValue) {
+        return "questdb.qwp.authorization." + Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(authorizationValue.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    /**
+     * Sends a browser upgrade from {@code origin} to {@code localhost:port} that
+     * offers {@code protocols} and adds {@code extraHeaders}, and returns the
+     * response headers.
+     */
+    public static String browserCredentialUpgrade(int port, String path, String origin, String protocols, String extraHeaders) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = browserUpgradeRequestWithOrigin(
+                    path, "localhost:" + port, origin,
+                    "Sec-WebSocket-Protocol: " + protocols + "\r\n" + extraHeaders);
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            return readHttpHeaders(socket.getInputStream());
+        }
+    }
+
+    /**
      * Builds a browser-shaped WebSocket upgrade request: a real browser always
      * sends {@code Origin} and cannot attach {@code X-QWP-*} headers, so every
      * QWP browser test drives this exact shape.
@@ -92,9 +168,13 @@ public final class QwpWireTestFixtures {
      *                     (cookies, credentials), or empty for none
      */
     public static String browserUpgradeRequest(String path, String authority, String originScheme, String extraHeaders) {
+        return browserUpgradeRequestWithOrigin(path, authority, originScheme + "://" + authority, extraHeaders);
+    }
+
+    public static String browserUpgradeRequestWithOrigin(String path, String authority, String origin, String extraHeaders) {
         return "GET " + path + " HTTP/1.1\r\n"
                 + "Host: " + authority + "\r\n"
-                + "Origin: " + originScheme + "://" + authority + "\r\n"
+                + "Origin: " + origin + "\r\n"
                 + "Upgrade: websocket\r\n"
                 + "Connection: Upgrade\r\n"
                 + "Sec-WebSocket-Key: " + WEBSOCKET_KEY + "\r\n"

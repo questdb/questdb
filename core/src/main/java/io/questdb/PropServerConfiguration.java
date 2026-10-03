@@ -54,6 +54,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -472,6 +473,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final QwpBrowserAllowedOrigins qwpBrowserAllowedOrigins;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
@@ -2031,6 +2033,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
+            try {
+                this.qwpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                        getString(properties, env, PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS, "")
+                );
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
+            }
             this.qwpBrowserTlsTerminationEnabled = getBoolean(
                     properties,
                     env,
@@ -6362,6 +6371,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getQueueTimeout() {
             return httpNetConnectionQueueTimeout;
+        }
+
+        @Override
+        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+            return qwpBrowserAllowedOrigins;
         }
 
         @Override
