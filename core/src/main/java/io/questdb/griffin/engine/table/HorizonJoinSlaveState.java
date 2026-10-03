@@ -24,19 +24,23 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * Per-slave configuration for multi-slave HORIZON JOIN.
- * Holds stateless config shared by both ST and async execution paths.
+ * Holds configuration and owned filters shared by ST and async execution paths.
  * Mutable resources (maps, sinks, records, helpers, cursors) are created
  * by the respective cursor/atom implementations.
  * <p>
- * Owns the slave {@link RecordCursorFactory} and frees it on {@link #close()}.
+ * Owns the slave {@link RecordCursorFactory}, its filter and optional worker clones.
+ * Async factories may detach the factory; {@link #close()} frees the remaining owners.
  */
 public class HorizonJoinSlaveState implements QuietCloseable {
     private final @Nullable ColumnTypes asOfJoinKeyTypes;
@@ -47,6 +51,19 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private final long slaveTsScale;
     private RecordCursorFactory factory;
+    private @Nullable Function filter;
+    private @Nullable ObjList<Function> perWorkerFilters;
+
+    static Throwable cursorClosed(Throwable cleanupFailure, @Nullable Function filter) {
+        if (filter != null) {
+            try {
+                filter.cursorClosed();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
+        }
+        return cleanupFailure;
+    }
 
     public HorizonJoinSlaveState(
             RecordCursorFactory factory,
@@ -69,7 +86,26 @@ public class HorizonJoinSlaveState implements QuietCloseable {
 
     @Override
     public void close() {
-        factory = Misc.free(factory);
+        final RecordCursorFactory factory = this.factory;
+        this.factory = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final ObjList<Function> perWorkerFilters = this.perWorkerFilters;
+        this.perWorkerFilters = null;
+        Throwable cleanupFailure = Misc.freeBestEffort(null, factory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilters);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    Throwable cursorClosed(Throwable cleanupFailure) {
+        cleanupFailure = cursorClosed(cleanupFailure, filter);
+        if (perWorkerFilters != null) {
+            for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
+                cleanupFailure = cursorClosed(cleanupFailure, perWorkerFilters.getQuick(i));
+            }
+        }
+        return cleanupFailure;
     }
 
     void detachFactory() {
@@ -84,6 +120,10 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         return factory;
     }
 
+    public @Nullable Function getFilter() {
+        return filter;
+    }
+
     public int getMasterColumnCount() {
         return masterColumnCount;
     }
@@ -96,6 +136,10 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         return masterTsScale;
     }
 
+    public @Nullable ObjList<Function> getPerWorkerFilters() {
+        return perWorkerFilters;
+    }
+
     public int @Nullable [] getSlaveSymbolKeyColumnIndices() {
         return slaveSymbolKeyColumnIndices;
     }
@@ -106,5 +150,13 @@ public class HorizonJoinSlaveState implements QuietCloseable {
 
     public boolean isKeyed() {
         return isKeyed;
+    }
+
+    public void setFilter(@Nullable Function filter) {
+        this.filter = filter;
+    }
+
+    public void setPerWorkerFilters(@Nullable ObjList<Function> perWorkerFilters) {
+        this.perWorkerFilters = perWorkerFilters;
     }
 }
