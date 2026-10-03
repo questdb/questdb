@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
@@ -46,12 +47,18 @@ public final class HashJoinGroupByAggregates {
     // other types identically in both plans, and the entries carry no argument type.
     private static final ObjHashSet<Class<?>> BINARY = new ObjHashSet<>();
     private static final ObjList<Class<?>> CLASSES = new ObjList<>();
-    private static final int NO_TYPE = -2;
-    // Maps a class to the argument type tag it was reviewed and tested for. A class may serve
-    // other argument types as well: avg(boolean) returns AvgDoubleGroupByFunction, and the
-    // function parser passes a narrower numeric argument through without a cast. Those
-    // combinations keep the ordinary plan.
-    private static final ObjIntHashMap<Class<?>> UNARY = new ObjIntHashMap<>(256, 0.5, NO_TYPE);
+    // The numeric types that the function parser passes to a DOUBLE parameter without a cast. Both
+    // plans hand the aggregate the same argument function, and the aggregate widens it through
+    // getDouble(), so the fused plan reads every one of them exactly as the ordinary plan does.
+    private static final int[] DOUBLE_NUMERIC = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT,
+            ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE};
+    private static final int NO_CLASS = -1;
+    // One bit per argument type tag, at UNARY's index of the class.
+    private static final LongList UNARY_ARG_TAGS = new LongList();
+    // Maps a class to the index of the argument type tags it was reviewed and tested for. A class
+    // may serve other argument types as well: avg(boolean) returns AvgDoubleGroupByFunction, and
+    // count(timestamp) returns CountLongGroupByFunction. Those combinations keep the ordinary plan.
+    private static final ObjIntHashMap<Class<?>> UNARY = new ObjIntHashMap<>(256, 0.5, NO_CLASS);
 
     private HashJoinGroupByAggregates() {
     }
@@ -70,8 +77,8 @@ public final class HashJoinGroupByAggregates {
     }
 
     public static boolean isSupportedUnary(Class<?> type, int argType) {
-        final int tag = UNARY.get(type);
-        return tag != NO_TYPE && tag == ColumnType.tagOf(argType);
+        final int index = UNARY.get(type);
+        return index != NO_CLASS && (UNARY_ARG_TAGS.getQuick(index) & (1L << ColumnType.tagOf(argType))) != 0;
     }
 
     private static void binary(Class<?> type) {
@@ -79,19 +86,26 @@ public final class HashJoinGroupByAggregates {
         CLASSES.add(type);
     }
 
-    private static void unary(Class<?> type, int argTag) {
-        assert UNARY.get(type) == NO_TYPE;
-        UNARY.put(type, argTag);
+    private static void unary(Class<?> type, int... argTags) {
+        assert UNARY.get(type) == NO_CLASS;
+        long mask = 0;
+        for (int argTag : argTags) {
+            assert argTag >= 0 && argTag < Long.SIZE;
+            mask |= 1L << argTag;
+        }
+        UNARY.put(type, UNARY_ARG_TAGS.size());
+        UNARY_ARG_TAGS.add(mask);
         CLASSES.add(type);
     }
 
     static {
         CLASSES.add(CountLongConstGroupByFunction.class);
 
-        unary(AvgDoubleGroupByFunction.class, ColumnType.DOUBLE);
+        // avg() has no FLOAT overload: avg(FLOAT) resolves to avg(DOUBLE), and avg(BYTE) to avg(SHORT).
+        unary(AvgDoubleGroupByFunction.class, ColumnType.DOUBLE, ColumnType.FLOAT);
         unary(AvgIntGroupByFunction.class, ColumnType.INT);
         unary(AvgLongGroupByFunction.class, ColumnType.LONG);
-        unary(AvgShortGroupByFunction.class, ColumnType.SHORT);
+        unary(AvgShortGroupByFunction.class, ColumnType.SHORT, ColumnType.BYTE);
         unary(AvgDecimal8GroupByFunction.class, ColumnType.DECIMAL8);
         unary(AvgDecimal16GroupByFunction.class, ColumnType.DECIMAL16);
         unary(AvgDecimal32GroupByFunction.class, ColumnType.DECIMAL32);
@@ -109,7 +123,7 @@ public final class HashJoinGroupByAggregates {
         unary(SumFloatGroupByFunction.class, ColumnType.FLOAT);
         unary(SumIntGroupByFunction.class, ColumnType.INT);
         unary(SumLongGroupByFunction.class, ColumnType.LONG);
-        unary(SumShortGroupByFunction.class, ColumnType.SHORT);
+        unary(SumShortGroupByFunction.class, ColumnType.SHORT, ColumnType.BYTE);
         unary(SumLong256GroupByFunction.class, ColumnType.LONG256);
         unary(SumDecimal8GroupByFunction.class, ColumnType.DECIMAL8);
         unary(SumDecimal16GroupByFunction.class, ColumnType.DECIMAL16);
@@ -117,11 +131,12 @@ public final class HashJoinGroupByAggregates {
         unary(SumDecimal64GroupByFunction.class, ColumnType.DECIMAL64);
         unary(SumDecimal128GroupByFunction.class, ColumnType.DECIMAL128);
         unary(SumDecimal256GroupByFunction.class, ColumnType.DECIMAL256);
-        unary(KSumDoubleGroupByFunction.class, ColumnType.DOUBLE);
-        unary(NSumDoubleGroupByFunction.class, ColumnType.DOUBLE);
-        unary(GeomeanDoubleGroupByFunction.class, ColumnType.DOUBLE);
+        unary(KSumDoubleGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(NSumDoubleGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(GeomeanDoubleGroupByFunction.class, DOUBLE_NUMERIC);
 
-        // MinShort and MaxShort store and return INT. No min, max, sum or avg class exists for BYTE.
+        // MinShort and MaxShort store and return INT. No min, max, sum or avg class exists for BYTE:
+        // a BYTE argument resolves to the SHORT overload and reads through getShort().
         unary(MinCharGroupByFunction.class, ColumnType.CHAR);
         unary(MinDateGroupByFunction.class, ColumnType.DATE);
         unary(MinDoubleGroupByFunction.class, ColumnType.DOUBLE);
@@ -129,7 +144,7 @@ public final class HashJoinGroupByAggregates {
         unary(MinIntGroupByFunction.class, ColumnType.INT);
         unary(MinIPv4GroupByFunction.class, ColumnType.IPv4);
         unary(MinLongGroupByFunction.class, ColumnType.LONG);
-        unary(MinShortGroupByFunction.class, ColumnType.SHORT);
+        unary(MinShortGroupByFunction.class, ColumnType.SHORT, ColumnType.BYTE);
         unary(MinTimestampGroupByFunction.class, ColumnType.TIMESTAMP);
         unary(MinDecimalGroupByFunctionFactory.Decimal8Func.class, ColumnType.DECIMAL8);
         unary(MinDecimalGroupByFunctionFactory.Decimal16Func.class, ColumnType.DECIMAL16);
@@ -144,7 +159,7 @@ public final class HashJoinGroupByAggregates {
         unary(MaxIntGroupByFunction.class, ColumnType.INT);
         unary(MaxIPv4GroupByFunction.class, ColumnType.IPv4);
         unary(MaxLongGroupByFunction.class, ColumnType.LONG);
-        unary(MaxShortGroupByFunction.class, ColumnType.SHORT);
+        unary(MaxShortGroupByFunction.class, ColumnType.SHORT, ColumnType.BYTE);
         unary(MaxTimestampGroupByFunction.class, ColumnType.TIMESTAMP);
         unary(MaxDecimalGroupByFunctionFactory.Decimal8Func.class, ColumnType.DECIMAL8);
         unary(MaxDecimalGroupByFunctionFactory.Decimal16Func.class, ColumnType.DECIMAL16);
@@ -168,10 +183,11 @@ public final class HashJoinGroupByAggregates {
         unary(BoolAndGroupByFunction.class, ColumnType.BOOLEAN);
         unary(BoolOrGroupByFunction.class, ColumnType.BOOLEAN);
 
-        // The concrete subclasses of AbstractCountGroupByFunction, each with one LONG of state.
+        // The concrete subclasses of AbstractCountGroupByFunction, each with one LONG of state. BYTE and
+        // SHORT resolve to count(INT), which reads them through getInt().
         unary(CountDoubleGroupByFunction.class, ColumnType.DOUBLE);
         unary(CountFloatGroupByFunction.class, ColumnType.FLOAT);
-        unary(CountIntGroupByFunction.class, ColumnType.INT);
+        unary(CountIntGroupByFunction.class, ColumnType.INT, ColumnType.SHORT, ColumnType.BYTE);
         unary(CountLongGroupByFunction.class, ColumnType.LONG);
         unary(CountIPv4GroupByFunction.class, ColumnType.IPv4);
         unary(CountLong256GroupByFunction.class, ColumnType.LONG256);
@@ -190,14 +206,14 @@ public final class HashJoinGroupByAggregates {
         unary(CountDecimalGroupByFunctionFactory.Decimal128Func.class, ColumnType.DECIMAL128);
         unary(CountDecimalGroupByFunctionFactory.Decimal256Func.class, ColumnType.DECIMAL256);
 
-        unary(StdDevSampleGroupByFunctionFactory.StdDevSampleGroupByFunction.class, ColumnType.DOUBLE);
-        unary(StdDevPopGroupByFunctionFactory.StdDevPopGroupByFunction.class, ColumnType.DOUBLE);
-        unary(VarSampleGroupByFunctionFactory.VarSampleGroupByFunction.class, ColumnType.DOUBLE);
-        unary(VarPopGroupByFunctionFactory.VarPopGroupByFunction.class, ColumnType.DOUBLE);
-        unary(SkewnessSampleGroupByFunctionFactory.SkewnessSampleGroupByFunction.class, ColumnType.DOUBLE);
-        unary(SkewnessPopGroupByFunctionFactory.SkewnessPopGroupByFunction.class, ColumnType.DOUBLE);
-        unary(KurtosisSampleGroupByFunctionFactory.KurtosisSampleGroupByFunction.class, ColumnType.DOUBLE);
-        unary(KurtosisPopGroupByFunctionFactory.KurtosisPopGroupByFunction.class, ColumnType.DOUBLE);
+        unary(StdDevSampleGroupByFunctionFactory.StdDevSampleGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(StdDevPopGroupByFunctionFactory.StdDevPopGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(VarSampleGroupByFunctionFactory.VarSampleGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(VarPopGroupByFunctionFactory.VarPopGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(SkewnessSampleGroupByFunctionFactory.SkewnessSampleGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(SkewnessPopGroupByFunctionFactory.SkewnessPopGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(KurtosisSampleGroupByFunctionFactory.KurtosisSampleGroupByFunction.class, DOUBLE_NUMERIC);
+        unary(KurtosisPopGroupByFunctionFactory.KurtosisPopGroupByFunction.class, DOUBLE_NUMERIC);
 
         binary(CovarSampleGroupByFunctionFactory.CovarSampleGroupByFunction.class);
         binary(CovarPopGroupByFunction.class);

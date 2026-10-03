@@ -504,14 +504,14 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 for (String join : JOINS) {
                     for (String side : new String[]{"r", "p"}) {
                         for (String aggregate : new String[]{"count(" + side + ".t)", "first(" + side + ".d)",
-                                "last(" + side + ".d)", "count_distinct(" + side + ".s)", "count(" + side + ".i::short)"}) {
+                                "last(" + side + ".d)", "count_distinct(" + side + ".s)", "stddev_pop(" + side + ".t)"}) {
                             assertDifferential("select " + aggregate + from(join), context, false);
                             assertDifferential("select r.s,p.s," + aggregate + from(join) + " order by r.s,p.s", context, false);
                         }
                         // HashJoinGroupByAggregatesTest covers every admitted class; these flipped from excluded.
                         for (String aggregate : new String[]{"sum(" + side + ".i)", "sum(" + side + ".l)",
                                 "avg(" + side + ".i)", "avg(" + side + ".l)", "min(" + side + ".d)", "max(" + side + ".d)",
-                                "ksum(" + side + ".d)"}) {
+                                "ksum(" + side + ".d)", "count(" + side + ".i::short)", "stddev_pop(" + side + ".i)"}) {
                             assertDifferential("select " + aggregate + from(join), context, true);
                             assertDifferential("select r.s,p.s," + aggregate + from(join) + " order by r.s,p.s", context, true);
                         }
@@ -546,12 +546,12 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 }
                 for (String join : JOINS) {
                     for (String side : new String[]{"r", "p"}) {
-                        // sum(FLOAT) is SumFloat; avg(FLOAT) passes the FLOAT argument to AvgDouble.
-                        for (String aggregate : new String[]{"sum(" + side + ".v)", "avg(" + side + ".v)"}) {
-                            boolean isFused = aggregate.startsWith("sum");
-                            assertDifferential("select " + aggregate + " from a r" + join + "b p on r.id=p.id", context, isFused);
+                        // sum(FLOAT) is SumFloat; avg(FLOAT) passes the FLOAT argument to AvgDouble, which the
+                        // registry admits for FLOAT as well, and so does stddev_pop(FLOAT).
+                        for (String aggregate : new String[]{"sum(" + side + ".v)", "avg(" + side + ".v)", "stddev_pop(" + side + ".v)"}) {
+                            assertDifferential("select " + aggregate + " from a r" + join + "b p on r.id=p.id", context, true);
                             assertDifferential("select r.s,p.s," + aggregate + " from a r" + join
-                                    + "b p on r.id=p.id order by r.s,p.s", context, isFused);
+                                    + "b p on r.id=p.id order by r.s,p.s", context, true);
                         }
                     }
                     // A SYMBOL key against a text key reconciles to that text type and both sides

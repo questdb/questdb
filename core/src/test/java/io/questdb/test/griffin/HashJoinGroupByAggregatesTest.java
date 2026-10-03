@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -77,6 +78,33 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     // "Async JIT Hash Join Group By" for a JIT-compiled probe filter.
     private static final String FUSED = "Hash Join Group By";
     private static final String[] JOINS = {" JOIN ", " LEFT JOIN ", " RIGHT JOIN "};
+    // The narrower numeric columns that the function parser passes to a DOUBLE parameter without a cast.
+    private static final String[] NUMERIC_COLUMNS = {"y", "h", "i", "l", "f"};
+    private static final short[] NUMERIC_TYPES = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT};
+
+    @Test
+    public void testAvgByteArgument() throws Exception {
+        // BYTE resolves to avg(SHORT): AvgShortGroupByFunction reads the BYTE column.
+        assertNumericArgument("avg", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testAvgFloatArgument() throws Exception {
+        // avg() has no FLOAT overload, so AvgDoubleGroupByFunction reads the FLOAT column.
+        assertNumericArgument("avg", "f", ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCountByteArgument() throws Exception {
+        // BYTE resolves to count(INT): CountIntGroupByFunction reads the BYTE column.
+        assertNumericArgument("count", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCountShortArgument() throws Exception {
+        // SHORT resolves to count(INT): CountIntGroupByFunction reads the SHORT column.
+        assertNumericArgument("count", "h", ColumnType.SHORT);
+    }
 
     @Test
     public void testEveryAdmittedAggregateMatchesOrdinaryPlan() throws Exception {
@@ -138,10 +166,10 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                                 "approx_median(" + side + ".d + 6)", "mode(" + side + ".b)", "mode(" + side + ".d)",
                                 "min(" + side + ".s::STRING)", "max(" + side + ".s::VARCHAR)",
                                 "array_agg(" + side + ".d)",
-                                // Admitted classes over argument types outside their registry entries.
-                                "sum(" + side + ".y)", "avg(" + side + ".y)", "min(" + side + ".y)", "max(" + side + ".y)",
+                                // Admitted classes over argument types outside their registry entries. The
+                                // narrower numeric types are admitted; BOOLEAN, DATE and TIMESTAMP are not.
                                 "avg(" + side + ".b)", "min(" + side + ".b)", "max(" + side + ".b)",
-                                "avg(" + side + ".f)", "count(" + side + ".ts)", "count(" + side + ".i::SHORT)"
+                                "count(" + side + ".ts)", "stddev_pop(" + side + ".t)", "ksum(" + side + ".dt)"
                         }) {
                             assertDifferential("SELECT " + aggregate + from, context, false);
                             assertDifferential("SELECT r.g rg, p.g pg, " + aggregate + from + " ORDER BY rg, pg", context, false);
@@ -170,6 +198,48 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeomeanNumericArguments() throws Exception {
+        assertNumericArguments("geomean");
+    }
+
+    @Test
+    public void testKSumNumericArguments() throws Exception {
+        assertNumericArguments("ksum");
+    }
+
+    @Test
+    public void testKurtosisNumericArguments() throws Exception {
+        assertNumericArguments("kurtosis");
+    }
+
+    @Test
+    public void testKurtosisPopNumericArguments() throws Exception {
+        assertNumericArguments("kurtosis_pop");
+    }
+
+    @Test
+    public void testKurtosisSampNumericArguments() throws Exception {
+        assertNumericArguments("kurtosis_samp");
+    }
+
+    @Test
+    public void testMaxByteArgument() throws Exception {
+        // BYTE resolves to max(SHORT): MaxShortGroupByFunction reads the BYTE column.
+        assertNumericArgument("max", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testMinByteArgument() throws Exception {
+        // BYTE resolves to min(SHORT): MinShortGroupByFunction reads the BYTE column.
+        assertNumericArgument("min", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testNSumNumericArguments() throws Exception {
+        assertNumericArguments("nsum");
+    }
+
+    @Test
     public void testNullCharArgumentFailsInBothPlans() throws Exception {
         assertMemoryLeak(() -> {
             createTables(engine, sqlExecutionContext);
@@ -190,6 +260,169 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testSkewnessNumericArguments() throws Exception {
+        assertNumericArguments("skewness");
+    }
+
+    @Test
+    public void testSkewnessPopNumericArguments() throws Exception {
+        assertNumericArguments("skewness_pop");
+    }
+
+    @Test
+    public void testSkewnessSampNumericArguments() throws Exception {
+        assertNumericArguments("skewness_samp");
+    }
+
+    @Test
+    public void testStdDevNumericArguments() throws Exception {
+        assertNumericArguments("stddev");
+    }
+
+    @Test
+    public void testStdDevPopByteArgument() throws Exception {
+        assertNumericArgument("stddev_pop", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testStdDevPopDoubleArgument() throws Exception {
+        // Control: the type the registry admitted before it took the narrower numeric types.
+        assertNumericArgument("stddev_pop", "d", ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testStdDevPopFloatArgument() throws Exception {
+        assertNumericArgument("stddev_pop", "f", ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testStdDevPopIntArgument() throws Exception {
+        assertNumericArgument("stddev_pop", "i", ColumnType.INT);
+    }
+
+    @Test
+    public void testStdDevPopLongArgument() throws Exception {
+        assertNumericArgument("stddev_pop", "l", ColumnType.LONG);
+    }
+
+    @Test
+    public void testStdDevPopOfFloatSpreadGroupedByJoinedName() throws Exception {
+        // The NYSE TAQ shape: a FLOAT difference of two probe columns, grouped by a STRING key computed
+        // from a build SYMBOL. The difference stays FLOAT, so every aggregate here reads a FLOAT argument.
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(pool, (db, compiler, ctx) -> {
+                createTables(db, ctx);
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    context.changePageFrameSizes(1, 4);
+                    for (String join : JOINS) {
+                        String from = " FROM r" + join + "p ON r.k = p.k";
+                        for (String function : new String[]{"stddev_pop", "stddev_samp", "var_pop", "var_samp", "avg"}) {
+                            for (String where : new String[]{"", " WHERE r.f > 0", " WHERE r.k > 100"}) {
+                                String sql = "SELECT " + function + "(r.f - r.y) spread_stat, coalesce(p.g, '') ex, count() n,"
+                                        + " max(r.f - r.y) mx, weighted_avg(r.f - r.y, r.h + r.i) wavg"
+                                        + from + where + " ORDER BY ex";
+                                assertNumericArgumentFuses(sql, context, ColumnType.FLOAT);
+                            }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testStdDevPopShortArgument() throws Exception {
+        assertNumericArgument("stddev_pop", "h", ColumnType.SHORT);
+    }
+
+    @Test
+    public void testStdDevSampByteArgument() throws Exception {
+        assertNumericArgument("stddev_samp", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testStdDevSampFloatArgument() throws Exception {
+        assertNumericArgument("stddev_samp", "f", ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testStdDevSampIntArgument() throws Exception {
+        assertNumericArgument("stddev_samp", "i", ColumnType.INT);
+    }
+
+    @Test
+    public void testStdDevSampLongArgument() throws Exception {
+        assertNumericArgument("stddev_samp", "l", ColumnType.LONG);
+    }
+
+    @Test
+    public void testStdDevSampShortArgument() throws Exception {
+        assertNumericArgument("stddev_samp", "h", ColumnType.SHORT);
+    }
+
+    @Test
+    public void testSumByteArgument() throws Exception {
+        // BYTE resolves to sum(SHORT): SumShortGroupByFunction reads the BYTE column.
+        assertNumericArgument("sum", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testVarPopByteArgument() throws Exception {
+        assertNumericArgument("var_pop", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testVarPopFloatArgument() throws Exception {
+        assertNumericArgument("var_pop", "f", ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testVarPopIntArgument() throws Exception {
+        assertNumericArgument("var_pop", "i", ColumnType.INT);
+    }
+
+    @Test
+    public void testVarPopLongArgument() throws Exception {
+        assertNumericArgument("var_pop", "l", ColumnType.LONG);
+    }
+
+    @Test
+    public void testVarPopShortArgument() throws Exception {
+        assertNumericArgument("var_pop", "h", ColumnType.SHORT);
+    }
+
+    @Test
+    public void testVarSampByteArgument() throws Exception {
+        assertNumericArgument("var_samp", "y", ColumnType.BYTE);
+    }
+
+    @Test
+    public void testVarSampFloatArgument() throws Exception {
+        assertNumericArgument("var_samp", "f", ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testVarSampIntArgument() throws Exception {
+        assertNumericArgument("var_samp", "i", ColumnType.INT);
+    }
+
+    @Test
+    public void testVarSampLongArgument() throws Exception {
+        assertNumericArgument("var_samp", "l", ColumnType.LONG);
+    }
+
+    @Test
+    public void testVarSampShortArgument() throws Exception {
+        assertNumericArgument("var_samp", "h", ColumnType.SHORT);
+    }
+
+    @Test
+    public void testVarianceNumericArguments() throws Exception {
+        assertNumericArguments("variance");
     }
 
     private static void addBinaryAggregates(ObjList<String> sink) {
@@ -254,6 +487,81 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                 "skewness", "skewness_samp", "skewness_pop", "kurtosis", "kurtosis_samp", "kurtosis_pop"}) {
             sink.add(function + "(" + x + "d)");
         }
+    }
+
+    private void assertNumericArgument(String function, String column, short argType) throws Exception {
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(pool, (db, compiler, ctx) -> {
+                createTables(db, ctx);
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    context.changePageFrameSizes(1, 4);
+                    assertNumericArgument(function, column, argType, context);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    private void assertNumericArgument(
+            String function,
+            String column,
+            short argType,
+            SqlExecutionContextImpl context
+    ) throws SqlException {
+        // BYTE and SHORT hold no NULL, and the null-extended rows of an outer join read them as 0.
+        boolean isNullable = argType != ColumnType.BYTE && argType != ColumnType.SHORT;
+        for (String join : JOINS) {
+            String from = " FROM r" + join + "p ON r.k = p.k";
+            for (String side : new String[]{"r", "p"}) {
+                String argument = side + "." + column;
+                String aggregate = function + "(" + argument + ") v";
+                // All rows; positive values only (geomean needs them); groups whose arguments are all NULL;
+                // no rows at all, where the keyed query returns nothing and the unkeyed one a row of NULLs.
+                for (String where : new String[]{"", " WHERE " + argument + " > 0",
+                        isNullable ? " WHERE " + argument + " IS NULL" : null, " WHERE r.k > 100"}) {
+                    if (where == null) {
+                        continue;
+                    }
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, Integer.MAX_VALUE);
+                    assertNumericArgumentFuses("SELECT " + aggregate + ", count() pairs" + from + where, context, argType);
+                    // Threshold 1 shards the keyed maps, so partial results also merge per shard.
+                    for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                        assertNumericArgumentFuses("SELECT " + aggregate + ", r.g rg, p.g pg, count() pairs" + from + where
+                                + " ORDER BY rg, pg", context, argType);
+                    }
+                }
+            }
+        }
+    }
+
+    // Asserts that the first aggregate reads an argument of the given type without a cast, that the
+    // query compiles to the fused operator, and that its results equal those of the ordinary plan.
+    private static void assertNumericArgumentFuses(String sql, SqlExecutionContextImpl context, short argType) throws SqlException {
+        context.setParallelHashJoinGroupByEnabled(true);
+        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
+            String plan = plan(factory, context);
+            Assert.assertTrue(sql + "\n" + plan, plan.contains("Async Hash Join Group By") || plan.contains("Async JIT Hash Join Group By"));
+            GroupByFunction aggregate = fused(factory).getAtom().getFunctions().getGroupByFunctions(-1).getQuick(0);
+            Assert.assertTrue(sql, aggregate instanceof UnaryFunction);
+            Assert.assertEquals(sql, ColumnType.nameOf(argType), ColumnType.nameOf(((UnaryFunction) aggregate).getArg().getType()));
+        }
+        assertFusedMatchesOrdinary(sql, context, new ObjHashSet<>());
+    }
+
+    private void assertNumericArguments(String function) throws Exception {
+        assertMemoryLeak(() -> {
+            TestWorkerPool pool = new TestWorkerPool(4);
+            TestUtils.execute(pool, (db, compiler, ctx) -> {
+                createTables(db, ctx);
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    context.changePageFrameSizes(1, 4);
+                    for (int i = 0; i < NUMERIC_COLUMNS.length; i++) {
+                        assertNumericArgument(function, NUMERIC_COLUMNS[i], NUMERIC_TYPES[i], context);
+                    }
+                }
+            }, configuration, LOG);
+        });
     }
 
     private static void assertChunks(
