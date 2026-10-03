@@ -46,7 +46,9 @@ class LtIntCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        return Numbers.lessThan(leftFunc.getInt(rec), value, negated);
+        final int l = leftFunc.getInt(rec);
+        // two NULLs compare equal (>= true, < false); one NULL makes both false
+        return (l == value || (l != Numbers.INT_NULL && value != Numbers.INT_NULL)) && negated != LtIntCursorFunctionFactory.value(l, value);
     }
 
     @Override

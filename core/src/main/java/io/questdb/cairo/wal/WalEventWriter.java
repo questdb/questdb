@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -59,6 +60,11 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalEventWriter implements Closeable {
+    /**
+     * The opcode {@link #bindValueOpcode} yields for a type the SQL event's bind-value format
+     * has no arm for; {@link #appendFunctionValue} and the cursor's readers throw on it.
+     */
+    static final int BIND_VALUE_NONE = -1;
     private final CairoConfiguration configuration;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
@@ -126,11 +132,30 @@ class WalEventWriter implements Closeable {
         }
     }
 
+    /**
+     * The arm {@link #appendFunctionValue} writes and {@code WalEventCursor.SqlInfo} reads
+     * for a bind variable of this type: its tag for the 26 types the SQL event carries,
+     * {@link #BIND_VALUE_NONE} otherwise. One relation for both sides of the format.
+     */
+    static int bindValueOpcode(int columnType) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return BIND_VALUE_NONE;
+        }
+        return switch (accessor) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, GEOBYTE, GEOSHORT,
+                 GEOINT, GEOLONG, BINARY, UUID, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256 -> accessor.opcode();
+            // SYMBOL, LONG256, LONG128 and INTERVAL bind variables have no event arm either
+            case SYMBOL, LONG256, LONG128, INTERVAL -> BIND_VALUE_NONE;
+        };
+    }
+
     private void appendFunctionValue(Function function) {
         final int type = function.getType();
         eventMem.putInt(type);
 
-        switch (ColumnType.tagOf(type)) {
+        switch (bindValueOpcode(type)) {
             case ColumnType.BOOLEAN:
                 eventMem.putBool(function.getBool(null));
                 break;

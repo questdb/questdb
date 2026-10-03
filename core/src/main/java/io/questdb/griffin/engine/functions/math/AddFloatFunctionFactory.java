@@ -39,6 +39,10 @@ import io.questdb.std.Transient;
 
 public class AddFloatFunctionFactory implements FunctionFactory {
 
+    public static float value(float left, float right) {
+        return left + right;
+    }
+
     @Override
     public String getSignature() {
         return "+(FF)";
@@ -78,7 +82,7 @@ public class AddFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            return left.getFloat(rec) + right.getFloat(rec);
+            return value(left.getFloat(rec), right.getFloat(rec));
         }
 
         @Override

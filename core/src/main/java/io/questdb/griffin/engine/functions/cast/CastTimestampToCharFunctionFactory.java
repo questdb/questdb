@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToCharFunctionFactory implements FunctionFactory {
+    public static char value(long operand) {
+        return (char) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Na)";
@@ -51,8 +55,8 @@ public class CastTimestampToCharFunctionFactory implements FunctionFactory {
 
         @Override
         public char getChar(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            return value != Numbers.LONG_NULL ? (char) value : 0;
+            final long timestamp = arg.getTimestamp(rec);
+            return timestamp != Numbers.LONG_NULL ? value(timestamp) : 0;
         }
     }
 }

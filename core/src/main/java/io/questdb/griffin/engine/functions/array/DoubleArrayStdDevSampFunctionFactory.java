@@ -45,6 +45,14 @@ import io.questdb.std.ObjList;
 public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_stddev_samp";
 
+    public static double value(double mean, double element, int count) {
+        return mean + (element - mean) / count;
+    }
+
+    public static double value(double deltaSquaredSum, double element, double oldMean, double newMean) {
+        return deltaSquaredSum + (element - newMean) * (element - oldMean);
+    }
+
     @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";
@@ -92,12 +100,12 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
                 int offset = arr.getFlatViewOffset();
                 int length = arr.getFlatViewLength();
                 for (int i = offset, n = offset + length; i < n; i++) {
-                    double value = flatView.getDoubleAtAbsIndex(i);
-                    if (Numbers.isFinite(value)) {
+                    double v = flatView.getDoubleAtAbsIndex(i);
+                    if (Numbers.isFinite(v)) {
                         count++;
                         double oldMean = mean;
-                        mean += (value - mean) / count;
-                        deltaSquaredSum += (value - mean) * (value - oldMean);
+                        mean = value(mean, v, count);
+                        deltaSquaredSum = value(deltaSquaredSum, v, oldMean, mean);
                     }
                 }
             } else {
@@ -135,12 +143,12 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
                 for (int i = 0; i < count; i++) {
-                    double value = view.getDouble(flatIndex);
-                    if (Numbers.isFinite(value)) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v)) {
                         this.count++;
                         double oldMean = mean;
-                        mean += (value - mean) / this.count;
-                        deltaSquaredSum += (value - mean) * (value - oldMean);
+                        mean = value(mean, v, this.count);
+                        deltaSquaredSum = value(deltaSquaredSum, v, oldMean, mean);
                     }
                     flatIndex += stride;
                 }

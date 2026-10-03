@@ -37,6 +37,14 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
+    /**
+     * Undefined for NaN and the infinities, where {@link Math#round(double)} gives 0 and the ends of
+     * the LONG range: the function gives NULL there, as for a NULL operand.
+     */
+    public static double value(double operand) {
+        return Math.round(operand);
+    }
+
     @Override
     public String getSignature() {
         return "round(D)";
@@ -62,7 +70,7 @@ public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final double d = arg.getDouble(rec);
-            return Numbers.isFinite(d) ? Math.round(d) : Double.NaN;
+            return Numbers.isFinite(d) ? value(d) : Double.NaN;
         }
 
         @Override

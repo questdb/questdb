@@ -1375,6 +1375,60 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPostingCoveringIndexWithPendingLazyConversionNoNullSourceColumnTopWal() throws Exception {
+        // Fixed->var lazy conversion from types without a NULL (SHORT, BOOLEAN) whose Parquet
+        // partition has a column top: the top rows decode to an in-band 0/false, so both the
+        // covering build and the page-frame read must take the source column's NULL policy
+        // (NONE) and read them as NULL, while rows written after ADD COLUMN read as values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_lazy_conv_top (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t_lazy_conv_top
+                    SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A' || (x % 2)
+                    FROM long_sequence(4)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_top ADD COLUMN c_short_vc SHORT");
+            execute("ALTER TABLE t_lazy_conv_top ADD COLUMN c_bool_str BOOLEAN");
+            execute("""
+                    INSERT INTO t_lazy_conv_top
+                    SELECT dateadd('m', (x + 4)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A' || (x % 2), x::SHORT, x % 4 = 0
+                    FROM long_sequence(4)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_top CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_top ALTER COLUMN c_short_vc TYPE VARCHAR");
+            execute("ALTER TABLE t_lazy_conv_top ALTER COLUMN c_bool_str TYPE STRING");
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_top ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (c_short_vc, c_bool_str)");
+            drainWalQueue();
+
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_lazy_conv_top'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("suspended\nfalse\n");
+            final String expected = """
+                    ts\tc_short_vc\tc_bool_str
+                    2024-01-01T00:02:00.000000Z\t\t
+                    2024-01-01T00:04:00.000000Z\t\t
+                    2024-01-01T00:06:00.000000Z\t2\tfalse
+                    2024-01-01T00:08:00.000000Z\t4\ttrue
+                    """;
+            assertQuery("SELECT ts, c_short_vc, c_bool_str FROM t_lazy_conv_top WHERE sym = 'A0' ORDER BY ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT /*+ no_covering */ ts, c_short_vc, c_bool_str FROM t_lazy_conv_top WHERE sym = 'A0' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testAddPostingCoveringIndexWithPendingLazyConversionNullsAndVarcharSpillWal() throws Exception {
         // Stresses the pending-lazy-conversion covered columns on their hardest inputs:
         // NULLs in every converting column (exercises the null branch of each converter --
@@ -16246,11 +16300,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // CoveringIndexParallelDecodeTest.) This test never navigates the
                     // frame, so it only ever observes those production placeholders.
                     assertEquals("covered ARRAY aux page address is a production placeholder (0)",
-                            0L, f.getAuxPageAddress(1));
+                            0L, f.getAuxAddress(1));
                     assertEquals("covered ARRAY aux page size is a production placeholder (0)",
-                            0L, f.getAuxPageSize(1));
+                            0L, f.getAuxSize(1));
                     assertEquals("covered ARRAY data page size is a production placeholder (0)",
-                            0L, f.getPageSize(1));
+                            0L, f.getDataSize(1));
                 }
                 assertEquals(10, rows);
             }

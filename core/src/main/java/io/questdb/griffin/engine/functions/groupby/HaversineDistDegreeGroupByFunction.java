@@ -35,10 +35,7 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-import static java.lang.Math.*;
-
 public class HaversineDistDegreeGroupByFunction extends DoubleFunction implements GroupByFunction, TernaryFunction {
-    private final static double EARTH_RADIUS = 6371.088;
     private final Function latDegree;
     private final Function lonDegree;
     private final Function timestamp;
@@ -71,7 +68,7 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         if (Numbers.isFinite(lat1Degrees) && Numbers.isFinite(lon1Degrees) && timestamp1 != Numbers.LONG_NULL) {
             if (Numbers.isFinite(lat2Degrees) && Numbers.isFinite(lon2Degrees) && timestamp2 != Numbers.LONG_NULL) {
                 double currentTotalDistance = getDistance(mapValue);
-                double distance = calculateHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, currentTotalDistance);
+                double distance = HaversineDistDegreeGroupByFunctionFactory.value(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, currentTotalDistance);
                 saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
                 saveDistance(mapValue, distance);
             }
@@ -208,24 +205,7 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         double lat2Degrees = getFirstLatitude(value2);
         double lon2Degrees = getFirstLongitude(value2);
 
-        return calculateHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, 0);
-    }
-
-    private double calculateHaversineDistanceFromDegrees(double lat1Degrees, double lon1Degrees, double lat2Degrees, double lon2Degrees, double currentTotalDistance) {
-        double lat1 = toRad(lat1Degrees);
-        double lon1 = toRad(lon1Degrees);
-        double lat2 = toRad(lat2Degrees);
-        double lon2 = toRad(lon2Degrees);
-        return calculateHaversineDistanceFromRadians(currentTotalDistance, lat1, lon1, lat2, lon2);
-    }
-
-    private double calculateHaversineDistanceFromRadians(double currentTotal, double lat1, double lon1, double lat2, double lon2) {
-        double halfLatDist = (lat2 - lat1) / 2;
-        double halfLonDist = (lon2 - lon1) / 2;
-        double a = sin(halfLatDist) * sin(halfLatDist) + cos(lat1) * cos(lat2) * sin(halfLonDist) * sin(halfLonDist);
-        double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-        currentTotal += EARTH_RADIUS * c;
-        return currentTotal;
+        return HaversineDistDegreeGroupByFunctionFactory.value(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, 0);
     }
 
     private double getDistance(Record result) {
@@ -274,9 +254,5 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         mapValue.putDouble(this.valueIndex + 3, lat);
         mapValue.putDouble(this.valueIndex + 4, lon);
         mapValue.putTimestamp(this.valueIndex + 5, timestamp);
-    }
-
-    private double toRad(double deg) {
-        return deg * PI / 180;
     }
 }

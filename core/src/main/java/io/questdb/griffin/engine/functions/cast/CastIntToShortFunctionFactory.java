@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToShortFunctionFactory implements FunctionFactory {
+    public static short value(int operand) {
+        return (short) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Ie)";
@@ -51,8 +55,8 @@ public class CastIntToShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? (short) value : 0;
+            final int val = arg.getInt(rec);
+            return val != Numbers.INT_NULL ? value(val) : 0;
         }
     }
 }

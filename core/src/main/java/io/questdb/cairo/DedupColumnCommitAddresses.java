@@ -106,10 +106,16 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.putLong(addr + COL_VAR_DATA_LEN_64, columnVarDataLen);
     }
 
+    /**
+     * Writes a dedup key's column facts. Rows above {@code columnTop} compare as the value
+     * the native comparer finds in the null-value slot, which follows from the column's
+     * {@code nullPolicy}.
+     */
     public static long setColValues(
             long dedupCommitAddr,
             int dedupKeyIndex,
             int columnType,
+            NullPolicy nullPolicy,
             int valueSizeBytes,
             long columnTop
     ) {
@@ -118,10 +124,15 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.putInt(addr + VAL_SIZE_32, valueSizeBytes);
         Unsafe.putLong(addr + COL_TOP_64, columnTop);
 
-        Unsafe.putLong(addr + NULL_VAL_256, TableUtils.getNullLong(columnType, 0));
-        Unsafe.putLong(addr + NULL_VAL_256 + 8, TableUtils.getNullLong(columnType, 1));
-        Unsafe.putLong(addr + NULL_VAL_256 + 16, TableUtils.getNullLong(columnType, 2));
-        Unsafe.putLong(addr + NULL_VAL_256 + 24, TableUtils.getNullLong(columnType, 3));
+        // A column-top row compares as the type's NULL: its sentinel, or for a type without NULL
+        // the value its column top reads as. A switch expression, so a new policy lists this site.
+        final TypeDriver typeDriver = switch (nullPolicy) {
+            case SENTINEL, NONE -> ColumnType.getTypeDriver(columnType);
+        };
+        Unsafe.putLong(addr + NULL_VAL_256, typeDriver.getNullLong(0));
+        Unsafe.putLong(addr + NULL_VAL_256 + 8, typeDriver.getNullLong(1));
+        Unsafe.putLong(addr + NULL_VAL_256 + 16, typeDriver.getNullLong(2));
+        Unsafe.putLong(addr + NULL_VAL_256 + 24, typeDriver.getNullLong(3));
         return addr;
     }
 

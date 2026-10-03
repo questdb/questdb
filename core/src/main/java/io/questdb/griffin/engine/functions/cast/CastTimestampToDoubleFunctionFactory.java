@@ -33,6 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToDoubleFunctionFactory implements FunctionFactory {
+    public static double value(long operand) {
+        return (double) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Nd)";

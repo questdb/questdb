@@ -40,6 +40,14 @@ import io.questdb.std.ObjList;
 public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_avg";
 
+    public static double value(double sum, double element) {
+        return sum + element;
+    }
+
+    public static double value(double sum, int count) {
+        return sum / count;
+    }
+
     @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";
@@ -82,7 +90,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
             count = 0;
             sum = 0d;
             calculateRecursive(arr, 0, 0);
-            return sum / count;
+            return value(sum, count);
         }
 
         @Override
@@ -103,7 +111,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
                 for (int i = 0; i < dimLen; i++) {
                     double v = view.getDouble(flatIndex);
                     if (Numbers.isFinite(v)) {
-                        sum += v;
+                        sum = value(sum, v);
                         count++;
                     }
                     flatIndex += stride;

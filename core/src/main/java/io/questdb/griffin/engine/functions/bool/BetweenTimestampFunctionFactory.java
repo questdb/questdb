@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -41,6 +42,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class BetweenTimestampFunctionFactory implements FunctionFactory {
+    public static boolean value(long timestamp, long from, long to) {
+        return Math.min(from, to) <= timestamp && timestamp <= Math.max(from, to);
+    }
+
     @Override
     public String getSignature() {
         return "between(NNN)";
@@ -61,15 +66,16 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         int fromType = ColumnType.getTimestampType(fromFn.getType());
         int toType = ColumnType.getTimestampType(toFn.getType());
         if (!ColumnType.isTimestamp(argType)) {
-            if (fromFn.isConstant() && toFn.isConstant()) {
-                long fromFnTimestamp = fromFn.getTimestamp(null);
-                long toFnTimestamp = toFn.getTimestamp(null);
-                if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
-                    return BooleanConstant.FALSE;
-                }
-                return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
-            }
-            return new VarBetweenFunction(arg, fromFn, toFn, null, fromType, toType);
+            // an operand that is not a timestamp compares through its getTimestamp, with LONG_MIN as NULL; the
+            // tags are listed, so a new type decides whether that reading holds for it (F110)
+            return switch (ColumnTypeTag.of(arg.getType())) {
+                case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING,
+                     SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG,
+                     RECORD, GEOHASH, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
+                     DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
+                     PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                        newRawTimestampFunction(arg, fromFn, toFn, fromType, toType);
+            };
         }
 
 
@@ -97,6 +103,19 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    // the operand is compared as it reads through getTimestamp, with no conversion
+    private static Function newRawTimestampFunction(Function arg, Function fromFn, Function toFn, int fromType, int toType) {
+        if (fromFn.isConstant() && toFn.isConstant()) {
+            long fromFnTimestamp = fromFn.getTimestamp(null);
+            long toFnTimestamp = toFn.getTimestamp(null);
+            if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
+                return BooleanConstant.FALSE;
+            }
+            return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
+        }
+        return new VarBetweenFunction(arg, fromFn, toFn, null, fromType, toType);
+    }
+
     private static class BothConvertFunction extends VarBetweenFunction {
         public BothConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
             super(left, from, to, driver, fromType, toType);
@@ -104,8 +123,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return false;
             }
             long fromTs = driver.from(from.getTimestamp(rec), fromType);
@@ -118,7 +137,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
+            return value(timestamp, fromTs, toTs);
         }
     }
 
@@ -159,8 +178,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return false;
             }
             long fromTs = driver.from(from.getTimestamp(rec), fromType);
@@ -173,7 +192,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
+            return value(timestamp, fromTs, toTs);
         }
     }
 
@@ -184,8 +203,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return false;
             }
             long fromTs = from.getTimestamp(rec);
@@ -198,7 +217,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
+            return value(timestamp, fromTs, toTs);
         }
     }
 
@@ -221,8 +240,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return false;
             }
 
@@ -236,7 +255,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
+            return value(timestamp, fromTs, toTs);
         }
 
         @Override

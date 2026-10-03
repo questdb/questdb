@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDoubleToShortFunctionFactory implements FunctionFactory {
+    public static short value(double operand) {
+        return operand > Short.MAX_VALUE || operand < Short.MIN_VALUE ? 0 : (short) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(De)";
@@ -51,8 +55,8 @@ public class CastDoubleToShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
-            final double value = arg.getDouble(rec);
-            return Numbers.isNull(value) || value > Short.MAX_VALUE || value < Short.MIN_VALUE ? 0 : (short) value;
+            final double val = arg.getDouble(rec);
+            return Numbers.isNull(val) ? 0 : value(val);
         }
     }
 }

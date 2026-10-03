@@ -31,9 +31,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -143,34 +145,44 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 GroupByFunction function = groupByFunctions.getQuick(i);
                 if (function.isScalar()) {
                     groupByScalarFunctions.add(function);
-                    switch (ColumnType.tagOf(function.getType())) {
-                        case ColumnType.BYTE:
+                    // the endpoints are stored and interpolated as the accessor family's value
+                    final TypeDriver driver = ColumnType.findTypeDriver(function.getType());
+                    final PhysicalDescriptor.Accessor accessor = driver != null ? driver.getAccessor() : null;
+                    if (accessor == null) {
+                        Misc.freeObjList(groupByScalarFunctions);
+                        throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
+                    }
+                    switch (accessor) {
+                        case BYTE -> {
                             storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
                             interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);
-                            break;
-                        case ColumnType.SHORT:
+                        }
+                        case SHORT -> {
                             storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);
                             interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);
-                            break;
-                        case ColumnType.INT:
+                        }
+                        case INT -> {
                             storeYFunctions.add(InterpolationUtil.STORE_Y_INT);
                             interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);
-                            break;
-                        case ColumnType.LONG:
+                        }
+                        case LONG -> {
                             storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);
                             interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);
-                            break;
-                        case ColumnType.DOUBLE:
+                        }
+                        case DOUBLE -> {
                             storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
                             interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
-                            break;
-                        case ColumnType.FLOAT:
+                        }
+                        case FLOAT -> {
                             storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
                             interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
-                            break;
-                        default:
+                        }
+                        case BOOLEAN, CHAR, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                             GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
+                             DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> {
                             Misc.freeObjList(groupByScalarFunctions);
                             throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
+                        }
                     }
                 } else {
                     groupByTwoPointFunctions.add(function);

@@ -29,6 +29,45 @@ use std::num::NonZeroI32;
 
 pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
 
+/// How storage moves a column's values: a width class, or a var-size layout whose values live
+/// in a data vector addressed through an aux vector. The mirror of the Java definitions'
+/// `PhysicalDescriptor.Movement` (F39); it says nothing about NULL.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ColumnMovement {
+    W1,
+    W2,
+    W4,
+    W8,
+    W16,
+    W32,
+    Var,
+}
+
+/// How a column type represents NULL, as far as native code needs it: the mirror of the Java
+/// definitions' `TypeDriver.getNullPolicy()` for the stored types. `None` for the types where every
+/// bit pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as leading default
+/// values; `Sentinel` for every other type, which keeps its NULL in a reserved value.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ColumnNullPolicy {
+    None,
+    Sentinel,
+}
+
+impl ColumnMovement {
+    /// The value width in bytes, or None for a var-size layout.
+    pub const fn size(self) -> Option<usize> {
+        match self {
+            ColumnMovement::W1 => Some(1),
+            ColumnMovement::W2 => Some(2),
+            ColumnMovement::W4 => Some(4),
+            ColumnMovement::W8 => Some(8),
+            ColumnMovement::W16 => Some(16),
+            ColumnMovement::W32 => Some(32),
+            ColumnMovement::Var => None,
+        }
+    }
+}
+
 // Don't forget to update VALUES when modifying this list.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -109,36 +148,86 @@ impl ColumnTypeTag {
     /// If the type is var size, returns None.
     /// N.B. Symbol columns are _also_ considered fixed size.
     pub const fn fixed_size(self) -> Option<usize> {
+        self.movement().size()
+    }
+
+    /// How storage moves this tag's values. Every tag has an arm, so a new tag stops the build
+    /// here and takes its width from this one answer (F39).
+    pub const fn movement(self) -> ColumnMovement {
         match self {
             ColumnTypeTag::Boolean
             | ColumnTypeTag::GeoByte
             | ColumnTypeTag::Byte
-            | ColumnTypeTag::Decimal8 => Some(1),
+            | ColumnTypeTag::Decimal8 => ColumnMovement::W1,
 
             ColumnTypeTag::Short
             | ColumnTypeTag::GeoShort
             | ColumnTypeTag::Char
-            | ColumnTypeTag::Decimal16 => Some(2),
+            | ColumnTypeTag::Decimal16 => ColumnMovement::W2,
 
             ColumnTypeTag::Float
             | ColumnTypeTag::Int
             | ColumnTypeTag::IPv4
             | ColumnTypeTag::GeoInt
             | ColumnTypeTag::Symbol
-            | ColumnTypeTag::Decimal32 => Some(4),
+            | ColumnTypeTag::Decimal32 => ColumnMovement::W4,
 
             ColumnTypeTag::Double
             | ColumnTypeTag::Long
             | ColumnTypeTag::Date
             | ColumnTypeTag::GeoLong
             | ColumnTypeTag::Timestamp
-            | ColumnTypeTag::Decimal64 => Some(8),
+            | ColumnTypeTag::Decimal64 => ColumnMovement::W8,
 
-            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => Some(16),
+            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => {
+                ColumnMovement::W16
+            }
 
-            ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => Some(32),
+            ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => ColumnMovement::W32,
 
-            _ => None,
+            ColumnTypeTag::String
+            | ColumnTypeTag::Binary
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Array
+            | ColumnTypeTag::VarcharSlice => ColumnMovement::Var,
+        }
+    }
+
+    /// How this tag represents NULL. Every tag has an arm, so a new tag stops the build here and
+    /// declares its NULL policy once, for the Parquet read and write paths that key on it.
+    pub const fn null_policy(self) -> ColumnNullPolicy {
+        match self {
+            ColumnTypeTag::Boolean
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Short
+            | ColumnTypeTag::Char => ColumnNullPolicy::None,
+
+            ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::Float
+            | ColumnTypeTag::Double
+            | ColumnTypeTag::String
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Long256
+            | ColumnTypeTag::GeoByte
+            | ColumnTypeTag::GeoShort
+            | ColumnTypeTag::GeoInt
+            | ColumnTypeTag::GeoLong
+            | ColumnTypeTag::Binary
+            | ColumnTypeTag::Uuid
+            | ColumnTypeTag::Long128
+            | ColumnTypeTag::IPv4
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Array
+            | ColumnTypeTag::Decimal8
+            | ColumnTypeTag::Decimal16
+            | ColumnTypeTag::Decimal32
+            | ColumnTypeTag::Decimal64
+            | ColumnTypeTag::Decimal128
+            | ColumnTypeTag::Decimal256
+            | ColumnTypeTag::VarcharSlice => ColumnNullPolicy::Sentinel,
         }
     }
 
@@ -618,6 +707,68 @@ mod tests {
         assert_eq!(ColumnTypeTag::Decimal64.fixed_size(), Some(8));
         assert_eq!(ColumnTypeTag::Decimal128.fixed_size(), Some(16));
         assert_eq!(ColumnTypeTag::Decimal256.fixed_size(), Some(32));
+    }
+
+    #[test]
+    fn test_null_policy() {
+        // the Java definitions' NullPolicy.NONE types, and SENTINEL for every other stored type
+        for tag in ColumnTypeTag::VALUES {
+            let expected = if matches!(
+                tag,
+                ColumnTypeTag::Boolean
+                    | ColumnTypeTag::Byte
+                    | ColumnTypeTag::Short
+                    | ColumnTypeTag::Char
+            ) {
+                ColumnNullPolicy::None
+            } else {
+                ColumnNullPolicy::Sentinel
+            };
+            assert_eq!(tag.null_policy(), expected, "{}", tag.name());
+        }
+    }
+
+    #[test]
+    fn test_fixed_size_as_before_movement() {
+        // the widths the tag match gave before it derived from the movement tier
+        let expected = |tag: ColumnTypeTag| -> Option<usize> {
+            match tag {
+                ColumnTypeTag::Boolean
+                | ColumnTypeTag::GeoByte
+                | ColumnTypeTag::Byte
+                | ColumnTypeTag::Decimal8 => Some(1),
+                ColumnTypeTag::Short
+                | ColumnTypeTag::GeoShort
+                | ColumnTypeTag::Char
+                | ColumnTypeTag::Decimal16 => Some(2),
+                ColumnTypeTag::Float
+                | ColumnTypeTag::Int
+                | ColumnTypeTag::IPv4
+                | ColumnTypeTag::GeoInt
+                | ColumnTypeTag::Symbol
+                | ColumnTypeTag::Decimal32 => Some(4),
+                ColumnTypeTag::Double
+                | ColumnTypeTag::Long
+                | ColumnTypeTag::Date
+                | ColumnTypeTag::GeoLong
+                | ColumnTypeTag::Timestamp
+                | ColumnTypeTag::Decimal64 => Some(8),
+                ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => {
+                    Some(16)
+                }
+                ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => Some(32),
+                _ => None,
+            }
+        };
+        for tag in ColumnTypeTag::VALUES {
+            assert_eq!(tag.fixed_size(), expected(tag), "{}", tag.name());
+            assert_eq!(
+                tag.is_var_size(),
+                tag.movement() == ColumnMovement::Var,
+                "{}",
+                tag.name()
+            );
+        }
     }
 
     #[test]

@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToBooleanFunctionFactory implements FunctionFactory {
+    public static boolean value(long operand) {
+        return operand != 0;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Nt)";
@@ -52,7 +56,7 @@ public class CastTimestampToBooleanFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long timestamp = arg.getTimestamp(rec);
-            return timestamp != Numbers.LONG_NULL && timestamp != 0;
+            return timestamp != Numbers.LONG_NULL && value(timestamp);
         }
     }
 }

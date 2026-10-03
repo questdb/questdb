@@ -45,6 +45,16 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
     private static final String SYMBOL = "make_geohash";
     private static final String SIGNATURE = SYMBOL + "(DDi)";
 
+    /**
+     * Undefined for a latitude outside [-90, 90], a longitude outside [-180, 180] or a precision
+     * outside [0, 60] bits, where {@link GeoHashes#fromCoordinatesDeg} throws: the function gives
+     * NULL there. A NaN coordinate passes the range checks and quantises to the lowest cell of its
+     * axis.
+     */
+    public static long value(double lat, double lon, int bits) throws NumericException {
+        return GeoHashes.fromCoordinatesDeg(lat, lon, bits);
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -140,7 +150,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
             try {
                 double lon = this.lon.getDouble(rec);
                 double lat = this.lat.getDouble(rec);
-                return GeoHashes.fromCoordinatesDeg(lat, lon, bits);
+                return value(lat, lon, bits);
             } catch (NumericException e) {
                 return GeoHashes.NULL;
             }

@@ -42,6 +42,10 @@ import org.jetbrains.annotations.NotNull;
 
 public class EqIntervalFunctionFactory implements FunctionFactory {
 
+    public static boolean value(Interval left, Interval right) {
+        return left.equals(right);
+    }
+
     @Override
     public String getSignature() {
         return "=(ΔΔ)";
@@ -107,7 +111,7 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != constant.equals(arg.getInterval(rec));
+            return negated != value(constant, arg.getInterval(rec));
         }
 
         @Override
@@ -131,7 +135,7 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final Interval a = left.getInterval(rec);
             final Interval b = right.getInterval(rec);
-            return negated != a.equals(b);
+            return negated != value(a, b);
         }
 
         @Override
@@ -154,7 +158,7 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Interval a = left.getInterval(rec);
-            return negated != a.equals(cachedRuntimeConst);
+            return negated != value(a, cachedRuntimeConst);
         }
 
         @Override

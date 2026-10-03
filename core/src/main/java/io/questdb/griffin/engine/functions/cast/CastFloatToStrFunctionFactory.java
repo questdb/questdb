@@ -31,9 +31,14 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToStrFunctionFactory implements FunctionFactory {
+
+    public static void value(CharSink<?> sink, float operand) {
+        Numbers.append(sink, operand);
+    }
 
     @Override
     public String getSignature() {
@@ -61,23 +66,23 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            final float value = arg.getFloat(rec);
-            if (Numbers.isNull(value)) {
+            final float val = arg.getFloat(rec);
+            if (Numbers.isNull(val)) {
                 return null;
             }
             sinkA.clear();
-            sinkA.put(value);
+            value(sinkA, val);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            final float value = arg.getFloat(rec);
-            if (Numbers.isNull(value)) {
+            final float val = arg.getFloat(rec);
+            if (Numbers.isNull(val)) {
                 return null;
             }
             sinkB.clear();
-            sinkB.put(value);
+            value(sinkB, val);
             return sinkB;
         }
     }

@@ -30,9 +30,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 
 public class CastLong256ToLongFunctionFactory implements FunctionFactory {
+    public static long value(Long256 operand) {
+        return operand.getLong0();
+    }
+
     @Override
     public String getSignature() {
         return "cast(Hl)";

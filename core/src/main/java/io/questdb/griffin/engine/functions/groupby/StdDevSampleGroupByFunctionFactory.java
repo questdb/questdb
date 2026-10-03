@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,19 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class StdDevSampleGroupByFunctionFactory implements FunctionFactory {
+    public static void value(MapValue mapValue, int valueIndex, double x) {
+        double mean = mapValue.getDouble(valueIndex);
+        double sum = mapValue.getDouble(valueIndex + 1);
+        long count = mapValue.getLong(valueIndex + 2) + 1;
+
+        double oldMean = mean;
+        mean += (x - mean) / count;
+        sum += (x - mean) * (x - oldMean);
+        mapValue.putDouble(valueIndex, mean);
+        mapValue.putDouble(valueIndex + 1, sum);
+        mapValue.addLong(valueIndex + 2, 1L);
+    }
+
     @Override
     public String getSignature() {
         return "stddev_samp(D)";

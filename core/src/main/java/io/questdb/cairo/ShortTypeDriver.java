@@ -1,0 +1,140 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.columns.ShortColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.ShortTypeConstant;
+import io.questdb.std.Vect;
+
+/**
+ * Type driver for SHORT.
+ */
+public final class ShortTypeDriver extends FixedSizeTypeDriver {
+    public static final ShortTypeDriver INSTANCE = new ShortTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.CHAR, ColumnType.DECIMAL};
+
+    private ShortTypeDriver() {
+        super(
+                ColumnTypeTag.SHORT,
+                PhysicalDescriptor.Movement.W2,
+                PhysicalDescriptor.Arithmetic.I16,
+                PhysicalDescriptor.Accessor.SHORT
+        );
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setShort(index);
+        return columnType;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.SHORT, "SHORT");
+    }
+
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return ShortConstant.ZERO;
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return 0L;
+    }
+
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.NONE;
+    }
+
+    @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_INT2;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 16;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.INT;
+    }
+
+    @Override
+    public char getSignatureChar() {
+        return 'e';
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.SHORT ? ShortTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.SHORT;
+    }
+
+    @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return ShortColumn.newInstance(columnIndex);
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putShort((short) 0);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryShort(addr, (short) 0, count);
+    }
+}

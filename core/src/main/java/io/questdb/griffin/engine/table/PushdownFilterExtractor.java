@@ -25,6 +25,9 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.NullPolicy;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DecimalUtil;
@@ -211,7 +214,10 @@ public class PushdownFilterExtractor implements Mutable {
     }
 
     /**
-     * Reports whether a null predicate over this column type may drive row group pruning.
+     * Reports whether a null predicate over this column type may drive row group pruning. The
+     * column's NULL policy decides first: a column without NULL (NONE) prunes nothing, except for
+     * CHAR's IS NOT NULL, and a SENTINEL column answers by its accessor family. A new type in a
+     * family takes that family's answer, and a new policy fails to compile here until it has one.
      * <p>
      * Pruning is exact only where the parquet null bit and the SQL NULL denote the same rows.
      * The parquet writer marks column-top rows - rows that predate the ADD COLUMN - with
@@ -260,11 +266,25 @@ public class PushdownFilterExtractor implements Mutable {
      * remaining pair - IS NULL over those three - folds to a constant FALSE that
      * {@code SqlCodeGenerator} replaces with an empty factory, so no scan runs there to prune.
      */
-    private static boolean isNullOpPushable(int columnType, int opType) {
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT -> false;
-            case ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE -> opType == OP_IS_NOT_NULL;
-            default -> true;
+    private static boolean isNullOpPushable(int columnType, NullPolicy nullPolicy, int opType) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        // pseudo tags and VARCHAR_SLICE never name a table column; they answered true and still do
+        if (driver == null) {
+            return true;
+        }
+        return switch (nullPolicy) {
+            // no NULL: the row-group null counts say nothing about these. Quirk char-top-null: CHAR has
+            // no NULL either, yet a column top reads back as CHAR_NULL, which SQL treats as NULL, so its
+            // IS NOT NULL prunes exactly and stays pushable, as before
+            case NONE -> driver.getAccessor() == PhysicalDescriptor.Accessor.CHAR && opType == OP_IS_NOT_NULL;
+            case SENTINEL -> switch (driver.getAccessor()) {
+                // IS NOT NULL only, as before
+                case CHAR, FLOAT, DOUBLE -> opType == OP_IS_NOT_NULL;
+                // both operators, as before
+                case BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT,
+                     GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
+                     DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> true;
+            };
         };
     }
 
@@ -439,7 +459,7 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
 
         if (isNullConstant(valueNode)) {
-            if (isNullOpPushable(columnType, OP_IS_NULL)) {
+            if (isNullOpPushable(columnType, metadata.getColumnNullPolicy(columnIndex), OP_IS_NULL)) {
                 conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NULL));
             }
             return;
@@ -515,7 +535,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        if (!isNullOpPushable(columnType, OP_IS_NOT_NULL)) {
+        if (!isNullOpPushable(columnType, metadata.getColumnNullPolicy(columnIndex), OP_IS_NOT_NULL)) {
             return;
         }
         conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NOT_NULL));

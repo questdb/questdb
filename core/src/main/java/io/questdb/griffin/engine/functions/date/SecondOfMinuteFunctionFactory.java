@@ -38,6 +38,10 @@ import io.questdb.std.ObjList;
 
 public class SecondOfMinuteFunctionFactory implements FunctionFactory {
 
+    public static int value(TimestampDriver driver, long timestamp) {
+        return driver.getSecondOfMinute(timestamp);
+    }
+
     @Override
     public String getSignature() {
         return "second(N)";
@@ -67,8 +71,7 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            return driver.getSecondOfMinute(value);
+            return value(driver, arg.getTimestamp(rec));
         }
 
         @Override

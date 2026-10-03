@@ -36,6 +36,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class BitwiseXorLongFunctionFactory implements FunctionFactory {
+    public static long value(long left, long right) {
+        return left ^ right;
+    }
+
     @Override
     public String getSignature() {
         return "^(LL)";
@@ -70,7 +74,7 @@ public class BitwiseXorLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
-            return l != Numbers.LONG_NULL && r != Numbers.LONG_NULL ? l ^ r : Numbers.LONG_NULL;
+            return l != Numbers.LONG_NULL && r != Numbers.LONG_NULL ? value(l, r) : Numbers.LONG_NULL;
         }
 
         @Override

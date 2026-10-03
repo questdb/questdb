@@ -25,6 +25,9 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PgTypeOids;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.std.IntList;
 import io.questdb.std.IntShortHashMap;
 import io.questdb.std.Numbers;
@@ -69,47 +72,47 @@ public class PGOids {
      * Users should prefer using the text format when possible.
      */
     public static final int DECIMAL_BIND_TYPE = ColumnType.getDecimalType(76, 38);
-    public static final int PG_ARR_BOOL = 1000;
-    public static final int PG_ARR_BYTEA = 1001;
-    public static final int PG_ARR_DATE = 1182;
-    public static final int PG_ARR_FLOAT4 = 1021;
-    public static final int PG_ARR_FLOAT8 = 1022;
-    public static final int PG_ARR_INET = 1041;
-    public static final int PG_ARR_INT2 = 1005;
-    public static final int PG_ARR_INT4 = 1007;
-    public static final int PG_ARR_INT8 = 1016;
-    public static final int PG_ARR_INTERVAL = 1187;
-    public static final int PG_ARR_JSONB = 3807;
-    public static final int PG_ARR_NUMERIC = 1231;
-    public static final int PG_ARR_TEXT = 1009;
-    public static final int PG_ARR_TIME = 1183;
-    public static final int PG_ARR_TIMESTAMP = 1115;
-    public static final int PG_ARR_TIMESTAMP_TZ = 1185;
-    public static final int PG_ARR_UUID = 2951;
-    public static final int PG_ARR_VARCHAR = 1015;
-    public static final int PG_BOOL = 16;
-    public static final int PG_BYTEA = 17;
+    public static final int PG_ARR_BOOL = PgTypeOids.PG_ARR_BOOL;
+    public static final int PG_ARR_BYTEA = PgTypeOids.PG_ARR_BYTEA;
+    public static final int PG_ARR_DATE = PgTypeOids.PG_ARR_DATE;
+    public static final int PG_ARR_FLOAT4 = PgTypeOids.PG_ARR_FLOAT4;
+    public static final int PG_ARR_FLOAT8 = PgTypeOids.PG_ARR_FLOAT8;
+    public static final int PG_ARR_INET = PgTypeOids.PG_ARR_INET;
+    public static final int PG_ARR_INT2 = PgTypeOids.PG_ARR_INT2;
+    public static final int PG_ARR_INT4 = PgTypeOids.PG_ARR_INT4;
+    public static final int PG_ARR_INT8 = PgTypeOids.PG_ARR_INT8;
+    public static final int PG_ARR_INTERVAL = PgTypeOids.PG_ARR_INTERVAL;
+    public static final int PG_ARR_JSONB = PgTypeOids.PG_ARR_JSONB;
+    public static final int PG_ARR_NUMERIC = PgTypeOids.PG_ARR_NUMERIC;
+    public static final int PG_ARR_TEXT = PgTypeOids.PG_ARR_TEXT;
+    public static final int PG_ARR_TIME = PgTypeOids.PG_ARR_TIME;
+    public static final int PG_ARR_TIMESTAMP = PgTypeOids.PG_ARR_TIMESTAMP;
+    public static final int PG_ARR_TIMESTAMP_TZ = PgTypeOids.PG_ARR_TIMESTAMP_TZ;
+    public static final int PG_ARR_UUID = PgTypeOids.PG_ARR_UUID;
+    public static final int PG_ARR_VARCHAR = PgTypeOids.PG_ARR_VARCHAR;
+    public static final int PG_BOOL = PgTypeOids.PG_BOOL;
+    public static final int PG_BYTEA = PgTypeOids.PG_BYTEA;
     public static final int PG_CATALOG_OID = 11;
-    public static final int PG_CHAR = 1042;
+    public static final int PG_CHAR = PgTypeOids.PG_CHAR;
     public static final int PG_CLASS_OID = 1259;
-    public static final int PG_DATE = 1082;
-    public static final int PG_FLOAT4 = 700;
-    public static final int PG_FLOAT8 = 701;
-    public static final int PG_INET = 869;
-    public static final int PG_INT2 = 21;
-    public static final int PG_INT4 = 23;
-    public static final int PG_INT8 = 20;
-    public static final int PG_INTERNAL = 2281;
-    public static final int PG_INTERVAL = 1186;
-    public static final int PG_JSONB = 3802;
+    public static final int PG_DATE = PgTypeOids.PG_DATE;
+    public static final int PG_FLOAT4 = PgTypeOids.PG_FLOAT4;
+    public static final int PG_FLOAT8 = PgTypeOids.PG_FLOAT8;
+    public static final int PG_INET = PgTypeOids.PG_INET;
+    public static final int PG_INT2 = PgTypeOids.PG_INT2;
+    public static final int PG_INT4 = PgTypeOids.PG_INT4;
+    public static final int PG_INT8 = PgTypeOids.PG_INT8;
+    public static final int PG_INTERNAL = PgTypeOids.PG_INTERNAL;
+    public static final int PG_INTERVAL = PgTypeOids.PG_INTERVAL;
+    public static final int PG_JSONB = PgTypeOids.PG_JSONB;
     public static final int PG_NAMESPACE_OID = 2615;
-    public static final int PG_NUMERIC = 1700;
-    public static final int PG_OID = 26;
+    public static final int PG_NUMERIC = PgTypeOids.PG_NUMERIC;
+    public static final int PG_OID = PgTypeOids.PG_OID;
     public static final int PG_PUBLIC_OID = 2200;
-    public static final int PG_TEXT = 25;
-    public static final int PG_TIME = 1083;
-    public static final int PG_TIMESTAMP = 1114;
-    public static final int PG_TIMESTAMP_TZ = 1184;
+    public static final int PG_TEXT = PgTypeOids.PG_TEXT;
+    public static final int PG_TIME = PgTypeOids.PG_TIME;
+    public static final int PG_TIMESTAMP = PgTypeOids.PG_TIMESTAMP;
+    public static final int PG_TIMESTAMP_TZ = PgTypeOids.PG_TIMESTAMP_TZ;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
     public static final char[] PG_TYPE_TO_CATEGORY = new char[17];
@@ -119,10 +122,10 @@ public class PGOids {
     public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[17];
     public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[17];
     public static final IntShortHashMap PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
-    public static final int PG_UNSPECIFIED = 0;
-    public static final int PG_UUID = 2950;
-    public static final int PG_VARCHAR = 1043;
-    public static final int PG_VOID = 2278;
+    public static final int PG_UNSPECIFIED = PgTypeOids.PG_UNSPECIFIED;
+    public static final int PG_UUID = PgTypeOids.PG_UUID;
+    public static final int PG_VARCHAR = PgTypeOids.PG_VARCHAR;
+    public static final int PG_VOID = PgTypeOids.PG_VOID;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_ARR_BOOL = ((PG_ARR_BOOL >> 24) & 0xff) | ((PG_ARR_BOOL << 8) & 0xff0000) | ((PG_ARR_BOOL >> 8) & 0xff00) | ((PG_ARR_BOOL << 24) & 0xff000000);
     @SuppressWarnings("NumericOverflow")
@@ -192,8 +195,10 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_VOID = ((PG_VOID >> 24) & 0xff) | ((PG_VOID << 8) & 0xff0000) | ((PG_VOID >> 8) & 0xff00) | ((PG_VOID << 24) & 0xff000000);
     private static final int CHAR_ATT_TYP_MOD = 5; // CHAR(n) in PostgreSQL has n+4 as type modifier
-    private static final IntList TYPE_ARR_OIDS = new IntList();
-    private static final IntList TYPE_OIDS = new IntList();
+    // Indexed by tag, filled at init from arrayTypeOid() / typeOid(); getTypeOid() stays an array read.
+    // The array element tag is a 6-bit field, so its table covers every value the field can hold.
+    private static final int[] TYPE_ARR_OIDS = new int[64];
+    private static final int[] TYPE_OIDS = new int[ColumnType.MAX_TAG + 1];
     private static final int X_CHAR_ATT_TYP_MOD = Numbers.bswap(CHAR_ATT_TYP_MOD);
 
     public static int getAttTypMod(int pgOidType) {
@@ -209,12 +214,16 @@ public class PGOids {
         return -1;
     }
 
+    /**
+     * The PostgreSQL type OID pgwire advertises for a QuestDB column type; 0 when there is none
+     * (see {@link #typeOid(int)} and {@link #arrayTypeOid(int)}).
+     */
     public static int getTypeOid(int type) {
         if (!ColumnType.isArray(type)) {
-            return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
+            return TYPE_OIDS[ColumnType.tagOf(type)];
         }
         int elType = ColumnType.decodeArrayElementType(type);
-        return TYPE_ARR_OIDS.getQuick(elType);
+        return TYPE_ARR_OIDS[elType];
     }
 
     public static int getXAttTypMod(int pgOidType) {
@@ -274,42 +283,38 @@ public class PGOids {
         return type & (~(1 << 31));
     }
 
-    static {
-        TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
-        TYPE_OIDS.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
-        TYPE_OIDS.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
-        TYPE_OIDS.extendAndSet(ColumnType.INT, PG_INT4); // INT4
-        TYPE_OIDS.extendAndSet(ColumnType.SHORT, PG_INT2); // INT2
-        TYPE_OIDS.extendAndSet(ColumnType.CHAR, PG_CHAR);
-        TYPE_OIDS.extendAndSet(ColumnType.SYMBOL, PG_VARCHAR); // NAME
-        TYPE_OIDS.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
-        TYPE_OIDS.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
-        TYPE_OIDS.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        // We represent QuestDB native DATE type as TIMESTAMP in PostgreSQL
-        // Why? QuestDB DATE type has millisecond precision, while PostgreSQL DATE type has 'day' precision.
-        // This is a workaround to avoid data loss when transferring data from QuestDB to PostgreSQL.
-        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // TIMESTAMP, not PG_DATE! (this intentional)
-        TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
-        TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.GEOBYTE, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.GEOSHORT, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.GEOLONG, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // UUID
-        TYPE_OIDS.extendAndSet(ColumnType.IPv4, PG_VARCHAR); //IPv4
-        TYPE_OIDS.extendAndSet(ColumnType.VARCHAR, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.INTERVAL, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.ARRAY_STRING, PG_VARCHAR); // ARRAY_STRING is a hack, we send results as VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL8, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL16, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL32, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL64, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL128, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL256, PG_NUMERIC); // NUMERIC
+    /**
+     * The PostgreSQL array type OID for a QuestDB array whose elements have the given tag: the
+     * element type's definition answers (F41). Only DOUBLE and VARCHAR elements have one; every
+     * other element type, and a pseudo tag or VARCHAR_SLICE, is 0, which
+     * {@code PGPipelineEntry.rejectLongArrayResults()} and {@code PGOidsTest} rely on.
+     */
+    private static int arrayTypeOid(int elementTag) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(elementTag);
+        return driver != null ? driver.getPgArrayOid() : 0;
+    }
 
-        TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
-        TYPE_ARR_OIDS.extendAndSet(ColumnType.VARCHAR, PG_ARR_VARCHAR); // VARCHAR[]
+    /**
+     * The PostgreSQL type OID for a non-array QuestDB column type: the definition answers (F41).
+     * 0 means "no OID": the type is never described to a client (pseudo tags, VARCHAR_SLICE), or
+     * pgwire has no representation for it (LONG128, see {@code PGPipelineEntry.outRecord()}).
+     * ARRAY_STRING is no type: it is a hack for PostgreSQL metadata functions, sent as VARCHAR.
+     */
+    private static int typeOid(int tag) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(tag);
+        if (driver != null) {
+            return driver.getPgOid();
+        }
+        return tag == ColumnType.ARRAY_STRING ? PG_VARCHAR : 0;
+    }
+
+    static {
+        for (int tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            TYPE_OIDS[tag] = typeOid(tag);
+        }
+        for (int tag = 0; tag < TYPE_ARR_OIDS.length; tag++) {
+            TYPE_ARR_OIDS[tag] = arrayTypeOid(tag);
+        }
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);

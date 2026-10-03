@@ -48,6 +48,10 @@ import io.questdb.std.str.Utf8Sequence;
 
 public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
+    public static boolean value(long left, long right) {
+        return left == right;
+    }
+
     @Override
     public String getSignature() {
         return "=(NC)";
@@ -123,7 +127,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (driver.from(leftFunc.getTimestamp(rec), leftType) == epoch);
+            return negated != value(driver.from(leftFunc.getTimestamp(rec), leftType), epoch);
         }
     }
 
@@ -147,7 +151,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            return negated != value(leftFunc.getTimestamp(rec), epoch);
         }
 
         @Override
@@ -229,7 +233,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            return negated != value(leftFunc.getTimestamp(rec), epoch);
         }
 
         @Override
@@ -306,7 +310,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            return negated != value(leftFunc.getTimestamp(rec), epoch);
         }
 
         @Override

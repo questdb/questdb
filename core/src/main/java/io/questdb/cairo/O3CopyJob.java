@@ -127,6 +127,19 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .I$();
 
         try {
+            // validity moves with the values, once per block (F36, F37); the designated
+            // timestamp comes in as a negative type
+            copyValidity(
+                    ColumnType.getTypeDriver(Math.abs(columnType)).getValidityOps(),
+                    blockType,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
+                    srcDataTop,
+                    srcDataLo,
+                    srcDataHi,
+                    srcOooLo,
+                    srcOooHi
+            );
             switch (blockType) {
                 case O3_BLOCK_MERGE:
                     mergeCopy(
@@ -426,46 +439,22 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         } else if (ColumnType.isDesignatedTimestamp(columnType)) {
             Vect.oooCopyIndex(timestampMergeIndexAddr, timestampMergeIndexCount, dstFixAddr);
         } else {
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.BOOLEAN:
-                case ColumnType.BYTE:
-                case ColumnType.GEOBYTE:
-                case ColumnType.DECIMAL8:
-                    Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.SHORT:
-                case ColumnType.CHAR:
-                case ColumnType.GEOSHORT:
-                case ColumnType.DECIMAL16:
-                    Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.INT:
-                case ColumnType.IPv4:
-                case ColumnType.FLOAT:
-                case ColumnType.SYMBOL:
-                case ColumnType.GEOINT:
-                case ColumnType.DECIMAL32:
-                    Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.DOUBLE:
-                case ColumnType.LONG:
-                case ColumnType.DATE:
-                case ColumnType.GEOLONG:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DECIMAL64:
-                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.UUID:
-                case ColumnType.LONG128:
-                case ColumnType.DECIMAL128:
-                    Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.LONG256:
-                case ColumnType.DECIMAL256:
-                    Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                default:
-                    break;
+            // every fixed-size type merges by width alone
+            switch (ColumnType.pow2SizeOf(columnType)) {
+                case 0 ->
+                        Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 1 ->
+                        Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 2 ->
+                        Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 3 ->
+                        Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 4 ->
+                        Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 5 ->
+                        Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                default ->
+                        throw CairoException.critical(0).put("cannot merge column of type ").put(ColumnType.nameOf(columnType));
             }
         }
     }
@@ -704,6 +693,34 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         partitionUpdateSinkAddr,
                         tableWriter
                 );
+            }
+        }
+    }
+
+    /**
+     * Runs a copy block's validity operation. No column on this branch has validity memory, so
+     * every address is 0; the rows are the block's own.
+     */
+    private static void copyValidity(
+            ValidityOps validityOps,
+            int blockType,
+            long mergeIndexAddr,
+            long mergeCount,
+            long srcDataTop,
+            long srcDataLo,
+            long srcDataHi,
+            long srcOooLo,
+            long srcOooHi
+    ) {
+        switch (blockType) {
+            case O3_BLOCK_MERGE -> validityOps.merge(mergeIndexAddr, mergeCount, 0, srcDataTop, 0, 0, 0);
+            case O3_BLOCK_O3 -> validityOps.copy(0, srcOooLo, 0, 0, srcOooHi - srcOooLo + 1);
+            case O3_BLOCK_DATA -> {
+                if (srcDataLo <= srcDataHi) {
+                    validityOps.copy(0, srcDataLo, 0, 0, srcDataHi - srcDataLo + 1);
+                }
+            }
+            default -> {
             }
         }
     }

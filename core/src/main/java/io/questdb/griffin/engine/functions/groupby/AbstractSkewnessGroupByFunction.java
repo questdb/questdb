@@ -62,7 +62,7 @@ public abstract class AbstractSkewnessGroupByFunction extends DoubleFunction imp
         mapValue.putDouble(valueIndex + 2, 0);
         mapValue.putLong(valueIndex + 3, 0);
         if (Numbers.isFinite(d)) {
-            aggregate(mapValue, d);
+            SkewnessSampleGroupByFunctionFactory.value(mapValue, valueIndex, d);
         }
     }
 
@@ -70,7 +70,7 @@ public abstract class AbstractSkewnessGroupByFunction extends DoubleFunction imp
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         if (Numbers.isFinite(d)) {
-            aggregate(mapValue, d);
+            SkewnessSampleGroupByFunctionFactory.value(mapValue, valueIndex, d);
         }
     }
 
@@ -165,27 +165,5 @@ public abstract class AbstractSkewnessGroupByFunction extends DoubleFunction imp
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
-    }
-
-    protected void aggregate(MapValue mapValue, double value) {
-        double mean = mapValue.getDouble(valueIndex);
-        double m2 = mapValue.getDouble(valueIndex + 1);
-        double m3 = mapValue.getDouble(valueIndex + 2);
-        long n = mapValue.getLong(valueIndex + 3) + 1;
-
-        double nd = n;
-        double delta = value - mean;
-        double deltaN = delta / nd;
-        double term1 = delta * deltaN * (nd - 1);
-
-        // Update order matters: M3 reads the old M2.
-        double newM3 = m3 + term1 * deltaN * (nd - 2) - 3 * deltaN * m2;
-        double newM2 = m2 + term1;
-        double newMean = mean + deltaN;
-
-        mapValue.putDouble(valueIndex, newMean);
-        mapValue.putDouble(valueIndex + 1, newM2);
-        mapValue.putDouble(valueIndex + 2, newM3);
-        mapValue.putLong(valueIndex + 3, n);
     }
 }

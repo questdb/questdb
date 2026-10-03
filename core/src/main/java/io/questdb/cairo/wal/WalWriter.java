@@ -38,6 +38,7 @@ import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -48,6 +49,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.ValidityOps;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -76,7 +78,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -779,6 +780,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private static void configureNullSetters(
             ObjList<Runnable> nullers,
             int type,
+            NullPolicy nullPolicy,
             MemoryMA dataMem,
             MemoryMA auxMem,
             int columnIndex,
@@ -786,90 +788,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             BoolList symbolMapNullFlags
     ) {
         int columnTag = ColumnType.tagOf(type);
-        if (ColumnType.isVarSize(columnTag)) {
-            final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
-            nullers.add(() -> typeDriver.appendNull(auxMem, dataMem));
+        if (columnTag == ColumnType.SYMBOL) {
+            nullers.add(() ->
+                    {
+                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                        if (!symbolMapNullFlags.get(columnIndex)) {
+                            symbolMapNullFlags.setQuick(columnIndex, true);
+                            symbolMapNullFlagsChanged.setQuick(columnIndex, true);
+                        }
+                    }
+            );
+        } else if (ColumnType.isPersisted(columnTag)) {
+            // the definition's appender writes the column's NULL as a value: the sentinel, or for a
+            // type without NULL what it stores instead
+            nullers.add(switch (nullPolicy) {
+                case SENTINEL, NONE -> ColumnType.getTypeDriver(type).newNullAppender(dataMem, auxMem);
+            });
         } else {
-            switch (columnTag) {
-                case ColumnType.BOOLEAN:
-                case ColumnType.BYTE:
-                    nullers.add(() -> dataMem.putByte((byte) 0));
-                    break;
-                case ColumnType.DOUBLE:
-                    nullers.add(() -> dataMem.putDouble(Double.NaN));
-                    break;
-                case ColumnType.FLOAT:
-                    nullers.add(() -> dataMem.putFloat(Float.NaN));
-                    break;
-                case ColumnType.INT:
-                    nullers.add(() -> dataMem.putInt(Numbers.INT_NULL));
-                    break;
-                case ColumnType.IPv4:
-                    nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
-                    break;
-                case ColumnType.LONG:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
-                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NULL));
-                    break;
-                case ColumnType.LONG256:
-                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL));
-                    break;
-                case ColumnType.SHORT:
-                    nullers.add(() -> dataMem.putShort((short) 0));
-                    break;
-                case ColumnType.CHAR:
-                    nullers.add(() -> dataMem.putChar((char) 0));
-                    break;
-                case ColumnType.SYMBOL:
-                    nullers.add(() ->
-                            {
-                                dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                                if (!symbolMapNullFlags.get(columnIndex)) {
-                                    symbolMapNullFlags.setQuick(columnIndex, true);
-                                    symbolMapNullFlagsChanged.setQuick(columnIndex, true);
-                                }
-                            }
-                    );
-                    break;
-                case ColumnType.GEOBYTE:
-                    nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
-                    break;
-                case ColumnType.GEOSHORT:
-                    nullers.add(() -> dataMem.putShort(GeoHashes.SHORT_NULL));
-                    break;
-                case ColumnType.GEOINT:
-                    nullers.add(() -> dataMem.putInt(GeoHashes.INT_NULL));
-                    break;
-                case ColumnType.GEOLONG:
-                    nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
-                    break;
-                case ColumnType.LONG128:
-                    // fall through
-                case ColumnType.UUID:
-                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
-                    break;
-                case ColumnType.DECIMAL8:
-                    nullers.add(() -> dataMem.putByte(Decimals.DECIMAL8_NULL));
-                    break;
-                case ColumnType.DECIMAL16:
-                    nullers.add(() -> dataMem.putShort(Decimals.DECIMAL16_NULL));
-                    break;
-                case ColumnType.DECIMAL32:
-                    nullers.add(() -> dataMem.putInt(Decimals.DECIMAL32_NULL));
-                    break;
-                case ColumnType.DECIMAL64:
-                    nullers.add(() -> dataMem.putLong(Decimals.DECIMAL64_NULL));
-                    break;
-                case ColumnType.DECIMAL128:
-                    nullers.add(() -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL));
-                    break;
-                case ColumnType.DECIMAL256:
-                    nullers.add(() -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL));
-                    break;
-                default:
-                    throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
-            }
+            // a non-persisted type never reaches a table column
+            throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }
     }
 
@@ -1145,14 +1082,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    private void configureColumn(int columnIndex, int columnType) {
+    private void configureColumn(int columnIndex, int columnType, @Nullable NullPolicy nullPolicy) {
         final int dataColumnOffset = getDataColumnOffset(columnIndex);
         if (columnType > 0) {
             final MemoryMA dataMem = Vm.getPMARInstance(configuration);
             final MemoryMA auxMem = createAuxColumnMem(columnType);
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
-            configureNullSetters(nullSetters, columnType, dataMem, auxMem, columnIndex, symbolMapNullFlagsChanged, symbolMapNullFlags);
+            assert nullPolicy != null;
+            configureNullSetters(nullSetters, columnType, nullPolicy, dataMem, auxMem, columnIndex, symbolMapNullFlagsChanged, symbolMapNullFlags);
             rowValueIsNotNull.add(-1);
         } else {
             columns.extendAndSet(dataColumnOffset, NullMemory.INSTANCE);
@@ -1164,7 +1102,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private void configureColumns() {
         for (int i = 0; i < columnCount; i++) {
-            configureColumn(i, metadata.getColumnType(i));
+            final int columnType = metadata.getColumnType(i);
+            // a removed column has no NULL policy
+            configureColumn(i, columnType, columnType > 0 ? metadata.getColumnNullPolicy(i) : null);
         }
     }
 
@@ -1890,6 +1830,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
                             int colType = columnIndex == timestampIndex ? -columnType : columnType;
                             int newColumnType = columnIndex == convertColumnIndex ? convertToColumnType : colType;
+                            final NullPolicy nullPolicy = metadata.getColumnNullPolicy(columnIndex);
+                            // the conversion target joins the metadata later; until ALTER carries a
+                            // NULL marker its policy is its type's
+                            final NullPolicy newNullPolicy = columnIndex == convertColumnIndex
+                                    ? ColumnType.getTypeDriver(convertToColumnType).getNullPolicy()
+                                    : nullPolicy;
                             // Saves existing segment file offsets and new file sizes in columnRollSink.
                             CopyWalSegmentUtils.rollColumnToSegment(
                                     ff,
@@ -1904,7 +1850,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     uncommittedRows,
                                     columnRollSink,
                                     commitMode,
+                                    nullPolicy,
                                     newColumnType,
+                                    newNullPolicy,
                                     symbolTable,
                                     symbolMapWriter
                             );
@@ -1987,6 +1935,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
         }
+        // the segment's rows before the added column are NULL; no WAL column has validity memory
+        ValidityOps.of(metadata.getColumnNullPolicy(columnIndex)).fill(0, 0, rowCount, false);
     }
 
     private void setFixColumnNulls(int type, int columnIndex, long rowCount) {
@@ -1996,7 +1946,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (columnFileSize > 0) {
             long address = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), columnFileSize, MEM_TAG);
             try {
-                TableUtils.setNull(type, address, rowCount);
+                ColumnType.getTypeDriver(type).setNull(address, rowCount);
             } finally {
                 ff.munmap(address, columnFileSize, MEM_TAG);
             }
@@ -2494,7 +2444,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     columnCount = metadata.getColumnCount();
                     columnIndex = columnCount - 1;
                     // create column file
-                    configureColumn(columnIndex, columnType);
+                    configureColumn(columnIndex, columnType, metadata.getColumnNullPolicy(columnIndex));
                     if (ColumnType.isSymbol(columnType)) {
                         configureSymbolMapWriter(columnIndex, columnName, 0, -1);
                     }
@@ -2579,7 +2529,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     if (existingColumnType != newType) {
                         // Configure new column, it will be used if the uncommitted data is rolled to a new segment
                         int newColumnIndex = columnCount;
-                        configureColumn(newColumnIndex, newType);
+                        // the new column joins the metadata after the roll; until ALTER carries a
+                        // NULL marker its policy is its type's
+                        configureColumn(newColumnIndex, newType, ColumnType.getTypeDriver(newType).getNullPolicy());
                         if (ColumnType.isSymbol(newType)) {
                             configureSymbolMapWriter(newColumnIndex, columnName, 0, -1);
                         }

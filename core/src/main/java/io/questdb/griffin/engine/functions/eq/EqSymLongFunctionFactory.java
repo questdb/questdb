@@ -47,6 +47,17 @@ import org.jetbrains.annotations.Nullable;
  * compared to the symbol.
  */
 public class EqSymLongFunctionFactory implements FunctionFactory {
+    /**
+     * Prints {@code right} with {@code Numbers.append(sink, right, false)}, which prints LONG_MIN as
+     * a number where {@code StringSink.put(long)} prints it as null. The function tests NULL first,
+     * so its results do not change.
+     */
+    public static boolean value(StringSink sink, CharSequence left, long right) {
+        sink.clear();
+        Numbers.append(sink, right, false);
+        return Chars.equalsNc(sink, left);
+    }
+
     @Override
     public String getSignature() {
         return "=(KL)";
@@ -192,11 +203,9 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long value = right.getLong(rec);
-            if (value != Numbers.LONG_NULL) {
-                sink.clear();
-                sink.put(value);
-                return negated != Chars.equalsNc(sink, left.getSymbol(rec));
+            long r = right.getLong(rec);
+            if (r != Numbers.LONG_NULL) {
+                return negated != value(sink, left.getSymbol(rec), r);
             }
             return negated == (left.getSymbol(rec) != null);
         }

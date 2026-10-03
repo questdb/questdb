@@ -42,6 +42,21 @@ public class LPadFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "lpad(SI)";
 
+    /**
+     * Undefined for a negative length: the function gives NULL there, as for a NULL operand. The
+     * function also rejects a length above its buffer limit before it calls the body.
+     */
+    public static void value(StringSink sink, CharSequence str, int len) {
+        if (len > str.length()) {
+            for (int i = 0; i < (len - str.length()); i++) {
+                sink.put(' ');
+            }
+            sink.put(str);
+        } else {
+            sink.put(str, 0, len);
+        }
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -125,14 +140,7 @@ public class LPadFunctionFactory implements FunctionFactory {
                             .put(", requiredLength=").put(len).put(']');
                 }
                 sink.clear();
-                if (len > str.length()) {
-                    for (int i = 0; i < (len - str.length()); i++) {
-                        sink.put(' ');
-                    }
-                    sink.put(str);
-                } else {
-                    sink.put(str, 0, len);
-                }
+                value(sink, str, len);
                 return sink;
             }
             return null;

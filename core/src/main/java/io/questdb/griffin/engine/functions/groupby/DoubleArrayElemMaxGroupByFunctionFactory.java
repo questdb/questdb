@@ -38,6 +38,10 @@ import org.jetbrains.annotations.NotNull;
 
 public class DoubleArrayElemMaxGroupByFunctionFactory implements FunctionFactory {
 
+    public static double value(double max, double element) {
+        return Math.max(max, element);
+    }
+
     @Override
     public String getSignature() {
         return "array_elem_max(D[])";
@@ -74,14 +78,14 @@ public class DoubleArrayElemMaxGroupByFunctionFactory implements FunctionFactory
         protected void accumulateOne(long dataPtr, int accFi, double inputVal) {
             long addr = dataPtr + (long) accFi * Double.BYTES;
             double accVal = Unsafe.getDouble(addr);
-            Unsafe.putDouble(addr, Numbers.isFinite(accVal) ? Math.max(accVal, inputVal) : inputVal);
+            Unsafe.putDouble(addr, Numbers.isFinite(accVal) ? value(accVal, inputVal) : inputVal);
         }
 
         @Override
         protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
             long addr = destDataPtr + (long) destFi * Double.BYTES;
             double destVal = Unsafe.getDouble(addr);
-            Unsafe.putDouble(addr, Numbers.isFinite(destVal) ? Math.max(destVal, srcVal) : srcVal);
+            Unsafe.putDouble(addr, Numbers.isFinite(destVal) ? value(destVal, srcVal) : srcVal);
         }
     }
 }

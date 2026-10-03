@@ -31,7 +31,8 @@
 #include "jni.h"
 
 /**
- * ColumnType enum, matching the Java definitions.
+ * ColumnType enum, matching the Java definitions in io.questdb.cairo.ColumnType.
+ * ColumnTypeTest parses this file and fails when a number here differs from Java.
  */
 enum class ColumnType : int {
   UNDEFINED = 0,
@@ -62,14 +63,104 @@ enum class ColumnType : int {
   IPV4 = 25,
   VARCHAR = 26,
   ARRAY = 27,
-  REGCLASS = 28,
-  REGPROCEDURE = 29,
-  ARRAY_STRING = 30,
-  PARAMETER = 31,
-  INTERVAL = 32,
-  NULL_ = 33,
+  DECIMAL8 = 28,
+  DECIMAL16 = 29,
+  DECIMAL32 = 30,
+  DECIMAL64 = 31,
+  DECIMAL128 = 32,
+  DECIMAL256 = 33,
+  DECIMAL = 34,
+  REGCLASS = 35,
+  REGPROCEDURE = 36,
+  ARRAY_STRING = 37,
+  PARAMETER = 38,
+  INTERVAL = 39,
+  VARCHAR_SLICE = 40,
+  NULL_ = 41,
   TIMESTAMP_NANO = 1 << 18 | TIMESTAMP_MICRO,
 };
+
+/**
+ * The var-size layout of a column type's values, for native code that picks a var-size reader
+ * (F43, E10). The dedup switches key on this closed set instead of on ColumnType, so a new
+ * fixed-size tag lists no site there, while a new layout lists every one of them: dedup.cpp
+ * builds with -Wswitch-enum as an error.
+ */
+enum class VarLayout : int {
+    // fixed-size values, or a type no var-size reader serves
+    NONE,
+    VARCHAR,
+    STRING,
+    BINARY,
+    ARRAY,
+    // a SYMBOL column's keys, remapped into one int buffer (dedup of a WAL commit block)
+    SYMBOL,
+};
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
+
+/**
+ * The layout of the exact type value column_type. Every tag has an arm, so a new tag
+ * stops the build here; an encoded value (array dimensions, geohash bits) is no enumerator and
+ * has no layout, as the switches this replaces treated it.
+ */
+inline VarLayout var_layout(int32_t column_type) {
+    switch (static_cast<ColumnType>(column_type)) {
+        case ColumnType::VARCHAR:
+            return VarLayout::VARCHAR;
+        case ColumnType::STRING:
+            return VarLayout::STRING;
+        case ColumnType::BINARY:
+            return VarLayout::BINARY;
+        case ColumnType::ARRAY:
+            return VarLayout::ARRAY;
+        case ColumnType::SYMBOL:
+            return VarLayout::SYMBOL;
+        case ColumnType::UNDEFINED:
+        case ColumnType::BOOLEAN:
+        case ColumnType::BYTE:
+        case ColumnType::SHORT:
+        case ColumnType::CHAR:
+        case ColumnType::INT:
+        case ColumnType::LONG:
+        case ColumnType::DATE:
+        case ColumnType::TIMESTAMP_MICRO:
+        case ColumnType::FLOAT:
+        case ColumnType::DOUBLE:
+        case ColumnType::LONG256:
+        case ColumnType::GEOBYTE:
+        case ColumnType::GEOSHORT:
+        case ColumnType::GEOINT:
+        case ColumnType::GEOLONG:
+        case ColumnType::UUID:
+        case ColumnType::CURSOR:
+        case ColumnType::VAR_ARG:
+        case ColumnType::RECORD:
+        case ColumnType::GEOHASH:
+        case ColumnType::LONG128:
+        case ColumnType::IPV4:
+        case ColumnType::DECIMAL8:
+        case ColumnType::DECIMAL16:
+        case ColumnType::DECIMAL32:
+        case ColumnType::DECIMAL64:
+        case ColumnType::DECIMAL128:
+        case ColumnType::DECIMAL256:
+        case ColumnType::DECIMAL:
+        case ColumnType::REGCLASS:
+        case ColumnType::REGPROCEDURE:
+        case ColumnType::ARRAY_STRING:
+        case ColumnType::PARAMETER:
+        case ColumnType::INTERVAL:
+        case ColumnType::VARCHAR_SLICE:
+        case ColumnType::NULL_:
+        case ColumnType::TIMESTAMP_NANO:
+            return VarLayout::NONE;
+    }
+    return VarLayout::NONE;
+}
+
+#pragma GCC diagnostic pop
 
 #pragma pack (push, 1)
 struct VarcharAuxEntryInlined {

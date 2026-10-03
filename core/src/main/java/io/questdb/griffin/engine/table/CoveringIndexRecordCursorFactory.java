@@ -1035,12 +1035,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public long getAuxPageAddress(int columnIndex) {
+        public long getAuxAddress(int columnIndex) {
             return auxPageAddresses[columnIndex];
         }
 
         @Override
-        public long getAuxPageSize(int columnIndex) {
+        public long getAuxSize(int columnIndex) {
             return auxPageSizes[columnIndex];
         }
 
@@ -1116,13 +1116,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public long getPageAddress(int columnIndex) {
+        public long getDataAddress(int columnIndex) {
             return pageAddresses[columnIndex];
         }
 
         @Override
-        public long getPageSize(int columnIndex) {
+        public long getDataSize(int columnIndex) {
             return pageSizes[columnIndex];
+        }
+
+        @Override
+        public long getNullCount(int columnIndex) {
+            return -1;
         }
 
         @Override
@@ -1154,6 +1159,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public long getPartitionLo() {
             return partitionLo;
         }
+
+        @Override
+        public long getValidityAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getValidityBitOffset(int columnIndex) {
+            return 0;
+        }
     }
 
     private static abstract class CoveringPageFrameCursor implements TablePageFrameCursor {
@@ -1179,6 +1194,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final LongList allocatedBuffers = new LongList();
         protected final IntList columnIndexes;
         protected final ColumnMapping columnMapping = new ColumnMapping();
+        protected final int[] columnLayouts;
         protected final int[] columnSizeBytes;
         protected final int[] columnTypeTags;
         protected final int[] columnTypes;
@@ -1293,6 +1309,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.frame = new CoveringPageFrame(queryColCount, queryColToIncludeIdx);
             this.columnSizeBytes = new int[queryColCount];
             this.columnTypeTags = new int[queryColCount];
+            this.columnLayouts = new int[queryColCount];
             this.columnTypes = new int[queryColCount];
             this.frameAddrs = new long[queryColCount + 1];
             this.frameVarDataAddrs = new long[queryColCount];
@@ -1301,7 +1318,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             for (int q = 0; q < queryColCount; q++) {
                 int colType = metadata.getColumnType(q);
                 this.columnTypes[q] = colType;
-                this.columnTypeTags[q] = ColumnType.tagOf(colType);
+                // the decoder's arm for the column: its tag, or COVERED_NONE for a type without one
+                this.columnTypeTags[q] = CoveredColumnDecoder.coveredOpcode(colType);
+                this.columnLayouts[q] = CoveredColumnDecoder.coveredLayout(colType);
                 if (queryColToIncludeIdx[q] >= 0) {
                     this.columnSizeBytes[q] = ColumnType.sizeOf(colType);
                 } else if (queryColToIncludeIdx[q] == -1) {
@@ -1488,26 +1507,31 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int newCapacity = capacity * 2;
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
-                    if (columnTypeTags[q] == ColumnType.VARCHAR) {
-                        long oldBytes = (long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-                        long newBytes = (long) newCapacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-                        long copyBytes = (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-                        addrs[q] = growBuffer(addrs[q], oldBytes, newBytes, copyBytes);
-                    } else if (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY) {
-                        long oldBytes = (long) (capacity + 1) * Long.BYTES;
-                        long newBytes = (long) (newCapacity + 1) * Long.BYTES;
-                        long copyBytes = (long) count * Long.BYTES;
-                        addrs[q] = growBuffer(addrs[q], oldBytes, newBytes, copyBytes);
-                    } else if (columnTypeTags[q] == ColumnType.ARRAY) {
-                        long oldBytes = (long) capacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
-                        long newBytes = (long) newCapacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
-                        long copyBytes = (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
-                        addrs[q] = growBuffer(addrs[q], oldBytes, newBytes, copyBytes);
-                    } else {
-                        long oldBytes = (long) capacity * columnSizeBytes[q];
-                        long newBytes = (long) newCapacity * columnSizeBytes[q];
-                        long copyBytes = (long) count * columnSizeBytes[q];
-                        addrs[q] = growBuffer(addrs[q], oldBytes, newBytes, copyBytes);
+                    switch (columnLayouts[q]) {
+                        case CoveredColumnDecoder.LAYOUT_VARCHAR -> {
+                            long oldBytes = (long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                            long newBytes = (long) newCapacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                            long copyBytes = (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                            addrs[q] = growBuffer(addrs[q], oldBytes, newBytes, copyBytes);
+                        }
+                        case CoveredColumnDecoder.LAYOUT_OFFSET -> {
+                            long oldBytes = (long) (capacity + 1) * Long.BYTES;
+                            long newBytes = (long) (newCapacity + 1) * Long.BYTES;
+                            long copyBytes = (long) count * Long.BYTES;
+                            addrs[q] = growBuffer(addrs[q], oldBytes, newBytes, copyBytes);
+                        }
+                        case CoveredColumnDecoder.LAYOUT_ARRAY -> {
+                            long oldBytes = (long) capacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
+                            long newBytes = (long) newCapacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
+                            long copyBytes = (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
+                            addrs[q] = growBuffer(addrs[q], oldBytes, newBytes, copyBytes);
+                        }
+                        default -> { // LAYOUT_FIXED
+                            long oldBytes = (long) capacity * columnSizeBytes[q];
+                            long newBytes = (long) newCapacity * columnSizeBytes[q];
+                            long copyBytes = (long) count * columnSizeBytes[q];
+                            addrs[q] = growBuffer(addrs[q], oldBytes, newBytes, copyBytes);
+                        }
                     }
                 }
             }
@@ -1547,25 +1571,29 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Arrays.fill(frameVarDataCap, 0);
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
-                    if (columnTypeTags[q] == ColumnType.VARCHAR) {
-                        frameAddrs[q] = allocBuffer((long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
-                        int initDataCap = capacity * 32;
-                        frameVarDataAddrs[q] = allocBuffer(initDataCap);
-                        frameVarDataCap[q] = initDataCap;
-                    } else if (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY) {
-                        // STRING/BINARY aux: 8 bytes per row (offset), plus sentinel at end
-                        frameAddrs[q] = allocBuffer((long) (capacity + 1) * Long.BYTES);
-                        int initDataCap = capacity * 32;
-                        frameVarDataAddrs[q] = allocBuffer(initDataCap);
-                        frameVarDataCap[q] = initDataCap;
-                    } else if (columnTypeTags[q] == ColumnType.ARRAY) {
-                        // ARRAY aux: 16 bytes per row [offset][size]
-                        frameAddrs[q] = allocBuffer((long) capacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
-                        int initDataCap = capacity * 32;
-                        frameVarDataAddrs[q] = allocBuffer(initDataCap);
-                        frameVarDataCap[q] = initDataCap;
-                    } else {
-                        frameAddrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
+                    switch (columnLayouts[q]) {
+                        case CoveredColumnDecoder.LAYOUT_VARCHAR -> {
+                            frameAddrs[q] = allocBuffer((long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+                            int initDataCap = capacity * 32;
+                            frameVarDataAddrs[q] = allocBuffer(initDataCap);
+                            frameVarDataCap[q] = initDataCap;
+                        }
+                        case CoveredColumnDecoder.LAYOUT_OFFSET -> {
+                            // STRING/BINARY aux: 8 bytes per row (offset), plus sentinel at end
+                            frameAddrs[q] = allocBuffer((long) (capacity + 1) * Long.BYTES);
+                            int initDataCap = capacity * 32;
+                            frameVarDataAddrs[q] = allocBuffer(initDataCap);
+                            frameVarDataCap[q] = initDataCap;
+                        }
+                        case CoveredColumnDecoder.LAYOUT_ARRAY -> {
+                            // ARRAY aux: 16 bytes per row [offset][size]
+                            frameAddrs[q] = allocBuffer((long) capacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+                            int initDataCap = capacity * 32;
+                            frameVarDataAddrs[q] = allocBuffer(initDataCap);
+                            frameVarDataCap[q] = initDataCap;
+                        }
+                        default -> // LAYOUT_FIXED
+                                frameAddrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
                     }
                 }
             }
@@ -1859,28 +1887,35 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     frame.pageSizes[q] = 0;
                     frame.auxPageAddresses[q] = 0;
                     frame.auxPageSizes[q] = 0;
-                } else if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.VARCHAR) {
-                    frame.auxPageAddresses[q] = frameAddrs[q];
-                    frame.auxPageSizes[q] = (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-                    frame.pageAddresses[q] = frameVarDataAddrs[q];
-                    frame.pageSizes[q] = frameVarDataPos[q];
-                } else if (includeIdx >= 0 && (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY)) {
-                    // Write sentinel offset at [count] position
-                    Unsafe.putLong(frameAddrs[q] + (long) count * Long.BYTES, frameVarDataPos[q]);
-                    frame.auxPageAddresses[q] = frameAddrs[q];
-                    frame.auxPageSizes[q] = (long) (count + 1) * Long.BYTES;
-                    frame.pageAddresses[q] = frameVarDataAddrs[q];
-                    frame.pageSizes[q] = frameVarDataPos[q];
-                } else if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.ARRAY) {
-                    frame.auxPageAddresses[q] = frameAddrs[q];
-                    frame.auxPageSizes[q] = (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
-                    frame.pageAddresses[q] = frameVarDataAddrs[q];
-                    frame.pageSizes[q] = frameVarDataPos[q];
                 } else if (includeIdx >= 0) {
-                    frame.pageAddresses[q] = frameAddrs[q];
-                    frame.pageSizes[q] = (long) count * columnSizeBytes[q];
-                    frame.auxPageAddresses[q] = 0;
-                    frame.auxPageSizes[q] = 0;
+                    switch (columnLayouts[q]) {
+                        case CoveredColumnDecoder.LAYOUT_VARCHAR -> {
+                            frame.auxPageAddresses[q] = frameAddrs[q];
+                            frame.auxPageSizes[q] = (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                            frame.pageAddresses[q] = frameVarDataAddrs[q];
+                            frame.pageSizes[q] = frameVarDataPos[q];
+                        }
+                        case CoveredColumnDecoder.LAYOUT_OFFSET -> {
+                            // Write sentinel offset at [count] position
+                            Unsafe.putLong(frameAddrs[q] + (long) count * Long.BYTES, frameVarDataPos[q]);
+                            frame.auxPageAddresses[q] = frameAddrs[q];
+                            frame.auxPageSizes[q] = (long) (count + 1) * Long.BYTES;
+                            frame.pageAddresses[q] = frameVarDataAddrs[q];
+                            frame.pageSizes[q] = frameVarDataPos[q];
+                        }
+                        case CoveredColumnDecoder.LAYOUT_ARRAY -> {
+                            frame.auxPageAddresses[q] = frameAddrs[q];
+                            frame.auxPageSizes[q] = (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
+                            frame.pageAddresses[q] = frameVarDataAddrs[q];
+                            frame.pageSizes[q] = frameVarDataPos[q];
+                        }
+                        default -> { // LAYOUT_FIXED
+                            frame.pageAddresses[q] = frameAddrs[q];
+                            frame.pageSizes[q] = (long) count * columnSizeBytes[q];
+                            frame.auxPageAddresses[q] = 0;
+                            frame.auxPageSizes[q] = 0;
+                        }
+                    }
                 } else if (includeIdx == -1) {
                     frame.pageAddresses[q] = symAddr;
                     frame.pageSizes[q] = (long) count * Integer.BYTES;

@@ -48,7 +48,7 @@ use parquet_format_safe::{
     Encoding as ThriftEncoding, OffsetIndex, PageEncodingStats, PageHeader, PageType, RowGroup,
     Type,
 };
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnNullPolicy, ColumnType, ColumnTypeTag};
 use qdb_parquet_meta::convert::resolve_column_id;
 use rapidhash::RapidHashMap;
 use std::collections::HashSet;
@@ -1646,13 +1646,13 @@ impl ParquetUpdater {
             if field.get_field_info().repetition != Repetition::Required {
                 return false;
             }
-            match col.data_type.tag() {
-                ColumnTypeTag::Symbol => !col.not_null_hint,
-                ColumnTypeTag::Boolean
-                | ColumnTypeTag::Byte
-                | ColumnTypeTag::Short
-                | ColumnTypeTag::Char => true,
-                _ => false,
+            // the types without NULL (BOOLEAN, BYTE, SHORT, CHAR) and a SYMBOL without the not-null
+            // hint were once written Required; they are Optional now
+            match col.data_type.tag().null_policy() {
+                ColumnNullPolicy::None => true,
+                ColumnNullPolicy::Sentinel => {
+                    col.data_type.tag() == ColumnTypeTag::Symbol && !col.not_null_hint
+                }
             }
         };
         let needs_update = partition
@@ -2219,7 +2219,34 @@ fn generate_required_zero_page(
             // Stored as Int32 in Parquet.
             4
         }
-        _ => {
+        // only the types without NULL are written Required; every tag is named, so a new tag
+        // stops the build here
+        ColumnTypeTag::Int
+        | ColumnTypeTag::Long
+        | ColumnTypeTag::Date
+        | ColumnTypeTag::Timestamp
+        | ColumnTypeTag::Float
+        | ColumnTypeTag::Double
+        | ColumnTypeTag::String
+        | ColumnTypeTag::Symbol
+        | ColumnTypeTag::Long256
+        | ColumnTypeTag::GeoByte
+        | ColumnTypeTag::GeoShort
+        | ColumnTypeTag::GeoInt
+        | ColumnTypeTag::GeoLong
+        | ColumnTypeTag::Binary
+        | ColumnTypeTag::Uuid
+        | ColumnTypeTag::Long128
+        | ColumnTypeTag::IPv4
+        | ColumnTypeTag::Varchar
+        | ColumnTypeTag::Array
+        | ColumnTypeTag::Decimal8
+        | ColumnTypeTag::Decimal16
+        | ColumnTypeTag::Decimal32
+        | ColumnTypeTag::Decimal64
+        | ColumnTypeTag::Decimal128
+        | ColumnTypeTag::Decimal256
+        | ColumnTypeTag::VarcharSlice => {
             return Err(fmt_err!(
                 InvalidLayout,
                 "cannot generate null chunk for Required column type {:?}",
@@ -2230,6 +2257,10 @@ fn generate_required_zero_page(
     Ok(vec![0u8; row_count * value_size])
 }
 
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not a tag match (F43): parquet2 PhysicalType"
+)]
 fn build_column_infos_from_qdb_meta<'a>(
     qdb_meta: &'a QdbMeta,
     schema_columns: &'a [parquet2::metadata::ColumnDescriptor],
@@ -2527,6 +2558,10 @@ mod tests {
         .unwrap()
     }
 
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match (F43): parquet2 page Index"
+    )]
     fn exercise_hybrid_rewrite(
         unchanged_count: usize,
         changed_position: usize,
@@ -3356,6 +3391,10 @@ mod tests {
     /// Asserts every column carries both indexes, each OffsetIndex points at the
     /// column's data page, and the timestamp ColumnIndex matches `ts_bounds` with
     /// ASCENDING order. Loads with the page index Required (a mixed file rejects).
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match (F43): parquet2 page Index"
+    )]
     fn assert_fully_indexed(bytes: &[u8], ts_bounds: &[(i64, i64)]) {
         use parquet::arrow::arrow_reader::ArrowReaderOptions;
         use parquet::file::page_index::index::Index;
@@ -3546,6 +3585,10 @@ mod tests {
     /// fresh-encode path (boundary order from sorting_columns) and the copy path
     /// disagreeing on direction.
     #[test]
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match (F43): parquet2 page Index"
+    )]
     fn rewrite_preserves_descending_boundary_order_in_copied_group() -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;
         use parquet::arrow::arrow_reader::ArrowReaderOptions;
@@ -4674,6 +4717,10 @@ mod tests {
         use parquet2::schema::Repetition;
         use parquet2::write::Version;
 
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "test helper: builds only the tags its cases name"
+        )]
         fn build_field(tag: ColumnTypeTag, repetition: Repetition, id: i32) -> ParquetType {
             // Mirrors the field definitions schema.rs builds for these tags
             // (Byte=Int8, Short=Int16, Char=Uint16); only the repetition is

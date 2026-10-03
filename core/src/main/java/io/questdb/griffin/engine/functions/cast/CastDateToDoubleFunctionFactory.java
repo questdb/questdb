@@ -33,6 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastDateToDoubleFunctionFactory implements FunctionFactory {
+    public static double value(long operand) {
+        return (double) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Md)";

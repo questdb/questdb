@@ -27,8 +27,11 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.sql.ColumnVectorDescriptor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -73,11 +76,26 @@ import io.questdb.std.str.Utf8Sequence;
 public class SortKeyEncoder implements QuietCloseable {
     public static final int KEY_PREFIX_BYTES = 16;
     public static final long MAX_ENTRY_HEAP_BYTES = (Integer.toUnsignedLong(-1) - 1) << 3;
+    // The key kinds keyKind() sorts the column types into: how the fixed bytes of a sort column
+    // are normalised into a byte-comparable key, or that the key is variable-length or not encodable.
+    private static final int KIND_DOUBLE = 3;
+    private static final int KIND_FLOAT = 2;
+    private static final int KIND_NONE = -1;
+    private static final int KIND_SIGNED = 0;
+    private static final int KIND_SYMBOL = 5;
+    private static final int KIND_UNSIGNED = 1;
+    private static final int KIND_VARIABLE = 6;
+    private static final int KIND_WIDE = 4;
     private final int[] columnByteWidths;
     private final int[] columnIndices;
+    // per column: the keyKind() of the column type
+    private final int[] columnKeyKinds;
     private final int[] columnTypes;
     private final Decimal128 decimal128Sink;
     private final Decimal256 decimal256Sink;
+    // per column: the arm the per-row encoders take, the opcode of the type's accessor family
+    // (keyKind() encodes only a type that orders like its family), -1 for a column it does not encode
+    private final short[] encodeOpcodes;
     private final boolean hasBorrowedRankMaps;
     private final boolean[] isDesc;
     private final boolean[] isStaticSymbol;
@@ -106,7 +124,9 @@ public class SortKeyEncoder implements QuietCloseable {
     public SortKeyEncoder(RecordMetadata metadata, IntList sortColumnFilter, SortKeyEncoder rankMapOwner) {
         int n = sortColumnFilter.size();
         this.columnIndices = new int[n];
+        this.columnKeyKinds = new int[n];
         this.columnTypes = new int[n];
+        this.encodeOpcodes = new short[n];
         this.isDesc = new boolean[n];
         this.isStaticSymbol = new boolean[n];
         this.offsets = new int[n];
@@ -123,8 +143,10 @@ public class SortKeyEncoder implements QuietCloseable {
                 isDesc[i] = encoded < 0;
                 columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
                 columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
-                hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
-                hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
+                columnKeyKinds[i] = keyKind(columnTypes[i]);
+                encodeOpcodes[i] = columnKeyKinds[i] != KIND_NONE ? PhysicalDescriptor.accessorOpcodeOf(columnTypes[i]) : -1;
+                hasDecimal128 |= encodeOpcodes[i] == ColumnType.DECIMAL128;
+                hasDecimal256 |= encodeOpcodes[i] == ColumnType.DECIMAL256;
                 if (ColumnType.isSymbol(columnTypes[i]) && metadata.isSymbolTableStatic(columnIndices[i])) {
                     isStaticSymbol[i] = true;
                     columnByteWidths[i] = 4;
@@ -151,13 +173,7 @@ public class SortKeyEncoder implements QuietCloseable {
         } else if (columnByteWidths[0] >= 0 && columnByteWidths[0] <= 8) {
             this.keyShape = KeyShape.FIXED8;
         } else {
-            this.keyShape = switch (columnTypes[0]) {
-                case ColumnType.VARCHAR -> KeyShape.VARCHAR;
-                case ColumnType.STRING -> KeyShape.STRING;
-                case ColumnType.SYMBOL -> KeyShape.SYMBOL;
-                case ColumnType.UUID, ColumnType.LONG128, ColumnType.LONG256 -> KeyShape.FIXED_WIDE;
-                default -> KeyShape.GENERIC;
-            };
+            this.keyShape = keyShapeOf(PhysicalDescriptor.accessorOf(columnTypes[0]));
         }
         this.decimal128Sink = hasDecimal128 ? new Decimal128() : null;
         this.decimal256Sink = hasDecimal256 ? new Decimal256() : null;
@@ -529,6 +545,21 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
+    /**
+     * The integral batch loop of a fixed key of this width. BOOLEAN is stored as exactly 0 or 1
+     * (putBool), so xor-ing the raw byte reproduces the per-row getBool() normalization in
+     * encodeFixed8.
+     */
+    private static void batchIntegral(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, int byteWidth, long xorMask) {
+        switch (byteWidth) {
+            case 1 -> batchIntegral1(topK, colAddr, rowIdBase, rows, rowCount, xorMask);
+            case 2 -> batchIntegral2(topK, colAddr, rowIdBase, rows, rowCount, xorMask);
+            case 4 -> batchIntegral4(topK, colAddr, rowIdBase, rows, rowCount, xorMask);
+            case 8 -> batchIntegral8(topK, colAddr, rowIdBase, rows, rowCount, xorMask);
+            default -> throw new AssertionError("unexpected FIXED_8 width: " + byteWidth);
+        }
+    }
+
     private static void batchIntegral1(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, long xorMask) {
         if (rows == null) {
             for (long r = 0; r < rowCount; r++) {
@@ -715,15 +746,15 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putLong(addr + 8, Long.reverseBytes(unsignedKey(lo, desc)));
     }
 
+    /**
+     * The width of a sort column's fixed key bytes, -1 for a variable-length or non-encodable
+     * column. Together with {@link #keyKind} this is the (width, mask) shape of a fixed key: the
+     * batch encoders pick the integral loop by width and the xor mask by kind.
+     */
     private static int fixedColumnByteWidth(int columnType) {
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
-            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR, ColumnType.DECIMAL16 -> 2;
-            case ColumnType.INT, ColumnType.GEOINT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.DECIMAL32 -> 4;
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE, ColumnType.GEOLONG,
-                 ColumnType.DECIMAL64 -> 8;
-            case ColumnType.DECIMAL128, ColumnType.LONG128, ColumnType.UUID -> 16;
-            case ColumnType.DECIMAL256, ColumnType.LONG256 -> 32;
+        return switch (keyKind(columnType)) {
+            case KIND_SIGNED, KIND_UNSIGNED, KIND_FLOAT, KIND_DOUBLE, KIND_WIDE ->
+                    ColumnType.getTypeDriver(columnType).getMovement().size();
             default -> -1;
         };
     }
@@ -786,10 +817,71 @@ public class SortKeyEncoder implements QuietCloseable {
         return Long.compareUnsigned(l0, Numbers.LONG_NULL) < 0;
     }
 
+    /**
+     * The xor mask that turns the raw bytes of an integral key of this width into a
+     * byte-comparable key: the sign bit for a signed kind, nothing for an unsigned kind, and every
+     * bit on top of that for a descending sort.
+     */
+    private static long integralXorMask(int kind, int byteWidth, boolean desc) {
+        final boolean isSigned = kind == KIND_SIGNED;
+        return switch (byteWidth) {
+            case 1 -> isSigned ? (desc ? 0x7FL : 0x80L) : (desc ? 0xFFL : 0L);
+            case 2 -> isSigned ? (desc ? 0x7FFFL : 0x8000L) : (desc ? 0xFFFFL : 0L);
+            case 4 -> isSigned ? (desc ? 0x7FFFFFFFL : 0x80000000L) : (desc ? 0xFFFFFFFFL : 0L);
+            case 8 -> isSigned ? (desc ? Long.MAX_VALUE : Long.MIN_VALUE) : (desc ? -1L : 0L);
+            default -> throw new AssertionError("unexpected FIXED_8 width: " + byteWidth);
+        };
+    }
+
     private static boolean isEncodable(int columnType) {
-        return switch (columnType) {
-            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
-            default -> fixedColumnByteWidth(columnType) >= 0;
+        return keyKind(columnType) != KIND_NONE;
+    }
+
+    /**
+     * The key kind of a sort column type: with {@link #fixedColumnByteWidth} the (width, mask) shape
+     * of a fixed key. CHAR and IPv4 are the unsigned integral kinds; BOOLEAN joins them because it is
+     * stored as 0 or 1. The wide kinds (16 and 32 bytes) and the symbol kind have their own encoders;
+     * the variable kind goes to the key heap; {@link #KIND_NONE} is not encodable.
+     */
+    private static int keyKind(int columnType) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        // a type that reads through a family but orders otherwise has no per-row arm here yet
+        if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
+            return KIND_NONE;
+        }
+        return switch (driver.getArithmetic()) {
+            case I8, I16, I32, I64 -> KIND_SIGNED;
+            case U8, U16, U32 -> KIND_UNSIGNED;
+            case F32 -> KIND_FLOAT;
+            case F64 -> KIND_DOUBLE;
+            case WIDE -> KIND_WIDE;
+            case NONE -> switch (driver.getAccessor()) {
+                case SYMBOL -> KIND_SYMBOL;
+                case STRING, VARCHAR -> KIND_VARIABLE;
+                case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, GEOBYTE, GEOSHORT,
+                     GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                     DECIMAL128, DECIMAL256, INTERVAL -> KIND_NONE;
+            };
+        };
+    }
+
+    /**
+     * The encode fast path of a single sort column wider than 8 bytes or of variable length, by
+     * its accessor family.
+     */
+    private static KeyShape keyShapeOf(PhysicalDescriptor.Accessor accessor) {
+        if (accessor == null) {
+            return KeyShape.GENERIC;
+        }
+        return switch (accessor) {
+            case VARCHAR -> KeyShape.VARCHAR;
+            case STRING -> KeyShape.STRING;
+            case SYMBOL -> KeyShape.SYMBOL;
+            case UUID, LONG128, LONG256 -> KeyShape.FIXED_WIDE;
+            // the wide-fixed decimals have no batch path; the rest cannot reach here (isSupported)
+            case DECIMAL128, DECIMAL256, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, GEOBYTE,
+                 GEOSHORT, GEOINT, GEOLONG, BINARY, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, INTERVAL ->
+                    KeyShape.GENERIC;
         };
     }
 
@@ -1001,7 +1093,7 @@ public class SortKeyEncoder implements QuietCloseable {
                 encodeFixedColumn(record, i, heap.appendAddressFor(columnByteWidths[i]));
             } else {
                 final long remaining = budget - (heap.getAppendOffset() - start);
-                switch (columnTypes[i]) {
+                switch (encodeOpcodes[i]) {
                     case ColumnType.VARCHAR ->
                             appendVarchar(record.getVarcharA(columnIndices[i]), isDesc[i], remaining);
                     case ColumnType.STRING -> appendUtf16(record.getStrA(columnIndices[i]), isDesc[i], remaining);
@@ -1107,7 +1199,7 @@ public class SortKeyEncoder implements QuietCloseable {
 
     private void encodeFixed8(Record record, long destAddr, long rowId) {
         int colIdx = columnIndices[0];
-        int colType = columnTypes[0];
+        short opcode = encodeOpcodes[0];
         boolean desc = isDesc[0];
         int shift = (8 - columnByteWidths[0]) * 8;
         long key;
@@ -1119,7 +1211,7 @@ public class SortKeyEncoder implements QuietCloseable {
             Unsafe.putLong(destAddr + 8, rowId);
             return;
         }
-        key = switch (colType) {
+        key = switch (opcode) {
             case ColumnType.BOOLEAN -> {
                 byte b = record.getBool(colIdx) ? (byte) 1 : (byte) 0;
                 yield (desc ? ~b : b) & 0xFFL;
@@ -1159,7 +1251,7 @@ public class SortKeyEncoder implements QuietCloseable {
                     yield bits >= 0 ? bits ^ Long.MIN_VALUE : ~bits;
                 }
             }
-            default -> throw new AssertionError("unexpected FIXED_8 type: " + ColumnType.nameOf(colType));
+            default -> throw new AssertionError("unexpected FIXED_8 type: " + ColumnType.nameOf(columnTypes[0]));
         } << shift;
         Unsafe.putLong(destAddr, key);
         Unsafe.putLong(destAddr + 8, rowId);
@@ -1173,29 +1265,21 @@ public class SortKeyEncoder implements QuietCloseable {
             // which materializes the converted value through the record accessors.
             return false;
         }
-        final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
+        final long colAddr = frameMemory.getColumnVectorDescriptor().getDataAddress(columnIndices[0]);
         if (colAddr == 0) {
             return false;
         }
         final long rowIdBase = Rows.toRowID(frameIndex, 0);
         final boolean desc = isDesc[0];
-        switch (columnTypes[0]) {
-            case ColumnType.SYMBOL -> batchSymbol(topK, colAddr, rowIdBase, rows, rowCount, desc);
-            case ColumnType.FLOAT -> batchFloat(topK, colAddr, rowIdBase, rows, rowCount, desc);
-            case ColumnType.DOUBLE -> batchDouble(topK, colAddr, rowIdBase, rows, rowCount, desc);
-            // BOOLEAN is stored as exactly 0 or 1 (putBool), so xor-ing the raw byte reproduces the
-            // per-row getBool() normalization in encodeFixed8.
-            case ColumnType.BOOLEAN -> batchIntegral1(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0xFFL : 0L);
-            case ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                    batchIntegral1(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0x7FL : 0x80L);
-            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                    batchIntegral2(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0x7FFFL : 0x8000L);
-            case ColumnType.CHAR -> batchIntegral2(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0xFFFFL : 0L);
-            case ColumnType.INT, ColumnType.GEOINT, ColumnType.DECIMAL32 ->
-                    batchIntegral4(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0x7FFFFFFFL : 0x80000000L);
-            case ColumnType.IPv4 -> batchIntegral4(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0xFFFFFFFFL : 0L);
-            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL64 ->
-                    batchIntegral8(topK, colAddr, rowIdBase, rows, rowCount, desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+        final int kind = columnKeyKinds[0];
+        switch (kind) {
+            case KIND_SYMBOL -> batchSymbol(topK, colAddr, rowIdBase, rows, rowCount, desc);
+            case KIND_FLOAT -> batchFloat(topK, colAddr, rowIdBase, rows, rowCount, desc);
+            case KIND_DOUBLE -> batchDouble(topK, colAddr, rowIdBase, rows, rowCount, desc);
+            case KIND_SIGNED, KIND_UNSIGNED -> {
+                final int byteWidth = columnByteWidths[0];
+                batchIntegral(topK, colAddr, rowIdBase, rows, rowCount, byteWidth, integralXorMask(kind, byteWidth, desc));
+            }
             default -> throw new AssertionError("unexpected FIXED_8 type: " + ColumnType.nameOf(columnTypes[0]));
         }
         return true;
@@ -1211,7 +1295,7 @@ public class SortKeyEncoder implements QuietCloseable {
             encodeUnsignedRank(addr, rank, columnByteWidths[i], desc);
             return;
         }
-        switch (columnTypes[i]) {
+        switch (encodeOpcodes[i]) {
             case ColumnType.BOOLEAN -> encodeBoolean(addr, record.getBool(colIdx), desc);
             case ColumnType.BYTE -> encodeByte(addr, record.getByte(colIdx), desc);
             case ColumnType.GEOBYTE -> encodeByte(addr, record.getGeoByte(colIdx), desc);
@@ -1267,7 +1351,7 @@ public class SortKeyEncoder implements QuietCloseable {
             // not this column's current wide-fixed type. Fall back to the per-row path.
             return false;
         }
-        final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
+        final long colAddr = frameMemory.getColumnVectorDescriptor().getDataAddress(columnIndices[0]);
         if (colAddr == 0) {
             // Column top: every frame row is NULL for this column.
             return false;
@@ -1275,7 +1359,7 @@ public class SortKeyEncoder implements QuietCloseable {
         final long rowIdBase = Rows.toRowID(frameIndex, 0);
         final int rowIdOffset = columnByteWidths[0];
         final boolean desc = isDesc[0];
-        switch (columnTypes[0]) {
+        switch (encodeOpcodes[0]) {
             case ColumnType.UUID -> batchUuid(topK, colAddr, rowIdBase, rowIdOffset, rows, rowCount, desc);
             case ColumnType.LONG128 -> batchLong128(topK, colAddr, rowIdBase, rowIdOffset, rows, rowCount, desc);
             case ColumnType.LONG256 -> batchLong256(topK, colAddr, rowIdBase, rowIdOffset, rows, rowCount, desc);
@@ -1310,12 +1394,13 @@ public class SortKeyEncoder implements QuietCloseable {
         if (frameMemory.getSourceColumnType(columnIndices[0]) != -1) {
             return false;
         }
-        final long dataAddr = frameMemory.getPageAddress(columnIndices[0]);
+        final ColumnVectorDescriptor columnVectors = frameMemory.getColumnVectorDescriptor();
+        final long dataAddr = columnVectors.getDataAddress(columnIndices[0]);
         if (dataAddr == 0) {
             // Column top: every frame row is NULL for this column.
             return false;
         }
-        final long auxAddr = frameMemory.getAuxPageAddress(columnIndices[0]);
+        final long auxAddr = columnVectors.getAuxAddress(columnIndices[0]);
         final long rowIdBase = Rows.toRowID(frameIndex, 0);
         if (rows == null) {
             for (long r = 0; r < rowCount; r++) {
@@ -1344,12 +1429,13 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private boolean encodeVarcharBatch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK, PageFrameMemoryRecord record) {
-        final long auxAddr = frameMemory.getAuxPageAddress(columnIndices[0]);
+        final ColumnVectorDescriptor columnVectors = frameMemory.getColumnVectorDescriptor();
+        final long auxAddr = columnVectors.getAuxAddress(columnIndices[0]);
         if (auxAddr == 0) {
             return false;
         }
         final boolean isParquet = frameMemory.getFrameFormat() == PartitionFormat.PARQUET;
-        final long dataAddr = isParquet ? 0 : frameMemory.getPageAddress(columnIndices[0]);
+        final long dataAddr = isParquet ? 0 : columnVectors.getDataAddress(columnIndices[0]);
         final long rowIdBase = Rows.toRowID(frameIndex, 0);
         if (rows == null) {
             for (long r = 0; r < rowCount; r++) {

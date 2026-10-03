@@ -24,16 +24,15 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntObjHashMap;
-import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 // ColumnType layout - 32bit
 //
@@ -71,6 +70,9 @@ public final class ColumnType {
     public static final int MIGRATION_VERSION = 429;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
+    // what nameOf answers for a type that has no name: a deleted column's type, an encoding
+    // nothing produces, a pseudo tag without a name
+    public static final String UNKNOWN_NAME = "unknown";
     // our type system is absolutely ordered ranging
     // - from UNDEFINED: index 0, represents lack of type, an internal parsing concept.
     // - to NULL: index must be last, other parts of the codebase rely on this fact.
@@ -136,11 +138,22 @@ public final class ColumnType {
     public static final short INTERVAL = PARAMETER + 1;        // = 39;
     public static final short VARCHAR_SLICE = INTERVAL + 1;    // = 40;
     public static final short NULL = VARCHAR_SLICE + 1;        // = 41; ALWAYS the last
-    private static final short[] TYPE_SIZE = new short[NULL + 1];
-    private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
+    // The highest tag number. Every table indexed by tag is sized MAX_TAG + 1 and every loop over
+    // the tag space runs to MAX_TAG inclusive; nothing else may derive a bound from NULL's number.
+    // The tag field is 8 bits wide and array element tags are stored in a 6-bit field, so
+    // ColumnTypeTest pins MAX_TAG < 128 and every array element tag < 64.
+    public static final short MAX_TAG = NULL;
+    // Pseudo tags resolve overloads or mark parser state and have no type definition (FR-007),
+    // so their size and name facts live here, indexed by tag; every real tag's facts come from
+    // its definition. A census-listed identity site.
+    private static final boolean[] PSEUDO_TAG = new boolean[MAX_TAG + 1];
+    private static final String[] PSEUDO_TAG_NAME = new String[MAX_TAG + 1];
+    private static final byte[] PSEUDO_TAG_POW2_SIZE = new byte[MAX_TAG + 1];
+    private static final byte[] PSEUDO_TAG_SIZE = new byte[MAX_TAG + 1];
     // slightly bigger than needed to make it a power of 2
-    private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
-    private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+    private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(MAX_TAG) + 1.0);
+    // pairwise relations keyed (fromTag, toTag), each filled at init from a per-tag row switch
+    private static final int RELATION_N = MAX_TAG + 1;
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
@@ -158,7 +171,6 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_MASK = ARRAY_NDIMS_LIMIT - 1;
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
-    private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_ARRAY_WEAK_DIMS = (1 << 19);
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
@@ -342,14 +354,19 @@ public final class ColumnType {
         return ((scale & 0xFF) << 18) | ((precision & 0xFF) << 8) | tag;
     }
 
+    /**
+     * The var-size storage API of a column type: the definition of its tag when that definition
+     * is on the var-size tier ({@link PhysicalDescriptor.Movement#VAR}), for every encoding of
+     * the tag. Throws {@link CairoException} for any other type.
+     */
     public static ColumnTypeDriver getDriver(int columnType) {
-        return switch (tagOf(columnType)) {
-            case STRING -> StringTypeDriver.INSTANCE;
-            case BINARY -> BinaryTypeDriver.INSTANCE;
-            case VARCHAR, VARCHAR_SLICE -> VarcharTypeDriver.INSTANCE;
-            case ARRAY -> ArrayTypeDriver.INSTANCE;
-            default -> throw CairoException.critical(0).put("no driver for type: ").put(columnType);
-        };
+        final short tag = tagOf(columnType);
+        if (tag >= 0 && tag <= MAX_TAG && Widths.VAR_SIZE[tag]) {
+            // every definition on the var-size tier implements the var-size storage API
+            // (TypeDriverTest)
+            return (ColumnTypeDriver) TypeDrivers.get(tag);
+        }
+        throw CairoException.critical(0).put("no driver for type: ").put(columnType);
     }
 
     public static int getGeoHashBits(int type) {
@@ -367,6 +384,26 @@ public final class ColumnType {
         int rightPriority = getTimestampTypePriority(right);
         // Return the timestamp type with higher precision using explicit priority
         return leftPriority >= rightPriority ? left : right;
+    }
+
+    /**
+     * The type definition of a real type, or null for a pseudo type (and for an encoding that is
+     * no tag). VARCHAR_SLICE answers VARCHAR's definition. Code that must refuse a pseudo type
+     * with an error calls {@link #getTypeDriver(int)} instead.
+     */
+    public static @Nullable TypeDriver findTypeDriver(int columnType) {
+        return TypeDrivers.find(columnType);
+    }
+
+    /**
+     * The per-type driver of a column type: one instance per non-pseudo tag, see
+     * {@link TypeDriver}. Fetch it once per column, batch or query, not per value. Throws
+     * {@link CairoException} for pseudo tags, which have no driver. Unlike
+     * {@link #getDriver(int)}, which serves the var-size storage API only, this is total
+     * over every type a column or a value can have.
+     */
+    public static TypeDriver getTypeDriver(int columnType) {
+        return TypeDrivers.get(columnType);
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
@@ -525,13 +562,17 @@ public final class ColumnType {
     }
 
     public static boolean isFixedSize(int columnType) {
-        // specified explicitly
-        return switch (columnType) {
-            case INT, LONG, BOOLEAN, BYTE, TIMESTAMP_MICRO, TIMESTAMP_NANO, DATE, DOUBLE, CHAR, SHORT, FLOAT, LONG128,
-                 LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                 DECIMAL128, DECIMAL256 -> true;
-            default -> false;
-        };
+        final short tag = tagOf(columnType);
+        // Quirk is-fixed-size-exact-value: the answer goes by exact value, as the switch this
+        // replaces did, so an encoded type (geohash bits, decimal precision and scale, the
+        // designated flag) reads false, and so do SYMBOL and INTERVAL, whose values have a fixed
+        // width; TIMESTAMP_NS, the one encoded type the switch listed, reads true
+        if (tag < 0 || tag > MAX_TAG
+                || (columnType != tag && columnType != TIMESTAMP_NANO)
+                || tag == SYMBOL || tag == INTERVAL) {
+            return false;
+        }
+        return Widths.FIXED_SIZE[tag];
     }
 
     public static boolean isGenericType(int columnType) {
@@ -550,23 +591,31 @@ public final class ColumnType {
         return columnType == ColumnType.INT;
     }
 
+    /**
+     * Whether values of this type are integers: its definition declares the INT relation kind
+     * (BYTE, SHORT, INT and LONG). The relation kind is the logical value class, so DATE,
+     * TIMESTAMP, the geohashes and the narrow decimals, which share the integer arithmetic
+     * tiers, are not integers here. False for a pseudo type.
+     */
+    public static boolean isIntegral(int columnType) {
+        return RelationRules.kind(tagOf(columnType)) == RelationKind.INT;
+    }
+
+    /**
+     * Whether values of this type are numbers: integers ({@link #isIntegral(int)}) or floats,
+     * the FLOAT relation kind (FLOAT and DOUBLE). False for a pseudo type.
+     */
+    public static boolean isIntegralOrFloat(int columnType) {
+        final RelationKind kind = RelationRules.kind(tagOf(columnType));
+        return kind == RelationKind.INT || kind == RelationKind.FLOAT;
+    }
+
     public static boolean isInterval(int columnType) {
         return tagOf(columnType) == INTERVAL;
     }
 
     public static boolean isNull(int columnType) {
         return columnType == NULL;
-    }
-
-    /**
-     * Returns true for fixed-size types that have no dedicated NULL sentinel value, i.e. every
-     * bit pattern is a valid value (BOOLEAN, BYTE, SHORT, CHAR). Such columns cannot represent
-     * NULL on the data vector, so a column top over them reads as leading default values rather
-     * than NULLs.
-     */
-    public static boolean isNoNullSentinelFixedType(int columnType) {
-        final int tag = tagOf(columnType);
-        return tag == BOOLEAN || tag == BYTE || tag == SHORT || tag == CHAR;
     }
 
     public static boolean isParseableType(int colType) {
@@ -633,12 +682,10 @@ public final class ColumnType {
         final short fromTag = tagOf(fromType);
         final short toTag = tagOf(toType);
         return (fromTag == toTag && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
-                || isBuiltInWideningCast(fromType, toType)
-                || isStringCast(fromType, toType)
-                || isVarcharCast(fromType, toType)
-                || isGeoHashWideningCast(fromType, toType)
-                || isImplicitParsingCast(fromType, toType)
-                || isIPv4Cast(fromType, toType)
+                || isBuiltInWideningCast0(fromTag, toTag)
+                || (isWideningCast0(fromTag, toTag)
+                // the one cell with a facet beyond the tag: a CHAR parses into a geohash of up to 5 bits
+                && (fromTag != CHAR || toTag != GEOBYTE || getGeoHashBits(toType) < 6))
                 || isArrayCast(fromType, toType)
                 || (isDecimalType(toTag) && isDecimalType(fromTag));
     }
@@ -648,11 +695,11 @@ public final class ColumnType {
     }
 
     public static boolean isVarSize(int columnType) {
-        return columnType == STRING
-                || columnType == BINARY
-                || columnType == VARCHAR
-                || columnType == VARCHAR_SLICE
-                || tagOf(columnType) == ARRAY;
+        final short tag = tagOf(columnType);
+        // Quirk is-var-size-exact-value: STRING, BINARY, VARCHAR and VARCHAR_SLICE answer for
+        // their bare value only, as the comparisons this replaces did, while ARRAY answers for
+        // every encoding of its tag
+        return tag >= 0 && tag <= MAX_TAG && Widths.VAR_SIZE[tag] && (columnType == tag || tag == ARRAY);
     }
 
     public static boolean isVarchar(int columnType) {
@@ -682,11 +729,21 @@ public final class ColumnType {
     }
 
     public static String nameOf(int columnType) {
+        // the default-string swap writes its names here; it is dead code while
+        // ALLOW_DEFAULT_STRING_CHANGE is false, so the map stays empty
         final int index = typeNameMap.keyIndex(columnType);
-        if (index > -1) {
-            return "unknown";
+        if (index < 0) {
+            return typeNameMap.valueAtQuick(index);
         }
-        return typeNameMap.valueAtQuick(index);
+        final short tag = tagOf(columnType);
+        if (tag < 0 || tag > MAX_TAG) {
+            return UNKNOWN_NAME;
+        }
+        if (PSEUDO_TAG[tag]) {
+            final String name = PSEUDO_TAG_NAME[tag];
+            return name != null && columnType == tag ? name : UNKNOWN_NAME;
+        }
+        return TypeDrivers.get(columnType).getName(columnType);
     }
 
     public static int overloadDistance(short from, short to) {
@@ -695,11 +752,12 @@ public final class ColumnType {
         // Functions cannot accept UNDEFINED type (signature is not supported)
         // this check is just in case
         assert toTag > UNDEFINED : "Undefined not supported in overloads";
-        return OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag];
+        return Relations.OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag];
     }
 
     public static int pow2SizeOf(int columnType) {
-        return TYPE_SIZE_POW2[tagOf(columnType)];
+        // a deleted column's type reads past the table, as it always did
+        return Widths.POW2_SIZE[tagOf(columnType)];
     }
 
     public static int pow2SizeOfBits(int bits) {
@@ -720,15 +778,15 @@ public final class ColumnType {
     }
 
     public static int sizeOf(int columnType) {
-        short tag = tagOf(columnType);
-        if (tag < TYPE_SIZE.length) {
-            return sizeOfTag(tag);
+        final short tag = tagOf(columnType);
+        if (tag > MAX_TAG) {
+            return -1;
         }
-        return -1;
+        return sizeOfTag(tag);
     }
 
     public static int sizeOfTag(short tag) {
-        return TYPE_SIZE[tag];
+        return Widths.SIZE[tag];
     }
 
     public static short tagOf(int type) {
@@ -748,13 +806,12 @@ public final class ColumnType {
 
     private static void addArrayTypeName(StringSink sink, short type) {
         sink.clear();
-        sink.put(nameOf(type));
+        // the parser's names; ArrayTypeDriver names the same types
+        sink.put(ColumnTypeTag.of(type).name());
         for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
             sink.put("[]");
             int arrayType = encodeArrayType(type, d, false);
-            String name = sink.toString();
-            typeNameMap.put(arrayType, name);
-            nameTypeMap.put(name, arrayType);
+            nameTypeMap.put(sink.toString(), arrayType);
         }
     }
 
@@ -776,92 +833,19 @@ public final class ColumnType {
     }
 
     private static boolean isBuiltInWideningCast0(short fromTag, short toTag) {
-        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE && fromTag < toTag)
-                && (fromTag != BYTE || (toTag != CHAR && toTag != DATE && toTag != TIMESTAMP)) // exception #1: cannot widen byte to char/temporal
-                && (fromTag != SHORT || (toTag != DATE && toTag != TIMESTAMP)) // exception #2: cannot widen short to temporal
-                && (fromTag != CHAR || (toTag != DATE && toTag != TIMESTAMP)); // exception #3: cannot widen char to temporal
-
-        return isNumericWidening
-                || fromTag == NULL
-                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
-                || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
-                || ((fromTag == STRING || fromTag == VARCHAR || fromTag == VARCHAR_SLICE) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
+        return fromTag == NULL || isInRelation(Relations.BUILT_IN_WIDENING, fromTag, toTag);
     }
 
-    private static boolean isGeoHashWideningCast(int fromType, int toType) {
-        final int toTag = tagOf(toType);
-        final int fromTag = tagOf(fromType);
-        // Deliberate fallthrough in all case branches!
-        switch (fromTag) {
-            case GEOLONG:
-                if (toTag == GEOINT) {
-                    return true;
-                }
-            case GEOINT:
-                if (toTag == GEOSHORT) {
-                    return true;
-                }
-            case GEOSHORT:
-                if (toTag == GEOBYTE) {
-                    return true;
-                }
-            default:
-                return false;
-        }
-    }
-
-    private static boolean isIPv4Cast(int fromType, int toType) {
-        return (fromType == STRING || fromType == VARCHAR || fromType == VARCHAR_SLICE) && toType == IPv4;
-    }
-
-    private static boolean isImplicitParsingCast(int fromType, int toType) {
-        final int toTag = tagOf(toType);
-        return switch (fromType) {
-            case CHAR -> (toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (toTag == DATE || toTag == TIMESTAMP);
-            case STRING, VARCHAR, VARCHAR_SLICE -> switch (toTag) {
-                case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
-                default -> false;
-            };
-            case BYTE -> toTag == CHAR || toTag == DATE || toTag == TIMESTAMP;
-            case SHORT -> toTag == DATE || toTag == TIMESTAMP;
-            case SYMBOL -> toTag == TIMESTAMP;
-            default -> false;
-        };
+    private static boolean isInRelation(boolean[] relation, short fromTag, short toTag) {
+        return fromTag >= 0 && fromTag <= MAX_TAG && toTag >= 0 && toTag <= MAX_TAG && relation[fromTag * RELATION_N + toTag];
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
-        final boolean isTargetDecimal = isDecimal(toType);
-        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
-                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || isTimestamp(toType)))
-                || (fromType == LONG && toType >= BYTE && toType <= INT)
-                || (fromType == DATE && toType >= BYTE && toType <= INT)
-                || (isTimestamp(fromType) && ((toType >= BYTE && toType <= INT) || toType == DATE))
-                || (fromType == INT && toType >= BYTE && toType <= SHORT)
-                || (fromType == SHORT && toType == BYTE)
-                || (fromType == CHAR && toType == BYTE)
-                || (fromType >= BYTE && fromType <= LONG && isTargetDecimal)
-                || isStringyType(fromType) && (
-                toType == BYTE ||
-                        toType == SHORT ||
-                        toType == INT ||
-                        toType == LONG ||
-                        toType == DATE ||
-                        toType == TIMESTAMP_MICRO ||
-                        toType == TIMESTAMP_NANO ||
-                        toType == FLOAT ||
-                        toType == DOUBLE ||
-                        toType == CHAR ||
-                        toType == UUID ||
-                        ColumnType.isArray(toType) ||
-                        isTargetDecimal);
+        return isInRelation(Relations.NARROWING, tagOf(fromType), tagOf(toType));
     }
 
-    private static boolean isStringCast(int fromType, int toType) {
-        return (fromType == STRING && toType == SYMBOL)
-                || (fromType == SYMBOL && toType == STRING)
-                || (fromType == CHAR && toType == SYMBOL)
-                || (fromType == CHAR && toType == STRING)
-                || (fromType == UUID && toType == STRING);
+    private static boolean isWideningCast0(short fromTag, short toTag) {
+        return isInRelation(Relations.WIDENING_CAST, fromTag, toTag);
     }
 
     // Both arrays with undefined element types and arrays with weak dimensionality are considered undefined.
@@ -870,145 +854,96 @@ public final class ColumnType {
                 && (decodeArrayElementType(columnType) == UNDEFINED || (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0);
     }
 
-    private static boolean isVarcharCast(int fromType, int toType) {
-        return (fromType == STRING && toType == VARCHAR)
-                || (fromType == VARCHAR && toType == SYMBOL)
-                || (fromType == VARCHAR && toType == STRING)
-                || (fromType == SYMBOL && toType == VARCHAR)
-                || (fromType == CHAR && toType == VARCHAR)
-                || (fromType == UUID && toType == VARCHAR)
-                || (fromType == VARCHAR_SLICE && toType == VARCHAR)
-                || (fromType == VARCHAR_SLICE && toType == STRING)
-                || (fromType == VARCHAR_SLICE && toType == SYMBOL);
-    }
-
     private static int mkGeoHashType(int bits, short baseType) {
         return (baseType & ~(0xFF << BYTE_BITS)) | (bits << BYTE_BITS) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
 
-    static {
-        assert MIGRATION_VERSION >= VERSION;
-        // Overload priority is used (indirectly) to route argument type to correct function signature.
-        // The argument type keys the array (see comments in the array initialized). This type has to match
-        // the numeric value of the type text. Values are then picked in left-to-right order. Signature types
-        // on the left are used only if none of signature types on the right exist.
-        //
-        // All types must be mentioned at all times.
-        //
-        // Note that the overload rule here must align with the corresponding function implementation, or specific
-        // rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
-        // For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
-        // apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
-        // all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
-        // overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
+    private static void pseudoTag(short tag, int size, int pow2Size, String name) {
+        PSEUDO_TAG[tag] = true;
+        PSEUDO_TAG_SIZE[tag] = (byte) size;
+        PSEUDO_TAG_POW2_SIZE[tag] = (byte) pow2Size;
+        PSEUDO_TAG_NAME[tag] = name;
+    }
 
-        OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-                /* 1  BOOLEAN    */, {BOOLEAN}
-                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL}
-                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL}
-                /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL}
-                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL}
-                /* 7  DATE       */, {DATE, TIMESTAMP, LONG, DOUBLE}
-                /* 8  TIMESTAMP  */, {TIMESTAMP, LONG, DATE, DOUBLE}
-                /* 9  FLOAT      */, {FLOAT, DOUBLE}
-                /* 10 DOUBLE     */, {DOUBLE}
-                /* 11 STRING     */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 12 SYMBOL     */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
-                /* 13 LONG256    */, {LONG256, LONG}
-                /* 14 GEOBYTE    */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 15 GEOSHORT   */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 16 GEOINT     */, {GEOINT, GEOLONG, GEOHASH}
-                /* 17 GEOLONG    */, {GEOLONG, GEOHASH}
-                /* 18 BINARY     */, {BINARY}
-                /* 19 UUID       */, {UUID, STRING}
-                /* 20 CURSOR     */, {CURSOR}
-                /* 21 unused     */, {}
-                /* 22 unused     */, {}
-                /* 23 unused     */, {}
-                /* 24 LONG128    */, {LONG128}
-                /* 25 IPv4       */, {IPv4, STRING, VARCHAR}
-                /* 26 VARCHAR    */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 27 ARRAY      */, {ARRAY}
-                /* 28 DECIMAL8   */, {DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 29 DECIMAL16  */, {DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 30 DECIMAL32  */, {DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 31 DECIMAL64  */, {DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 32 DECIMAL128 */, {DECIMAL128, DECIMAL256, DECIMAL}
-                /* 33 DECIMAL256 */, {DECIMAL256, DECIMAL}
-                /* 34 DECIMAL    */, {}
-                /* 35 unused     */, {}
-                /* 36 unused     */, {}
-                /* 37 unused     */, {}
-                /* 38 unused     */, {}
-                /* 39 INTERVAL   */, {INTERVAL, STRING}
-                /* 40 VARCHAR_SLICE */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 41 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
-        };
-        for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
-            for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
-                short value = OVERLOAD_NONE;
-                short[] priority = OVERLOAD_PRIORITY[fromTag];
-                for (short i = 0; i < priority.length; i++) {
-                    if (priority[i] == toTag) {
-                        value = i;
-                        break;
-                    }
-                }
-                OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag] = value;
+
+    /**
+     * The pairwise relation tables, filled from {@link RelationRules} on first use. The rules read
+     * the type definitions, which {@link ColumnType}'s static initializer must not reach, so the
+     * tables live in their own holder class.
+     */
+    private static final class Relations {
+        private static final boolean[] BUILT_IN_WIDENING = new boolean[RELATION_N * RELATION_N];
+        private static final boolean[] NARROWING = new boolean[RELATION_N * RELATION_N];
+        private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+        private static final boolean[] WIDENING_CAST = new boolean[RELATION_N * RELATION_N];
+
+        private static void fillRelation(boolean[] relation, short fromTag, short[] toTags) {
+            for (short toTag : toTags) {
+                relation[fromTag * RELATION_N + toTag] = true;
             }
         }
-        // When null used as func arg, default to string as function factory arg to avoid weird behaviour
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
-        // Do the same for symbol -> avoids weird null behaviour
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
-        // A NULL literal is a scalar, never a cursor (scalar sub-query). Without this a bare
-        // `null` matches a CURSOR argument at distance 0, so `col <= null` (i.e. not(col > null))
-        // binds to a `>(?C)` cursor-comparison factory and blows up calling getRecordCursorFactory()
-        // on the NULL constant. Force no overload so scalar null-comparison factories are used.
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + CURSOR] = OVERLOAD_NONE;
+
+        static {
+            // Overload priority routes an argument type to a function signature: the implicit-cast
+            // list of fromTag names the signature types a value may be passed as, best first, and the
+            // position in the list is the distance. The other pairwise relations derive from the same
+            // facts by the rules.
+            for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+                final short fromTag = tag.code();
+                if (fromTag < 0) {
+                    continue;
+                }
+                fillRelation(BUILT_IN_WIDENING, fromTag, RelationRules.builtInWidening(fromTag));
+                fillRelation(WIDENING_CAST, fromTag, RelationRules.wideningCast(fromTag));
+                fillRelation(NARROWING, fromTag, RelationRules.narrowing(fromTag));
+                if (fromTag == NULL) {
+                    // NULL to any is 0 (the array default), except the three cells set below
+                    continue;
+                }
+                final short[] priority = RelationRules.implicitCasts(fromTag);
+                for (short toTag = BOOLEAN; toTag <= MAX_TAG; toTag++) {
+                    short value = OVERLOAD_NONE;
+                    for (short i = 0; i < priority.length; i++) {
+                        if (priority[i] == toTag) {
+                            value = i;
+                            break;
+                        }
+                    }
+                    OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag] = value;
+                }
+            }
+            // When null used as func arg, default to string as function factory arg to avoid weird behaviour
+            OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
+            // Do the same for symbol -> avoids weird null behaviour
+            OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
+            // A NULL literal is a scalar, never a cursor (scalar sub-query). Without this a bare
+            // `null` matches a CURSOR argument at distance 0, so `col <= null` (i.e. not(col > null))
+            // binds to a `>(?C)` cursor-comparison factory and blows up calling getRecordCursorFactory()
+            // on the NULL constant. Force no overload so scalar null-comparison factories are used.
+            OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + CURSOR] = OVERLOAD_NONE;
+        }
+    }
+
+    static {
+        assert MIGRATION_VERSION >= VERSION;
 
         GEO_TYPE_SIZE_POW2 = new int[GEOLONG_MAX_BITS + 1];
         for (int bits = 1; bits <= GEOLONG_MAX_BITS; bits++) {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
 
-        typeNameMap.put(BOOLEAN, "BOOLEAN");
-        typeNameMap.put(BYTE, "BYTE");
-        typeNameMap.put(DOUBLE, "DOUBLE");
-        typeNameMap.put(FLOAT, "FLOAT");
-        typeNameMap.put(INT, "INT");
-        typeNameMap.put(LONG, "LONG");
-        typeNameMap.put(SHORT, "SHORT");
-        typeNameMap.put(CHAR, "CHAR");
-        typeNameMap.put(STRING, "STRING");
-        typeNameMap.put(VARCHAR, "VARCHAR");
-        typeNameMap.put(ARRAY, "ARRAY");
-        typeNameMap.put(SYMBOL, "SYMBOL");
-        typeNameMap.put(BINARY, "BINARY");
-        typeNameMap.put(DATE, "DATE");
-        typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP_MICRO, "TIMESTAMP");
-        typeNameMap.put(TIMESTAMP_NANO, "TIMESTAMP_NS");
-        typeNameMap.put(LONG256, "LONG256");
-        typeNameMap.put(UUID, "UUID");
-        typeNameMap.put(LONG128, "LONG128");
-        typeNameMap.put(CURSOR, "CURSOR");
-        typeNameMap.put(RECORD, "RECORD");
-        typeNameMap.put(VAR_ARG, "VARARG");
-        typeNameMap.put(GEOHASH, "GEOHASH");
-        typeNameMap.put(REGCLASS, "regclass");
-        typeNameMap.put(REGPROCEDURE, "regprocedure");
-        typeNameMap.put(ARRAY_STRING, "text[]");
-        typeNameMap.put(IPv4, "IPv4");
-        typeNameMap.put(INTERVAL, "INTERVAL");
-        typeNameMap.put(INTERVAL_RAW, "INTERVAL");
-        typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
-        typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
-        typeNameMap.put(DECIMAL, "DECIMAL");
-        typeNameMap.put(VARCHAR_SLICE, "VARCHAR_SLICE");
-        typeNameMap.put(NULL, "NULL");
+        // the pseudo tags' facts: size, log2 size, name (null: none)
+        pseudoTag(UNDEFINED, -1, -1, null);
+        pseudoTag(CURSOR, -1, -1, "CURSOR");
+        pseudoTag(VAR_ARG, -1, -1, "VARARG");
+        pseudoTag(RECORD, -1, -1, "RECORD");
+        pseudoTag(GEOHASH, 0, 0, "GEOHASH");
+        pseudoTag(DECIMAL, 0, 0, "DECIMAL");
+        pseudoTag(REGCLASS, 0, 0, "regclass");
+        pseudoTag(REGPROCEDURE, 0, 0, "regprocedure");
+        pseudoTag(ARRAY_STRING, 0, 0, "text[]");
+        pseudoTag(PARAMETER, -1, -1, "PARAMETER");
+        pseudoTag(NULL, 0, -1, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
 //        arrayTypeSet.add(BYTE);
@@ -1067,87 +1002,8 @@ public final class ColumnType {
             } else {
                 sink.put("GEOHASH(").put(b / 5).put("c)");
             }
-            String name = sink.toString();
-            int type = getGeoHashTypeWithBits(b);
-            typeNameMap.put(type, name);
-            nameTypeMap.put(name, type);
+            nameTypeMap.put(sink.toString(), getGeoHashTypeWithBits(b));
         }
-
-        TYPE_SIZE_POW2[UNDEFINED] = -1;
-        TYPE_SIZE_POW2[BOOLEAN] = 0;
-        TYPE_SIZE_POW2[BYTE] = 0;
-        TYPE_SIZE_POW2[SHORT] = 1;
-        TYPE_SIZE_POW2[CHAR] = 1;
-        TYPE_SIZE_POW2[FLOAT] = 2;
-        TYPE_SIZE_POW2[INT] = 2;
-        TYPE_SIZE_POW2[IPv4] = 2;
-        TYPE_SIZE_POW2[SYMBOL] = 2;
-        TYPE_SIZE_POW2[DOUBLE] = 3;
-        TYPE_SIZE_POW2[STRING] = -1;
-        TYPE_SIZE_POW2[VARCHAR] = -1;
-        TYPE_SIZE_POW2[ARRAY] = -1;
-        TYPE_SIZE_POW2[LONG] = 3;
-        TYPE_SIZE_POW2[DATE] = 3;
-        TYPE_SIZE_POW2[TIMESTAMP] = 3;
-        TYPE_SIZE_POW2[LONG256] = 5;
-        TYPE_SIZE_POW2[GEOBYTE] = 0;
-        TYPE_SIZE_POW2[GEOSHORT] = 1;
-        TYPE_SIZE_POW2[GEOINT] = 2;
-        TYPE_SIZE_POW2[GEOLONG] = 3;
-        TYPE_SIZE_POW2[BINARY] = -1;
-        TYPE_SIZE_POW2[PARAMETER] = -1;
-        TYPE_SIZE_POW2[CURSOR] = -1;
-        TYPE_SIZE_POW2[VAR_ARG] = -1;
-        TYPE_SIZE_POW2[RECORD] = -1;
-        TYPE_SIZE_POW2[NULL] = -1;
-        TYPE_SIZE_POW2[LONG128] = 4;
-        TYPE_SIZE_POW2[UUID] = 4;
-        TYPE_SIZE_POW2[DECIMAL8] = 0;
-        TYPE_SIZE_POW2[DECIMAL16] = 1;
-        TYPE_SIZE_POW2[DECIMAL32] = 2;
-        TYPE_SIZE_POW2[DECIMAL64] = 3;
-        TYPE_SIZE_POW2[DECIMAL128] = 4;
-        TYPE_SIZE_POW2[DECIMAL256] = 5;
-        TYPE_SIZE_POW2[INTERVAL] = 4;
-        TYPE_SIZE_POW2[VARCHAR_SLICE] = VARCHAR_AUX_SHL;
-
-        TYPE_SIZE[UNDEFINED] = -1;
-        TYPE_SIZE[BOOLEAN] = Byte.BYTES;
-        TYPE_SIZE[BYTE] = Byte.BYTES;
-        TYPE_SIZE[SHORT] = Short.BYTES;
-        TYPE_SIZE[CHAR] = Character.BYTES;
-        TYPE_SIZE[FLOAT] = Float.BYTES;
-        TYPE_SIZE[INT] = Integer.BYTES;
-        TYPE_SIZE[IPv4] = Integer.BYTES;
-        TYPE_SIZE[SYMBOL] = Integer.BYTES;
-        TYPE_SIZE[STRING] = 0;
-        TYPE_SIZE[VARCHAR] = 0;
-        TYPE_SIZE[ARRAY] = 0;
-        TYPE_SIZE[DOUBLE] = Double.BYTES;
-        TYPE_SIZE[LONG] = Long.BYTES;
-        TYPE_SIZE[DATE] = Long.BYTES;
-        TYPE_SIZE[TIMESTAMP] = Long.BYTES;
-        TYPE_SIZE[LONG256] = Long256.BYTES;
-        TYPE_SIZE[GEOBYTE] = Byte.BYTES;
-        TYPE_SIZE[GEOSHORT] = Short.BYTES;
-        TYPE_SIZE[GEOINT] = Integer.BYTES;
-        TYPE_SIZE[GEOLONG] = Long.BYTES;
-        TYPE_SIZE[BINARY] = 0;
-        TYPE_SIZE[PARAMETER] = -1;
-        TYPE_SIZE[CURSOR] = -1;
-        TYPE_SIZE[VAR_ARG] = -1;
-        TYPE_SIZE[RECORD] = -1;
-        TYPE_SIZE[UUID] = 2 * Long.BYTES;
-        TYPE_SIZE[NULL] = 0;
-        TYPE_SIZE[LONG128] = 2 * Long.BYTES;
-        TYPE_SIZE[DECIMAL8] = Byte.BYTES;
-        TYPE_SIZE[DECIMAL16] = Short.BYTES;
-        TYPE_SIZE[DECIMAL32] = Integer.BYTES;
-        TYPE_SIZE[DECIMAL64] = Long.BYTES;
-        TYPE_SIZE[DECIMAL128] = 2 * Long.BYTES;
-        TYPE_SIZE[DECIMAL256] = 4 * Long.BYTES;
-        TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
-        TYPE_SIZE[VARCHAR_SLICE] = 0;
 
         nonPersistedTypes.add(UNDEFINED);
         nonPersistedTypes.add(INTERVAL);
@@ -1185,13 +1041,41 @@ public final class ColumnType {
         // Stored decimals
         for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
             for (int scale = 0; scale <= Decimals.MAX_SCALE; scale++) {
-                int type = getDecimalType(precision, scale);
                 sink.clear();
                 sink.put("DECIMAL(").put(precision).put(',').put(scale).put(")");
-                String name = sink.toString();
-                typeNameMap.put(type, name);
-                nameTypeMap.put(name, type);
+                nameTypeMap.put(sink.toString(), getDecimalType(precision, scale));
             }
+        }
+    }
+
+    /**
+     * The width and var-size facts per tag, derived on first use from each real type's definition
+     * ({@link TypeDriver#getMovement()}) and from the pseudo-tag facts, so that sizeOf,
+     * pow2SizeOf, isFixedSize, isVarSize and getDriver stay table reads. Never touched by ColumnType's static initialiser: the
+     * definitions and ColumnType initialise in any order (TypeDriverTest).
+     */
+    private static final class Widths {
+        static final boolean[] FIXED_SIZE = new boolean[MAX_TAG + 1];
+        static final byte[] POW2_SIZE = new byte[MAX_TAG + 1];
+        static final byte[] SIZE = new byte[MAX_TAG + 1];
+        static final boolean[] VAR_SIZE = new boolean[MAX_TAG + 1];
+
+        static {
+            for (short tag = 0; tag <= MAX_TAG; tag++) {
+                if (PSEUDO_TAG[tag]) {
+                    SIZE[tag] = PSEUDO_TAG_SIZE[tag];
+                    POW2_SIZE[tag] = PSEUDO_TAG_POW2_SIZE[tag];
+                    continue;
+                }
+                final PhysicalDescriptor.Movement movement = TypeDrivers.get(tag).getMovement();
+                SIZE[tag] = (byte) movement.size();
+                POW2_SIZE[tag] = (byte) movement.pow2Size();
+                FIXED_SIZE[tag] = movement != PhysicalDescriptor.Movement.VAR;
+                VAR_SIZE[tag] = movement == PhysicalDescriptor.Movement.VAR;
+            }
+            // Quirk varchar-slice-pow2-size: VARCHAR_SLICE shares VARCHAR's definition, a var-size
+            // layout, yet has always answered log2 of its 16-byte aux entry
+            POW2_SIZE[VARCHAR_SLICE] = VARCHAR_AUX_SHL;
         }
     }
 }

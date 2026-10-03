@@ -38,10 +38,20 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
+    /**
+     * The append of {@code put(long)} without its NULL test: it prints the reserved pattern
+     * LONG_MIN as a number, where {@code put(long)} prints null. The function tests NULL first,
+     * so its output does not change.
+     */
+    public static void value(CharSink<?> sink, long operand) {
+        Numbers.append(sink, operand, false);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Nk)";
@@ -81,38 +91,38 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return SymbolTable.VALUE_IS_NULL;
             }
 
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
+            final int keyIndex = symbolTableShortcut.keyIndex(timestamp);
             if (keyIndex < 0) {
                 return symbolTableShortcut.valueAt(keyIndex) - 1;
             }
 
-            symbolTableShortcut.putAt(keyIndex, value, next);
+            symbolTableShortcut.putAt(keyIndex, timestamp, next);
             sink.clear();
-            sink.put(value);
+            value(sink, timestamp);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return null;
             }
 
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
+            final int keyIndex = symbolTableShortcut.keyIndex(timestamp);
             if (keyIndex < 0) {
                 return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
             }
 
-            symbolTableShortcut.putAt(keyIndex, value, next++);
+            symbolTableShortcut.putAt(keyIndex, timestamp, next++);
             sink.clear();
-            sink.put(value);
+            value(sink, timestamp);
             final String str = Chars.toString(sink);
             symbols.add(str);
             return str;

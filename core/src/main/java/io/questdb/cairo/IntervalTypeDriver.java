@@ -1,0 +1,166 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.functions.columns.IntervalColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalTypeConstant;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
+
+/**
+ * Type driver for INTERVAL.
+ * <p>
+ * INTERVAL is an in-memory value type that is never persisted; the width is that of
+ * its two-long value, and it is NULL when both longs are LONG_NULL.
+ */
+public final class IntervalTypeDriver extends FixedSizeTypeDriver {
+    public static final IntervalTypeDriver INSTANCE = new IntervalTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.INTERVAL, ColumnType.STRING};
+
+    private IntervalTypeDriver() {
+        super(
+                ColumnTypeTag.INTERVAL,
+                PhysicalDescriptor.Movement.W16,
+                PhysicalDescriptor.Arithmetic.NONE,
+                PhysicalDescriptor.Accessor.INTERVAL
+        );
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        // no bind variable holds an INTERVAL
+        throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    /**
+     * The raw interval and both timestamp precisions share one name.
+     */
+    @Override
+    public String getName(int columnType) {
+        return switch (columnType) {
+            case ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO, ColumnType.INTERVAL_TIMESTAMP_NANO ->
+                    "INTERVAL";
+            default -> ColumnType.UNKNOWN_NAME;
+        };
+    }
+
+    /**
+     * An interval type carries its timestamp precision; the bare tag is the raw interval.
+     */
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        if (columnType != ColumnType.INTERVAL) {
+            return IntervalUtils.getTimestampDriverByIntervalType(columnType).getIntervalConstantNull();
+        }
+        return IntervalConstant.RAW_NULL;
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    // the interval travels as its text
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.INTERVAL;
+    }
+
+    @Override
+    public char getSignatureChar() {
+        return 'δ';
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return switch (columnType) {
+            case ColumnType.INTERVAL_RAW -> IntervalTypeConstant.RAW_INSTANCE;
+            case ColumnType.INTERVAL_TIMESTAMP_MICRO -> IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO -> IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE;
+            default -> null;
+        };
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.INTERVAL;
+    }
+
+    @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        // the parser takes INTERVAL as a CAST target from NULL only
+        return isFromNull;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return IntervalColumn.newInstance(columnIndex, columnType);
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
+    }
+}

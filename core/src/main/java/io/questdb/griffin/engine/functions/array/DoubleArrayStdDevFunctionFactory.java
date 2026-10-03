@@ -26,6 +26,14 @@ package io.questdb.griffin.engine.functions.array;
 
 public class DoubleArrayStdDevFunctionFactory extends DoubleArrayStdDevSampFunctionFactory {
 
+    public static double value(double mean, double element, int count) {
+        return DoubleArrayStdDevSampFunctionFactory.value(mean, element, count);
+    }
+
+    public static double value(double deltaSquaredSum, double element, double oldMean, double newMean) {
+        return DoubleArrayStdDevSampFunctionFactory.value(deltaSquaredSum, element, oldMean, newMean);
+    }
+
     @Override
     public String getSignature() {
         return "array_stddev(D[])";

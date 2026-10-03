@@ -37,6 +37,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class NegIntFunctionFactory implements FunctionFactory {
+    public static int value(int operand) {
+        return -operand;
+    }
+
     @Override
     public String getSignature() {
         return "-(I)";
@@ -67,8 +71,8 @@ public class NegIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? -value : Numbers.INT_NULL;
+            final int val = arg.getInt(rec);
+            return val != Numbers.INT_NULL ? value(val) : Numbers.INT_NULL;
         }
 
         @Override

@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
+import io.questdb.std.Decimal;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
@@ -45,6 +46,15 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
+
+    /**
+     * Undefined for NaN and the infinities, which no DECIMAL holds (the helper throws there): the
+     * function gives NULL for them, as for a NULL operand. A value the target precision cannot hold
+     * throws too, and the function reports it as an inconvertible value.
+     */
+    public static void value(Decimal decimal, double operand, int precision, int scale) throws NumericException {
+        Numbers.doubleToDecimal(operand, decimal, precision, scale, true);
+    }
 
     public static Function newInstance(Function arg, int targetType, int position) {
         return switch (ColumnType.tagOf(targetType)) {
@@ -98,7 +108,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
                 return;
             }
             try {
-                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
+                value(decimal, d, precision, scale);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }
@@ -142,7 +152,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
                 return;
             }
             try {
-                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
+                value(decimal, d, precision, scale);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }
@@ -171,7 +181,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
                 return false;
             }
             try {
-                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
+                value(decimal, d, precision, scale);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }

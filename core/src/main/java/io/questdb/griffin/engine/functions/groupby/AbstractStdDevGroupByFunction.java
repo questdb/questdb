@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * The abstract class, in addition, provides a method to aggregate univariate statistics.
+ * The abstract class, in addition, aggregates univariate statistics.
  * We use the B.P. Welford algorithm which works by first aggregating sum of squares Sxx = sum[(X - mean) ^ 2].
  * Computation of standard deviation and variance is then simple (e.g. variance = Sxx / (n - 1), standard deviation = sqrt(variance))
  *
@@ -57,7 +57,7 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
         mapValue.putDouble(valueIndex + 1, 0);
         mapValue.putLong(valueIndex + 2, 0);
         if (Numbers.isFinite(d)) {
-            aggregate(mapValue, d);
+            StdDevSampleGroupByFunctionFactory.value(mapValue, valueIndex, d);
         }
     }
 
@@ -65,7 +65,7 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         if (Numbers.isFinite(d)) {
-            aggregate(mapValue, d);
+            StdDevSampleGroupByFunctionFactory.value(mapValue, valueIndex, d);
         }
     }
 
@@ -150,18 +150,5 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
-    }
-
-    protected void aggregate(MapValue mapValue, double value) {
-        double mean = mapValue.getDouble(valueIndex);
-        double sum = mapValue.getDouble(valueIndex + 1);
-        long count = mapValue.getLong(valueIndex + 2) + 1;
-
-        double oldMean = mean;
-        mean += (value - mean) / count;
-        sum += (value - mean) * (value - oldMean);
-        mapValue.putDouble(valueIndex, mean);
-        mapValue.putDouble(valueIndex + 1, sum);
-        mapValue.addLong(valueIndex + 2, 1L);
     }
 }

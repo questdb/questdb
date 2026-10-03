@@ -109,7 +109,7 @@ public class ContainsIPv4Utils {
             if (netmask == 32 || netmask == -1) {
                 return false;
             }
-            return (arg.getIPv4(rec) & netmask) == subnet;
+            return ContainsIPv4StrFunctionFactory.value(arg.getIPv4(rec), subnet, netmask);
         }
 
         @Override
@@ -138,7 +138,7 @@ public class ContainsIPv4Utils {
             if (netmask == 32 || netmask == -1) {
                 return false;
             }
-            return (ipv4Func.getIPv4(rec) & netmask) == subnet;
+            return ContainsIPv4StrFunctionFactory.value(ipv4Func.getIPv4(rec), subnet, netmask);
         }
 
         @Override
@@ -210,7 +210,7 @@ public class ContainsIPv4Utils {
             if (netmask == 32 || netmask == -1) {
                 return false;
             }
-            return (ipv4Func.getIPv4(rec) & netmask) == subnet;
+            return ContainsIPv4StrFunctionFactory.value(ipv4Func.getIPv4(rec), subnet, netmask);
         }
 
         @Override
@@ -261,7 +261,7 @@ public class ContainsIPv4Utils {
             if (netmask == 32 || netmask == -1) {
                 return false;
             }
-            return (ipv4Func.getIPv4(rec) & netmask) == subnet;
+            return ContainsIPv4VarcharFunctionFactory.value(ipv4Func.getIPv4(rec), subnet, netmask);
         }
 
         @Override

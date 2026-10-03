@@ -24,7 +24,13 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.map.MapValue;
+
 public class KurtosisGroupByFunctionFactory extends KurtosisSampleGroupByFunctionFactory {
+    public static void value(MapValue mapValue, int valueIndex, double x) {
+        KurtosisSampleGroupByFunctionFactory.value(mapValue, valueIndex, x);
+    }
+
     @Override
     public String getSignature() {
         return "kurtosis(D)";

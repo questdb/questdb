@@ -71,6 +71,14 @@ import io.questdb.std.datetime.CommonUtils;
  */
 public class TimestampAddFunctionFactory implements FunctionFactory {
 
+    public static long value(TimestampDriver.TimestampAddMethod add, long timestamp, int stride) {
+        return add.add(timestamp, stride);
+    }
+
+    public static long value(TimestampDriver driver, long timestamp, char period, int stride) {
+        return driver.add(timestamp, period, stride);
+    }
+
     @Override
     public String getSignature() {
         return "dateadd(AIN)";
@@ -128,7 +136,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return periodAddFunction.add(timestamp, stride);
+            return value(periodAddFunction, timestamp, stride);
         }
 
         @Override
@@ -216,7 +224,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL || stride == Numbers.INT_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return periodAddFunc.add(timestamp, stride);
+            return value(periodAddFunc, timestamp, stride);
         }
 
         @Override
@@ -272,7 +280,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return timestampDriver.add(timestamp, period, stride);
+            return value(timestampDriver, timestamp, period, stride);
         }
 
         @Override

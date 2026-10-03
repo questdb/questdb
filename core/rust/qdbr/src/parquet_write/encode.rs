@@ -1282,6 +1282,10 @@ mod tests {
     /// Build a Column for the given tag with 100 minimal-but-valid rows.
     /// Returns the Column plus a Box owning the underlying Vec, which the
     /// caller must keep alive for the duration of the Column.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "test helper: builds only the tags its cases name"
+    )]
     fn build_column(tag: ColumnTypeTag) -> (Column, Box<dyn std::any::Any>) {
         match tag {
             ColumnTypeTag::Boolean => {

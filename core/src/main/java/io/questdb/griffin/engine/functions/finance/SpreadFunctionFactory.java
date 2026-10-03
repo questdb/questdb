@@ -35,6 +35,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SpreadFunctionFactory implements FunctionFactory {
+    public static double value(double bid, double ask) {
+        return ask - bid;
+    }
+
     @Override
     public String getSignature() {
         return "spread(DD)";

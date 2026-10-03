@@ -35,6 +35,10 @@ import io.questdb.std.ObjList;
 
 public class BitXorIntGroupByFunctionFactory implements FunctionFactory {
 
+    public static int value(int left, int right) {
+        return left ^ right;
+    }
+
     @Override
     public String getSignature() {
         return "bit_xor(I)";

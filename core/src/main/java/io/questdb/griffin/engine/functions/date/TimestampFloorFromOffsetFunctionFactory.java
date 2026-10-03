@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.std.datetime.TimeZoneRules;
+
 
 /**
  * Floors timestamps with modulo relative to a timestamp from 1970-01-01, as
@@ -36,6 +39,27 @@ package io.questdb.griffin.engine.functions.date;
  */
 public class TimestampFloorFromOffsetFunctionFactory extends AbstractTimestampFloorFromOffsetFunctionFactory {
     private static final String NAME = TimestampFloorFunctionFactory.NAME;
+
+    public static long value(TimestampDriver.TimestampFloorWithOffsetMethod floor, long timestamp, int stride, long effectiveOffset, long tzOffset) {
+        return floor.floor(timestamp + tzOffset, stride, effectiveOffset);
+    }
+
+    public static long value(TimestampDriver.TimestampFloorWithOffsetMethod floor, long timestamp, int stride, long effectiveOffset, TimeZoneRules tzRules) {
+        final long tzOff = tzRules.getOffset(timestamp);
+        final long localTimestamp = timestamp + tzOff;
+        long result = floor.floor(localTimestamp, stride, effectiveOffset);
+        // Move the timestamp to the bucket if it belongs to a DST gap, i.e. non-existing
+        // time interval that occur due to a forward clock shift.
+        // This is required to avoid duplicate timestamps returned by SAMPLE BY + DST time zone + offset
+        // queries that get rewritten to a parallel GROUP BY.
+        long gapDuration = tzRules.getDstGapOffset(result);
+        if (gapDuration != 0) {
+            // The floored local time landed in a DST gap (spring-forward). Back up by the gap
+            // duration to reach a real local time, then re-floor to find the correct bucket.
+            result = floor.floor(result - gapDuration, stride, effectiveOffset);
+        }
+        return result;
+    }
 
     @Override
     public String getSignature() {

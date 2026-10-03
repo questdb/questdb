@@ -124,24 +124,7 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
         if (!Numbers.isFinite(sample) || !Numbers.isFinite(weight) || weight == 0.0) {
             return;
         }
-        // Acquire current computation state
-        double wSum = mapValue.getDouble(valueIndex);
-        double wSum2 = mapValue.getDouble(valueIndex + 1);
-        double mean = mapValue.getDouble(valueIndex + 2);
-        double s = mapValue.getDouble(valueIndex + 3);
-
-        // Update computation state with values from record
-        wSum += weight;
-        wSum2 += weight * weight;
-        double meanOld = mean;
-        mean += (weight / wSum) * (sample - meanOld);
-        s += weight * (sample - meanOld) * (sample - mean);
-
-        // Store updated computation state
-        mapValue.putDouble(valueIndex, wSum);
-        mapValue.putDouble(valueIndex + 1, wSum2);
-        mapValue.putDouble(valueIndex + 2, mean);
-        mapValue.putDouble(valueIndex + 3, s);
+        WeightedStdDevReliabilityGroupByFunctionFactory.value(mapValue, valueIndex, sample, weight);
     }
 
     @Override

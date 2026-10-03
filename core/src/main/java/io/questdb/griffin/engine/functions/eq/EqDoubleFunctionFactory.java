@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -38,6 +39,19 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqDoubleFunctionFactory implements FunctionFactory {
+    /**
+     * The value comparison of {@link Numbers#equals(double, double)} without its NULL test: the
+     * tolerance compare answers every pair of finite values, and the body also answers the values
+     * a type without a reserved NULL carries (PA-13): every NaN equals every NaN, and an infinity
+     * equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's extra
+     * clauses would cost every row that compares unequal.
+     */
+    public static boolean value(double left, double right) {
+        return Math.abs(left - right) <= Numbers.DOUBLE_TOLERANCE
+                || left == right
+                || (Double.isNaN(left) && Double.isNaN(right));
+    }
+
     @Override
     public String getSignature() {
         return "=(DD)";
@@ -71,16 +85,19 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
+    // x = NULL (or NaN): the NULL test of the operand's type; every type without one of its own reads as a
+    // DOUBLE, whose NULL is NaN. The tags are listed, so a new type decides whether that holds for it (F111)
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
-        return switch (ColumnType.tagOf(operandType)) {
-            case ColumnType.INT -> new FuncIntIsNaN(operand);
-            case ColumnType.LONG -> new FuncLongIsNaN(operand);
-            case ColumnType.DATE -> new FuncDateIsNaN(operand);
-            case ColumnType.TIMESTAMP -> new FuncTimestampIsNaN(operand);
-            case ColumnType.FLOAT -> new FuncFloatIsNaN(operand);
-            default ->
-                // double
-                    new FuncDoubleIsNaN(operand);
+        return switch (ColumnTypeTag.of(operandType)) {
+            case INT -> new FuncIntIsNaN(operand);
+            case LONG -> new FuncLongIsNaN(operand);
+            case DATE -> new FuncDateIsNaN(operand);
+            case TIMESTAMP -> new FuncTimestampIsNaN(operand);
+            case FLOAT -> new FuncFloatIsNaN(operand);
+            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT,
+                 GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, VARCHAR, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE,
+                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> new FuncDoubleIsNaN(operand);
         };
     }
 

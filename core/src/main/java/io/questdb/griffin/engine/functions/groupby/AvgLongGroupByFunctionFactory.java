@@ -34,6 +34,14 @@ import io.questdb.std.Transient;
 
 public class AvgLongGroupByFunctionFactory implements FunctionFactory {
 
+    public static double value(double sum, long next) {
+        return sum + next;
+    }
+
+    public static double value(double sum, double partialSum) {
+        return sum + partialSum;
+    }
+
     @Override
     public String getSignature() {
         return "avg(L)";

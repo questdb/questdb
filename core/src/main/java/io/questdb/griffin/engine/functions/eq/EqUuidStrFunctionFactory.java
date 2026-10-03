@@ -43,6 +43,15 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 
 public final class EqUuidStrFunctionFactory implements FunctionFactory {
+    public static boolean value(long leftLo, long leftHi, CharSequence right) {
+        try {
+            Uuid.checkDashesAndLength(right);
+            return leftHi == Uuid.parseHi(right) && leftLo == Uuid.parseLo(right);
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
     @Override
     public String getSignature() {
         return "=(ZS)";
@@ -153,12 +162,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             if (uuidStr == null) {
                 return negated != (constUuidHi == Numbers.LONG_NULL && constUuidLo == Numbers.LONG_NULL);
             }
-            try {
-                Uuid.checkDashesAndLength(uuidStr);
-                return negated != (constUuidHi == Uuid.parseHi(uuidStr) && constUuidLo == Uuid.parseLo(uuidStr));
-            } catch (NumericException e) {
-                return negated;
-            }
+            return negated != value(constUuidLo, constUuidHi, uuidStr);
         }
 
         @Override
@@ -188,12 +192,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             if (str == null) {
                 return negated != Uuid.isNull(lo, hi);
             }
-            try {
-                Uuid.checkDashesAndLength(str);
-                return negated != (hi == Uuid.parseHi(str) && lo == Uuid.parseLo(str));
-            } catch (NumericException e) {
-                return negated;
-            }
+            return negated != value(lo, hi, str);
         }
     }
 

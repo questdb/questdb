@@ -447,6 +447,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         dataAddresses.getAddress(),
                         dataAddresses.size(),
                         auxAddresses.getAddress(),
+                        task.getValidityLists().getAddress(),
                         atom.bindVarMemory.getAddress(),
                         atom.bindVarFunctions.size(),
                         frameRowCount
@@ -457,6 +458,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         dataAddresses.getAddress(),
                         dataAddresses.size(),
                         auxAddresses.getAddress(),
+                        task.getValidityLists().getAddress(),
                         atom.bindVarMemory.getAddress(),
                         atom.bindVarFunctions.size(),
                         rows.getAddress(),

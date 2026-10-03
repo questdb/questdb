@@ -32,6 +32,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class MinIntGroupByFunctionFactory implements FunctionFactory {
+    public static int value(int min, int next) {
+        return Math.min(min, next);
+    }
+
     @Override
     public String getSignature() {
         return "min(I)";

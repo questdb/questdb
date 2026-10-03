@@ -33,6 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class MinTimestampGroupByFunctionFactory implements FunctionFactory {
+    public static long value(long min, long next) {
+        return Math.min(min, next);
+    }
+
     @Override
     public String getSignature() {
         return "min(N)";

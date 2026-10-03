@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDoubleToByteFunctionFactory implements FunctionFactory {
+    public static byte value(double operand) {
+        return operand > Byte.MAX_VALUE || operand < Byte.MIN_VALUE ? 0 : (byte) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Db)";
@@ -51,8 +55,8 @@ public class CastDoubleToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            final double value = arg.getDouble(rec);
-            return Numbers.isNull(value) || value > Byte.MAX_VALUE || value < Byte.MIN_VALUE ? 0 : (byte) value;
+            final double val = arg.getDouble(rec);
+            return Numbers.isNull(val) ? 0 : value(val);
         }
     }
 }

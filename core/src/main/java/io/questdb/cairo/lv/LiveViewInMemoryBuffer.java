@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -128,6 +129,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // so it can hold the stub. Today every entry is the stub - see class javadoc.
     private final ObjList<MemoryCARW> auxMem;
     private final IntList columnTypeSizes;
+    // per column: the accessor family's opcode, the arm the per-row copy loops switch on
+    private final int[] columnOpcodes;
     private final IntList columnTypes;
     // Primary/data region per column: always a real MemoryCARWImpl. Carries the
     // value at row << shift for a fixed-width / SYMBOL column, or the appended
@@ -201,6 +204,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      */
     public LiveViewInMemoryBuffer(IntList columnTypes, int timestampColumnIndex, long pageSize, @Nullable MemoryTracker memoryTracker) {
         this.columnTypes = new IntList(columnTypes.size());
+        this.columnOpcodes = new int[columnTypes.size()];
         this.columnTypeSizes = new IntList(columnTypes.size());
         this.dataMem = new ObjList<>(columnTypes.size());
         this.auxMem = new ObjList<>(columnTypes.size());
@@ -218,7 +222,15 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         try {
             for (int i = 0, n = columnTypes.size(); i < n; i++) {
                 int type = columnTypes.getQuick(i);
+                // The tier stores exactly the types isTierSupported admits; the per-row copy
+                // loops below have an arm for each of them and a tripwire default. Both
+                // production callers gate on areColumnTypesSupported first, so this rejects
+                // only an ungated construction.
+                if (!isTierSupported(ColumnType.tagOf(type))) {
+                    throw unsupportedColumnType(type);
+                }
                 this.columnTypes.add(type);
+                this.columnOpcodes[i] = PhysicalDescriptor.accessorOpcodeOf(type);
                 // Per-row footprint of the fixed-width primary write (row << shift); 0
                 // for a var-size column, whose payload size is not a fixed per-row
                 // stride but is tracked by the dataMem / auxMem append cursors instead.
@@ -579,41 +591,29 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         }
     }
 
+    /**
+     * The relation behind {@link #areColumnTypesSupported} and the constructor: the tags the
+     * tier stores, i.e. the arms of {@link #copyRowFrom} and {@link #copyRowFromRecord}. The
+     * rest are not column types (or not persisted ones, INTERVAL), so an LV output never
+     * carries them; such a schema reads disk-only.
+     */
     private static boolean isTierSupported(int type) {
-        switch (type) {
-            case ColumnType.LONG:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.DATE:
-            case ColumnType.GEOLONG:
-            case ColumnType.INT:
-            case ColumnType.SYMBOL:
-            case ColumnType.GEOINT:
-            case ColumnType.IPv4:
-            case ColumnType.DOUBLE:
-            case ColumnType.FLOAT:
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-            case ColumnType.CHAR:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-            case ColumnType.BOOLEAN:
-            case ColumnType.LONG256:
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-            case ColumnType.STRING:
-            case ColumnType.BINARY:
-            case ColumnType.VARCHAR:
-            case ColumnType.ARRAY:
-                return true;
-            default:
-                return false;
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
+        if (accessor == null) {
+            return false;
         }
+        return switch (accessor) {
+            case LONG, TIMESTAMP, DATE, GEOLONG, INT, SYMBOL, GEOINT, IPv4, DOUBLE, FLOAT, SHORT, GEOSHORT, CHAR, BYTE,
+                 GEOBYTE, BOOLEAN, LONG256, LONG128, UUID, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, STRING, BINARY, VARCHAR, ARRAY -> true;
+            case INTERVAL -> false;
+        };
+    }
+
+    private static UnsupportedOperationException unsupportedColumnType(int columnType) {
+        return new UnsupportedOperationException(
+                "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnType)
+        );
     }
 
     /**
@@ -635,8 +635,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             if (src.leadSymbolHasNull[c]) {
                 leadSymbolHasNull[c] = true;
             }
-            int type = ColumnType.tagOf(columnTypes.getQuick(c));
-            switch (type) {
+            switch (columnOpcodes[c]) {
                 case ColumnType.LONG:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.DATE:
@@ -709,9 +708,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     appendArray(c, dstRow, src.getArray(srcRow, c));
                     break;
                 default:
-                    throw new UnsupportedOperationException(
-                            "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
-                    );
+                    // unreachable: the constructor admits only isTierSupported types
+                    throw unsupportedColumnType(columnTypes.getQuick(c));
             }
         }
     }
@@ -733,8 +731,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      */
     public void copyRowFromRecord(Record record, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
-            int type = ColumnType.tagOf(columnTypes.getQuick(c));
-            switch (type) {
+            switch (columnOpcodes[c]) {
                 case ColumnType.LONG:
                     putLong(dstRow, c, record.getLong(c));
                     break;
@@ -827,9 +824,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     appendArray(c, dstRow, record.getArray(c, columnTypes.getQuick(c)));
                     break;
                 default:
-                    throw new UnsupportedOperationException(
-                            "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
-                    );
+                    // unreachable: the constructor admits only isTierSupported types
+                    throw unsupportedColumnType(columnTypes.getQuick(c));
             }
         }
     }
@@ -887,7 +883,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 // order assert (aux cursor == dst * auxWidth) holds.
                 long dst = dstRow;
                 for (long r = srcRowLo; r < srcRowHi; r++, dst++) {
-                    switch (ColumnType.tagOf(columnTypes.getQuick(c))) {
+                    switch (columnOpcodes[c]) {
                         case ColumnType.STRING:
                             appendStr(c, dst, src.getStrA(r, c));
                             break;
@@ -901,9 +897,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                             appendArray(c, dst, src.getArray(r, c));
                             break;
                         default:
-                            throw new UnsupportedOperationException(
-                                    "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
-                            );
+                            // unreachable: the constructor admits only isTierSupported types, and
+                            // every var-size one of those has an arm above
+                            throw unsupportedColumnType(columnTypes.getQuick(c));
                     }
                 }
             }

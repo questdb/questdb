@@ -34,7 +34,30 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public interface ColumnTypeDriver {
+public interface ColumnTypeDriver extends TypeDriver {
+
+    /**
+     * A var-size NULL is not a single word; no fixed-width read ever produces it.
+     */
+    @Override
+    default long getNullAsLong() {
+        return 0L;
+    }
+
+    /**
+     * Var-size NULLs are encoded in the aux vector, so the appender is {@link #appendNull}.
+     */
+    @Override
+    default Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> appendNull(auxMem, dataMem);
+    }
+
+    /**
+     * Var-size NULLs live in the aux vector; there is nothing to fill in the data vector.
+     */
+    @Override
+    default void setNull(long addr, long count) {
+    }
 
     /**
      * Appends null encoding to the memory.

@@ -26,7 +26,9 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -200,13 +202,18 @@ public final class DecimalUtil {
             short s = (short) ColumnType.getDecimalScale(type);
             return Numbers.encodeLowHighShorts(p, s);
         }
-        return switch (tag) {
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG ->
-                    Numbers.encodeLowHighShorts((short) 19, (short) 0);
-            case ColumnType.INT -> Numbers.encodeLowHighShorts((short) 10, (short) 0);
-            case ColumnType.SHORT -> Numbers.encodeLowHighShorts((short) 5, (short) 0);
-            case ColumnType.BYTE -> Numbers.encodeLowHighShorts((short) 3, (short) 0);
-            default -> 0;
+        final TypeDriver driver = ColumnType.findTypeDriver(type);
+        // pseudo types have no definition and no precision
+        if (driver == null) {
+            return 0;
+        }
+        // an integer's precision is the digits of its largest value, from its arithmetic tier; DATE and TIMESTAMP
+        // count their unit in 64 bits. The kinds and tiers are closed sets, so a new one decides here (F112)
+        return switch (driver.getRelationKind()) {
+            case INT -> integerPrecisionScale(driver.getArithmetic());
+            case TEMPORAL -> Numbers.encodeLowHighShorts((short) 19, (short) 0);
+            case UNDEF, BOOL, CHAR, FLOAT, TEXT, SYMBOL, LONG256, LONG128, UUID, IPV4, BINARY, GEO, DECIMAL, ARRAY,
+                 INTERVAL, PSEUDO, NULL -> 0;
         };
     }
 
@@ -729,10 +736,22 @@ public final class DecimalUtil {
         return toFloat(sink);
     }
 
+    private static int integerPrecisionScale(PhysicalDescriptor.Arithmetic arithmetic) {
+        final short precision = switch (arithmetic) {
+            case I8, U8 -> 3;
+            case I16, U16 -> 5;
+            case I32, U32 -> 10;
+            case I64 -> 19;
+            case F32, F64, WIDE, NONE -> 0;
+        };
+        return precision == 0 ? 0 : Numbers.encodeLowHighShorts(precision, (short) 0);
+    }
+
     /**
      * When the unscaled value and 10^scale are both exact doubles the quotient is rounded once,
      * so dividing them gives the same double as parsing the decimal text.
      */
+
     private static boolean isExact(long unscaled, int scale) {
         return scale <= MAX_EXACT_SCALE && unscaled >= -MAX_EXACT_UNSCALED && unscaled <= MAX_EXACT_UNSCALED;
     }

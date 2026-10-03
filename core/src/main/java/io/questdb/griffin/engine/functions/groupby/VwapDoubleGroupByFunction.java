@@ -67,10 +67,7 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
         final double price = priceFunction.getDouble(record);
         final double volume = volumeFunction.getDouble(record);
         if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0.0d) {
-            final double notional = price * volume;
-            mapValue.addDouble(valueIndex + 1, notional);
-            mapValue.addDouble(valueIndex + 2, volume);
-            mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex + 1) / mapValue.getDouble(valueIndex + 2));
+            VwapDoubleGroupByFunctionFactory.value(mapValue, valueIndex, price, volume);
         }
     }
 

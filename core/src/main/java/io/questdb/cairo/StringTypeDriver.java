@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -31,8 +33,15 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.StrTypeConstant;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
@@ -41,6 +50,8 @@ import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
 
 public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.STRING, ColumnType.VARCHAR, ColumnType.CHAR, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.FLOAT, ColumnType.SHORT, ColumnType.BYTE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.SYMBOL, ColumnType.IPv4};
 
     public static void appendValue(MemoryA auxMem, MemoryA dataMem, CharSequence value) {
         auxMem.putLong(dataMem.putStr(value));
@@ -125,8 +136,113 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setStr(index);
+        return columnType;
+    }
+
+    @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.STRING;
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return row << LEGACY_VAR_SIZE_AUX_SHL;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return columnType == ColumnType.STRING ? "STRING" : ColumnType.UNKNOWN_NAME;
+    }
+
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return StrConstant.NULL;
+    }
+
+    /**
+     * The aux entry of a NULL string: NULL_LEN in both halves.
+     */
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.encodeLowHighInts(TableUtils.NULL_LEN, TableUtils.NULL_LEN);
+    }
+
+    /**
+     * STRING keeps NULL in the length prefix.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.TEXT;
+    }
+
+    @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.STRING;
+    }
+
+    @Override
+    public char getSignatureChar() {
+        return 's';
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.STRING ? StrTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.STRING;
+    }
+
+    @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    /**
+     * Always a new instance: {@link StrColumn} is not thread-safe, so it is never pooled.
+     */
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return new StrColumn(columnIndex);
     }
 
     @Override

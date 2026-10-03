@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.std.DoubleList;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -44,6 +45,15 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 
 public class InDoubleFunctionFactory implements FunctionFactory {
+    /**
+     * The comparison of {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an
+     * infinity equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's
+     * extra clauses would cost every element that compares unequal.
+     */
+    public static boolean value(double key, double element) {
+        return EqDoubleFunctionFactory.value(key, element);
+    }
+
     public static double tryParseDouble(CharSequence seq, int position) throws SqlException {
         try {
             return Numbers.parseDouble(seq);

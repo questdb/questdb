@@ -42,6 +42,19 @@ import io.questdb.griffin.engine.functions.lt.AbstractLongCursorFunctionFactory;
  */
 public class EqLongCursorFunctionFactory extends AbstractLongCursorFunctionFactory {
 
+    /**
+     * The comparison of {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an
+     * infinity equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's
+     * extra clauses would cost every row that compares unequal.
+     */
+    public static boolean value(double left, double right) {
+        return EqDoubleFunctionFactory.value(left, right);
+    }
+
+    public static boolean value(long left, long right) {
+        return left == right;
+    }
+
     @Override
     public String getSignature() {
         return "=(LC)";

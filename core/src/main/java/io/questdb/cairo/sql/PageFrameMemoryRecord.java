@@ -31,6 +31,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -47,6 +48,7 @@ import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.BoolList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -111,6 +113,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private long uuidCacheHi;
     private long uuidCacheLo;
     private long uuidCacheRowIndex = -1;
+    // The current frame's column-vector descriptor: this record's own copy of the frame
+    // memory's, taken whole, so a record copy carries every field.
+    protected final ColumnVectorDescriptor columnVectors = new ColumnVectorDescriptor();
+    // The descriptor's lists and column offset, for the per-row getters to read without one more
+    // indirection through columnVectors. Only bindColumnVectors() sets them, from columnVectors.
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
     // Pool bind generation captured when boundPool was stamped. The pool bumps its
@@ -142,16 +149,21 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected DirectLongList pageSizes;
     protected long rowIdOffset;
     protected long rowIndex;
+    // Per-column NULL policy of the stored source column, next to sourceColumnTypes; null
+    // where the source type is not a fixed type. Set during init() with sourceColumnTypes.
+    protected ObjList<NullPolicy> sourceColumnNullPolicies;
     // Per-column source type tag for fixed->var type-cast columns.
     // Set from PageFrameMemoryPool during init(); null when hasTypeCasts is false.
     protected IntList sourceColumnTypes;
     protected boolean stableStrings;
     protected SymbolTableSource symbolTableSource;
     // Per-column lazy fixed->str/varchar cache: one converter singleton (same for both
-    // destinations), packed (precision<<16)|scale args for DECIMAL, and ColumnType.sizeOf
+    // destinations), packed (precision<<16)|scale args for DECIMAL, whether column-top rows
+    // read as NULL explicitly (from the source column's NULL policy), and ColumnType.sizeOf
     // width. Null until first type-cast read; invalidated when sourceColumnTypes changes.
     protected IntList typeCastArgs;
     protected ObjList<ColumnTypeConverter.Fixed2VarConverter> typeCastConverters;
+    protected BoolList typeCastIsTopNull;
     protected IntList typeCastWidth;
 
     public PageFrameMemoryRecord() {
@@ -167,11 +179,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.frameIndex = other.frameIndex;
         this.frameFormat = other.frameFormat;
         this.rowIdOffset = other.rowIdOffset;
-        this.pageAddresses = other.pageAddresses;
-        this.auxPageAddresses = other.auxPageAddresses;
-        this.pageSizes = other.pageSizes;
-        this.auxPageSizes = other.auxPageSizes;
-        this.columnOffset = other.columnOffset;
+        this.columnVectors.copyFrom(other.columnVectors);
+        bindColumnVectors();
         this.columnCount = other.columnCount;
         this.columnTops = other.columnTops;
         this.stableStrings = other.stableStrings;
@@ -183,6 +192,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (other.sourceColumnTypes != null) {
             this.sourceColumnTypes = new IntList(other.sourceColumnTypes);
         }
+        if (other.sourceColumnNullPolicies != null) {
+            this.sourceColumnNullPolicies = new ObjList<>(other.sourceColumnNullPolicies);
+        }
         this.letter = letter;
     }
 
@@ -191,11 +203,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         rowIndex = 0;
         frameIndex = -1;
         rowIdOffset = -1;
-        columnOffset = 0;
-        pageAddresses = null;
-        auxPageAddresses = null;
-        pageSizes = null;
-        auxPageSizes = null;
+        columnVectors.clear();
+        bindColumnVectors();
         boundPool = null;
         boundGeneration = 0;
         columnTops = null;
@@ -206,6 +215,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         hasTypeCasts = false;
         if (sourceColumnTypes != null) {
             sourceColumnTypes.clear();
+        }
+        if (sourceColumnNullPolicies != null) {
+            sourceColumnNullPolicies.clear();
         }
         invalidateTypeCastConverterCache();
         // Drop the var->UUID parse cache key so a recycled record cannot serve a prior query's
@@ -829,11 +841,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.hasTypeCasts = frameMemory.hasColumnTypeCasts();
         this.rowIdOffset = frameMemory.getRowIdOffset();
-        this.pageAddresses = frameMemory.getPageAddresses();
-        this.auxPageAddresses = frameMemory.getAuxPageAddresses();
-        this.pageSizes = frameMemory.getPageSizes();
-        this.auxPageSizes = frameMemory.getAuxPageSizes();
-        this.columnOffset = frameMemory.getColumnOffset();
+        this.columnVectors.copyFrom(frameMemory.getColumnVectorDescriptor());
+        bindColumnVectors();
         this.columnCount = frameMemory.getColumnCount();
         this.columnTops = frameMemory.getColumnTops();
         if (this.hasTypeCasts) {
@@ -841,9 +850,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             if (this.sourceColumnTypes == null) {
                 this.sourceColumnTypes = new IntList(columnCount);
             }
+            if (this.sourceColumnNullPolicies == null) {
+                this.sourceColumnNullPolicies = new ObjList<>(columnCount);
+            }
             this.sourceColumnTypes.setAll(columnCount, -1);
+            this.sourceColumnNullPolicies.setAll(columnCount, null);
             for (int col = 0; col < columnCount; col++) {
                 this.sourceColumnTypes.setQuick(col, frameMemory.getSourceColumnType(col));
+                this.sourceColumnNullPolicies.setQuick(col, frameMemory.getSourceColumnNullPolicy(col));
             }
         }
         invalidateTypeCastConverterCache();
@@ -905,6 +919,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return shapeAddr(columnIndex, auxEntryAddr);
     }
 
+    private void bindColumnVectors() {
+        pageAddresses = columnVectors.getDataAddresses();
+        pageSizes = columnVectors.getDataSizes();
+        auxPageAddresses = columnVectors.getAuxAddresses();
+        auxPageSizes = columnVectors.getAuxSizes();
+        columnOffset = columnVectors.getColumnOffset();
+    }
+
     private ColumnTypeConverter.Fixed2VarConverter cacheTypeCastConverter(int columnIndex, int srcType, int dstType) {
         // The destination only affects the unsupported diagnostic in getFixedToVarConverter,
         // so the resolved singleton is the same for STRING and VARCHAR targets and one
@@ -914,6 +936,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             typeCastConverters = new ObjList<>();
             typeCastArgs = new IntList();
             typeCastWidth = new IntList();
+            typeCastIsTopNull = new BoolList();
         }
         final ColumnTypeConverter.Fixed2VarConverter converter =
                 ColumnTypeConverter.getFixedToVarConverter(srcType, dstType);
@@ -926,6 +949,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         typeCastArgs.extendAndSet(columnIndex, args);
         typeCastWidth.extendAndSet(columnIndex, ColumnType.sizeOf(srcType));
+        // Only no-NULL sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
+        // count: their column-top rows decode to an in-band 0/false the converter cannot tell
+        // from a real value. Sentinel sources store the column top as their null sentinel (and
+        // may also have scattered nulls), so the converter already returns null for them.
+        typeCastIsTopNull.extendAndSet(columnIndex, switch (sourceColumnNullPolicies.getQuick(columnIndex)) {
+            case SENTINEL -> false;
+            case NONE -> true;
+        });
         return converter;
     }
 
@@ -942,20 +973,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address == 0) {
             return null; // column top
         }
-        // Only no-sentinel sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
-        // count: their column-top rows decode to an in-band 0/false the converter cannot tell
-        // from a real value. Sentinel sources store the column top as their null sentinel (and
-        // may also have scattered nulls), so the converter already returns null for them.
-        if (columnTops != null && ColumnType.isNoNullSentinelFixedType(srcType)
-                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
-            return null;
-        }
-        sink.clear();
         ColumnTypeConverter.Fixed2VarConverter converter =
                 typeCastConverters != null ? typeCastConverters.getQuiet(columnIndex) : null;
         if (converter == null) {
             converter = cacheTypeCastConverter(columnIndex, srcType, ColumnType.STRING);
         }
+        // See cacheTypeCastConverter: only no-NULL sources need the explicit column-top count.
+        if (columnTops != null && typeCastIsTopNull.get(columnIndex)
+                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
+            return null;
+        }
+        sink.clear();
         final int args = typeCastArgs.getQuick(columnIndex);
         return converter.convert(
                 address + rowIndex * typeCastWidth.getQuick(columnIndex),
@@ -975,17 +1003,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address == 0) {
             return null; // column top
         }
-        // See convertFixedToStr: only no-sentinel sources need the explicit column-top count.
-        if (columnTops != null && ColumnType.isNoNullSentinelFixedType(srcType)
-                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
-            return null;
-        }
-        sink.clear();
         ColumnTypeConverter.Fixed2VarConverter converter =
                 typeCastConverters != null ? typeCastConverters.getQuiet(columnIndex) : null;
         if (converter == null) {
             converter = cacheTypeCastConverter(columnIndex, srcType, ColumnType.VARCHAR);
         }
+        // See cacheTypeCastConverter: only no-NULL sources need the explicit column-top count.
+        if (columnTops != null && typeCastIsTopNull.get(columnIndex)
+                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
+            return null;
+        }
+        sink.clear();
         final int args = typeCastArgs.getQuick(columnIndex);
         return converter.convert(
                 address + rowIndex * typeCastWidth.getQuick(columnIndex),
@@ -1262,6 +1290,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             typeCastConverters.clear();
             typeCastArgs.clear();
             typeCastWidth.clear();
+            typeCastIsTopNull.clear();
         }
     }
 
@@ -1599,14 +1628,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             int frameIndex,
             byte frameFormat,
             long rowIdOffset,
-            DirectLongList pageAddresses,
-            DirectLongList auxPageAddresses,
-            DirectLongList pageLimits,
-            DirectLongList auxPageLimits,
-            int columnOffset,
-            int columnCount,
+            ColumnVectorDescriptor columnVectors,
             boolean hasTypeCasts,
             IntList sourceColumnTypes,
+            ObjList<NullPolicy> sourceColumnNullPolicies,
             DirectLongList columnTops
     ) {
         this.frameIndex = frameIndex;
@@ -1621,19 +1646,21 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             if (this.sourceColumnTypes == null) {
                 this.sourceColumnTypes = new IntList(sourceColumnTypes.size());
             }
+            if (this.sourceColumnNullPolicies == null) {
+                this.sourceColumnNullPolicies = new ObjList<>(sourceColumnTypes.size());
+            }
             final int n = sourceColumnTypes.size();
             this.sourceColumnTypes.setAll(n, -1);
+            this.sourceColumnNullPolicies.setAll(n, null);
             for (int c = 0; c < n; c++) {
                 this.sourceColumnTypes.setQuick(c, sourceColumnTypes.getQuick(c));
+                this.sourceColumnNullPolicies.setQuick(c, sourceColumnNullPolicies.getQuick(c));
             }
         }
         this.rowIdOffset = rowIdOffset;
-        this.pageAddresses = pageAddresses;
-        this.auxPageAddresses = auxPageAddresses;
-        this.pageSizes = pageLimits;
-        this.auxPageSizes = auxPageLimits;
-        this.columnOffset = columnOffset;
-        this.columnCount = columnCount;
+        this.columnVectors.copyFrom(columnVectors);
+        bindColumnVectors();
+        this.columnCount = columnVectors.getColumnCount();
         invalidateTypeCastConverterCache();
     }
 }

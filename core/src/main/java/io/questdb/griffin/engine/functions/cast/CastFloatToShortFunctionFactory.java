@@ -34,6 +34,13 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastFloatToShortFunctionFactory implements FunctionFactory {
+    /**
+     * Undefined outside the SHORT range: the function gives 0 there, as for a NULL operand.
+     */
+    public static short value(float operand) {
+        return (short) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Fe)";
@@ -51,8 +58,8 @@ public class CastFloatToShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
-            final float value = arg.getFloat(rec);
-            return Numbers.isNull(value) || value > Short.MAX_VALUE || value < Short.MIN_VALUE ? 0 : (short) value;
+            final float val = arg.getFloat(rec);
+            return Numbers.isNull(val) || val > Short.MAX_VALUE || val < Short.MIN_VALUE ? 0 : value(val);
         }
     }
 }

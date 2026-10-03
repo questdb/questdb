@@ -24,8 +24,10 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.NullPolicy;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Represents page frame as a set of per column contiguous memory.
@@ -45,33 +47,20 @@ public interface PageFrameMemory {
      */
     boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls);
 
-    /**
-     * Returns aux (index) vector address for a var-size column.
-     */
-    long getAuxPageAddress(int columnIndex);
-
-    /**
-     * Returns flat list of aux page addresses for all frames.
-     * Use with {@link #getColumnOffset()} for efficient access.
-     */
-    DirectLongList getAuxPageAddresses();
-
-    /**
-     * Returns flat list of aux page sizes for all frames.
-     */
-    DirectLongList getAuxPageSizes();
-
     int getColumnCount();
 
     /**
-     * Returns pre-computed offset into flat column arrays for this frame.
-     * Usage: {@code getPageAddresses().getQuick(getColumnOffset() + columnIndex)}
+     * Returns the frame's column-vector descriptor: per column, the data and aux vectors, the
+     * NULL policy and the validity fields. Consumers read the frame's column data only through
+     * it. The descriptor belongs to this frame memory and changes when the memory moves to
+     * another frame; a record that must keep a frame copies it.
      */
-    int getColumnOffset();
+    ColumnVectorDescriptor getColumnVectorDescriptor();
 
     /**
      * Returns the per-column leading column-top count for this frame, or {@code null} when
-     * the frame has none (e.g. native frames). Used by {@link PageFrameMemoryRecord} to
+     * the frame has none (e.g. native frames), indexed like the descriptor's lists (its column
+     * offset plus the column index). Used by {@link PageFrameMemoryRecord} to
      * surface NULL for column-top rows during a lazy fixed-&gt;var conversion, where the
      * decoded source value is an in-band 0 indistinguishable from a real 0.
      */
@@ -87,27 +76,6 @@ public interface PageFrameMemory {
     int getFrameIndex();
 
     /**
-     * Returns data vector address for a column.
-     */
-    long getPageAddress(int columnIndex);
-
-    /**
-     * Returns flat list of data page addresses for all frames.
-     * Use with {@link #getColumnOffset()} for efficient access.
-     */
-    DirectLongList getPageAddresses();
-
-    /**
-     * Returns data vector size for a column.
-     */
-    long getPageSize(int columnIndex);
-
-    /**
-     * Returns flat list of data page sizes for all frames.
-     */
-    DirectLongList getPageSizes();
-
-    /**
      * Returns the pool that owns this frame memory's parquet decode buffers, or
      * {@code null} when the memory is not owned by a {@link PageFrameMemoryPool}.
      * A {@link PageFrameMemoryRecord} stamps this on bind so that
@@ -121,6 +89,14 @@ public interface PageFrameMemory {
      * Returns row ID offset used to compute real row IDs.
      */
     long getRowIdOffset();
+
+    /**
+     * Returns the NULL policy of the stored source column for a fixed-to-var type-cast
+     * column (a non-negative {@link #getSourceColumnType(int)}), read from the Parquet
+     * file's per-column accessor; null for any other column.
+     */
+    @Nullable
+    NullPolicy getSourceColumnNullPolicy(int columnIndex);
 
     /**
      * Returns the source column type tag for a type-cast column, or -1 if

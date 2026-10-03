@@ -39,6 +39,10 @@ import io.questdb.std.Transient;
 
 public class SubDoubleFunctionFactory implements FunctionFactory {
 
+    public static double value(double left, double right) {
+        return left - right;
+    }
+
     @Override
     public String getSignature() {
         return "-(DD)";
@@ -78,7 +82,7 @@ public class SubDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return left.getDouble(rec) - right.getDouble(rec);
+            return value(left.getDouble(rec), right.getDouble(rec));
         }
 
         @Override

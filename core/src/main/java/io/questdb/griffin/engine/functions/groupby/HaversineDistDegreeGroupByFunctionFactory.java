@@ -33,6 +33,20 @@ import io.questdb.std.ObjList;
 
 public class HaversineDistDegreeGroupByFunctionFactory implements FunctionFactory {
 
+    private static final double EARTH_RADIUS = 6371.088;
+
+    public static double value(double lat1Degrees, double lon1Degrees, double lat2Degrees, double lon2Degrees, double currentTotalDistance) {
+        double lat1 = lat1Degrees * Math.PI / 180;
+        double lon1 = lon1Degrees * Math.PI / 180;
+        double lat2 = lat2Degrees * Math.PI / 180;
+        double lon2 = lon2Degrees * Math.PI / 180;
+        double halfLatDist = (lat2 - lat1) / 2;
+        double halfLonDist = (lon2 - lon1) / 2;
+        double a = Math.sin(halfLatDist) * Math.sin(halfLatDist) + Math.cos(lat1) * Math.cos(lat2) * Math.sin(halfLonDist) * Math.sin(halfLonDist);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return currentTotalDistance + EARTH_RADIUS * c;
+    }
+
     @Override
     public String getSignature() {
         return "haversine_dist_deg(DDN)";

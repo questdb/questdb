@@ -59,7 +59,7 @@ public class CursorPrinter {
 
     public static void printColumn(Record record, RecordMetadata metadata, int columnIndex, CharSink<?> sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = metadata.getColumnType(columnIndex);
-        switch (ColumnType.tagOf(columnType)) {
+        switch (printOpcode(columnType)) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, record.getDate(columnIndex));
                 break;
@@ -199,8 +199,14 @@ public class CursorPrinter {
             case ColumnType.DECIMAL256:
                 putDecimal256Value(sink, record, columnIndex, columnType);
                 break;
-            default:
+            case ColumnType.UNDEFINED:
+                // printOpcode() yields UNDEFINED for the tags that print as an empty cell
                 break;
+            default:
+                // a wire kind whose opcode has no arm here: javac lists printOpcode() for a new kind,
+                // not this per-row switch, so fail loudly rather than print an empty cell
+                throw new UnsupportedOperationException("no print arm for opcode " + printOpcode(columnType)
+                        + " [type=" + ColumnType.nameOf(columnType) + ']');
         }
         if (printTypes) {
             int printColType = symbolAsString && ColumnType.isSymbol(columnType) ? ColumnType.STRING : columnType;
@@ -286,6 +292,54 @@ public class CursorPrinter {
             }
             printColumn(record, metadata, i, sink, printTypes);
         }
+    }
+
+    /**
+     * Picks the {@link #printColumn} arm for a column. Every tag is named, so a new type has to
+     * decide how it prints before any test can see its values; the tags without an arm yield
+     * UNDEFINED and print as the empty cell they always did. This is the test and log printer,
+     * so the enum switch per cell is acceptable.
+     */
+    private static int printOpcode(int columnType) {
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            // ARRAY_STRING and a NULL-typed column have arms; no other pseudo tag has one, and
+            // VARCHAR_SLICE never reaches a printed record: an empty cell, as before
+            final short tag = ColumnType.tagOf(columnType);
+            return tag == ColumnType.ARRAY_STRING || tag == ColumnType.NULL ? tag : ColumnType.UNDEFINED;
+        }
+        return switch (kind) {
+            case BOOLEAN -> ColumnType.BOOLEAN;
+            case BYTE -> ColumnType.BYTE;
+            case SHORT -> ColumnType.SHORT;
+            case CHAR -> ColumnType.CHAR;
+            case INT -> ColumnType.INT;
+            case LONG -> ColumnType.LONG;
+            case DATE -> ColumnType.DATE;
+            case TIMESTAMP -> ColumnType.TIMESTAMP;
+            case FLOAT -> ColumnType.FLOAT;
+            case DOUBLE -> ColumnType.DOUBLE;
+            case STRING -> ColumnType.STRING;
+            case SYMBOL -> ColumnType.SYMBOL;
+            case LONG256 -> ColumnType.LONG256;
+            case GEOBYTE -> ColumnType.GEOBYTE;
+            case GEOSHORT -> ColumnType.GEOSHORT;
+            case GEOINT -> ColumnType.GEOINT;
+            case GEOLONG -> ColumnType.GEOLONG;
+            case BINARY -> ColumnType.BINARY;
+            case UUID -> ColumnType.UUID;
+            case LONG128 -> ColumnType.LONG128;
+            case IPV4 -> ColumnType.IPv4;
+            case VARCHAR -> ColumnType.VARCHAR;
+            case ARRAY -> ColumnType.ARRAY;
+            case INTERVAL -> ColumnType.INTERVAL;
+            case DECIMAL8 -> ColumnType.DECIMAL8;
+            case DECIMAL16 -> ColumnType.DECIMAL16;
+            case DECIMAL32 -> ColumnType.DECIMAL32;
+            case DECIMAL64 -> ColumnType.DECIMAL64;
+            case DECIMAL128 -> ColumnType.DECIMAL128;
+            case DECIMAL256 -> ColumnType.DECIMAL256;
+        };
     }
 
     private static void putDecimal128Value(CharSink<?> sink, Record rec, int col, int type) {

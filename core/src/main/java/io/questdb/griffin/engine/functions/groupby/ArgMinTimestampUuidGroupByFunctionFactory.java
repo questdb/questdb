@@ -33,6 +33,15 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ArgMinTimestampUuidGroupByFunctionFactory implements FunctionFactory {
+    public static boolean value(long minKeyLo, long minKeyHi, long nextKeyLo, long nextKeyHi) {
+        // compare as unsigned longs: hi first, then lo
+        final int cmp = Long.compareUnsigned(nextKeyHi, minKeyHi);
+        if (cmp != 0) {
+            return cmp < 0;
+        }
+        return Long.compareUnsigned(nextKeyLo, minKeyLo) < 0;
+    }
+
     @Override
     public String getSignature() {
         return "arg_min(NZ)";

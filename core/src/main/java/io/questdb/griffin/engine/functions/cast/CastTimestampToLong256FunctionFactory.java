@@ -33,6 +33,15 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class CastTimestampToLong256FunctionFactory implements FunctionFactory {
+    public static void value(CharSink<?> sink, long operand) {
+        Numbers.appendLong256Value(operand, 0, 0, 0, sink);
+    }
+
+    public static Long256Impl value(Long256Impl long256, long operand) {
+        long256.setLow(operand);
+        return long256;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Nh)";
@@ -53,31 +62,29 @@ public class CastTimestampToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
-            final long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getLong(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return;
             }
-            Numbers.appendLong256(value, 0, 0, 0, sink);
+            value(sink, timestamp);
         }
 
         @Override
         public Long256 getLong256A(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256a.setLow(value);
-            return long256a;
+            return value(long256a, timestamp);
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            final long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getLong(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256b.setLow(value);
-            return long256b;
+            return value(long256b, timestamp);
         }
     }
 }

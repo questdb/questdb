@@ -76,7 +76,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
             long rowCount,
             long baseRowId
     ) {
-        // INT_NULL == Integer.MIN_VALUE, so Math.max handles every INT_NULL combination naturally.
+        // INT_NULL == Integer.MIN_VALUE, so the body's Math.max handles every INT_NULL combination naturally.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct int column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
@@ -87,7 +87,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.putInt(addr, Math.max(value, Unsafe.getInt(addr)));
+                Unsafe.putInt(addr, MaxIntGroupByFunctionFactory.value(Unsafe.getInt(addr), value));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
@@ -95,7 +95,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.putInt(addr, Math.max(value, Unsafe.getInt(addr)));
+                Unsafe.putInt(addr, MaxIntGroupByFunctionFactory.value(Unsafe.getInt(addr), value));
             }
         }
     }

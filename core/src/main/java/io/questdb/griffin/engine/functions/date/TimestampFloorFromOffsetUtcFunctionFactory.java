@@ -24,6 +24,10 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.TimeZoneRules;
+
 
 /**
  * Floors timestamps with timezone-aware alignment but returns UTC results.
@@ -42,6 +46,19 @@ package io.questdb.griffin.engine.functions.date;
  */
 public class TimestampFloorFromOffsetUtcFunctionFactory extends AbstractTimestampFloorFromOffsetFunctionFactory {
     public static final String NAME = "timestamp_floor_utc";
+
+    public static long value(TimestampDriver.TimestampFloorWithOffsetMethod floor, long timestamp, int stride, long effectiveOffset, long tzOffset) {
+        return floor.floor(timestamp + tzOffset, stride, effectiveOffset) - tzOffset;
+    }
+
+    public static long value(TimestampDriver.TimestampFloorWithOffsetMethod floor, long timestamp, int stride, long effectiveOffset, TimeZoneRules tzRules, char unit) {
+        // Use the shared conversion strategy from CommonUtils so that
+        // the mat view refresh iterator produces matching bucket boundaries.
+        final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
+        final long localTimestamp = timestamp + tzOff;
+        final long result = floor.floor(localTimestamp, stride, effectiveOffset);
+        return CommonUtils.offsetFlooredUtcResult(result, tzOff, 0, tzRules, unit);
+    }
 
     @Override
     public String getSignature() {

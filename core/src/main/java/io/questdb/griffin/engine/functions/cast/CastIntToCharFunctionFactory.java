@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToCharFunctionFactory implements FunctionFactory {
+    public static char value(int operand) {
+        return (char) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Ia)";
@@ -51,8 +55,8 @@ public class CastIntToCharFunctionFactory implements FunctionFactory {
 
         @Override
         public char getChar(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? (char) value : 0;
+            final int val = arg.getInt(rec);
+            return val != Numbers.INT_NULL ? value(val) : 0;
         }
     }
 }

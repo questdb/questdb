@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
@@ -469,15 +470,14 @@ public final class WhereClauseParser implements Mutable {
         return equalsTo ? 0 : isLo ? (short) 1 : (short) -1;
     }
 
+    // a bound the timestamp intrinsics read: a timestamp, a type the TIMESTAMP getter reads (rule W), or
+    // SYMBOL, whose constant parses as text; rule C's narrow integers and CHAR are not bounds, nor are
+    // the pseudo types and VARCHAR_SLICE, which rule W admits
     private static boolean canCastToTimestamp(int type) {
-        final int typeTag = ColumnType.tagOf(type);
-        return typeTag == ColumnType.TIMESTAMP
-                || typeTag == ColumnType.DATE
-                || typeTag == ColumnType.STRING
-                || typeTag == ColumnType.SYMBOL
-                || typeTag == ColumnType.INT
-                || typeTag == ColumnType.LONG
-                || typeTag == ColumnType.VARCHAR;
+        if (PhysicalDescriptor.storedTypeDriverOf(type) == null) {
+            return false;
+        }
+        return ColumnType.isSameTagOrBuiltInWideningCast(type, ColumnType.TIMESTAMP) || ColumnType.isSymbol(type);
     }
 
     private static void checkNodeValid(ExpressionNode node) throws SqlException {
@@ -521,9 +521,20 @@ public final class WhereClauseParser implements Mutable {
         return n != null && (isFunc(n) || n.type == ExpressionNode.QUERY);
     }
 
-    private static boolean isIntegerType(int type) {
-        final int tag = ColumnType.tagOf(type);
-        return tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.INT || tag == ColumnType.LONG;
+    // the column types an equality can key a scan on, by the accessor family their values are read
+    // through, as isLatestOnKeyType; another type is not a key, which loses the optimisation only
+    private static boolean isKeyColumnType(int columnType) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        // pseudo types and VARCHAR_SLICE never name a key column
+        if (accessor == null) {
+            return false;
+        }
+        return switch (accessor) {
+            case INT, LONG, STRING, SYMBOL, VARCHAR -> true;
+            case BOOLEAN, BYTE, SHORT, CHAR, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                 GEOLONG, BINARY, UUID, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, INTERVAL -> false;
+        };
     }
 
     /**
@@ -1005,96 +1016,90 @@ public final class WhereClauseParser implements Mutable {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
 
-                switch (ColumnType.tagOf(m.getColumnType(index))) {
-                    case ColumnType.VARCHAR:
-                    case ColumnType.SYMBOL:
-                    case ColumnType.STRING:
-                    case ColumnType.LONG:
-                    case ColumnType.INT:
-                        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
-                            CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
-                            if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
-                                if (!isCorrectType(b.type)) {
-                                    node.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
-                                }
-                                // IN sets can't be merged if either contains a bind variable (even if it's the same),
-                                // so we've to push new set to filter
-                                if (!allKeyValuesAreKnown || (b.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
-                                    node.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
-                                }
-                                if (b.type == ExpressionNode.FUNCTION) {
-                                    CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
-                                    if (!isConstFunction) {
-                                        node.intrinsicValue = IntrinsicModel.FALSE;
-                                        return false;
-                                    }
-                                    value = testValue;
-                                }
+                if (!isKeyColumnType(m.getColumnType(index))) {
+                    return false;
+                }
+                if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
+                    CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
+                    if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
+                        if (!isCorrectType(b.type)) {
+                            node.intrinsicValue = IntrinsicModel.FALSE;
+                            return false;
+                        }
+                        // IN sets can't be merged if either contains a bind variable (even if it's the same),
+                        // so we've to push new set to filter
+                        if (!allKeyValuesAreKnown || (b.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
+                            node.intrinsicValue = IntrinsicModel.FALSE;
+                            return false;
+                        }
+                        if (b.type == ExpressionNode.FUNCTION) {
+                            CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
+                            if (!isConstFunction) {
+                                node.intrinsicValue = IntrinsicModel.FALSE;
+                                return false;
+                            }
+                            value = testValue;
+                        }
 
-                                // we can refer to the accumulated key values, compute overlap of values
-                                // if values do overlap, keep only our value otherwise invalidate entire model
-                                if (tempKeyValues.contains(value)) {
-                                    // x in ('a,'b') and x = 'a' then x = 'b' can't happen
-                                    if (tempKeyValues.size() > 1) {
-                                        clearKeys();
-                                        addValue(node, b, value);
-                                    }
-                                } else if (tempKeyValues.size() > 0) {
-                                    // "x in ('a','b') and x = 'c' means we have a conflicting predicates
-                                    clearKeys();
+                        // we can refer to the accumulated key values, compute overlap of values
+                        // if values do overlap, keep only our value otherwise invalidate entire model
+                        if (tempKeyValues.contains(value)) {
+                            // x in ('a,'b') and x = 'a' then x = 'b' can't happen
+                            if (tempKeyValues.size() > 1) {
+                                clearKeys();
+                                addValue(node, b, value);
+                            }
+                        } else if (tempKeyValues.size() > 0) {
+                            // "x in ('a','b') and x = 'c' means we have a conflicting predicates
+                            clearKeys();
+                            node.intrinsicValue = IntrinsicModel.TRUE;
+                            model.intrinsicValue = IntrinsicModel.FALSE;
+                            return false;
+                        }
+
+                        // x not in ('a', 'b') and x = 'a'  or
+                        // x not in ($1, 'a') and x = $1  means we have conflicting predicates
+                        if (tempKeyExcludedValues.contains(value)) {
+                            if (value != null) {
+                                int idx = tempKeyExcludedValues.getListIndexOf(value);
+                                if (!isTypeMismatch(tempKeyExcludedValueType.get(idx), b.type)) {
+                                    // clear all excluded values because conflict was detected
+                                    clearExcludedKeys();
                                     node.intrinsicValue = IntrinsicModel.TRUE;
                                     model.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
-
-                                // x not in ('a', 'b') and x = 'a'  or
-                                // x not in ($1, 'a') and x = $1  means we have conflicting predicates
-                                if (tempKeyExcludedValues.contains(value)) {
-                                    if (value != null) {
-                                        int idx = tempKeyExcludedValues.getListIndexOf(value);
-                                        if (!isTypeMismatch(tempKeyExcludedValueType.get(idx), b.type)) {
-                                            // clear all excluded values because conflict was detected
-                                            clearExcludedKeys();
-                                            node.intrinsicValue = IntrinsicModel.TRUE;
-                                            model.intrinsicValue = IntrinsicModel.FALSE;
-                                            return false;
-                                        }
-                                    }
-                                }
-
-                                // no conflicts detected, so just add the value
-                                addValue(node, b, value);
-                                return true;
-                            } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
-                                if (!isCorrectType(b.type)) {
-                                    b.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
-                                }
-                                if (b.type == ExpressionNode.FUNCTION) {
-                                    CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
-                                    if (!isConstFunction) {
-                                        node.intrinsicValue = IntrinsicModel.FALSE;
-                                        return false;
-                                    }
-                                    value = testValue;
-                                }
-
-                                model.keyColumn = columnName;
-                                clearKeys();
-                                clearExcludedKeys();
-                                resetNodes();
-                                addValue(node, b, value);
-                                return true;
                             }
-                            keyNodes.add(node);
-                            return true;
                         }
-                        // fall through
-                    default:
-                        return false;
+
+                        // no conflicts detected, so just add the value
+                        addValue(node, b, value);
+                        return true;
+                    } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
+                        if (!isCorrectType(b.type)) {
+                            b.intrinsicValue = IntrinsicModel.FALSE;
+                            return false;
+                        }
+                        if (b.type == ExpressionNode.FUNCTION) {
+                            CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
+                            if (!isConstFunction) {
+                                node.intrinsicValue = IntrinsicModel.FALSE;
+                                return false;
+                            }
+                            value = testValue;
+                        }
+
+                        model.keyColumn = columnName;
+                        clearKeys();
+                        clearExcludedKeys();
+                        resetNodes();
+                        addValue(node, b, value);
+                        return true;
+                    }
+                    keyNodes.add(node);
+                    return true;
                 }
+                return false;
             }
         }
         // special case for ts = (<subquery>) and similar cases
@@ -1938,95 +1943,89 @@ public final class WhereClauseParser implements Mutable {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
 
-                switch (ColumnType.tagOf(m.getColumnType(index))) {
-                    case ColumnType.VARCHAR:
-                    case ColumnType.SYMBOL:
-                    case ColumnType.STRING:
-                    case ColumnType.LONG:
-                    case ColumnType.INT:
-                        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
-                            CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
-                            if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
-                                if (!isCorrectType(b.type)) {
-                                    node.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
-                                }
-                                if (b.type == ExpressionNode.FUNCTION) {
-                                    CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
-                                    if (!isConstFunction) {
-                                        node.intrinsicValue = IntrinsicModel.FALSE;
-                                        return false;
-                                    }
-                                    value = testValue;
-                                }
-
-                                if (tempKeyExcludedValues.contains(value)) {
-                                    // x not in ('a,'b') and x != 'a' means x not in ('a,'b')
-                                    if (value != null) {
-                                        int idx = tempKeyExcludedValues.getListIndexOf(value);
-                                        // don't mix bind var with literal, push new node to filter
-                                        if (isTypeMismatch(tempKeyExcludedValueType.get(idx), b.type)) {
-                                            node.intrinsicValue = IntrinsicModel.FALSE;
-                                            return false;
-                                        }
-                                    }
-                                    node.intrinsicValue = IntrinsicModel.TRUE;
-                                    keyExclNodes.add(node);
-                                } else if (tempKeyValues.contains(value)
-                                        && (allKeyValuesAreKnown && b.type != ExpressionNode.BIND_VARIABLE)) {
-                                    // sets can't be merged if either contains a bind variable
-                                    int listIdx;
-                                    if (value == null) {
-                                        listIdx = tempKeyValues.removeNull();
-                                    } else {
-                                        int hashIdx = tempKeyValues.keyIndex(value);
-                                        listIdx = tempKeyValues.getListIndexAt(hashIdx);
-                                        tempKeyValues.removeAt(hashIdx);
-                                    }
-                                    tempKeyValuePos.removeIndex(listIdx);
-                                    tempKeyValueType.removeIndex(listIdx);
-                                    removeNodes(b, keyNodes);
-                                    node.intrinsicValue = IntrinsicModel.TRUE;
-
-                                    // in set is empty
-                                    if (tempKeyValues.size() == 0) {
-                                        model.intrinsicValue = IntrinsicModel.FALSE;
-                                    }
-                                    keyExclNodes.add(node);
-                                } else {
-                                    addExcludedValue(node, b, value);
-                                }
-                            } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
-                                if (!isCorrectType(b.type)) {
-                                    node.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
-                                }
-                                if (b.type == ExpressionNode.FUNCTION) {
-                                    CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
-                                    if (!isConstFunction) {
-                                        node.intrinsicValue = IntrinsicModel.FALSE;
-                                        return false;
-                                    }
-
-                                    value = testValue;
-                                }
-
-                                model.keyColumn = columnName;
-                                clearKeys();
-                                clearExcludedKeys();
-                                resetNodes();
-                                addExcludedValue(node, b, value);
-                                return true;
-                            }
-                            return true;
-                        } else if (Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)) {
-                            keyExclNodes.add(node);
+                if (!isKeyColumnType(m.getColumnType(index))) {
+                    return false;
+                }
+                if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
+                    CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
+                    if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
+                        if (!isCorrectType(b.type)) {
+                            node.intrinsicValue = IntrinsicModel.FALSE;
                             return false;
                         }
-                        // fall through
-                    default:
-                        return false;
+                        if (b.type == ExpressionNode.FUNCTION) {
+                            CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
+                            if (!isConstFunction) {
+                                node.intrinsicValue = IntrinsicModel.FALSE;
+                                return false;
+                            }
+                            value = testValue;
+                        }
+
+                        if (tempKeyExcludedValues.contains(value)) {
+                            // x not in ('a,'b') and x != 'a' means x not in ('a,'b')
+                            if (value != null) {
+                                int idx = tempKeyExcludedValues.getListIndexOf(value);
+                                // don't mix bind var with literal, push new node to filter
+                                if (isTypeMismatch(tempKeyExcludedValueType.get(idx), b.type)) {
+                                    node.intrinsicValue = IntrinsicModel.FALSE;
+                                    return false;
+                                }
+                            }
+                            node.intrinsicValue = IntrinsicModel.TRUE;
+                            keyExclNodes.add(node);
+                        } else if (tempKeyValues.contains(value)
+                                && (allKeyValuesAreKnown && b.type != ExpressionNode.BIND_VARIABLE)) {
+                            // sets can't be merged if either contains a bind variable
+                            int listIdx;
+                            if (value == null) {
+                                listIdx = tempKeyValues.removeNull();
+                            } else {
+                                int hashIdx = tempKeyValues.keyIndex(value);
+                                listIdx = tempKeyValues.getListIndexAt(hashIdx);
+                                tempKeyValues.removeAt(hashIdx);
+                            }
+                            tempKeyValuePos.removeIndex(listIdx);
+                            tempKeyValueType.removeIndex(listIdx);
+                            removeNodes(b, keyNodes);
+                            node.intrinsicValue = IntrinsicModel.TRUE;
+
+                            // in set is empty
+                            if (tempKeyValues.size() == 0) {
+                                model.intrinsicValue = IntrinsicModel.FALSE;
+                            }
+                            keyExclNodes.add(node);
+                        } else {
+                            addExcludedValue(node, b, value);
+                        }
+                    } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
+                        if (!isCorrectType(b.type)) {
+                            node.intrinsicValue = IntrinsicModel.FALSE;
+                            return false;
+                        }
+                        if (b.type == ExpressionNode.FUNCTION) {
+                            CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
+                            if (!isConstFunction) {
+                                node.intrinsicValue = IntrinsicModel.FALSE;
+                                return false;
+                            }
+
+                            value = testValue;
+                        }
+
+                        model.keyColumn = columnName;
+                        clearKeys();
+                        clearExcludedKeys();
+                        resetNodes();
+                        addExcludedValue(node, b, value);
+                        return true;
+                    }
+                    return true;
+                } else if (Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)) {
+                    keyExclNodes.add(node);
+                    return false;
                 }
+                return false;
             }
         }
         return false;
@@ -3865,7 +3864,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 if (isTimestamp) {
                     checkFunctionCanBeTimestamp(metadata, executionContext, bound, boundNode.position);
-                } else if (!isIntegerType(bound.getType())) {
+                } else if (!ColumnType.isIntegral(bound.getType())) {
                     return BOUND_FAIL;
                 }
                 if (bound.isConstant()) {

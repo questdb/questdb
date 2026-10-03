@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -134,6 +135,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntIntHashMap parquetIdxToDecodeSlot;
     private final IntList queryToSlot = new IntList(16);
     private final IntLongHashMap recordAtSlices = new IntLongHashMap();
+    // Scratch descriptor that navigateTo(int, PageFrameMemoryRecord) points at a frame before the
+    // record copies it; the pool is used by one thread at a time.
+    private final ColumnVectorDescriptor recordColumnVectors = new ColumnVectorDescriptor();
+    // Per-column NULL policy of the stored source column for fixed-to-var type-cast
+    // columns, from the Parquet file's per-column accessor. Indexed by query column
+    // index; null where sourceColumnTypes holds no fixed source type.
+    private final ObjList<NullPolicy> sourceColumnNullPolicies;
     // Per-column source type tag for fixed-to-var type-cast columns.
     // Indexed by query column index; -1 means no type cast.
     private final IntList sourceColumnTypes;
@@ -202,6 +210,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetIdxToDecodeSlot = new IntIntHashMap(16);
             legacyDecoder = new ParquetFileDecoder();
             sourceColumnTypes = new IntList();
+            sourceColumnNullPolicies = new ObjList<>();
         } catch (Throwable th) {
             close();
             throw th;
@@ -303,13 +312,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     frameIndex,
                     format,
                     addressCache.getRowIdOffset(frameIndex),
-                    addressCache.getPageAddresses(),
-                    addressCache.getAuxPageAddresses(),
-                    addressCache.getPageSizes(),
-                    addressCache.getAuxPageSizes(),
-                    addressCache.toColumnOffset(frameIndex),
-                    addressCache.getColumnCount(),
+                    addressCache.describeNativeFrame(frameIndex, recordColumnVectors),
                     false,
+                    null,
                     null,
                     null
             );
@@ -385,14 +390,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     frameIndex,
                     format,
                     addressCache.getRowIdOffset(frameIndex),
-                    parquetBuffers.pageAddresses,
-                    parquetBuffers.auxPageAddresses,
-                    parquetBuffers.pageSizes,
-                    parquetBuffers.auxPageSizes,
-                    0, // parquet buffers use 0 offset since they're frame-specific
-                    addressCache.getColumnCount(),
+                    parquetBuffers.describe(recordColumnVectors),
                     hasTypeCasts,
                     sourceColumnTypes,
+                    sourceColumnNullPolicies,
                     parquetBuffers.columnTops
             );
             record.setBoundPool(this, bindGeneration);
@@ -451,11 +452,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final byte format = addressCache.getFrameFormat(frameIndex);
         if (format == PartitionFormat.NATIVE) {
             unbind(FRAME_MEMORY_MASK);
-            frameMemory.pageAddresses = addressCache.getPageAddresses();
-            frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
-            frameMemory.pageSizes = addressCache.getPageSizes();
-            frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
-            frameMemory.columnOffset = addressCache.toColumnOffset(frameIndex);
+            addressCache.describeNativeFrame(frameIndex, frameMemory.columnVectors);
             frameMemory.currentRowGroupBuffer = null;
             // Covered frame: decode its covered columns on this worker and rebind
             // the frame memory to the decoded buffers (overriding the eager flat
@@ -481,11 +478,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 unbind(FRAME_MEMORY_MASK);
                 final DirectLongList zeroes = getNullColumnAddresses();
                 frameMemory.currentRowGroupBuffer = null;
-                frameMemory.pageAddresses = zeroes;
-                frameMemory.auxPageAddresses = zeroes;
-                frameMemory.pageSizes = zeroes;
-                frameMemory.auxPageSizes = zeroes;
-                frameMemory.columnOffset = 0;
+                describeDecoded(frameMemory.columnVectors, zeroes, zeroes, zeroes, zeroes);
                 frameMemory.frameIndex = frameIndex;
                 frameMemory.frameFormat = format;
                 return frameMemory;
@@ -534,12 +527,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
             }
             frameMemory.currentRowGroupBuffer = parquetBuffers;
-            frameMemory.pageAddresses = parquetBuffers.pageAddresses;
-            frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
-            frameMemory.pageSizes = parquetBuffers.pageSizes;
-            frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
+            parquetBuffers.describe(frameMemory.columnVectors);
             frameMemory.columnTops = parquetBuffers.columnTops;
-            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -559,11 +548,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final byte format = addressCache.getFrameFormat(frameIndex);
         if (format == PartitionFormat.NATIVE) {
             unbind(FRAME_MEMORY_MASK);
-            frameMemory.pageAddresses = addressCache.getPageAddresses();
-            frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
-            frameMemory.pageSizes = addressCache.getPageSizes();
-            frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
-            frameMemory.columnOffset = addressCache.toColumnOffset(frameIndex);
+            addressCache.describeNativeFrame(frameIndex, frameMemory.columnVectors);
             frameMemory.currentRowGroupBuffer = null;
             // Covered frame: decode covered columns on this worker and rebind. See
             // the matching arm in navigateTo(int, int, int). The columnIndexes hint
@@ -608,12 +593,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
             }
             frameMemory.currentRowGroupBuffer = parquetBuffers;
-            frameMemory.pageAddresses = parquetBuffers.pageAddresses;
-            frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
-            frameMemory.pageSizes = parquetBuffers.pageSizes;
-            frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
+            parquetBuffers.describe(frameMemory.columnVectors);
             frameMemory.columnTops = parquetBuffers.columnTops;
-            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -717,6 +698,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         columnIdToParquetIdx.clear();
         queryToSlot.clear();
         sourceColumnTypes.clear();
+        sourceColumnNullPolicies.clear();
         declaredFrameRowCounts.clear();
         recordAtSlices.clear();
         Misc.clear(recordAtRows);
@@ -1078,6 +1060,33 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         };
     }
 
+    /**
+     * Points a descriptor at a decoded frame's buffers: Parquet row-group buffers, covered
+     * buffers or the zero list of an empty window. These frames carry no validity, so the
+     * validity lists stay null and every column answers validity address 0, bit offset 0 and
+     * NULL count -1. The buffers are per frame, so the column offset is 0.
+     */
+    private ColumnVectorDescriptor describeDecoded(
+            ColumnVectorDescriptor descriptor,
+            DirectLongList dataAddresses,
+            DirectLongList dataSizes,
+            DirectLongList auxAddresses,
+            DirectLongList auxSizes
+    ) {
+        return descriptor.of(
+                dataAddresses,
+                dataSizes,
+                auxAddresses,
+                auxSizes,
+                null,
+                null,
+                null,
+                addressCache.getColumnNullPolicies(),
+                0,
+                addressCache.getColumnCount()
+        );
+    }
+
     private DirectLongList getNullColumnAddresses() {
         final int columnCount = addressCache.getColumnCount();
         if (nullColumnAddresses == null) {
@@ -1203,13 +1212,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 frameIndex,
                 PartitionFormat.NATIVE,
                 addressCache.getRowIdOffset(frameIndex),
-                buffers.getPageAddresses(),
-                buffers.getAuxPageAddresses(),
-                buffers.getPageSizes(),
-                buffers.getAuxPageSizes(),
-                0, // covered buffers are frame-specific, so they use a 0 column offset
-                addressCache.getColumnCount(),
+                buffers.describe(recordColumnVectors),
                 false, // covered NATIVE frames have no parquet-style lazy type conversion
+                null,
                 null,
                 null
         );
@@ -1235,6 +1240,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             queryToSlot.setQuick(q, -1);
         }
         sourceColumnTypes.setAll(readParquetColumnCount, -1);
+        sourceColumnNullPolicies.setAll(readParquetColumnCount, null);
         hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
             resolveParquetColumn(i, columnMapping, activeDecoder);
@@ -1261,6 +1267,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (isInclude) {
             // First-pass navigation: start from a clean slate.
             sourceColumnTypes.setAll(readParquetColumnCount, -1);
+            sourceColumnNullPolicies.setAll(readParquetColumnCount, null);
             hasTypeCasts = false;
         }
         // isInclude=false is populateRemainingColumns: retain sourceColumnTypes / hasTypeCasts
@@ -1300,11 +1307,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return;
         }
         frameMemory.currentRowGroupBuffer = null;
-        frameMemory.pageAddresses = buffers.getPageAddresses();
-        frameMemory.auxPageAddresses = buffers.getAuxPageAddresses();
-        frameMemory.pageSizes = buffers.getPageSizes();
-        frameMemory.auxPageSizes = buffers.getAuxPageSizes();
-        frameMemory.columnOffset = 0;
+        buffers.describe(frameMemory.columnVectors);
     }
 
     /**
@@ -1398,6 +1401,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     // Java does lazy per-row conversion in PageFrameMemoryRecord.
                     queryToSlot.setQuick(i, addDecodeSlotIfAbsent(parquetIdx, sourceType));
                     sourceColumnTypes.setQuick(i, sourceType);
+                    sourceColumnNullPolicies.setQuick(i, parquetMetadata.getColumnNullPolicy(parquetIdx));
                     hasTypeCasts = true;
                     return;
                 }
@@ -1547,6 +1551,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // Per query column size (bytes) for fixed-width columns; type tag; full
         // type; and the sidecar include index (>= 0 covered, -1 symbol key).
         // Query-constant, built once with the column buffers.
+        private int[] columnLayouts;
         private int[] columnSizeBytes;
         private int[] columnTypeTags;
         private int[] columnTypes;
@@ -1653,6 +1658,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 varDataPos = new int[queryColCount];
                 columnTypes = new int[queryColCount];
                 columnTypeTags = new int[queryColCount];
+                columnLayouts = new int[queryColCount];
                 columnSizeBytes = new int[queryColCount];
                 coveredIncludeIdx = new int[queryColCount];
                 coveredColumn = new boolean[queryColCount];
@@ -1660,7 +1666,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 for (int q = 0; q < queryColCount; q++) {
                     final int type = types.getQuick(q);
                     columnTypes[q] = type;
-                    columnTypeTags[q] = ColumnType.tagOf(type);
+                    // the decoder's arm for the column: its tag, or COVERED_NONE for a type without one
+                    columnTypeTags[q] = CoveredColumnDecoder.coveredOpcode(type);
+                    columnLayouts[q] = CoveredColumnDecoder.coveredLayout(type);
                     columnSizeBytes[q] = ColumnType.sizeOf(type);
                 }
             }
@@ -1688,20 +1696,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
                 final long auxBytes;
                 final int initDataCap;
-                switch (columnTypeTags[q]) {
-                    case ColumnType.VARCHAR -> {
+                switch (columnLayouts[q]) {
+                    case CoveredColumnDecoder.LAYOUT_VARCHAR -> {
                         auxBytes = (long) rowCount * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
                         initDataCap = rowCount * 32;
                     }
-                    case ColumnType.STRING, ColumnType.BINARY -> {
+                    case CoveredColumnDecoder.LAYOUT_OFFSET -> {
                         auxBytes = (long) (rowCount + 1) * Long.BYTES;
                         initDataCap = rowCount * 32;
                     }
-                    case ColumnType.ARRAY -> {
+                    case CoveredColumnDecoder.LAYOUT_ARRAY -> {
                         auxBytes = (long) rowCount * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
                         initDataCap = rowCount * 32;
                     }
-                    default -> {
+                    default -> { // LAYOUT_FIXED
                         auxBytes = (long) rowCount * columnSizeBytes[q];
                         initDataCap = 0;
                     }
@@ -1828,14 +1836,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     auxPageSizes.set(q, 0);
                     continue;
                 }
-                switch (columnTypeTags[q]) {
-                    case ColumnType.VARCHAR -> {
+                switch (columnLayouts[q]) {
+                    case CoveredColumnDecoder.LAYOUT_VARCHAR -> {
                         auxPageAddresses.set(q, colAddr[q]);
                         auxPageSizes.set(q, (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
                         pageAddresses.set(q, varDataAddr[q]);
                         pageSizes.set(q, varDataPos[q]);
                     }
-                    case ColumnType.STRING, ColumnType.BINARY -> {
+                    case CoveredColumnDecoder.LAYOUT_OFFSET -> {
                         // Trailing sentinel offset at slot [count]. Guard colAddr[q] != 0:
                         // covered frames currently always have rowCount >= 1 so the buffer
                         // is always allocated, but the check makes this robust against a
@@ -1848,13 +1856,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         pageAddresses.set(q, varDataAddr[q]);
                         pageSizes.set(q, varDataPos[q]);
                     }
-                    case ColumnType.ARRAY -> {
+                    case CoveredColumnDecoder.LAYOUT_ARRAY -> {
                         auxPageAddresses.set(q, colAddr[q]);
                         auxPageSizes.set(q, (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
                         pageAddresses.set(q, varDataAddr[q]);
                         pageSizes.set(q, varDataPos[q]);
                     }
-                    default -> {
+                    default -> { // LAYOUT_FIXED
                         pageAddresses.set(q, colAddr[q]);
                         pageSizes.set(q, (long) count * columnSizeBytes[q]);
                         auxPageAddresses.set(q, 0);
@@ -1923,60 +1931,25 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
         }
 
-        DirectLongList getAuxPageAddresses() {
-            return auxPageAddresses;
-        }
-
-        DirectLongList getAuxPageSizes() {
-            return auxPageSizes;
-        }
-
-        DirectLongList getPageAddresses() {
-            return pageAddresses;
-        }
-
-        DirectLongList getPageSizes() {
-            return pageSizes;
+        ColumnVectorDescriptor describe(ColumnVectorDescriptor descriptor) {
+            return describeDecoded(descriptor, pageAddresses, pageSizes, auxPageAddresses, auxPageSizes);
         }
     }
 
     private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
-        private DirectLongList auxPageAddresses;
-        private DirectLongList auxPageSizes;
-        private int columnOffset;
+        private final ColumnVectorDescriptor columnVectors = new ColumnVectorDescriptor();
         private DirectLongList columnTops;
         private ParquetBuffers currentRowGroupBuffer;
         private byte frameFormat = -1;
         private int frameIndex = -1;
-        private DirectLongList pageAddresses;
-        private DirectLongList pageSizes;
 
         @Override
         public void clear() {
             frameIndex = -1;
             frameFormat = -1;
-            columnOffset = 0;
-            pageAddresses = null;
-            auxPageAddresses = null;
-            pageSizes = null;
-            auxPageSizes = null;
+            columnVectors.clear();
             columnTops = null;
             currentRowGroupBuffer = null;
-        }
-
-        @Override
-        public long getAuxPageAddress(int columnIndex) {
-            return auxPageAddresses.get(columnOffset + columnIndex);
-        }
-
-        @Override
-        public DirectLongList getAuxPageAddresses() {
-            return auxPageAddresses;
-        }
-
-        @Override
-        public DirectLongList getAuxPageSizes() {
-            return auxPageSizes;
         }
 
         @Override
@@ -1985,13 +1958,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
-        public int getColumnOffset() {
-            return columnOffset;
+        public DirectLongList getColumnTops() {
+            return columnTops;
         }
 
         @Override
-        public DirectLongList getColumnTops() {
-            return columnTops;
+        public ColumnVectorDescriptor getColumnVectorDescriptor() {
+            return columnVectors;
         }
 
         @Override
@@ -2005,26 +1978,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
-        public long getPageAddress(int columnIndex) {
-            return pageAddresses.get(columnOffset + columnIndex);
-        }
-
-        @Override
-        public DirectLongList getPageAddresses() {
-            return pageAddresses;
-        }
-
-        @Override
-        public long getPageSize(int columnIndex) {
-            return pageSizes.get(columnOffset + columnIndex);
-        }
-
-        @Override
-        public DirectLongList getPageSizes() {
-            return pageSizes;
-        }
-
-        @Override
         public PageFrameMemoryPool getPool() {
             return PageFrameMemoryPool.this;
         }
@@ -2032,6 +1985,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public long getRowIdOffset() {
             return addressCache.getRowIdOffset(frameIndex);
+        }
+
+        @Override
+        public @Nullable NullPolicy getSourceColumnNullPolicy(int columnIndex) {
+            if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
+                return sourceColumnNullPolicies.getQuick(columnIndex);
+            }
+            return null;
         }
 
         @Override
@@ -2047,7 +2008,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
                 // VARCHAR column that contains short strings will have zero data vector,
                 // so for such columns we also need to check that the aux (index) vector is zero.
-                if (pageAddresses.get(columnOffset + i) == 0 && auxPageAddresses.get(columnOffset + i) == 0) {
+                if (columnVectors.getDataAddress(i) == 0 && columnVectors.getAuxAddress(i) == 0) {
                     return true;
                 }
             }
@@ -2188,6 +2149,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // LRU links so a pooled shell cannot retain its former neighbours.
             prev = null;
             next = null;
+        }
+
+        public ColumnVectorDescriptor describe(ColumnVectorDescriptor descriptor) {
+            return describeDecoded(descriptor, pageAddresses, pageSizes, auxPageAddresses, auxPageSizes);
         }
 
         public void decode(ParquetDecoder decoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi, int frameRowLo) {

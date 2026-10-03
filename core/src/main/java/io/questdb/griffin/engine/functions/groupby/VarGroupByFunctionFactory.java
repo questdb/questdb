@@ -24,7 +24,13 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.map.MapValue;
+
 public class VarGroupByFunctionFactory extends VarSampleGroupByFunctionFactory {
+    public static void value(MapValue mapValue, int valueIndex, double x) {
+        VarSampleGroupByFunctionFactory.value(mapValue, valueIndex, x);
+    }
+
     @Override
     public String getSignature() {
         return "variance(D)";

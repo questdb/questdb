@@ -24,15 +24,19 @@
 
 package io.questdb.cutlass.parquet;
 
+import io.questdb.cairo.NullPolicy;
+import io.questdb.cairo.sql.ColumnVectorDescriptor;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
 /**
@@ -42,8 +46,13 @@ import io.questdb.std.QuietCloseable;
 class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseable {
     private final DirectLongList auxPageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final DirectLongList auxPageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    private final ObjList<NullPolicy> columnNullPolicies = new ObjList<>();
+    private final ColumnVectorDescriptor columnVectors = new ColumnVectorDescriptor();
+    private final DirectLongList nullCounts = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final DirectLongList pageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final DirectLongList pageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    private final DirectLongList validityAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    private final DirectLongList validityBitOffsets = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private int columnCount;
     private boolean hasColumnTops;
     private long rowIdOffset;
@@ -54,6 +63,10 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
         auxPageAddresses.clear();
         pageSizes.clear();
         auxPageSizes.clear();
+        validityAddresses.clear();
+        validityBitOffsets.clear();
+        nullCounts.clear();
+        columnVectors.clear();
     }
 
     @Override
@@ -62,21 +75,10 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
         Misc.free(auxPageAddresses);
         Misc.free(pageSizes);
         Misc.free(auxPageSizes);
-    }
-
-    @Override
-    public long getAuxPageAddress(int columnIndex) {
-        return auxPageAddresses.get(columnIndex);
-    }
-
-    @Override
-    public DirectLongList getAuxPageAddresses() {
-        return auxPageAddresses;
-    }
-
-    @Override
-    public DirectLongList getAuxPageSizes() {
-        return auxPageSizes;
+        Misc.free(validityAddresses);
+        Misc.free(validityBitOffsets);
+        Misc.free(nullCounts);
+        columnVectors.clear();
     }
 
     @Override
@@ -85,8 +87,8 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     }
 
     @Override
-    public int getColumnOffset() {
-        return 0;
+    public ColumnVectorDescriptor getColumnVectorDescriptor() {
+        return columnVectors;
     }
 
     @Override
@@ -100,26 +102,6 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     }
 
     @Override
-    public long getPageAddress(int columnIndex) {
-        return pageAddresses.get(columnIndex);
-    }
-
-    @Override
-    public DirectLongList getPageAddresses() {
-        return pageAddresses;
-    }
-
-    @Override
-    public long getPageSize(int columnIndex) {
-        return pageSizes.get(columnIndex);
-    }
-
-    @Override
-    public DirectLongList getPageSizes() {
-        return pageSizes;
-    }
-
-    @Override
     public PageFrameMemoryPool getPool() {
         // Not backed by a PageFrameMemoryPool; records bound from here always rebind.
         return null;
@@ -128,6 +110,11 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     @Override
     public long getRowIdOffset() {
         return rowIdOffset;
+    }
+
+    @Override
+    public NullPolicy getSourceColumnNullPolicy(int columnIndex) {
+        return null;
     }
 
     @Override
@@ -145,6 +132,9 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
         return false;
     }
 
+    /**
+     * Copies a frame of the page frame cursor whose metadata {@link #ofMetadata} took.
+     */
     public void of(PageFrame frame) {
         this.columnCount = frame.getColumnCount();
         this.rowIdOffset = frame.getPartitionLo();
@@ -153,17 +143,45 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
         auxPageAddresses.clear();
         pageSizes.clear();
         auxPageSizes.clear();
+        validityAddresses.clear();
+        validityBitOffsets.clear();
+        nullCounts.clear();
 
         hasColumnTops = false;
         for (int col = 0; col < columnCount; col++) {
-            long addr = frame.getPageAddress(col);
+            long addr = frame.getDataAddress(col);
             pageAddresses.add(addr);
-            pageSizes.add(frame.getPageSize(col));
-            auxPageAddresses.add(frame.getAuxPageAddress(col));
-            auxPageSizes.add(frame.getAuxPageSize(col));
+            pageSizes.add(frame.getDataSize(col));
+            auxPageAddresses.add(frame.getAuxAddress(col));
+            auxPageSizes.add(frame.getAuxSize(col));
+            validityAddresses.add(frame.getValidityAddress(col));
+            validityBitOffsets.add(frame.getValidityBitOffset(col));
+            nullCounts.add(frame.getNullCount(col));
             if (addr == 0) {
                 hasColumnTops = true;
             }
+        }
+        columnVectors.of(
+                pageAddresses,
+                pageSizes,
+                auxPageAddresses,
+                auxPageSizes,
+                validityAddresses,
+                validityBitOffsets,
+                nullCounts,
+                columnNullPolicies,
+                0,
+                columnCount
+        );
+    }
+
+    /**
+     * Takes the per-column NULL policies of the page frame cursor's metadata, once at setup.
+     */
+    public void ofMetadata(RecordMetadata metadata) {
+        columnNullPolicies.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            columnNullPolicies.add(metadata.getColumnNullPolicy(i));
         }
     }
 

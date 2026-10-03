@@ -146,7 +146,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * Bulk-appends {@code (hi - lo)} rows of the given {@code frame}, driving the
      * column emit in column-major order when the frame is in NATIVE format. Each
      * supported column type reads its page memory directly from
-     * {@link PageFrame#getPageAddress} and hands a bulk-append call to the
+     * {@link PageFrame#getDataAddress} and hands a bulk-append call to the
      * corresponding column scratch; types without a columnar fast path fall
      * back to per-row iteration over {@code record}, touching only the columns
      * that need it.
@@ -178,7 +178,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             final QwpColumnScratch scratch = scs[ci];
             final byte wt = wts[ci];
             // Column-top check moved INSIDE each fixed-width case. For VARCHAR /
-            // STRING / BINARY, {@code getPageAddress} returning 0 does NOT mean
+            // STRING / BINARY, {@code getDataAddress} returning 0 does NOT mean
             // column top -- it can also mean all values in this frame are
             // inline-stored in the aux vector with no overflow to the data
             // vector. Those types take the per-row fallback which uses
@@ -189,7 +189,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_TIMESTAMP:
                 case QwpConstants.TYPE_TIMESTAMP_NANOS:
                 case QwpConstants.TYPE_DECIMAL64: {
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -198,7 +198,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_DOUBLE: {
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -207,7 +207,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_INT: {
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -217,7 +217,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_IPV4: {
                     // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -226,7 +226,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_FLOAT: {
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -236,7 +236,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_SHORT:
                 case QwpConstants.TYPE_CHAR: {
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: SHORT / CHAR cannot carry NULL.
                         // INSERT NULL stores 0 and the wire row keeps the null
@@ -250,7 +250,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_BYTE: {
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: BYTE cannot carry NULL. See the
                         // SHORT / CHAR case above for the column-top rationale.
@@ -261,7 +261,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_BOOLEAN: {
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: BOOLEAN cannot carry NULL. The
                         // column-top fill is n bit-packed false values; the
@@ -274,7 +274,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_SYMBOL: {
                     SymbolTable st = sts[ci];
-                    long base = frame.getPageAddress(ci);
+                    long base = frame.getDataAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else if (st != null) {
@@ -846,9 +846,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 break;
             case QwpConstants.TYPE_VARCHAR: {
                 // Egress advertises TYPE_VARCHAR for both QuestDB STRING and VARCHAR source
-                // columns (identical wire layout); branch on the source type to reach the
+                // columns (identical wire layout); branch on the source's wire kind to reach the
                 // right Record getter.
-                if (ColumnType.tagOf(qt) == ColumnType.STRING) {
+                if (def.isUtf16Source()) {
                     CharSequence cs = record.getStrA(ci);
                     if (cs == null) scratch.appendNull();
                     else scratch.appendString(cs);

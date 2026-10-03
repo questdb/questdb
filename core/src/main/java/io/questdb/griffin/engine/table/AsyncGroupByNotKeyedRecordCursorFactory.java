@@ -431,7 +431,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     if (colIdx == AsyncGroupByNotKeyedAtom.BATCH_NO_ARG) {
                         func.computeBatch(value, 0, count, startRowId);
                     } else {
-                        func.computeBatch(value, frameMemory.getPageAddress(colIdx), count, startRowId);
+                        func.computeBatch(value, frameMemory.getColumnVectorDescriptor().getDataAddress(colIdx), count, startRowId);
                     }
                 }
 
@@ -545,6 +545,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                         addressCache,
                         filterCtx.getDataAddresses(slotId),
                         filterCtx.getAuxAddresses(slotId),
+                        filterCtx.getValidityLists(slotId),
                         rows,
                         frameRowCount
                 );

@@ -38,6 +38,19 @@ import org.jetbrains.annotations.NotNull;
 
 public class DoubleArrayElemMinGroupByFunctionFactory implements FunctionFactory {
 
+    /**
+     * The smaller of two elements by {@link Math#min}, with NaN ordered after every other value
+     * (PA-13): a NaN operand gives the other one. The function keeps today's {@code Math.min} and
+     * does not call it: it passes only finite values, where the body's NaN tests would add work to
+     * every element.
+     */
+    public static double value(double min, double element) {
+        if (Double.isNaN(element)) {
+            return min;
+        }
+        return Double.isNaN(min) ? element : Math.min(min, element);
+    }
+
     @Override
     public String getSignature() {
         return "array_elem_min(D[])";

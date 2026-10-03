@@ -260,6 +260,12 @@ public class PartitionEncoder {
                             parquetEncodingConfig
                     );
                 } else {
+                    // The secondary slot carries a fixed-size column's validity bitmap. NULLs that
+                    // live in the values need none, so it stays empty; a policy that keeps them in
+                    // a bitmap will pass the bitmap here.
+                    final long validityAddr = switch (metadata.getColumnNullPolicy(i)) {
+                        case SENTINEL, NONE -> 0;
+                    };
                     descriptor.addColumn(
                             columnName,
                             columnType,
@@ -267,7 +273,7 @@ public class PartitionEncoder {
                             colTop,
                             primaryMem.addressOf(0),
                             primaryMem.size(),
-                            0,
+                            validityAddr,
                             0,
                             0,
                             0,

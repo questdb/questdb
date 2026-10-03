@@ -90,7 +90,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? MinLongGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         } else {
@@ -101,7 +101,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? MinLongGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         }

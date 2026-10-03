@@ -39,6 +39,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.line.LineUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -438,7 +439,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             int geoHashBits = 0;
             if (valueType != ColumnType.NULL) {
                 final int valueTypeTag = ColumnType.tagOf(valueType);
-                final int columnTypeTag = ColumnType.tagOf(columnType);
+                // the column's ILP kind (LineUtils.columnKind()): a type takes its accessor family's
+                // row, as the appender takes its arm; every other type's kind is its tag, or a family
+                // kind (GEOHASH, DECIMAL) that no row names
+                final int columnTypeTag = LineUtils.columnKind(columnType);
                 valid = switch (valueTypeTag) {
                     case ColumnType.LONG -> columnTypeTag == ColumnType.LONG
                             || columnTypeTag == ColumnType.INT

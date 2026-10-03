@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,27 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class WeightedStdDevReliabilityGroupByFunctionFactory implements FunctionFactory {
+    public static void value(MapValue mapValue, int valueIndex, double sample, double weight) {
+        // Acquire current computation state
+        double wSum = mapValue.getDouble(valueIndex);
+        double wSum2 = mapValue.getDouble(valueIndex + 1);
+        double mean = mapValue.getDouble(valueIndex + 2);
+        double s = mapValue.getDouble(valueIndex + 3);
+
+        // Update computation state with values from record
+        wSum += weight;
+        wSum2 += weight * weight;
+        double meanOld = mean;
+        mean += (weight / wSum) * (sample - meanOld);
+        s += weight * (sample - meanOld) * (sample - mean);
+
+        // Store updated computation state
+        mapValue.putDouble(valueIndex, wSum);
+        mapValue.putDouble(valueIndex + 1, wSum2);
+        mapValue.putDouble(valueIndex + 2, mean);
+        mapValue.putDouble(valueIndex + 3, s);
+    }
+
     @Override
     public String getSignature() {
         return "weighted_stddev_rel(DD)";

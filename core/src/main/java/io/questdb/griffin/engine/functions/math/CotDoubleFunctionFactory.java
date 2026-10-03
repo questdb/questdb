@@ -38,6 +38,14 @@ import io.questdb.std.ObjList;
 public class CotDoubleFunctionFactory implements FunctionFactory {
     public static final String SYMBOL = "cot";
 
+    /**
+     * Undefined where the cotangent is not finite (a zero or infinite angle, or one whose tangent
+     * is too small to invert): the function gives NULL there, as for a NULL operand.
+     */
+    public static double value(double operand) {
+        return 1.0 / Math.tan(operand);
+    }
+
     @Override
     public String getSignature() {
         return SYMBOL + "(D)";
@@ -68,7 +76,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double d = 1.0 / Math.tan(angleRad.getDouble(rec));
+            double d = value(angleRad.getDouble(rec));
             return Numbers.isFinite(d) ? d : Double.NaN;
         }
 

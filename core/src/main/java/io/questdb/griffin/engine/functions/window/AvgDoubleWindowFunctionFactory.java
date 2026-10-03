@@ -79,6 +79,22 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(D)";
 
+    /**
+     * A sliding frame removes a value by adding its negation: IEEE 754 defines x - y as
+     * x + (-y), so the result does not change.
+     */
+    public static double value(double sum, double delta) {
+        return sum + delta;
+    }
+
+    /**
+     * Undefined for a zero count: the function gives NULL there, as for a frame without a
+     * non-NULL value.
+     */
+    public static double value(double sum, long count) {
+        return sum / count;
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -370,11 +386,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void accumulateWindowState(Record record, MapValue value) {
+        public void accumulateWindowState(Record record, MapValue mapValue) {
             final double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
-                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+                mapValue.putDouble(windowStateSumSlot, value(mapValue.getDouble(windowStateSumSlot), d));
+                mapValue.putLong(windowStateNonNullCountSlot, mapValue.getLong(windowStateNonNullCountSlot) + 1);
             }
         }
 
@@ -406,20 +422,20 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 partitionByRecord.of(record);
                 MapKey key = map.withKey();
                 key.put(partitionByRecord, partitionBySink);
-                MapValue value = key.createValue();
+                MapValue mapValue = key.createValue();
 
                 long count;
                 double sum;
 
-                if (value.isNew()) {
+                if (mapValue.isNew()) {
                     count = 1;
                     sum = d;
                 } else {
-                    count = value.getLong(1) + 1;
-                    sum = value.getDouble(0) + d;
+                    count = mapValue.getLong(1) + 1;
+                    sum = value(mapValue.getDouble(0), d);
                 }
-                value.putDouble(0, sum);
-                value.putLong(1, count);
+                mapValue.putDouble(0, sum);
+                mapValue.putLong(1, count);
             }
         }
 
@@ -461,15 +477,15 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 long count = value.getLong(1);
                 if (count > 0) {
                     double sum = value.getDouble(0);
-                    value.putDouble(0, sum / count);
+                    value.putDouble(0, value(sum, count));
                 }
             }
         }
 
         @Override
-        public void projectWindowState(Record record, MapValue value) {
-            final long count = value.getLong(windowStateNonNullCountSlot);
-            windowStateResult = count != 0 ? value.getDouble(windowStateSumSlot) / count : Double.NaN;
+        public void projectWindowState(Record record, MapValue mapValue) {
+            final long count = mapValue.getLong(windowStateNonNullCountSlot);
+            windowStateResult = count != 0 ? value(mapValue.getDouble(windowStateSumSlot), count) : Double.NaN;
         }
 
         @Override
@@ -707,7 +723,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += val;
+                            sum = value(sum, val);
                             frameSize++;
                         } else {
                             break;
@@ -720,7 +736,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += val;
+                            sum = value(sum, val);
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -922,8 +938,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
-                            double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += value;
+                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            sum = value(sum, val);
                             frameSize++;
                         } else {
                             break;
@@ -936,7 +952,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += val;
+                            sum = value(sum, val);
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -949,7 +965,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
 
                 if (frameSize != 0) {
-                    avg = sum / frameSize;
+                    avg = value(sum, frameSize);
                     this.sum = sum;
                 } else {
                     avg = Double.NaN;
@@ -994,7 +1010,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             final long count = value.getLong(windowStateNonNullCountSlot);
             if (count != 0) {
                 sum = value.getDouble(windowStateSumSlot);
-                avg = sum / count;
+                avg = value(sum, count);
             } else {
                 sum = Double.NaN;
                 avg = Double.NaN;
@@ -1467,7 +1483,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         ? d
                         : memory.getDouble(ringOffset + enteringIdx * Double.BYTES);
                 if (Numbers.isFinite(entering)) {
-                    sum += entering;
+                    sum = value(sum, entering);
                     count++;
                 }
             }
@@ -1554,12 +1570,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 double hiValue = frameIncludesCurrentValue ? d : memory.getDouble(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
                 if (Numbers.isFinite(hiValue)) {
                     count++;
-                    sum += hiValue;
+                    sum = value(sum, hiValue);
                 }
 
                 //here sum is correct for current row
                 if (count != 0) {
-                    avg = sum / count;
+                    avg = value(sum, count);
                     this.sum = sum;
                 } else {
                     avg = Double.NaN;
@@ -1612,7 +1628,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             final long count = value.getLong(windowStateNonNullCountSlot);
             if (count != 0) {
                 sum = value.getDouble(windowStateSumSlot);
-                avg = sum / count;
+                avg = value(sum, count);
             } else {
                 sum = Double.NaN;
                 avg = Double.NaN;
@@ -1958,8 +1974,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
-                        double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum += value;
+                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        sum = value(sum, val);
                         frameSize++;
                     } else {
                         break;
@@ -1972,7 +1988,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum += val;
+                        sum = value(sum, val);
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
@@ -1983,7 +1999,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 firstIdx = newFirstIdx;
             }
             if (frameSize != 0) {
-                avg = sum / frameSize;
+                avg = value(sum, frameSize);
                 externalSum = sum;
 
             } else {
@@ -2122,11 +2138,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 hiValue = buffer.getDouble((long) (loIdx % bufferSize) * Double.BYTES);
             }
             if (Numbers.isFinite(hiValue)) {
-                sum += hiValue;
+                sum = value(sum, hiValue);
                 count++;
             }
             if (count != 0) {
-                avg = sum / count;
+                avg = value(sum, count);
                 externalSum = sum;
             } else {
                 avg = Double.NaN;
@@ -2282,11 +2298,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void accumulateWindowState(Record record, MapValue value) {
+        public void accumulateWindowState(Record record, MapValue mapValue) {
             final double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
-                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+                mapValue.putDouble(windowStateSumSlot, value(mapValue.getDouble(windowStateSumSlot), d));
+                mapValue.putLong(windowStateNonNullCountSlot, mapValue.getLong(windowStateNonNullCountSlot) + 1);
             }
         }
 
@@ -2318,13 +2334,13 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum += d;
+                sum = value(sum, d);
                 count++;
             }
 
             value.putDouble(0, sum);
             value.putLong(1, count);
-            avg = count != 0 ? sum / count : Double.NaN;
+            avg = count != 0 ? value(sum, count) : Double.NaN;
         }
 
         @Override
@@ -2343,9 +2359,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void projectWindowState(Record record, MapValue value) {
-            final long count = value.getLong(windowStateNonNullCountSlot);
-            avg = count != 0 ? value.getDouble(windowStateSumSlot) / count : Double.NaN;
+        public void projectWindowState(Record record, MapValue mapValue) {
+            final long count = mapValue.getLong(windowStateNonNullCountSlot);
+            avg = count != 0 ? value(mapValue.getDouble(windowStateSumSlot), count) : Double.NaN;
         }
 
         @Override
@@ -2488,11 +2504,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum += d;
+                sum = value(sum, d);
                 count++;
             }
 
-            avg = count != 0 ? sum / count : Double.NaN;
+            avg = count != 0 ? value(sum, count) : Double.NaN;
         }
 
         @Override
@@ -2567,7 +2583,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum += d;
+                sum = value(sum, d);
                 count++;
             }
         }
@@ -2579,7 +2595,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void preparePass2() {
-            avg = count > 0 ? sum / count : Double.NaN;
+            avg = count > 0 ? value(sum, count) : Double.NaN;
         }
 
         @Override

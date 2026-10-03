@@ -27,6 +27,7 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -789,14 +790,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                     final int columnType = metadata.getColumnType(i);
-                    final long pageAddress = frame.getPageAddress(i);
+                    final long pageAddress = frame.getDataAddress(i);
                     // Var-size columns may have an empty .d file when all values are inlined
                     // into the aux vector (see FwdTableReaderPageFrameCursor for the producer
                     // contract); use the aux address as the column-top detector to avoid
                     // materialising live rows as NULL.
                     final long localColTop;
                     if (ColumnType.isVarSize(columnType)) {
-                        localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                        localColTop = frame.getAuxAddress(i) > 0 ? 0 : frameRowCount;
                     } else {
                         localColTop = pageAddress > 0 ? 0 : frameRowCount;
                     }
@@ -812,7 +813,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
                         columnData.add(localColTop);
                         columnData.add(pageAddress);
-                        columnData.add(frame.getPageSize(i));
+                        columnData.add(frame.getDataSize(i));
                         columnData.add(symbolValuesMem.addressOf(0));
                         columnData.add(symbolValuesMem.size());
                         columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
@@ -820,9 +821,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     } else {
                         columnData.add(localColTop);
                         columnData.add(pageAddress);
-                        columnData.add(frame.getPageSize(i));
-                        columnData.add(frame.getAuxPageAddress(i));
-                        columnData.add(frame.getAuxPageSize(i));
+                        columnData.add(frame.getDataSize(i));
+                        columnData.add(frame.getAuxAddress(i));
+                        columnData.add(frame.getAuxSize(i));
                         columnData.add(0L);
                         columnData.add(0L);
                     }
@@ -942,13 +943,22 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         private static int getRequiredAlignmentForSimd(int columnType) {
-            return switch (ColumnType.tagOf(columnType)) {
+            // by the accessor family (F39): the Rust encoder picks its SIMD path by the value layout
+            final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+            if (accessor == null) {
+                // the pseudo tags and VARCHAR_SLICE take no SIMD path
+                return 1;
+            }
+            return switch (accessor) {
                 // Types using Simd<i64, 8> or Simd<f64, 8>
-                case ColumnType.LONG, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.DATE -> 8;
+                case LONG, DOUBLE, TIMESTAMP, DATE -> 8;
                 // Types using Simd<i32, 16> or Simd<f32, 16>
-                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
-                // All other types use scalar paths - no SIMD alignment required
-                default -> 1;
+                case INT, FLOAT, SYMBOL -> 4;
+                // All other types use scalar paths - no SIMD alignment required. A new family takes
+                // the alignment of the Rust encoder path it joins, so every family is named here.
+                case BOOLEAN, BYTE, SHORT, CHAR, STRING, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID,
+                     LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                     INTERVAL -> 1;
             };
         }
 

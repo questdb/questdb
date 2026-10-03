@@ -43,6 +43,15 @@ import org.jetbrains.annotations.Nullable;
 
 public class RightStrFunctionFactory implements FunctionFactory {
 
+    /**
+     * Undefined for a count of {@code Integer.MIN_VALUE}, whose negation overflows: that is INT's
+     * NULL, which the function answers first.
+     */
+    public static void value(StringSink sink, CharSequence str, int count) {
+        final int len = str.length();
+        sink.put(str, getPos(len, count), len);
+    }
+
     @Override
     public String getSignature() {
         return "right(SI)";
@@ -124,10 +133,8 @@ public class RightStrFunctionFactory implements FunctionFactory {
         private StringSink getStr0(Record rec, StringSink sink) {
             CharSequence str = strFunc.getStrA(rec);
             if (str != null) {
-                final int len = str.length();
-                final int pos = getPos(len);
                 sink.clear();
-                sink.put(str, pos, len);
+                value(sink, str, count);
                 return sink;
             }
             return null;
@@ -190,10 +197,8 @@ public class RightStrFunctionFactory implements FunctionFactory {
             final CharSequence str = strFunc.getStrA(rec);
             final int count = countFunc.getInt(rec);
             if (str != null && count != Numbers.INT_NULL) {
-                final int len = str.length();
-                final int pos = getPos(len, count);
                 sink.clear();
-                sink.put(str, pos, len);
+                value(sink, str, count);
                 return sink;
             }
             return null;

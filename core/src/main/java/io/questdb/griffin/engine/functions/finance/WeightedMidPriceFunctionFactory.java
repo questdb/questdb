@@ -36,6 +36,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class WeightedMidPriceFunctionFactory implements FunctionFactory {
+    public static double value(double bidSize, double bidPrice, double askPrice, double askSize) {
+        double imbalance = bidSize / (bidSize + askSize);
+        return askPrice * imbalance + bidPrice * (1 - imbalance);
+    }
+
     @Override
     public String getSignature() {
         return "wmid(DDDD)";
@@ -72,9 +77,7 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
 
-            double imbalance = bs / (bs + as);
-
-            return ap * imbalance + bp * (1 - imbalance);
+            return value(bs, bp, ap, as);
         }
 
         @Override

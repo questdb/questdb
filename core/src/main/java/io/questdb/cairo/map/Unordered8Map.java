@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
@@ -214,8 +215,23 @@ public class Unordered8Map implements Map, Reopenable {
         }
     }
 
+    /**
+     * The single-column key types this map stores in its 8-byte key slot. Only the plain
+     * TIMESTAMP type qualifies: a TIMESTAMP with the nanosecond or designated flag set stays on
+     * the ordered map (PB3, preserved).
+     */
     public static boolean isSupportedKeyType(int columnType) {
-        return columnType == ColumnType.LONG || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE;
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return false;
+        }
+        return switch (accessor) {
+            case LONG, DATE -> true;
+            case TIMESTAMP -> columnType == ColumnType.TIMESTAMP;
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                 GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, INTERVAL -> false;
+        };
     }
 
     @Override

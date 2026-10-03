@@ -37,6 +37,14 @@ import io.questdb.std.ObjList;
 
 public class IPv4MinusIntFunctionFactory implements FunctionFactory {
 
+    /**
+     * Undefined where the INT operand, read as unsigned, is not below the address (the difference
+     * would not be positive): the function gives NULL there, as for a NULL operand.
+     */
+    public static int value(int left, int right) {
+        return (int) (Numbers.ipv4ToLong(left) - Numbers.ipv4ToLong(right));
+    }
+
     @Override
     public String getSignature() {
         return "-(XI)";
@@ -64,12 +72,12 @@ public class IPv4MinusIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            final long l = Numbers.ipv4ToLong(left.getIPv4(rec));
-            final long r = Numbers.ipv4ToLong(right.getInt(rec));
-            if (r >= l) {
+            final int l = left.getIPv4(rec);
+            final int r = right.getInt(rec);
+            if (Numbers.ipv4ToLong(r) >= Numbers.ipv4ToLong(l)) {
                 return Numbers.IPv4_NULL;
             }
-            return (int) l != Numbers.IPv4_NULL && (int) r != Numbers.INT_NULL ? (int) (l - r) : Numbers.IPv4_NULL;
+            return l != Numbers.IPv4_NULL && r != Numbers.INT_NULL ? value(l, r) : Numbers.IPv4_NULL;
         }
 
         @Override

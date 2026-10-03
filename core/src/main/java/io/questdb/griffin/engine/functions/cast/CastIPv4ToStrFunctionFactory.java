@@ -31,10 +31,15 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
+
+    public static void value(CharSink<?> sink, int operand) {
+        Numbers.intToIPv4Sink(sink, operand);
+    }
 
     @Override
     public String getSignature() {
@@ -73,10 +78,10 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private StringSink toSink(int value, StringSink sinkB) {
-            if (value != Numbers.IPv4_NULL) {
+        private StringSink toSink(int ipv4, StringSink sinkB) {
+            if (ipv4 != Numbers.IPv4_NULL) {
                 sinkB.clear();
-                Numbers.intToIPv4Sink(sinkB, value);
+                value(sinkB, ipv4);
                 return sinkB;
             }
             return null;

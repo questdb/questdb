@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
@@ -214,8 +215,22 @@ public class Unordered4Map implements Map, Reopenable {
         }
     }
 
+    /**
+     * The single-column key types this map stores in its 4-byte key slot: the accessor families
+     * whose getters its records answer. A type without a family (a pseudo type, VARCHAR_SLICE)
+     * never keys it.
+     */
     public static boolean isSupportedKeyType(int columnType) {
-        return columnType == ColumnType.INT || columnType == ColumnType.IPv4 || columnType == ColumnType.SYMBOL;
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return false;
+        }
+        return switch (accessor) {
+            case INT, IPv4, SYMBOL -> true;
+            case BOOLEAN, BYTE, SHORT, CHAR, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, LONG256, GEOBYTE, GEOSHORT,
+                 GEOINT, GEOLONG, BINARY, UUID, LONG128, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, INTERVAL -> false;
+        };
     }
 
     @Override

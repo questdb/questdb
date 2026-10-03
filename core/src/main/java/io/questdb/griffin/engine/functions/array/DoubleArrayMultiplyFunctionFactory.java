@@ -46,6 +46,10 @@ import io.questdb.std.Transient;
 public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "*";
 
+    public static double value(double left, double right) {
+        return left * right;
+    }
+
     @Override
     public String getSignature() {
         return OPERATOR_NAME + "(D[]D[])";
@@ -139,7 +143,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             arrayOut.applyShape();
             if (left.isVanilla() && right.isVanilla()) {
                 for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
-                    arrayOut.putDouble(i, left.getDouble(i) * right.getDouble(i));
+                    arrayOut.putDouble(i, value(left.getDouble(i), right.getDouble(i)));
                 }
             } else {
                 applyRecursive(0, left, 0, right, 0, arrayOut.startMemoryA());
@@ -202,7 +206,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 for (int i = 0; i < count; i++) {
                     double leftVal = left.getDouble(flatIndexLeft);
                     double rightVal = right.getDouble(flatIndexRight);
-                    memOut.putDouble(leftVal * rightVal);
+                    memOut.putDouble(value(leftVal, rightVal));
                     flatIndexLeft += strideLeft;
                     flatIndexRight += strideRight;
                 }

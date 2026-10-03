@@ -46,6 +46,10 @@ import io.questdb.std.Transient;
 public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_cum_sum";
 
+    public static double value(double sum, double element) {
+        return sum + element;
+    }
+
     @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";
@@ -137,7 +141,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
                     currentSum = 0d;
                 }
                 final double y = v - compensation;
-                final double t = currentSum + y;
+                final double t = value(currentSum, y);
                 compensation = t - currentSum - y;
                 currentSum = t;
             }

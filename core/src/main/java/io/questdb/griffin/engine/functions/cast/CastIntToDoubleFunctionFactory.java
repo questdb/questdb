@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToDoubleFunctionFactory implements FunctionFactory {
+    public static double value(int operand) {
+        return operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Id)";
@@ -54,8 +58,8 @@ public class CastIntToDoubleFunctionFactory implements FunctionFactory {
             // Each INT cast reads the getter its IntFunction counterpart reads, so an explicit
             // cast never disagrees with an implicit read of the same expression. getDouble()
             // reads getInt(), so overflowing INT arithmetic wraps here as it does in i * j + 0.0.
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? value : Double.NaN;
+            final int val = arg.getInt(rec);
+            return val != Numbers.INT_NULL ? value(val) : Double.NaN;
         }
     }
 }

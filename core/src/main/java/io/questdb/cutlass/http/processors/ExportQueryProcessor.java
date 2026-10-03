@@ -34,6 +34,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ReaderScanProfile;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -283,6 +284,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
+                    computeColumnOpcodes(state);
                     doResumeSend(context);
                 } catch (CairoException e) {
                     if (state.isQueryCacheable()) {
@@ -382,6 +384,60 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
             throw ServerDisconnectException.INSTANCE;
         }
+    }
+
+    private static void computeColumnOpcodes(ExportQueryProcessorState state) {
+        state.columnOpcodes.clear();
+        for (int i = 0, n = state.metadata.getColumnCount(); i < n; i++) {
+            state.columnOpcodes.add(csvOpcode(state.metadata.getColumnType(i)));
+        }
+    }
+
+    /**
+     * Picks the {@link #putValue} arm for a column from its wire kind (F41), once per export rather
+     * than per cell. Every kind is named, so adding one makes javac stop here. LONG128 keeps its
+     * arm, which throws.
+     */
+    private static int csvOpcode(int columnType) {
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            // PB8: the unlabelled default of putValue() was `assert false`, which writes an empty
+            // cell in production. The pseudo tags and VARCHAR_SLICE keep that rendering through the
+            // NULL arm; RECORD has an empty-cell arm of its own
+            return ColumnType.tagOf(columnType) == ColumnType.RECORD ? ColumnType.RECORD : ColumnType.NULL;
+        }
+        return switch (kind) {
+            case BOOLEAN -> ColumnType.BOOLEAN;
+            case BYTE -> ColumnType.BYTE;
+            case SHORT -> ColumnType.SHORT;
+            case CHAR -> ColumnType.CHAR;
+            case INT -> ColumnType.INT;
+            case LONG -> ColumnType.LONG;
+            case DATE -> ColumnType.DATE;
+            case TIMESTAMP -> ColumnType.TIMESTAMP;
+            case FLOAT -> ColumnType.FLOAT;
+            case DOUBLE -> ColumnType.DOUBLE;
+            case STRING -> ColumnType.STRING;
+            case SYMBOL -> ColumnType.SYMBOL;
+            case LONG256 -> ColumnType.LONG256;
+            case GEOBYTE -> ColumnType.GEOBYTE;
+            case GEOSHORT -> ColumnType.GEOSHORT;
+            case GEOINT -> ColumnType.GEOINT;
+            case GEOLONG -> ColumnType.GEOLONG;
+            case BINARY -> ColumnType.BINARY;
+            case UUID -> ColumnType.UUID;
+            case LONG128 -> ColumnType.LONG128;
+            case IPV4 -> ColumnType.IPv4;
+            case VARCHAR -> ColumnType.VARCHAR;
+            case ARRAY -> ColumnType.ARRAY;
+            case INTERVAL -> ColumnType.INTERVAL;
+            case DECIMAL8 -> ColumnType.DECIMAL8;
+            case DECIMAL16 -> ColumnType.DECIMAL16;
+            case DECIMAL32 -> ColumnType.DECIMAL32;
+            case DECIMAL64 -> ColumnType.DECIMAL64;
+            case DECIMAL128 -> ColumnType.DECIMAL128;
+            case DECIMAL256 -> ColumnType.DECIMAL256;
+        };
     }
 
     private static boolean isExpUrl(Utf8Sequence tok) {
@@ -1211,7 +1267,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         final int columnType = state.metadata.getColumnType(state.columnIndex);
         final int columnIndex = state.columnIndex;
         final Record rec = state.record;
-        switch (ColumnType.tagOf(columnType)) {
+        switch (state.columnOpcodes.getQuick(columnIndex)) {
             case ColumnType.BOOLEAN:
                 response.put(rec.getBool(columnIndex));
                 break;
@@ -1266,6 +1322,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.NULL:
             case ColumnType.BINARY:
             case ColumnType.RECORD:
+                // an empty cell; csvOpcode() sends the pseudo tags here too (PB8)
                 break;
             case ColumnType.STRING:
                 putStringOrNull(response, rec.getStrA(columnIndex));
@@ -1326,7 +1383,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 putDecimal256StringValue(response, decimal256, columnType);
                 break;
             default:
-                assert false;
+                // csvOpcode() yields only the labels above; a wire kind whose opcode has no arm here
+                // fails loudly rather than write an empty cell (javac lists csvOpcode() for a new kind,
+                // not this per-row switch)
+                throw new UnsupportedOperationException("no CSV arm for opcode " + state.columnOpcodes.getQuick(columnIndex)
+                        + " [type=" + ColumnType.nameOf(columnType) + ']');
         }
     }
 

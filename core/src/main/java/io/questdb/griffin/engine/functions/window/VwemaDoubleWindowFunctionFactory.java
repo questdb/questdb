@@ -91,6 +91,18 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
     static final ArrayColumnTypes VWEMA_COLUMN_TYPES;
     static final ArrayColumnTypes VWEMA_COLUMN_TYPES_LV;
 
+    public static double value(double numerator, double denominator) {
+        return numerator / denominator;
+    }
+
+    public static double value(double denominator, double volume, double alpha) {
+        return alpha * volume + (1 - alpha) * denominator;
+    }
+
+    public static double value(double numerator, double price, double volume, double alpha) {
+        return alpha * price * volume + (1 - alpha) * numerator;
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -349,7 +361,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                     mapValue.putDouble(1, denominator);
                     mapValue.putLong(2, 0);
                     mapValue.putLong(3, 1);
-                    this.vwema = numerator / denominator;
+                    this.vwema = value(numerator, denominator);
                 } else {
                     mapValue.putDouble(0, Double.NaN);
                     mapValue.putDouble(1, Double.NaN);
@@ -371,8 +383,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                         // VWEMA update:
                         // numerator = alpha * price * volume + (1 - alpha) * prevNumerator
                         // denominator = alpha * volume + (1 - alpha) * prevDenominator
-                        newNumerator = alpha * price * volume + (1 - alpha) * prevNumerator;
-                        newDenominator = alpha * volume + (1 - alpha) * prevDenominator;
+                        newNumerator = value(prevNumerator, price, volume, alpha);
+                        newDenominator = value(prevDenominator, volume, alpha);
                     } else {
                         // First valid value
                         newNumerator = price * volume;
@@ -381,12 +393,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                     mapValue.putDouble(0, newNumerator);
                     mapValue.putDouble(1, newDenominator);
                     mapValue.putLong(3, 1);
-                    this.vwema = newNumerator / newDenominator;
+                    this.vwema = value(newNumerator, newDenominator);
                 } else {
                     // Null/invalid value - keep previous VWEMA
                     // When hasValue == 1, denominator is guaranteed finite and positive
                     // (set from volume > 0 and updated with positive arithmetic)
-                    this.vwema = hasValue == 1 ? prevNumerator / prevDenominator : Double.NaN;
+                    this.vwema = hasValue == 1 ? value(prevNumerator, prevDenominator) : Double.NaN;
                 }
             }
         }
@@ -574,8 +586,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                 // (set from finite price*volume and updated with finite arithmetic)
                 if (hasValue) {
                     // VWEMA update
-                    numerator = alpha * price * volume + (1 - alpha) * numerator;
-                    denominator = alpha * volume + (1 - alpha) * denominator;
+                    numerator = value(numerator, price, volume, alpha);
+                    denominator = value(denominator, volume, alpha);
                 } else {
                     // First valid value
                     numerator = price * volume;
@@ -596,7 +608,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         public double getDouble(Record rec) {
             // When hasValue is true, denominator is guaranteed finite and positive
             // (set from volume > 0 and updated with positive arithmetic)
-            return hasValue ? numerator / denominator : Double.NaN;
+            return hasValue ? value(numerator, denominator) : Double.NaN;
         }
 
         @Override
@@ -750,7 +762,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                     mapValue.putDouble(1, denominator);
                     mapValue.putLong(2, timestamp);
                     mapValue.putLong(3, 1);
-                    this.vwema = numerator / denominator;
+                    this.vwema = value(numerator, denominator);
                 } else {
                     mapValue.putDouble(0, Double.NaN);
                     mapValue.putDouble(1, Double.NaN);
@@ -780,8 +792,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                             alpha = 1.0 - Math.exp(-(double) dt / tau);
                         }
                         // VWEMA update
-                        newNumerator = alpha * price * volume + (1 - alpha) * prevNumerator;
-                        newDenominator = alpha * volume + (1 - alpha) * prevDenominator;
+                        newNumerator = value(prevNumerator, price, volume, alpha);
+                        newDenominator = value(prevDenominator, volume, alpha);
                     } else {
                         // First valid value
                         newNumerator = price * volume;
@@ -791,13 +803,13 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                     mapValue.putDouble(1, newDenominator);
                     mapValue.putLong(2, timestamp);
                     mapValue.putLong(3, 1);
-                    this.vwema = newNumerator / newDenominator;
+                    this.vwema = value(newNumerator, newDenominator);
                 } else {
                     // Null/invalid value - keep previous VWEMA but update timestamp
                     mapValue.putLong(2, timestamp);
                     // When hasValue == 1, denominator is guaranteed finite and positive
                     // (set from volume > 0 and updated with positive arithmetic)
-                    this.vwema = hasValue == 1 ? prevNumerator / prevDenominator : Double.NaN;
+                    this.vwema = hasValue == 1 ? value(prevNumerator, prevDenominator) : Double.NaN;
                 }
             }
         }
@@ -999,8 +1011,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                         alpha = 1.0 - Math.exp(-(double) dt / tau);
                     }
                     // VWEMA update
-                    numerator = alpha * price * volume + (1 - alpha) * numerator;
-                    denominator = alpha * volume + (1 - alpha) * denominator;
+                    numerator = value(numerator, price, volume, alpha);
+                    denominator = value(denominator, volume, alpha);
                 } else {
                     // First valid value
                     numerator = price * volume;
@@ -1021,7 +1033,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         public double getDouble(Record rec) {
             // When hasValue is true, denominator is guaranteed finite and positive
             // (set from volume > 0 and updated with positive arithmetic)
-            return hasValue ? numerator / denominator : Double.NaN;
+            return hasValue ? value(numerator, denominator) : Double.NaN;
         }
 
         @Override

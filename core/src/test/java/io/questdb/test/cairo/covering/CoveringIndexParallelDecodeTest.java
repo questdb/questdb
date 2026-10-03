@@ -35,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ColumnVectorDescriptor;
 import io.questdb.cairo.sql.DataSource;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -203,12 +204,13 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 // values and rebinds these addresses. The symbol key column is the
                 // -1 mapping (DIRECT) but for a covered frame it too is synthesized
                 // on the worker, so its production placeholder is 0 as well.
+                final ColumnVectorDescriptor columnVectors = new ColumnVectorDescriptor();
                 for (int i = 0; i < frameCount; i++) {
-                    long off = addressCache.toColumnOffset(i);
+                    addressCache.describeNativeFrame(i, columnVectors);
                     assertEquals("metadata-only single-key frame: covered page address is a placeholder (0)",
-                            0L, addressCache.getPageAddresses().get(off + coveredColumnIndex));
+                            0L, columnVectors.getDataAddress(coveredColumnIndex));
                     assertEquals("metadata-only single-key frame: symbol-key page address is a placeholder (0)",
-                            0L, addressCache.getPageAddresses().get(off + symbolColumnIndex));
+                            0L, columnVectors.getDataAddress(symbolColumnIndex));
                 }
             }
         });
@@ -1992,9 +1994,9 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                     // The covered column AND the symbol key are decoded on the
                     // worker, so production emits placeholder (0) page addresses.
                     assertEquals("single-key covered column page address is a production placeholder (0)",
-                            0L, f.getPageAddress(coveredColumnIndex));
+                            0L, f.getDataAddress(coveredColumnIndex));
                     assertEquals("single-key symbol-key page address is a production placeholder (0)",
-                            0L, f.getPageAddress(symbolColumnIndex));
+                            0L, f.getDataAddress(symbolColumnIndex));
                     // ... but the covered DECODE metadata is still populated.
                     assertEquals("covered column still reports COVERED",
                             DataSource.COVERED, f.getColumnSource(coveredColumnIndex));
@@ -2017,7 +2019,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 PageFrame f;
                 while ((f = cursor.next(0)) != null) {
                     frames++;
-                    if (f.getPageAddress(coveredColumnIndex) != 0) {
+                    if (f.getDataAddress(coveredColumnIndex) != 0) {
                         anyRealCoveredAddr = true;
                     }
                 }

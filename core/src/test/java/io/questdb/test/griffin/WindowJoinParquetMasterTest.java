@@ -166,10 +166,10 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
                     PageFrame frame;
                     while ((frame = tableCursor.next()) != null) {
                         Assert.assertEquals("the splice appends one synthetic column", 3, frame.getColumnCount());
-                        Assert.assertEquals("the synthetic column has no data page", 0, frame.getPageAddress(2));
-                        Assert.assertEquals("the synthetic column has no data bytes", 0, frame.getPageSize(2));
-                        Assert.assertEquals("the synthetic column has no auxiliary page", 0, frame.getAuxPageAddress(2));
-                        Assert.assertEquals("the synthetic column has no auxiliary bytes", 0, frame.getAuxPageSize(2));
+                        Assert.assertEquals("the synthetic column has no data page", 0, frame.getDataAddress(2));
+                        Assert.assertEquals("the synthetic column has no data bytes", 0, frame.getDataSize(2));
+                        Assert.assertEquals("the synthetic column has no auxiliary page", 0, frame.getAuxAddress(2));
+                        Assert.assertEquals("the synthetic column has no auxiliary bytes", 0, frame.getAuxSize(2));
                         frameRows += frame.getPartitionHi() - frame.getPartitionLo();
                     }
                     Assert.assertEquals("the selected partition must expose every master row", 10, frameRows);

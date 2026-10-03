@@ -49,6 +49,22 @@ import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 
 public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
+    public static long value(long timestamp, long tzOffset) {
+        return timestamp + tzOffset;
+    }
+
+    public static long value(TimeZoneRules tzRules, long timestamp) {
+        return timestamp + tzRules.getOffset(timestamp);
+    }
+
+    /**
+     * Throws {@link NumericException} for a timezone the locale does not know: the function
+     * returns the timestamp unchanged there.
+     */
+    public static long value(TimestampDriver driver, long timestamp, CharSequence timezone) throws NumericException {
+        return driver.toTimezone(timestamp, DateLocaleFactory.EN_LOCALE, timezone);
+    }
+
     @Override
     public String getSignature() {
         return "to_timezone(NS)";
@@ -135,8 +151,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final long timestamp = timestampFunc.getTimestamp(rec);
-            return timestamp + tzRules.getOffset(timestamp);
+            return value(tzRules, timestampFunc.getTimestamp(rec));
         }
 
         @Override
@@ -180,7 +195,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             final long timestampValue = timestampFunc.getTimestamp(rec);
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
-                return tz != null ? timestampDriver.toTimezone(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
+                return tz != null ? value(timestampDriver, timestampValue, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }
@@ -220,9 +235,9 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
             if (tzRules != null) {
-                return timestamp + tzRules.getOffset(timestamp);
+                return value(tzRules, timestamp);
             }
-            return timestamp + tzOffset;
+            return value(timestamp, tzOffset);
         }
 
         @Override

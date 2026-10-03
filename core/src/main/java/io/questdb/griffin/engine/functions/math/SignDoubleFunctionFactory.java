@@ -35,6 +35,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SignDoubleFunctionFactory implements FunctionFactory {
+    public static double value(double operand) {
+        if (operand == -0.0d) {
+            return 0.0d;
+        }
+        return Math.signum(operand);
+    }
+
     @Override
     public String getSignature() {
         return "sign(D)";
@@ -60,11 +67,7 @@ public class SignDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double d = arg.getDouble(rec);
-            if (d == -0.0d) {
-                return 0.0d;
-            }
-            return Math.signum(d);
+            return value(arg.getDouble(rec));
         }
 
         @Override

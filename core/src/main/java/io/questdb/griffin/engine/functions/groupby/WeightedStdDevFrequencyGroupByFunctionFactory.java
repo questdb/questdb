@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,10 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class WeightedStdDevFrequencyGroupByFunctionFactory implements FunctionFactory {
+    public static void value(MapValue mapValue, int valueIndex, double sample, double weight) {
+        WeightedStdDevReliabilityGroupByFunctionFactory.value(mapValue, valueIndex, sample, weight);
+    }
+
     @Override
     public String getSignature() {
         return "weighted_stddev_freq(DD)";

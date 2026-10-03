@@ -32,9 +32,14 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SpreadBpsFunctionFactory implements FunctionFactory {
+
+    public static double value(double bid, double ask) {
+        return SpreadFunctionFactory.value(bid, ask) / MidPriceFunctionFactory.value(bid, ask) * 10_000;
+    }
 
     // (bid, ask)
     @Override
@@ -60,8 +65,11 @@ public class SpreadBpsFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             final double b = bid.getDouble(rec);
             final double a = ask.getDouble(rec);
-
-            return FinanceUtils.spread(b, a) / FinanceUtils.mid(b, a) * 10_000;
+            // a NULL operand gives NULL, as the quotient of FinanceUtils.spread and mid does
+            if (Numbers.isNull(b) || Numbers.isNull(a)) {
+                return Double.NaN;
+            }
+            return value(b, a);
         }
 
         @Override

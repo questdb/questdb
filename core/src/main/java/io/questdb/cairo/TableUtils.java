@@ -65,7 +65,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.Chars;
-import io.questdb.std.Decimals;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -79,7 +78,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
@@ -954,48 +952,6 @@ public final class TableUtils {
         try (TableMetadata tableMetadata = engine.getTableMetadata(metadata.getTableToken())) {
             return tableMetadata.getMaxUncommittedRows();
         }
-    }
-
-    public static long getNullLong(int columnType, int longIndex) {
-        // In theory, we can have a column type where `NULL` value will be different `LONG` values,
-        // then this should return different values on longIndex. At the moment there are no such types.
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT -> 0L;
-            case ColumnType.SYMBOL -> Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
-            case ColumnType.FLOAT ->
-                    Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
-            case ColumnType.DOUBLE -> Double.doubleToLongBits(Double.NaN);
-            case ColumnType.INT -> Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
-            case ColumnType.LONG256, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG128,
-                 ColumnType.UUID, ColumnType.INTERVAL ->
-                // Long128, UUID, and INTERVAL are null when all 2 longs are NaNs
-                // Long256 is null when all 4 longs are NaNs
-                    Numbers.LONG_NULL;
-            case ColumnType.GEOBYTE, ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.GEOINT -> GeoHashes.NULL;
-            case ColumnType.IPv4 -> Numbers.IPv4_NULL;
-            case ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY -> NULL_LEN;
-            case ColumnType.STRING -> Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
-            case ColumnType.DECIMAL8 -> Decimals.DECIMAL8_NULL;
-            case ColumnType.DECIMAL16 -> Decimals.DECIMAL16_NULL;
-            case ColumnType.DECIMAL32 -> Decimals.DECIMAL32_NULL;
-            case ColumnType.DECIMAL64 -> Decimals.DECIMAL64_NULL;
-            case ColumnType.DECIMAL128 -> {
-                if (longIndex == 0) {
-                    yield Decimals.DECIMAL128_HI_NULL;
-                }
-                yield Decimals.DECIMAL128_LO_NULL;
-            }
-            case ColumnType.DECIMAL256 -> switch (longIndex) {
-                case 0 -> Decimals.DECIMAL256_HH_NULL;
-                case 1 -> Decimals.DECIMAL256_HL_NULL;
-                case 2 -> Decimals.DECIMAL256_LH_NULL;
-                default -> Decimals.DECIMAL256_LL_NULL;
-            };
-            default -> {
-                assert false : "Invalid column type: " + columnType;
-                yield 0;
-            }
-        };
     }
 
     public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
@@ -2567,85 +2523,6 @@ public final class TableUtils {
                 return false;
             }
             Os.pause();
-        }
-    }
-
-    public static void setNull(int columnType, long addr, long count) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-                Vect.memset(addr, count, 0);
-                break;
-            case ColumnType.GEOBYTE:
-                Vect.memset(addr, count, GeoHashes.BYTE_NULL);
-                break;
-            case ColumnType.CHAR:
-            case ColumnType.SHORT:
-                Vect.setMemoryShort(addr, (short) 0, count);
-                break;
-            case ColumnType.GEOSHORT:
-                Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);
-                break;
-            case ColumnType.INT:
-                Vect.setMemoryInt(addr, Numbers.INT_NULL, count);
-                break;
-            case ColumnType.IPv4:
-                Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
-                break;
-            case ColumnType.GEOINT:
-                Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);
-                break;
-            case ColumnType.FLOAT:
-                Vect.setMemoryFloat(addr, Float.NaN, count);
-                break;
-            case ColumnType.SYMBOL:
-                Vect.setMemoryInt(addr, SymbolTable.VALUE_IS_NULL, count);
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count);
-                break;
-            case ColumnType.GEOLONG:
-                Vect.setMemoryLong(addr, GeoHashes.NULL, count);
-                break;
-            case ColumnType.DOUBLE:
-                Vect.setMemoryDouble(addr, Double.NaN, count);
-                break;
-            case ColumnType.LONG256:
-                // Long256 is null when all 4 longs are NaNs
-                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 4);
-                break;
-            case ColumnType.LONG128:
-                // fall through
-            case ColumnType.UUID:
-                // Long128 and UUID are null when all 2 longs are NaNs
-                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
-                break;
-            case ColumnType.INTERVAL:
-                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
-                break;
-            case ColumnType.DECIMAL8:
-                Vect.memset(addr, count, Decimals.DECIMAL8_NULL);
-                break;
-            case ColumnType.DECIMAL16:
-                Vect.setMemoryShort(addr, Decimals.DECIMAL16_NULL, count);
-                break;
-            case ColumnType.DECIMAL32:
-                Vect.setMemoryInt(addr, Decimals.DECIMAL32_NULL, count);
-                break;
-            case ColumnType.DECIMAL64:
-                Vect.setMemoryLong(addr, Decimals.DECIMAL64_NULL, count);
-                break;
-            case ColumnType.DECIMAL128:
-                Vect.setMemoryLong128(addr, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, count);
-                break;
-            case ColumnType.DECIMAL256:
-                Vect.setMemoryLong256(addr, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
-                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, count);
-                break;
-            default:
-                break;
         }
     }
 

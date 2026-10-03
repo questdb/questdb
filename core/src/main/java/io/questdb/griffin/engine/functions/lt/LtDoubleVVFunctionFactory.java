@@ -32,11 +32,22 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
+    /**
+     * Whether {@code left} orders before {@code right}, for values that are not equal by
+     * {@link EqDoubleFunctionFactory#value}: NaN orders after every other value (PA-13). The
+     * function keeps today's comparison, which answers a NaN operand without this ordering: the
+     * body's NaN test would cost every row.
+     */
+    public static boolean value(double left, double right) {
+        return left < right || (!Double.isNaN(left) && Double.isNaN(right));
+    }
+
     @Override
     public String getSignature() {
         return "<(DD)";
