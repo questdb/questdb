@@ -26,6 +26,8 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -52,6 +54,7 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     private static final long HOUR = 3_600_000_000L;
+    private static final String[] PARTITION_BYS = {"NONE", "DAY"};
     private static final int ROWS = 24;
     private final String indexType;
 
@@ -306,7 +309,8 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
 
     @Test
     public void testInListOrderBySymParquetPartition() throws Exception {
-        // a Parquet partition is split into page frames by row group: 3 row groups of 4 rows
+        // A Parquet partition is split into page frames by row group: 3 row groups of 4 rows. The
+        // key-major scan would decode every row group once per key, so the sort stays.
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
             createTable("DAY");
@@ -315,7 +319,7 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             assertQuery(query)
                     .withPlanContaining("FilterOnValues")
                     .returns(expected(new String[]{"C", "A"}, true, 1, 12));
-            assertKeyMajorPlan(query, true);
+            assertKeyMajorPlan(query, false);
         });
     }
 
@@ -438,8 +442,8 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             createTable("DAY");
             final String query = "select sym, x, ts from t where sym = 'C' and ts in '1970-01-01' order by sym, ts desc";
             assertQuery(query).returns(expected(new String[]{"C"}, true, 1, 12));
-            // a backward index scan inside forward page frames is not descending across frames
-            assertKeyMajorPlan(query, false);
+            // a single key walked key-major: frames backward, each frame scanned backward
+            assertKeyMajorPlan(query, true);
         });
     }
 
@@ -478,8 +482,8 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             createTable("NONE");
             final String query = "select sym, x, ts from t where sym = 'A' order by sym, ts desc";
             assertQuery(query).returns(expected(new String[]{"A"}, true, 1, ROWS));
-            // a backward index scan inside forward page frames is not descending across frames
-            assertKeyMajorPlan(query, false);
+            // a single key walked key-major: frames backward, each frame scanned backward
+            assertKeyMajorPlan(query, true);
         });
     }
 
@@ -512,6 +516,101 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             final String query = "select sym, x, ts from t where ts in '1970-01-02' order by sym desc, ts desc";
             assertQuery(query).returns(expected(new String[]{"C", "B", "A"}, true, 13, ROWS));
             assertKeyMajorPlan(query, "bitmap".equals(indexType));
+        });
+    }
+
+    @Test
+    public void testUnevenBindValuesChangeBetweenRuns() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String partitionBy : PARTITION_BYS) {
+                createUnevenTables(partitionBy);
+                final String query = "select sym, x, ts from u where sym in ($1, $2) order by sym";
+                try (RecordCursorFactory factory = select(query)) {
+                    for (String[] binds : new String[][]{{"A", "B"}, {"D", "A"}, {"A", "A"}, {"ZZZ", "C"}, {null, "B"}}) {
+                        bindVariableService.clear();
+                        bindVariableService.setStr(0, binds[0]);
+                        bindVariableService.setStr(1, binds[1]);
+                        final String expected = oracle("select sym, x, ts from u_twin where sym in ($1, $2) order by sym, ts");
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            assertCursorTwoPass(expected, cursor, factory.getMetadata());
+                        }
+                    }
+                }
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testUnevenCachedPlanAfterTableChanges() throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createUnevenTables("DAY");
+            // E is not in the table yet, so it is a deferred key at compile time
+            final String query = "select sym, x, ts from u where sym in ('E', 'A', 'D') order by sym desc, ts desc";
+            final String oracleQuery = "select sym, x, ts from u_twin where sym in ('E', 'A', 'D') order by sym desc, ts desc";
+            try (RecordCursorFactory factory = select(query)) {
+                assertFactory(factory, oracle(oracleQuery));
+                // a new partition, a new symbol, an O3 insert that splits the first partition
+                for (String table : new String[]{"u", "u_twin"}) {
+                    try (TableReader ignore = getReader(table)) {
+                        execute("insert into " + table + " values" +
+                                " ('E', 101, '1970-01-03T01:00'), ('A', 102, '1970-01-03T02:00'), (null, 103, '1970-01-03T03:00')," +
+                                " ('E', 104, '1970-01-01T22:30'), ('D', 105, '1970-01-01T23:00')");
+                    }
+                }
+                assertFactory(factory, oracle(oracleQuery));
+                execute("alter table u drop partition list '1970-01-02'");
+                execute("alter table u_twin drop partition list '1970-01-02'");
+                assertFactory(factory, oracle(oracleQuery));
+            }
+        });
+    }
+
+    @Test
+    public void testUnevenInListWithNullAndUnknownKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String partitionBy : PARTITION_BYS) {
+                createUnevenTables(partitionBy);
+                assertDifferential("sym in (null, 'A') order by sym", "sym in (null, 'A') order by sym, ts", true);
+                assertDifferential("sym in ('A', 'ZZZ', 'D', null) order by sym desc, ts desc", "sym in ('A', 'ZZZ', 'D', null) order by sym desc, ts desc", true);
+                assertDifferential("sym in ('A', 'B', 'D') order by sym, ts desc", "sym in ('A', 'B', 'D') order by sym, ts desc", true);
+            }
+        });
+    }
+
+    @Test
+    public void testUnevenNotEqualsAndNotInWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String partitionBy : PARTITION_BYS) {
+                createUnevenTables(partitionBy);
+                // the NULL key is included: it sorts first ascending and last descending
+                assertDifferential("sym != 'B' order by sym", "sym != 'B' order by sym, ts", true);
+                assertDifferential("sym != 'B' order by sym desc", "sym != 'B' order by sym desc, ts", true);
+                assertDifferential("sym not in ('A', 'C') order by sym, ts desc", "sym not in ('A', 'C') order by sym, ts desc", true);
+                assertDifferential("sym not in ('D') order by sym desc, ts desc", "sym not in ('D') order by sym desc, ts desc", true);
+            }
+        });
+    }
+
+    @Test
+    public void testUnevenSingleKeyOrderBySymTsDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnevenTables("NONE");
+            assertDifferential("sym = 'A' order by sym, ts desc", "sym = 'A' order by sym, ts desc", true);
+            assertDifferential("sym = null order by sym, ts desc", "sym = null order by sym, ts desc", true);
+        });
+    }
+
+    @Test
+    public void testUnevenSortedSymbolIndexWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnevenTables("DAY");
+            // with a bitmap index this is the SortedSymbolIndex scan, a posting index sorts
+            final boolean keyMajor = "bitmap".equals(indexType);
+            assertDifferential("ts in '1970-01-01' order by sym", "ts in '1970-01-01' order by sym, ts", keyMajor);
+            assertDifferential("ts in '1970-01-02' order by sym desc", "ts in '1970-01-02' order by sym desc, ts", keyMajor);
+            assertDifferential("ts in '1970-01-02' order by sym desc, ts desc", "ts in '1970-01-02' order by sym desc, ts desc", keyMajor);
         });
     }
 
@@ -586,6 +685,59 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
         });
     }
 
+    private void assertDifferential(String where, String twinWhere, boolean expectKeyMajor) throws Exception {
+        final String query = "select sym, x, ts from u where " + where;
+        final String expected = oracle("select sym, x, ts from u_twin where " + twinWhere);
+        assertQuery(query).sizeMayVary().returns(expected);
+        assertKeyMajorPlan(query, expectKeyMajor);
+    }
+
+    private void assertFactory(RecordCursorFactory factory, String expected) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursorTwoPass(expected, cursor, factory.getMetadata());
+        }
+    }
+
+    /**
+     * Two copies of the same uneven data: {@code u} with the index under test and {@code u_twin}
+     * without any index, whose sorted output is the oracle. 40 rows, {@code ts} = (x - 1) * 72min, so
+     * under DAY 1970-01-01 holds x 1..20 and 1970-01-02 holds x 21..40, each 5 page frames of 4 rows.
+     * <ul>
+     *     <li>x 1..8: A on even x, NULL on odd x</li>
+     *     <li>x 9..16: B only, so B is absent from every other frame and from the second day</li>
+     *     <li>x 17..28: C, A, NULL by x % 3</li>
+     *     <li>x 29..40: D only, so D exists in the second day only</li>
+     * </ul>
+     */
+    private void createUnevenTables(String partitionBy) throws Exception {
+        execute("drop table if exists u");
+        execute("drop table if exists u_twin");
+        for (String table : new String[]{"u", "u_twin"}) {
+            execute(
+                    "create table " + table + " (sym symbol" + ("u".equals(table) ? " index type " + indexType : "")
+                            + ", x long, ts timestamp) timestamp(ts) partition by " + partitionBy
+            );
+            execute(
+                    "insert into " + table + " select" +
+                            " case" +
+                            "   when x <= 8 then case when x % 2 = 0 then 'A' else null end" +
+                            "   when x <= 16 then 'B'" +
+                            "   when x <= 28 then case x % 3 when 0 then 'C' when 1 then 'A' else null end" +
+                            "   else 'D'" +
+                            " end," +
+                            " x," +
+                            " ((x - 1) * 4_320_000_000L)::timestamp" +
+                            " from long_sequence(40)"
+            );
+        }
+    }
+
+    private String oracle(String twinQuery) throws Exception {
+        final StringSink expected = new StringSink();
+        printSql(twinQuery, expected);
+        return expected.toString();
+    }
+
     private void assertKeyMajorPlan(String query, boolean expectSortElided) throws Exception {
         final StringSink plan = new StringSink();
         printSql("explain " + query, plan);
@@ -598,6 +750,18 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals("sort elided [query=" + query + ", plan=\n" + plan + "]", expectSortElided, !hasSort);
+        // An index key scan that replaces the sort must be the key-major one, and say so: the
+        // per-frame scan is key-major within one page frame only.
+        final String planText = plan.toString();
+        final boolean keyScan = planText.contains("FilterOnValues") || planText.contains("FilterOnExcludedValues")
+                || planText.contains("SortedSymbolIndex");
+        if (keyScan) {
+            Assert.assertEquals(
+                    "key-major scan [query=" + query + ", plan=\n" + plan + "]",
+                    expectSortElided,
+                    planText.contains("keyMajor: true")
+            );
+        }
     }
 
     private void createTable(String partitionBy) throws Exception {
