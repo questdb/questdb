@@ -213,7 +213,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     /**
      * Makes durable what a checkpoint restore step changed under {@code dir}: the restored files, or the
      * removal of the trigger or of the checkpoint directory. A restore writes through many code paths, so
-     * this flushes whole filesystems rather than a tracked set of files.
+     * this flushes whole filesystems rather than a tracked set of files. {@link RecoveryCoordinator} also
+     * calls it before it anchors tables that a replica tenure or an out-of-process restore marked for
+     * adaptive enrolment.
      * <ul>
      *     <li>Linux: syncfs(2) on the filesystem holding {@code dir} and, with {@code includeVolumes}, on
      *     every volume a table directory under {@code dir} links to. Unlike sync(2), syncfs(2) reports
@@ -224,7 +226,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
      *     <li>Elsewhere: sync(2), which flushes every filesystem.</li>
      * </ul>
      */
-    private static void syncRestoredState(FilesFacade ff, Path dir, boolean includeVolumes) {
+    static void syncRestoredState(FilesFacade ff, Path dir, boolean includeVolumes) {
         if (ff.isSyncfsFileSystemWide()) {
             final int dirLen = dir.size();
             syncFileSystemOf(ff, dir.$());

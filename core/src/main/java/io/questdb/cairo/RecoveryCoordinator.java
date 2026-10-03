@@ -225,6 +225,7 @@ public class RecoveryCoordinator {
         // Do this only after the validation/restoration pass has completed for every table. Publish directly
         // from the restored files rather than opening TableWriter: constructor maintenance (index/purge repair)
         // must not mutate checkpoint state before the caller's configured recovery jobs run.
+        boolean isFileSystemSynced = false;
         for (int i = 0, n = checkpointEnrollments.size(); i < n; i++) {
             final TableToken token = checkpointEnrollments.getQuick(i);
             if (isLiveCutLeftToWriter(token)) {
@@ -235,6 +236,25 @@ public class RecoveryCoordinator {
             try (TableMetadata metadata = engine.getTableMetadata(token);
                  Path markerPath = new Path();
                  SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                // The baseline below fsyncs _meta, _cv and _txn, but not the column files they name. A marked
+                // table's columns are only as durable as the tenure or restore that wrote them kept them, which
+                // is not at all for a NOSYNC replica or an out-of-process restore. Flush them before the anchor
+                // vouches for them, as the writer's enrolment epoch does. Where syncfs is filesystem-wide, one
+                // flush covers every marked table, so a startup pays for it once; a table without a marker was
+                // restored from a checkpoint in this process, and the checkpoint agent has already run that
+                // flush. Elsewhere each table is flushed file by file: the checkpoint agent's sync(2) does not
+                // flush the drive cache, and Windows has no filesystem-wide flush at all.
+                if (!ff.isSyncfsFileSystemWide()) {
+                    DurableEpochManifest.fsyncTableFiles(
+                            configuration,
+                            token,
+                            metadata.getTimestampType(),
+                            metadata.getPartitionBy()
+                    );
+                } else if (!isFileSystemSynced && isMarkedForRestoreEnrolment(token, markerPath)) {
+                    DatabaseCheckpointAgent.syncRestoredState(ff, markerPath.of(configuration.getDbRoot()), true);
+                    isFileSystemSynced = true;
+                }
                 DurableEpochManifest.publishCheckpointRestored(
                         configuration,
                         token,

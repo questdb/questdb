@@ -17,6 +17,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -501,6 +502,53 @@ public final class DurableEpochManifest {
         }
     }
 
+    /**
+     * Flushes a table's materialized state file by file: every file of every attached partition and the partition
+     * directory, then every file in the table root and the root itself, then one device barrier. This is the
+     * fallback for platforms where {@link FilesFacade#syncfs(long)} flushes a single file, and it covers the same
+     * write set as the writer's first epoch there ({@code TableWriter.fsyncAttachedPartitionFiles}). A read-only
+     * partition is a soft link to storage nothing writes, so it holds nothing to flush.
+     *
+     * <p>The per-file fsync moves each file's bytes to the drive, and the closing {@code syncfs} flushes the drive
+     * cache once for all of them: F_FULLFSYNC on macOS acts as a barrier for data fsync'd on the same device before
+     * it, and on Windows each file's flush is already durable.
+     */
+    public static void fsyncTableFiles(CairoConfiguration configuration, TableToken tableToken, int timestampType, int partitionBy) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+            final int rootLen = path.of(configuration.getDbRoot()).concat(tableToken).size();
+            txReader.ofRO(path.concat(TableUtils.TXN_FILE_NAME).$(), timestampType, partitionBy);
+            if (!txReader.unsafeLoadAll()) {
+                throw CairoException.critical(0).put("could not read adaptive _txn to flush the table [table=")
+                        .put(tableToken.getTableName()).put(']');
+            }
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                if (txReader.isPartitionReadOnly(i)) {
+                    continue;
+                }
+                TableUtils.setPathForNativePartition(
+                        path.trimTo(rootLen),
+                        timestampType,
+                        partitionBy,
+                        txReader.getPartitionTimestampByIndex(i),
+                        txReader.getPartitionNameTxn(i)
+                );
+                fsyncDirectoryFiles(configuration, path, path.size());
+            }
+            fsyncDirectoryFiles(configuration, path, rootLen);
+            path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            if (fd == -1) {
+                throw CairoException.critical(ff.errno()).put("could not open adaptive _txn for the device flush [path=").put(path).put(']');
+            }
+            try {
+                ff.syncfs(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
     private static long checksum(FilesFacade ff, Path path, long size) {
         if (size <= 0) {
             throw CairoException.critical(ff.errno()).put("invalid adaptive epoch payload size [path=").put(path).put(", size=").put(size).put(']');
@@ -547,6 +595,43 @@ public final class DurableEpochManifest {
         } finally {
             ff.close(fd);
         }
+    }
+
+    private static void fsyncDirectoryFiles(CairoConfiguration configuration, Path dirPath, int dirLen) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long findPtr = ff.findFirst(dirPath.trimTo(dirLen).$());
+        if (findPtr <= 0) {
+            throw CairoException.critical(ff.errno()).put("could not enumerate adaptive directory for fsync [path=").put(dirPath).put(']');
+        }
+        try {
+            int findResult;
+            do {
+                final long namePtr = ff.findName(findPtr);
+                final int type = ff.findType(findPtr);
+                if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
+                    dirPath.trimTo(dirLen).concat(namePtr);
+                    final long fd = TableUtils.openRW(ff, dirPath.$(), LOG, configuration.getWriterFileOpenOpts());
+                    if (fd == -1) {
+                        throw CairoException.critical(ff.errno()).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
+                    }
+                    try {
+                        ff.fsync(fd);
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+                findResult = ff.findNext(findPtr);
+            } while (findResult > 0);
+            if (findResult < 0) {
+                throw CairoException.critical(ff.errno()).put("could not finish enumerating adaptive directory for fsync [path=")
+                        .put(dirPath.trimTo(dirLen)).put(']');
+            }
+        } finally {
+            ff.findClose(findPtr);
+            dirPath.trimTo(dirLen);
+        }
+        // Per-file fsync does not persist a newly created file's directory entry.
+        fsyncDirectory(configuration, dirPath, dirLen);
     }
 
     private static boolean payloadMatches(FilesFacade ff, Path path, long expectedSize, long expectedChecksum) {
