@@ -203,7 +203,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0,
                 0.8,
-                0.00,
+                0.1, // replaceProb
                 0,
                 0.1,
                 0.1,
@@ -238,7 +238,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0,
                 0.8,
-                0.00,
+                0.1, // replaceProb
                 0,
                 0.01,
                 0.1,
@@ -271,7 +271,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0,
                 0.8,
-                0.00,
+                0.1, // replaceProb
                 0,
                 0.01,
                 0.1,
