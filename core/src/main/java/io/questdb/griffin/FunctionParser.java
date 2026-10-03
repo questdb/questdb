@@ -367,6 +367,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         this.sqlExecutionContext = executionContext;
         this.lastFunctionFactorySignature = null;
+        // A sub-query operand re-enters this method through createCursorFunction() while the outer
+        // traversal still holds its pending operands on the same stacks.
+        final int functionDepth = functionStack.size();
+        final int positionDepth = positionStack.size();
 
         if (this.metadata != null) {
             metadataStack.push(this.metadata);
@@ -379,12 +383,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             try {
                 traverseAlgo.traverse(node, this);
             } catch (Exception e) {
-                // Release parsed functions best-effort: keep closing the rest even if one close()
-                // throws, and fold close failures into e as suppressed instead of masking it.
-                for (int i = functionStack.size(); i > 0; i--) {
+                // Release the functions this call parsed best-effort: keep closing the rest even if one
+                // close() throws, and fold close failures into e as suppressed instead of masking it.
+                // Entries below the depths belong to the outer traversal. It frees them if the failure
+                // reaches it, and keeps parsing with them if a nested caller falls back instead.
+                for (int i = functionStack.size(); i > functionDepth; i--) {
                     Misc.free(functionStack.poll(), e);
                 }
-                positionStack.clear();
+                for (int i = positionStack.size(); i > positionDepth; i--) {
+                    positionStack.pop();
+                }
                 throw e;
             }
 

@@ -116,6 +116,75 @@ public class ExplicitTimestampJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRightJoinOutputHasNoDesignatedTimestamp() throws Exception {
+        // The declaration orders the master, not the output of a RIGHT or FULL join, which
+        // follows the slave and null-extends the master's timestamp. As with a table master,
+        // the output has no designated timestamp, so ORDER BY sorts it and a RANGE frame
+        // rejects it. The output used to designate s.ts, and ORDER BY skipped the sort.
+        assertMemoryLeak(() -> {
+            createTables();
+            insertRows();
+            final String rightJoin = " FROM (SELECT ts, x FROM a) s TIMESTAMP(ts) RIGHT JOIN b ON s.x > b.y";
+            assertQuery("SELECT s.ts, b.y" + rightJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ty
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-01T01:10:00.000000Z\t1
+                            \t3
+                            """);
+            assertQuery("SELECT s.ts, b.y" + rightJoin + " ORDER BY s.ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ty
+                            \t3
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-01T01:10:00.000000Z\t1
+                            """);
+            final String fullJoin = " FROM (SELECT ts, x FROM a) s TIMESTAMP(ts) FULL JOIN b ON s.x > b.y";
+            assertQuery("SELECT s.ts, b.y" + fullJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ty
+                            2024-01-01T00:10:00.000000Z\tnull
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-01T01:10:00.000000Z\t1
+                            \t3
+                            """);
+            assertQuery("SELECT s.ts, b.y" + fullJoin + " ORDER BY s.ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ty
+                            \t3
+                            2024-01-01T00:10:00.000000Z\tnull
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-01T01:10:00.000000Z\t1
+                            """);
+            for (String from : new String[]{rightJoin, fullJoin}) {
+                final String sql = "SELECT s.ts, sum(b.y) OVER (ORDER BY s.ts RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW)" + from;
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(sql.indexOf("s.ts RANGE"), "RANGE is supported only for queries ordered by designated timestamp");
+            }
+
+            // an order-keeping join still designates the declared timestamp
+            assertQuery("SELECT s.ts, b.y FROM (SELECT ts, x FROM a) s TIMESTAMP(ts) JOIN b ON s.x > b.y")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ty
+                            2024-01-01T00:20:00.000000Z\t1
+                            2024-01-01T01:10:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testSharedCteWithDifferentTimestampDesignations() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

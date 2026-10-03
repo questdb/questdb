@@ -49,7 +49,7 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
         return new RegressionSlopeFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class RegressionSlopeFunction extends AbstractRegressionGroupByFunction {
+    static class RegressionSlopeFunction extends AbstractRegressionGroupByFunction {
 
         public RegressionSlopeFunction(@NotNull Function arg0, @NotNull Function arg1) {
             super(arg0, arg1);

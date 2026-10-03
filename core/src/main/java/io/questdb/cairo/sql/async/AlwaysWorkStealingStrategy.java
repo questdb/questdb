@@ -41,6 +41,9 @@ public class AlwaysWorkStealingStrategy implements WorkStealingStrategy {
 
     @Override
     public boolean shouldSteal(int finishedCount) {
+        // This strategy ignores the count, but it is the one that most servers and tests run,
+        // so it checks the contract on behalf of AdaptiveWorkStealingStrategy.
+        assert finishedCount >= 0;
         return true;
     }
 }

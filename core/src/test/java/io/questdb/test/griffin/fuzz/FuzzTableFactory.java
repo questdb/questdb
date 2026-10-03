@@ -31,8 +31,11 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
+import io.questdb.test.griffin.fuzz.types.IntKeyType;
+import io.questdb.test.griffin.fuzz.types.LongKeyType;
 import io.questdb.test.griffin.fuzz.types.SymbolType;
 import io.questdb.test.griffin.fuzz.types.TimestampType;
+import io.questdb.test.griffin.fuzz.types.VarcharKeyType;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -42,9 +45,15 @@ import java.time.format.DateTimeFormatter;
  * data but with independently random storage settings. Timestamps step
  * forward so a configurable chunk of rows spans multiple DAY partitions.
  * <p>
- * Every table carries at least one SYMBOL column named {@code sym} so a
- * join fuzzer has a predictable key to target. The designated timestamp
- * column is always the last column and is named {@code ts}.
+ * Every table carries four join-key columns over small domains, so a join
+ * fuzzer has a predictable key of each shape the fused hash join GROUP BY
+ * takes: the SYMBOL column {@code sym} and the INT column {@code k}, which
+ * the narrow INT layout reads, plus the LONG column {@code lk} (see
+ * {@link LongKeyType}) and the VARCHAR column {@code vk} (see
+ * {@link VarcharKeyType}), which reach the map-backed build through the key
+ * sinks. {@code vk} holds {@code sym}'s texts, so the two also join each
+ * other. The designated timestamp column is always the last column and is
+ * named {@code ts}.
  * <p>
  * Each of the two siblings independently picks one of three parquet
  * modes uniformly at random: {@link ParquetMode#NONE} keeps every
@@ -68,12 +77,15 @@ public final class FuzzTableFactory {
     // Drawn uniformly when a SYMBOL column gets indexed, so bitmap and the
     // three posting variants all get exercised over a run.
     private static final FuzzIndex.Kind[] INDEX_KINDS = FuzzIndex.Kind.values();
+    private static final String INT_JOIN_KEY_COLUMN = "k";
     private static final String JOIN_KEY_COLUMN = "sym";
+    private static final String LONG_JOIN_KEY_COLUMN = "lk";
     private static final double PARTIAL_PARQUET_PARTITION_CHANCE = 0.5;
     // Per-posting-index chance of attaching a covering INCLUDE list.
     private static final double POSTING_COVERING_CHANCE = 0.5;
     private static final int POSTING_MAX_COVERING_COLUMNS = 3;
     private static final String TS_COLUMN = "ts";
+    private static final String VARCHAR_JOIN_KEY_COLUMN = "vk";
 
     private final FuzzConfig config;
     // One shuffled deck for the whole run, dealt across every table the run
@@ -163,6 +175,12 @@ public final class FuzzTableFactory {
 
         // Shared join key. Always SYMBOL so ASOF/LT/SPLICE on (sym) has a target.
         columns.add(new FuzzColumn(JOIN_KEY_COLUMN, SymbolType.INSTANCE));
+        // Shared INT join key over a small domain, so an INT equi-join matches rows.
+        columns.add(new FuzzColumn(INT_JOIN_KEY_COLUMN, IntKeyType.INSTANCE));
+        // Shared LONG and VARCHAR join keys over the same domains, so an equi-join over
+        // either matches rows and takes the fused plan's staged-key route.
+        columns.add(new FuzzColumn(LONG_JOIN_KEY_COLUMN, LongKeyType.INSTANCE));
+        columns.add(new FuzzColumn(VARCHAR_JOIN_KEY_COLUMN, VarcharKeyType.INSTANCE));
 
         for (int i = 0; i < numExtra; i++) {
             columns.add(new FuzzColumn("c" + i, dealType(rnd)));

@@ -105,6 +105,7 @@ import io.questdb.griffin.engine.functions.math.SubIntFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
@@ -1111,6 +1112,77 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         assertParseClosesArgsWithoutMasking("boom() or bad_arg()", 1, -1, "exception in function factory", closeCount);
+    }
+
+    @Test
+    public void testFailedNestedParseKeepsOuterPendingFunctions() throws SqlException {
+        // A sub-query operand compiles through a nested parseFunction() on the same parser. Traversal
+        // descends the rhs first, so counted() is pending when nested() parses a missing column.
+        final AtomicInteger closeCount = new AtomicInteger();
+        final FunctionParser[] parser = new FunctionParser[1];
+        final boolean[] isFallback = new boolean[1];
+        final ExpressionNode missingColumn = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, "missing", 0, 0);
+        functions.add(new OrFunctionFactory());
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "counted()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                return new BooleanFunction() {
+                    @Override
+                    public void close() {
+                        closeCount.incrementAndGet();
+                    }
+
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return false;
+                    }
+                };
+            }
+        });
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "nested()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+                try (Function ignored = parser[0].parseFunction(missingColumn, new GenericRecordMetadata(), sqlExecutionContext)) {
+                    fail("expected nested parse failure");
+                } catch (SqlException e) {
+                    if (!isFallback[0]) {
+                        throw e;
+                    }
+                }
+                return new BooleanFunction() {
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return true;
+                    }
+                };
+            }
+        });
+        for (boolean isFallbackCase : new boolean[]{true, false}) {
+            closeCount.set(0);
+            isFallback[0] = isFallbackCase;
+            parser[0] = createFunctionParser();
+            try (Function function = parseFunction("nested() or counted()", new GenericRecordMetadata(), parser[0])) {
+                assertTrue("nested failure must reach the outer parse", isFallbackCase);
+                assertEquals(ColumnType.BOOLEAN, function.getType());
+                // The outer traversal still owns counted(), so the failed nested parse must not close it.
+                assertEquals(0, closeCount.get());
+            } catch (SqlException e) {
+                assertFalse("fallback must not fail the outer parse", isFallbackCase);
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: missing");
+            }
+            // Both paths close counted() exactly once: with the OR function, or in the outer parse's cleanup.
+            assertEquals(1, closeCount.get());
+        }
     }
 
     @Test

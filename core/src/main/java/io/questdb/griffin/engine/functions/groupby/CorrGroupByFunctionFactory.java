@@ -63,7 +63,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
      *
      * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
      */
-    private static class CorrGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+    static class CorrGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
         protected final Function xFunc;
         protected final Function yFunc;
         protected int valueIndex;

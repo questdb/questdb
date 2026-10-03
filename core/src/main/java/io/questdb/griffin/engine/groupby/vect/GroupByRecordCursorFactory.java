@@ -377,7 +377,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                 Os.pause();
             }
-            mergedCount = doneLatch.getCount();
+            mergedCount = -doneLatch.getCount();
         }
         return reclaimed;
     }
@@ -603,7 +603,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             int ownCount = 0;
             int reclaimed = 0;
             int total = 0;
-            int mergedCount = 0; // used for work stealing decisions
+            int mergedCount = 0; // positive completed-task count; the latch counts down from zero
 
             final Worker worker = Worker.current();
             final int workerId = worker != null ? worker.getWorkerId() % workerCount : -1;
@@ -678,13 +678,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     );
                                     ownCount++;
                                     total++;
-                                    mergedCount = doneLatch.getCount();
+                                    mergedCount = -doneLatch.getCount();
                                     break;
                                 }
                                 if (!ownerLoop.awaitProgress()) {
                                     Os.pause();
                                 }
-                                mergedCount = doneLatch.getCount();
+                                mergedCount = -doneLatch.getCount();
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();
                                 entry.of(

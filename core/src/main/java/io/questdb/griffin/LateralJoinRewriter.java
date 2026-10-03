@@ -4597,6 +4597,20 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // True when a join model of this level NULL-extends its master, so that the master's columns,
+    // and with them a correlation value cross-joined into it, can come back NULL.
+    private static boolean hasMasterNullingJoin(ObjList<IQueryModel> joinModels) {
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final int joinType = joinModels.getQuick(i).getJoinType();
+            if (joinType == IQueryModel.JOIN_RIGHT_OUTER
+                    || joinType == IQueryModel.JOIN_FULL_OUTER
+                    || joinType == IQueryModel.JOIN_SPLICE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Inserts the __qdb_outer_ref__ join model at the bottom-most data source
     // layer of the lateral subquery's nestedModel chain. pushDownOuterRefs walks
     // down the chain and calls terminateHere when it reaches a node that has a
@@ -4615,7 +4629,13 @@ class LateralJoinRewriter implements Mutable {
             int depth
     ) {
         ObjList<IQueryModel> joinModels = current.getJoinModels();
-        final int insertPos = 1;
+        // A RIGHT, FULL OUTER or SPLICE join NULL-extends its master, which is every model joined
+        // before it, so the __qdb_outer_ref__ model joins the outer join's result instead: a NULL
+        // correlation value matches no row of the alignment join, and the lateral would lose every
+        // row that the outer join preserves from its slave. INNER and LEFT joins keep every master
+        // row, so there the first position stands, and the correlated predicates prune the data
+        // source before the joins run.
+        final int insertPos = hasMasterNullingJoin(joinModels) ? joinModels.size() : 1;
         joinModels.add(outerRefJoinModel);
         for (int si = joinModels.size() - 1; si > insertPos; si--) {
             joinModels.setQuick(si, joinModels.getQuick(si - 1));

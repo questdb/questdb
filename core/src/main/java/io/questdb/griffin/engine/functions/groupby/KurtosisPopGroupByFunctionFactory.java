@@ -55,7 +55,7 @@ public class KurtosisPopGroupByFunctionFactory implements FunctionFactory {
         return new KurtosisPopGroupByFunction(args.getQuick(0));
     }
 
-    private static class KurtosisPopGroupByFunction extends AbstractKurtosisGroupByFunction {
+    static class KurtosisPopGroupByFunction extends AbstractKurtosisGroupByFunction {
 
         public KurtosisPopGroupByFunction(@NotNull Function arg) {
             super(arg);
