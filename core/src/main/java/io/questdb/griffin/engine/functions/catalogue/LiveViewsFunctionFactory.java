@@ -71,6 +71,12 @@ import io.questdb.std.ObjList;
  * surfaced as debug columns; both are useful for operators tracking
  * refresh-worker progress before the corresponding {@code lvConsumed} flow
  * catches up.
+  * {@code lag_seqtxn} is the lag between the base table's applied transaction
+ * and the live view's {@code last_processed_seqtxn}. It does not measure lag
+ * against the sequencer head. {@code base_sequencer_lag_seqtxn} measures the
+ * corresponding lag against the base table's sequencer head, allowing
+ * operators to distinguish a view that is caught up with the applied base
+ * table from one that is waiting for unapplied WAL transactions.
  * {@code o3_resume_replay_rows} and {@code o3_boundary_replay_rows} trail after
  * them as O3-replay observability: they split the rows an O3 re-emits by path -
  * bounded resume-from-anchor replays versus the residual O(view age) boundary
@@ -236,8 +242,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_IN_MEM_ROWS = 11;
         private static final int COLUMN_LAG_MICROS = 15;
         private static final int COLUMN_LAG_SEQTXN = 14;
+        private static final int COLUMN_BASE_SEQUENCER_LAG_SEQTXN = 33;
         private static final int COLUMN_LAST_PROCESSED_SEQTXN = 16;
-        private static final int COLUMN_LV_CONSUMED_SEQTXN = 18;
         private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 23;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
         private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 24;
@@ -420,19 +426,37 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             yield tier == null ? 0L : tier.publishedRowCount();
                         }
                         case COLUMN_LAG_SEQTXN -> {
-                            // base.sequencer.head - last_processed. The base token can be
-                            // transiently unresolved on a replica whose LV registered before
-                            // its base table downloaded (the refresh scan heals it); report
-                            // an unknown lag rather than NPE into the tracker lookup.
-                            TableToken baseToken = definition.getBaseTableToken();
+                            // base.applied_txn - last_processed. The base token can be
+                           // transiently unresolved on a replica whose LV registered before
+                          // its base table downloaded (the refresh scan heals it); report
+                        // an unknown lag rather than NPE into the tracker lookup.
+                        TableToken baseToken = definition.getBaseTableToken();
                             if (baseToken == null) {
-                                yield Numbers.LONG_NULL;
-                            }
-                            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
-                            long head = tracker.getWriterTxn();
-                            long lp = instance.getLastProcessedSeqTxn();
-                            yield head < 0 || lp < 0 ? Numbers.LONG_NULL : Math.max(0, head - lp);
+                            yield Numbers.LONG_NULL;
                         }
+                            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
+                            long appliedTxn = tracker.getWriterTxn();
+                            long lp = instance.getLastProcessedSeqTxn();
+                            yield appliedTxn < 0 || lp < 0
+                            ? Numbers.LONG_NULL
+                            : Math.max(0, appliedTxn - lp);
+                        }
+                    case COLUMN_BASE_SEQUENCER_LAG_SEQTXN -> {
+                                    // base.sequencer.head - last_processed. The base token can be
+                                    // transiently unresolved on a replica whose LV registered before
+                                    // its base table downloaded (the refresh scan heals it); report
+                                    // an unknown lag rather than NPE into the tracker lookup.
+                                    TableToken baseToken = definition.getBaseTableToken();
+                                    if (baseToken == null) {
+                                        yield Numbers.LONG_NULL;
+                                    }
+                                    SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
+                                    long head = tracker.getSeqTxn();
+                                    long lp = instance.getLastProcessedSeqTxn();
+                                    yield head < 0 || lp < 0
+                                            ? Numbers.LONG_NULL
+                                            : Math.max(0, head - lp);
+                                }
                         case COLUMN_LAG_MICROS -> {
                             // Now minus the wall-clock of the last successful flush.
                             // lastFlushTimeUs is the
