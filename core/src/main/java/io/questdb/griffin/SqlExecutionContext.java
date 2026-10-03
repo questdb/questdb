@@ -294,12 +294,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return true;
     }
 
-    // Existing live views may contain catalogue functions that CREATE now rejects.
-    // Only the refresh context opts in; CREATE still compiles under the restriction.
-    default boolean isLiveViewRefresh() {
-        return false;
-    }
-
     // Returns true when the current compile is the CREATE-time or refresh-time
     // compile of a live view's SELECT. Compile-time switch that lets window
     // function factories opt into live-view-only machinery (e.g. the
@@ -308,6 +302,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // extraction so the planner falls back to a plain FilteredRecordCursorFactory
     // shape that the incremental refresh path can handle.
     default boolean isLiveViewCompile() {
+        return false;
+    }
+
+    // Existing live views may contain catalogue functions that CREATE now rejects.
+    // Only the refresh context opts in; CREATE still compiles under the restriction.
+    default boolean isLiveViewRefresh() {
         return false;
     }
 
