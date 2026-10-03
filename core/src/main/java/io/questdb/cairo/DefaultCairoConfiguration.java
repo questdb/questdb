@@ -949,6 +949,30 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlAsOfAdaptiveBackScanBudget() {
+        return -1;
+    }
+
+    @Override
+    public boolean isSqlAsOfAutoAlgoEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getSqlAsOfIndexMaxMasterBp() {
+        return 200; // 2.00% — index wins below ~2% master/slave ratio (crossover ~1-2.5%, see bench)
+    }
+
+    @Override
+    public int getSqlAsOfMemoizedDenseRunThreshold() {
+        // From the K sweep: fallback eliminates the dense_sym cliff (6250ms -> 11.7ms, ~530x, matches
+        // Dense) for any K below the rows-per-timestamp; sparse-ts (runs of length 1) never trips, so a
+        // low K is costless there. 1024 sits an order of magnitude below observed cliffs and above
+        // incidental small ts clusters, so it won't prematurely abandon memoization on sparse-illiquid data.
+        return 1024;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }

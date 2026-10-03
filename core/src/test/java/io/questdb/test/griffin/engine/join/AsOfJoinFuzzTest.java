@@ -345,7 +345,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 case INDEX -> "Indexed";
                 case MEMOIZED, MEMOIZED_DRIVEBY -> "Memoized";
                 case DENSE -> "Dense Single Symbol";
-                default -> "Fast";
+                default -> "Dense Single Symbol";
             };
             TestUtils.assertContains(sink, "AsOf Join " + algo);
         }

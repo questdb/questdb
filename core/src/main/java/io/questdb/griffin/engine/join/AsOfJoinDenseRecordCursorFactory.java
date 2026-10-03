@@ -94,6 +94,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                     new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
                             SingleRecordSink.CONFIG_KEYS_ASOF_JOIN)
             );
+            this.cursor.setAdaptiveBackScanBudget(configuration.getSqlAsOfAdaptiveBackScanBudget());
         } catch (Throwable th) {
             Misc.free(bwdScanKeyToRowId);
             Misc.free(fwdScanKeyToRowId);
