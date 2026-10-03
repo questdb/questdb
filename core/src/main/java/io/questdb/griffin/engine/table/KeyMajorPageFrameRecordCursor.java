@@ -26,6 +26,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -46,6 +47,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -64,14 +66,25 @@ import org.jetbrains.annotations.Nullable;
  * Native frames are revisited for free. A Parquet frame is skipped when the index shows the key
  * has no rows in it, and is otherwise decoded again for each key that misses the decoded-frame
  * cache, which is why the planner keeps the sort over Parquet partitions.
+ * <p>
+ * A key's rows are spread across each frame, so reading them in key order misses the cache and
+ * the TLB on nearly every column of every row. The cursor therefore takes row ids from the index
+ * in batches and loads the batch's column cache lines in one tight loop before it emits the rows,
+ * which lets those misses overlap instead of being paid one row at a time by the consumer.
  */
 public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor {
+    // Row ids drained from the row cursor ahead of emission. Their column cache lines are loaded
+    // in one tight loop (see touch()), which must fit L1 with room to spare: measured best at
+    // 32-64 on a 50M-row table, and worse from 128 up.
+    private static final int PREFETCH_ROWS = 32;
     private final Function filter;
     private final LongList frameHis = new LongList();
     private final ObjList<IndexReader> frameIndexReaders = new ObjList<>();
     private final LongList frameLos = new LongList();
     private final IntList framePartitionIndexes = new IntList();
     private final FrameSnapshot frameSnapshot = new FrameSnapshot();
+    // row ids of the current (key, frame) taken from rowCursor ahead of emission, see fillRowBuf()
+    private final long[] rowBuf = new long[PREFETCH_ROWS];
     private final KeyedRowCursorFactory rowCursorFactory;
     private final boolean walkFramesBackward;
     private boolean areCursorsPrepared;
@@ -84,7 +97,17 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     private boolean isFramesCollected;
     private int keyCount;
     private int keyIndex;
+    private int rowBufLen;
+    private int rowBufPos;
     private RowCursor rowCursor;
+    // per column of the current frame: the address of row 0, the bytes readable from it and the
+    // row size as a shift; touchCount columns in total, 0 when the frame is not touched
+    private long[] touchAddresses = new long[0];
+    private int touchCount;
+    private long[] touchLimits = new long[0];
+    private int[] touchShifts = new int[0];
+    // sink for the touched bytes, so that the loads are not eliminated
+    private long touchSink;
 
     /**
      * @param frameOrder order of the page frames the partition frame cursor yields,
@@ -133,11 +156,14 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 keyCount = rowCursorFactory.getKeyCount();
             }
             while (true) {
-                if (rowCursor != null && rowCursor.hasNext()) {
-                    final long rowIndex = rowCursor.next();
+                if (rowBufPos < rowBufLen) {
+                    final long rowIndex = rowBuf[rowBufPos++];
                     frameMemoryPool.navigateTo(currentFrameIndex, recordA);
                     recordA.setRowIndex(rowIndex);
                     return true;
+                }
+                if (rowCursor != null && fillRowBuf()) {
+                    continue;
                 }
                 if (!nextKeyFrame()) {
                     break;
@@ -235,12 +261,30 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 rowCursor = rowCursorFactory.getCursor(keyIndex, frameSnapshot, frameMemory);
                 currentFrameIndex = frameIndex;
                 recordA.init(frameMemory);
+                prepareTouch(frameIndex, frameMemory);
                 return true;
             }
             keyIndex++;
             framePos = 0;
         }
         return false;
+    }
+
+    // Takes up to PREFETCH_ROWS row ids of the current (key, frame) and loads their column cache
+    // lines. Returns false when the row cursor is exhausted.
+    private boolean fillRowBuf() {
+        final long[] buf = rowBuf;
+        final RowCursor cursor = rowCursor;
+        int n = 0;
+        while (n < buf.length && cursor.hasNext()) {
+            buf[n++] = cursor.next();
+        }
+        rowBufPos = 0;
+        rowBufLen = n;
+        if (n > 0 && touchCount > 0) {
+            touch(n);
+        }
+        return n > 0;
     }
 
     private boolean hasNoRows(int keyIndex, int frameIndex) {
@@ -264,8 +308,51 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         }
     }
 
+    // Each key's rows are spread over the whole frame, so nearly every column value of a row is a
+    // cache and TLB miss. Read by the consumer one row at a time, with its own work in between,
+    // those misses are paid one after another; touch() makes them overlap. Only native frames are
+    // touched: their addresses are stable for the query, while a decoded Parquet frame can be
+    // evicted between two calls to hasNext().
+    private void prepareTouch(int frameIndex, PageFrameMemory frameMemory) {
+        touchCount = 0;
+        if (frameMemory.getFrameFormat() != PartitionFormat.NATIVE || frameAddressCache.isFrameCovered(frameIndex)) {
+            return;
+        }
+        final int columnCount = frameMemory.getColumnCount();
+        if (touchAddresses.length < columnCount) {
+            touchAddresses = new long[columnCount];
+            touchLimits = new long[columnCount];
+            touchShifts = new int[columnCount];
+        }
+        final IntList columnTypes = frameAddressCache.getColumnTypes();
+        for (int c = 0; c < columnCount; c++) {
+            final int columnType = columnTypes.getQuick(c);
+            final long address;
+            final long limit;
+            final int shift;
+            if (ColumnType.isVarSize(columnType)) {
+                address = frameMemory.getAuxPageAddress(c);
+                limit = frameMemory.getAuxPageSizes().get(frameMemory.getColumnOffset() + c);
+                shift = Long.numberOfTrailingZeros(ColumnType.getDriver(columnType).getAuxVectorOffset(1));
+            } else {
+                address = frameMemory.getPageAddress(c);
+                limit = frameMemory.getPageSize(c);
+                shift = ColumnType.pow2SizeOf(columnType);
+            }
+            if (address != 0 && shift >= 0 && limit > 0) {
+                touchAddresses[touchCount] = address;
+                touchLimits[touchCount] = limit;
+                touchShifts[touchCount] = shift;
+                touchCount++;
+            }
+        }
+    }
+
     private void resetWalk() {
         rowCursor = Misc.free(rowCursor);
+        rowBufPos = 0;
+        rowBufLen = 0;
+        touchCount = 0;
         isExhausted = false;
         isFramesCollected = false;
         frameLos.clear();
@@ -276,6 +363,25 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         framePos = 0;
         currentFrameIndex = -1;
         keyCount = 0;
+    }
+
+    // Loads one byte of every column of the buffered rows in a tight loop. The loads are
+    // independent, so their cache and TLB misses overlap instead of being paid one row at a time.
+    private void touch(int n) {
+        final long[] buf = rowBuf;
+        long sink = 0;
+        for (int c = 0; c < touchCount; c++) {
+            final long address = touchAddresses[c];
+            final long limit = touchLimits[c];
+            final int shift = touchShifts[c];
+            for (int i = 0; i < n; i++) {
+                final long offset = buf[i] << shift;
+                if (offset < limit) {
+                    sink += Unsafe.getByte(address + offset);
+                }
+            }
+        }
+        touchSink += sink;
     }
 
     /**

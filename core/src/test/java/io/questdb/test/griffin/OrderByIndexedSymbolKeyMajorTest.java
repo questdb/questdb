@@ -656,6 +656,57 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPrefetchOverEveryColumnTypeMatchesTwin() throws Exception {
+        // The key-major cursor buffers up to 32 row ids of a (key, frame) and loads their column
+        // cache lines ahead of emission. Frames of 256 rows give the frequent keys several full
+        // buffers per frame and the rare ones a partial buffer, over every fixed-size column
+        // type and the aux vectors of the var-size ones. The column added halfway is a column top
+        // that ends inside the last partition.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 256);
+            for (String partitionBy : PARTITION_BYS) {
+                execute("drop table if exists w");
+                execute("drop table if exists w_twin");
+                final String columns = "sym symbol%s, b boolean, by byte, sh short, ch char, i int, l long, f float, d double," +
+                        " s string, vc varchar, bin binary, u uuid, l256 long256, g geohash(5c), ip ipv4, dec decimal(18, 3)," +
+                        " arr double[], ts timestamp";
+                execute("create table w (" + String.format(columns, " index type " + indexType) + ") timestamp(ts) partition by " + partitionBy);
+                execute("create table w_twin (" + String.format(columns, "") + ") timestamp(ts) partition by " + partitionBy);
+                final String rows = "select" +
+                        // skewed keys: A about 60%, B 25%, C 10%, NULL 5%
+                        " case when x % 20 < 12 then 'A' when x % 20 < 17 then 'B' when x % 20 < 19 then 'C' else null end," +
+                        " rnd_boolean(), rnd_byte(), rnd_short(), rnd_char(), rnd_int(), rnd_long(), rnd_float(), rnd_double()," +
+                        " rnd_str(3, 8, 2), rnd_varchar(3, 30, 2), rnd_bin(4, 16, 2), rnd_uuid4(), rnd_long256(), rnd_geohash(25)," +
+                        " rnd_ipv4(), rnd_decimal(18, 3, 2), rnd_double_array(1, 2)," +
+                        " ((x - 1) * 60_000_000L)::timestamp" +
+                        " from long_sequence(3000)";
+                execute("insert into w_twin " + rows);
+                execute("insert into w select * from w_twin");
+                execute("alter table w add column late int");
+                execute("alter table w_twin add column late int");
+                final String more = "select" +
+                        " case when x % 3 = 0 then 'A' when x % 3 = 1 then 'C' else null end," +
+                        " rnd_boolean(), rnd_byte(), rnd_short(), rnd_char(), rnd_int(), rnd_long(), rnd_float(), rnd_double()," +
+                        " rnd_str(3, 8, 2), rnd_varchar(3, 30, 2), rnd_bin(4, 16, 2), rnd_uuid4(), rnd_long256(), rnd_geohash(25)," +
+                        " rnd_ipv4(), rnd_decimal(18, 3, 2), rnd_double_array(1, 2)," +
+                        " ((x + 2999) * 60_000_000L)::timestamp, x::int" +
+                        " from long_sequence(500)";
+                execute("insert into w_twin " + more);
+                execute("insert into w select * from w_twin where ts >= " + (3000 * 60_000_000L));
+                for (String[] c : new String[][]{
+                        {"sym in ('A', 'B', 'C', null) order by sym", "sym in ('A', 'B', 'C', null) order by sym, ts"},
+                        {"sym in ('C', null) order by sym desc", "sym in ('C', null) order by sym desc, ts"},
+                        {"sym != 'B' order by sym", "sym != 'B' order by sym, ts"},
+                }) {
+                    final String query = "select * from w where " + c[0];
+                    assertQuery(query).sizeMayVary().returns(oracle("select * from w_twin where " + c[1]));
+                    assertKeyMajorPlan(query, true);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnevenBindValuesChangeBetweenRuns() throws Exception {
         assertMemoryLeak(() -> {
             for (String partitionBy : PARTITION_BYS) {
