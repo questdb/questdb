@@ -82,6 +82,17 @@ import java.util.List;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class WindowFunctionTest extends AbstractCairoTest {
+    /**
+     * The six-row, three-partition fixture the scan-direction upgrade notes use, so the RANGE-frame
+     * results below can be read against the numbers recorded there. Two rows per day, values 1..6.
+     */
+    private static final String WINDOW_SCAN_DIRECTION_DDL =
+            "create table wsd (ts timestamp, sym symbol index, x long) timestamp(ts) partition by day";
+    private static final String WINDOW_SCAN_DIRECTION_ROWS =
+            "insert into wsd values" +
+                    " ('2024-01-01T00:00:00.000000Z','a',1), ('2024-01-01T01:00:00.000000Z','b',2)," +
+                    " ('2024-01-02T00:00:00.000000Z','a',3), ('2024-01-02T01:00:00.000000Z','c',4)," +
+                    " ('2024-01-03T00:00:00.000000Z','b',5), ('2024-01-03T01:00:00.000000Z','a',6)";
     private static final List<String> FRAME_FUNCTIONS;
     private static final String[][] FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME = new String[][]{
             {
@@ -4466,6 +4477,134 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    /**
+     * A RANGE frame over a base that does not claim ascending designated-timestamp order. The
+     * cached window path sorts the rows into the window's own ORDER BY before any function sees
+     * them - which is why the ROWS frame of this very query over this very base has always worked -
+     * so the RANGE frame does have an ordered timestamp to frame against and must compile.
+     * <p>
+     * The values below are ground truth: they are exactly what the documented remedy
+     * ({@code ... union all ... order by ts}) returns, which
+     * {@link #testFrameFunctionOverRangeOverOrderedUnionAllBase} pins. Only the ROW order differs,
+     * and that is the window contract - OVER (ORDER BY ...) frames the computation, it does not
+     * sort the result set - so the rows come out branch A then branch B while the averages are the
+     * interleaved ones. The two rows sharing a timestamp get different averages (1.333... and 1.5)
+     * because the frame ends at the current row of the sort, not at the end of its peer group.
+     */
+    @Test
+    public void testFrameFunctionOverRangeOverUnorderedUnionAllBase() throws Exception {
+        assertQuery("""
+                select ts, avg(x) over (order by ts range between 86400000000 preceding and current row) w
+                from ((select ts, x from wsd union all select ts, x from wsd) timestamp(ts))
+                """)
+                .ddl(WINDOW_SCAN_DIRECTION_DDL, WINDOW_SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .expectSize()
+                .timestampUnordered("ts")
+                .withPlanContaining("CachedWindow", "orderedFunctions: [[ts] =>")
+                .returns("""
+                        ts\tw
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T01:00:00.000000Z\t1.3333333333333333
+                        2024-01-02T00:00:00.000000Z\t1.8
+                        2024-01-02T01:00:00.000000Z\t2.8
+                        2024-01-03T00:00:00.000000Z\t3.8
+                        2024-01-03T01:00:00.000000Z\t4.8
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T01:00:00.000000Z\t1.5
+                        2024-01-02T00:00:00.000000Z\t2.0
+                        2024-01-02T01:00:00.000000Z\t3.0
+                        2024-01-03T00:00:00.000000Z\t4.0
+                        2024-01-03T01:00:00.000000Z\t5.0
+                        """);
+    }
+
+    /**
+     * The ground truth for {@link #testFrameFunctionOverRangeOverUnorderedUnionAllBase}: the same
+     * statement with the {@code ORDER BY ts} the release notes tell users to add. The base then
+     * merges instead of concatenating, so the rows arrive interleaved and ascending - and every
+     * window value above appears here, against the same timestamp.
+     */
+    @Test
+    public void testFrameFunctionOverRangeOverOrderedUnionAllBase() throws Exception {
+        assertQuery("""
+                select ts, avg(x) over (order by ts range between 86400000000 preceding and current row) w
+                from ((select ts, x from wsd union all select ts, x from wsd order by ts) timestamp(ts))
+                """)
+                .ddl(WINDOW_SCAN_DIRECTION_DDL, WINDOW_SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .timestampAsc("ts")
+                .returns("""
+                        ts\tw
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T01:00:00.000000Z\t1.3333333333333333
+                        2024-01-01T01:00:00.000000Z\t1.5
+                        2024-01-02T00:00:00.000000Z\t1.8
+                        2024-01-02T00:00:00.000000Z\t2.0
+                        2024-01-02T01:00:00.000000Z\t2.8
+                        2024-01-02T01:00:00.000000Z\t3.0
+                        2024-01-03T00:00:00.000000Z\t3.8
+                        2024-01-03T00:00:00.000000Z\t4.0
+                        2024-01-03T01:00:00.000000Z\t4.8
+                        2024-01-03T01:00:00.000000Z\t5.0
+                        """);
+    }
+
+    /**
+     * The same shape reached through a VIEW whose body re-attaches the designated timestamp. The
+     * user never writes {@code timestamp(col)} at the call site here, which is what makes this the
+     * shape most likely to be in a deployed schema.
+     */
+    @Test
+    public void testFrameFunctionOverRangeOverViewThatReattachesTimestamp() throws Exception {
+        assertQuery("select ts, avg(x) over (order by ts range between 86400000000 preceding and current row) w from wsdv")
+                .ddl(
+                        WINDOW_SCAN_DIRECTION_DDL,
+                        WINDOW_SCAN_DIRECTION_ROWS,
+                        "create view wsdv as (select * from (select ts, x from wsd union all select ts, x from wsd) timestamp(ts))"
+                )
+                .noLeakCheck()
+                .expectSize()
+                .timestampUnordered("ts")
+                .returns("""
+                        ts\tw
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T01:00:00.000000Z\t1.3333333333333333
+                        2024-01-02T00:00:00.000000Z\t1.8
+                        2024-01-02T01:00:00.000000Z\t2.8
+                        2024-01-03T00:00:00.000000Z\t3.8
+                        2024-01-03T01:00:00.000000Z\t4.8
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-01-01T01:00:00.000000Z\t1.5
+                        2024-01-02T00:00:00.000000Z\t2.0
+                        2024-01-02T01:00:00.000000Z\t3.0
+                        2024-01-03T00:00:00.000000Z\t4.0
+                        2024-01-03T01:00:00.000000Z\t5.0
+                        """);
+    }
+
+    /**
+     * ASC only. The claim the generator makes is that the cached path will sort the rows ASCENDING
+     * by the designated timestamp; it has no way to say "descending designated timestamp", which is
+     * what {@link #testFrameFunctionOverRangeIsOnlySupportedOverDesignatedTimestamp} pins for a
+     * plain table. This is the statement of
+     * {@link #testFrameFunctionOverRangeOverUnorderedUnionAllBase} with {@code desc} added, and it
+     * must keep refusing: a prototype that claimed BACKWARD for DESC broke that sibling test.
+     */
+    @Test
+    public void testFrameFunctionOverRangeDescOverUnorderedUnionAllBaseIsRefused() throws Exception {
+        assertQuery("""
+                select ts, avg(x) over (order by ts desc range between 86400000000 preceding and current row) w
+                from ((select ts, x from wsd union all select ts, x from wsd) timestamp(ts))
+                """)
+                .ddl(WINDOW_SCAN_DIRECTION_DDL, WINDOW_SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .failsWith("RANGE is supported only for queries ordered by designated timestamp");
     }
 
     @Test
