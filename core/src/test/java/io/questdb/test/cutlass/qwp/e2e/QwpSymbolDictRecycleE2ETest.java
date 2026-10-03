@@ -312,16 +312,15 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                 // Anchored on the LAST organic batch, not the first: with the first
                 // (FSN 0) every epoch base satisfies the check above, and with an
                 // epoch-0 anchor a lost SECOND roll (base 3 instead of 30) still passes.
-                // A lost roll is caught by that base assertion, so this await pins the
-                // accessor's epoch translation rather than the roll: the last organic
-                // FSN sits in the epoch before the final one, a correct base turns it
-                // into a negative internal target, and awaitAckedFsn must answer true
-                // at once via the prior-epoch short-circuit. An accessor that forgot
-                // the base would compare the raw FSN against the final epoch's ack
-                // watermark -- which acked a single frame -- and time the await out.
-                Assert.assertTrue("post-recycle awaitAckedFsn(lastOrganicFsn) must return true via the "
-                                + "prior-epoch short-circuit: base=" + finalEpochBase
-                                + " lastOrganicFsn=" + lastOrganicFsn,
+                // A lost roll is caught by that base assertion. This await is a contract
+                // check, not a mechanism pin: an FSN acked before the final recycle must
+                // still read as acked after it. The recycle's durable watermark and the
+                // epoch translation each satisfy it on their own, so it fails only if
+                // both are lost. The translation itself is pinned by the final-batch
+                // await above: that FSN lies in the final epoch, above the durable
+                // watermark, so only base + internal can reach it.
+                Assert.assertTrue("an FSN acked before the final recycle must still read as acked after it: "
+                                + "base=" + finalEpochBase + " lastOrganicFsn=" + lastOrganicFsn,
                         sender.awaitAckedFsn(lastOrganicFsn, 5_000));
             }
 

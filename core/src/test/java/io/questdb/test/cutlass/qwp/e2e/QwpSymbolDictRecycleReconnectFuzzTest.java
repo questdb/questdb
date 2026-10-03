@@ -447,9 +447,9 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 Assert.assertTrue("bouncer must not have exceeded its ceiling: restartCeiling="
                                 + restartCeiling + ", restarts=" + restarts,
                         restarts <= restartCeiling);
-                // Every targeted bounce stopped the server while the client held a connection
-                // that had already carried a frame, with reset requests paused. The only way
-                // such a stop is not counted is a recycle armed before the pause firing inside
+                // Every targeted bounce stopped the server while the client held an upgraded
+                // connection that had stayed live for 20 ms, with reset requests paused. The only
+                // way such a stop is not counted is a recycle armed before the pause firing inside
                 // the few milliseconds between the stability check and the worker halt; half
                 // is ample margin for that. Kills on blind bounces are not counted here, so a
                 // broken targeting path cannot pass on luck.
