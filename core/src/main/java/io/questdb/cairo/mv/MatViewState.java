@@ -30,6 +30,7 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -50,8 +51,8 @@ import static io.questdb.TelemetryEvent.*;
  * Mat view refresh state serves the purpose of synchronizing and coordinating
  * {@link MatViewRefreshJob}s.
  * <p>
- * Unlike {@link MatViewStateReader}, it does not carry a persisted invalidation
- * reason string. The {@link #pendingInvalidationMarker} is a transient in-memory marker
+ * The invalidation reason mirrors the last durable state and is retained while a full recovery is in
+ * progress. The {@link #pendingInvalidationMarker} is a transient in-memory marker
  * with two facets: a deferred invalidation (reason plus optional base-table txn
  * provenance) and a pending full-refresh owner. Either facet can be present alone or
  * combined on one marker; publications merge facets keep-strongest. A lock-holder's
@@ -83,6 +84,7 @@ public class MatViewState implements QuietCloseable {
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
     static final int PENDING_TASK_RETRY_FULL_REFRESH = 1;
+    static final int PENDING_TASK_RETRY_INCREMENTAL_REFRESH = 4;
     static final int PENDING_TASK_RETRY_INVALIDATION = 2;
     // Enables atomic ownership transfers of the pending-invalidation marker. A fresh marker object
     // identifies each reason publication, so a refresh can clear only the exact invalidation its
@@ -98,6 +100,10 @@ public class MatViewState implements QuietCloseable {
             AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
+    // An incremental refresh that lost the view lock left its run to the lock holder: the holder's
+    // release claims the request and enqueues one incremental refresh. See
+    // MatViewRefreshJob#tryLockForIncrementalRefresh.
+    private final AtomicBoolean pendingIncrementalRefresh = new AtomicBoolean(false);
     // Protected by this.latch.
     // Holds cached txn intervals read from WAL transactions (_event files) of the base table.
     // Lets WalPurgeJob to make progress and delete applied WAL segments of a base table without
@@ -106,8 +112,10 @@ public class MatViewState implements QuietCloseable {
     // Incremented each time there's a base table transaction(s).
     // Used by MatViewTimerJob to avoid queueing redundant WAL txn intervals caching tasks.
     private final AtomicLong refreshIntervalsSeq = new AtomicLong();
-    // Incremented each time an incremental/full refresh finishes.
-    // Used by MatViewTimerJob to avoid queueing redundant refresh tasks.
+    // Incremented each time an incremental or full refresh task finishes, whether or not it refreshed
+    // anything. The one exception is an incremental task that loses the view lock: the lock holder's release
+    // enqueues the view's next incremental refresh, which increments it when it finishes. MatViewTimerJob
+    // reads it to tell whether the refresh task it enqueued has left the queue.
     private final AtomicLong refreshSeq = new AtomicLong();
     private final MatViewTelemetryFacade telemetryFacade;
     // Exponential moving average of one REPLACE_RANGE commit, in nanoseconds.
@@ -140,8 +148,10 @@ public class MatViewState implements QuietCloseable {
     private volatile boolean closed;
     // Protected by this.latch.
     private RecordCursorFactory cursorFactory;
+    private long cursorFactoryExpiryPolicyVersion = -1;
     private volatile boolean dropped;
     private volatile boolean invalid;
+    private String invalidationReason;
     // Atomic token/txn pair covered by the last successful FULL refresh. This is intentionally
     // independent of lastRefreshBaseTxn: incremental and range refreshes cannot repair arbitrary
     // UPDATE, TRUNCATE, or schema invalidations even when they advance another watermark.
@@ -396,6 +406,34 @@ public class MatViewState implements QuietCloseable {
         RecordCursorFactory factory = cursorFactory;
         cursorFactory = null;
         return factory;
+    }
+
+    public long getRecordFactoryExpiryPolicyVersion() {
+        assert latch.get();
+        return cursorFactoryExpiryPolicyVersion;
+    }
+
+    public void returnRecordFactory(
+            RecordCursorFactory factory,
+            RecordToRowCopier copier,
+            long recordRowCopierMetadataVersion,
+            long expiryPolicyVersion
+    ) {
+        assert latch.get();
+        if (closed) {
+            Misc.free(factory);
+            return;
+        }
+        cursorFactory = factory;
+        cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
+        recordToRowCopier = copier;
+        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
+    }
+
+    boolean claimPendingIncrementalRefresh() {
+        // Reads before clearing, so that a claim with nothing pending writes nothing. The read is volatile,
+        // so it still observes a request that a loser published before its final lock attempt.
+        return pendingIncrementalRefresh.get() && pendingIncrementalRefresh.getAndSet(false);
     }
 
     int claimPendingTaskRetryFlags() {
@@ -684,6 +722,11 @@ public class MatViewState implements QuietCloseable {
         return getPendingFullRefreshOwner(pendingInvalidationMarker) != null;
     }
 
+    @TestOnly
+    public boolean hasPendingIncrementalRefreshForTesting() {
+        return pendingIncrementalRefresh.get();
+    }
+
     /**
      * Returns true only when the pending marker carries an invalidation reason. The refresh and
      * WAL-purge gates use this reason-only view: a full-refresh-only marker must not freeze a
@@ -709,6 +752,7 @@ public class MatViewState implements QuietCloseable {
 
     public void initFromReader(MatViewStateReader reader) {
         this.invalid = reader.isInvalid();
+        this.invalidationReason = Chars.toString(reader.getInvalidationReason());
         this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
         this.lastRefreshFinishTimestampUs = reader.getLastRefreshTimestampUs();
         this.lastPeriodHi = reader.getLastPeriodHi();
@@ -727,6 +771,11 @@ public class MatViewState implements QuietCloseable {
 
     public boolean isInvalid() {
         return invalid;
+    }
+
+    public String getInvalidationReason() {
+        assert latch.get();
+        return invalidationReason;
     }
 
     public boolean isLocked() {
@@ -778,6 +827,7 @@ public class MatViewState implements QuietCloseable {
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
         this.invalid = true;
+        this.invalidationReason = Chars.toString(invalidationReason);
     }
 
     Object markAsPendingFullRefreshAndGetOwner() {
@@ -886,6 +936,7 @@ public class MatViewState implements QuietCloseable {
 
     public void markAsValid() {
         this.invalid = false;
+        this.invalidationReason = null;
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
         this.refreshRetryCount = 0;
     }
@@ -937,6 +988,7 @@ public class MatViewState implements QuietCloseable {
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
+            long expiryPolicyVersion,
             long refreshFinishedTimestampUs,
             long refreshTriggeredTimestampUs,
             long periodHi
@@ -950,6 +1002,7 @@ public class MatViewState implements QuietCloseable {
             return;
         }
         this.cursorFactory = factory;
+        this.cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
@@ -1038,12 +1091,14 @@ public class MatViewState implements QuietCloseable {
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
+            long expiryPolicyVersion,
             long refreshFinishedTimestamp,
             long refreshTriggeredTimestamp,
             long baseTableTxn,
             long periodHi
     ) {
         assert latch.get();
+        markAsValid();
         if (closed) {
             // The owner store was torn down (e.g. a demote) while this worker held the latch. Parking
             // the live native factory into a discarded state would leak it (the state is unreachable),
@@ -1052,6 +1107,7 @@ public class MatViewState implements QuietCloseable {
             return;
         }
         this.cursorFactory = factory;
+        this.cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestamp;
@@ -1076,6 +1132,7 @@ public class MatViewState implements QuietCloseable {
             long periodHi
     ) {
         assert latch.get();
+        markAsValid();
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;
@@ -1089,6 +1146,10 @@ public class MatViewState implements QuietCloseable {
                 null,
                 refreshFinishedTimestampUs - refreshTriggeredTimestampUs
         );
+    }
+
+    void requestPendingIncrementalRefresh() {
+        pendingIncrementalRefresh.set(true);
     }
 
     void requestPendingTaskRetry(int retryFlags) {

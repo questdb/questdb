@@ -619,7 +619,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @TestOnly
-    public static void freeTableNameFunctionsForTesting(@Nullable IQueryModel queryModel, @NotNull Throwable failure) {
+    public static void freeTableNameFunctionsForTesting(@Nullable IQueryModel queryModel, @Nullable Throwable failure) {
         freeTableNameFunctions(queryModel, failure);
     }
 
@@ -735,6 +735,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         whereClauseParserDepth = 0;
         symbolEstimator.clear();
         intListPool.clear();
+        // `prefixes` holds the within(...) filter extracted for one query, and the extraction runs only
+        // while the within-latest-by optimisation is enabled. Clearing here keeps that filter out of the
+        // factories a later compilation generates.
+        prefixes.clear();
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();
@@ -848,8 +852,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Closes table-function factories that the optimizer attached to a query graph but generation
      * did not transfer. Transfer sites null the model field, so detaching each remaining field
      * before close prevents duplicate ownership across shared model references.
+     * <p>
+     * {@code failure} carries the in-flight exception when cleanup runs on an error path: a close
+     * failure attaches to it as a suppressed exception rather than masking it. Callers cleaning up
+     * on a success or retry path have no such exception and pass null, which lets a close failure
+     * propagate.
      */
-    static void freeTableNameFunctions(@Nullable IQueryModel queryModel, @NotNull Throwable failure) {
+    static void freeTableNameFunctions(@Nullable IQueryModel queryModel, @Nullable Throwable failure) {
         if (queryModel == null) {
             return;
         }
@@ -868,7 +877,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final RecordCursorFactory tableNameFunction = current.getTableNameFunction();
             current.setTableNameFunction(null);
-            Misc.free(tableNameFunction, failure);
+            if (failure != null) {
+                Misc.free(tableNameFunction, failure);
+            } else {
+                Misc.free(tableNameFunction);
+            }
 
             final ObjList<ExpressionNode> expressionModels = current.getExpressionModels();
             for (int i = 0, n = expressionModels.size(); i < n; i++) {
@@ -1779,14 +1792,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
-            int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
+            int k = CommonUtils.findPositiveIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
             TimestampDriver timestampDriver = getTimestampDriver(getHigherPrecisionTimestampType(leftTimestamp, rightTimestampType));
             long multiplier;
             switch (unit) {
                 case 'n':
-                    toleranceInterval = TimestampSamplerFactory.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
+                    toleranceInterval = CommonUtils.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
                     return timestampDriver.fromNanos(toleranceInterval);
                 case 'U':
                     multiplier = timestampDriver.fromMicros(1);
@@ -1813,10 +1826,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
             }
             int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
-            toleranceInterval = TimestampSamplerFactory.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
+            toleranceInterval = CommonUtils.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
             toleranceInterval *= multiplier;
         }
         return toleranceInterval;
+    }
+
+    /**
+     * The error for a join's right-hand side that cannot provide time frames. A materialized view whose
+     * EXPIRE ROWS policy is anything other than a cutoff on its designated timestamp reads through a row
+     * filter, and a row-filtered read has no time frames. The caller wrote the view's name, not a
+     * sub-query, so in that case the error names the view and points at its reference.
+     */
+    private static SqlException unsupportedTimeFrameSlave(IQueryModel slaveModel, String sideName, String genericMessage) {
+        final ExpressionNode expiryViewNameExpr = slaveModel.getExpiryViewNameExpr();
+        if (expiryViewNameExpr != null) {
+            return SqlException.position(expiryViewNameExpr.position)
+                    .put(sideName)
+                    .put(" cannot be materialized view '").put(expiryViewNameExpr.token)
+                    .put("' because its EXPIRE ROWS policy is not a cutoff on the designated timestamp");
+        }
+        return SqlException.position(slaveModel.getJoinKeywordPosition()).put(genericMessage);
     }
 
     private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
@@ -3282,13 +3312,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      */
     private long evalHorizonTimeValue(ExpressionNode expr, TimestampDriver timestampDriver) throws SqlException {
         CharSequence token = expr.token;
-        int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, expr.position);
+        int unitIndex = CommonUtils.findIntervalEndIndex(token, expr.position);
         if (unitIndex == -1) {
             // Unitless zero (e.g. "0")
             return 0;
         }
         char unit = token.charAt(unitIndex);
-        long value = TimestampSamplerFactory.parseInterval(token, unitIndex, expr.position);
+        long value = CommonUtils.parseInterval(token, unitIndex, expr.position);
         try {
             return switch (unit) {
                 case 'n' -> timestampDriver.fromNanos(value);
@@ -4289,8 +4319,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 coerceRuntimeConstantType(fillToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
             }
 
-            int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(fillStride.token, fillStride.position, "sample");
-            long samplingInterval = TimestampSamplerFactory.parsePositiveInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
+            int samplingIntervalEnd = CommonUtils.findPositiveIntervalEndIndex(fillStride.token, fillStride.position, "sample");
+            long samplingInterval = CommonUtils.parsePositiveInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
@@ -5181,14 +5211,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFunctionQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        RecordCursorFactory tableFactory = model.getTableNameFunction();
-        if (tableFactory != null) {
-            // We're transferring ownership of the tableFactory's factory to another factory
-            // setting tableFactory to NULL will prevent double-ownership.
-            // We should not release tableFactory itself, they typically just a lightweight factory wrapper.
-            model.setTableNameFunction(null);
-        } else {
-            // when tableFactory is null we have to recompile it from scratch, including creating new factory
+        // Taking the factory transfers ownership to the factory built below, and leaves the model's
+        // slot empty so cleanup cannot close what the caller now owns. The factory itself stays
+        // alive here - it is typically a lightweight wrapper the enclosing factory keeps.
+        RecordCursorFactory tableFactory = model.takeTableNameFunction();
+        if (tableFactory == null) {
+            // the model owns no factory, so build one from scratch
             tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
         }
 
@@ -5265,8 +5293,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
             if (!slaveFactory.supportsTimeFrameCursor()) {
-                throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                        .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                throw unsupportedTimeFrameSlave(
+                        slaveModel,
+                        "right-hand side of HORIZON JOIN",
+                        "right-hand side of HORIZON JOIN can only be a table with an optional filter"
+                );
             }
 
             final int workerCount = executionContext.getSharedQueryWorkerCount();
@@ -7101,7 +7132,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.SINGLE_THREAD_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else {
-                                    throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join must be a table, not sub-query");
+                                    throw unsupportedTimeFrameSlave(
+                                            slaveModel,
+                                            "right side of window join",
+                                            "right side of window join must be a table, not sub-query"
+                                    );
                                 }
                                 break;
                             case IQueryModel.JOIN_HORIZON:
@@ -8068,8 +8103,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {
                 if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
-                    throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
-                            .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                    throw unsupportedTimeFrameSlave(
+                            slaveModels.getQuick(s),
+                            "right-hand side of HORIZON JOIN",
+                            "right-hand side of HORIZON JOIN can only be a table with an optional filter"
+                    );
                 }
             }
 
@@ -9708,7 +9746,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case IQueryModel.SELECT_MODEL_WINDOW_JOIN -> generateSelectWindowJoin(model, executionContext);
             case IQueryModel.SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
             case IQueryModel.SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
-            case IQueryModel.SELECT_MODEL_SHOW -> model.getTableNameFunction();
+            // The optimiser builds the SHOW cursor itself and parks it on the model. Take it, so the
+            // caller owns the factory alone and the attempt's cleanup finds an empty slot.
+            case IQueryModel.SELECT_MODEL_SHOW -> model.takeTableNameFunction();
             default -> shouldProcessJoins && model.getJoinModels().size() > 1
                     ? generateJoins(model, executionContext)
                     : generateNoSelect(model, executionContext);

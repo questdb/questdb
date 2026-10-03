@@ -735,19 +735,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCursorForLatestByOnSubQueryOutputNotOrderedByTimestamp() throws Exception {
-        // Companion to testCursorForLatestByOnSubQueryWithRandomAccessSupport. That test's random
-        // dataset happens to land in ascending timestamp order, which hides the fact that
-        // LatestByLightRecordCursorFactory does NOT emit rows in designated-timestamp order. The
-        // cursor iterates its latest-by map in partition-key INSERTION order -- the order each key
-        // first appears in the ascending base scan -- while the row it emits for a key carries that
-        // key's MAX timestamp. Those two orderings are unrelated.
+        // LatestByLightRecordCursorFactory does NOT emit rows in designated-timestamp order. The cursor
+        // iterates its latest-by map in partition-key INSERTION order -- the order each key first
+        // appears in the ascending base scan -- while the row it emits for a key carries that key's MAX
+        // timestamp. Those two orderings are unrelated, so the factory advertises no designated
+        // timestamp.
         //
-        // The dataset below makes the gap visible. Scanning x ascending by k, the keys first appear
-        // in the order CC (day 1), BB (day 2), so the map emits CC then BB. But CC's latest k is
-        // day 4 and BB's latest k is day 3, so the emitted timestamps come out DESCENDING. The
-        // factory therefore advertises no designated timestamp. Adding ORDER BY k re-sorts the very
-        // same two rows into ascending order, proving the raw output was not timestamp-sorted to
-        // begin with.
+        // Reaching that factory takes a sub-query SqlOptimiser.pushLatestByToTableModel refuses to
+        // hoist. The sub-query below projects a subset of the table's columns, which fails the
+        // full-identity-projection test, so LATEST ON really does read a derived cursor. Scanning x
+        // ascending by k, the keys first appear in the order CC (day 1), BB (day 2), so the map emits
+        // CC then BB. But CC's latest k is day 4 and BB's latest k is day 3, so the emitted timestamps
+        // come out DESCENDING. Adding ORDER BY k re-sorts the very same two rows into ascending order,
+        // proving the raw output was not timestamp-sorted to begin with.
         assertMemoryLeak(() -> {
             execute("create table x (a double, b symbol, k timestamp) timestamp(k) partition by DAY");
             execute(
@@ -762,17 +762,41 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // Raw latest-by output, no ORDER BY: map order is CC, BB and their latest k descends.
             // The unordered output advertises no designated timestamp -- returns() without timestamp()
             // asserts exactly that (timestampIndex == -1).
+            assertQuery("(select b, k from x where b in ('BB','CC') and a > 0) latest on k partition by b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\tk
+                            CC\t1970-01-04T00:00:00.000000Z
+                            BB\t1970-01-03T00:00:00.000000Z
+                            """);
+
+            // The same two rows, this time actually sorted: ORDER BY k yields ascending timestamps.
+            assertQuery("(select b, k from x where b in ('BB','CC') and a > 0) latest on k partition by b order by k")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
+                            b\tk
+                            BB\t1970-01-03T00:00:00.000000Z
+                            CC\t1970-01-04T00:00:00.000000Z
+                            """);
+
+            // An identity projection also keeps map order: an ordinary sub-query must not use the
+            // scalar-expiry-only hoist, even when the filters span both query levels.
             assertQuery("(x where b in ('BB','CC')) where a > 0 latest on k partition by b")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("""
                             a\tb\tk
                             40.0\tCC\t1970-01-04T00:00:00.000000Z
                             30.0\tBB\t1970-01-03T00:00:00.000000Z
                             """);
 
-            // The same two rows, this time actually sorted: ORDER BY k yields ascending timestamps.
-            assertQuery("(x where b in ('BB','CC')) where a > 0 latest on k partition by b order by k")
+            // The direct-table path keeps its designated timestamp and emits the same winners in
+            // timestamp order. Ordinary sub-queries no longer use the scalar-expiry-only hoist.
+            assertQuery("x where b in ('BB','CC') and a > 0 latest on k partition by b")
                     .noLeakCheck()
                     .timestamp("k")
                     .expectSize()
@@ -786,10 +810,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCursorForLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
-        // LATEST ON over a random-access sub-query compiles to LatestByLightRecordCursorFactory, which
-        // emits rows in partition-key (map) order rather than designated-timestamp order. It therefore
-        // advertises no designated timestamp (expectedTimestamp == null). This data happens to come out
-        // ascending by k, but that is not guaranteed -- see testCursorForLatestByOnSubQueryOutputNotOrderedByTimestamp.
+        // Ordinary sub-queries keep LatestBy light, which emits in partition-key (map) order and
+        // advertises no designated timestamp, even when these particular winners happen to ascend.
         assertQuery("(x where b in ('BB','CC')) where a > 0 latest on k partition by b")
                 .ddl("create table x as " +
                         "(" +
@@ -800,6 +822,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY")
                 .expectSize()
+                .withPlanContaining("LatestBy light")
                 .returns("""
                         a\tb\tk
                         81.0161274171258\tCC\t1970-01-21T20:00:00.000000Z
@@ -4987,17 +5010,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into tab values ('d2', 'c2', 221, 5, 4)");
             execute("insert into tab values ('d2', 'c2', 222, 6, 5)");
 
-            // latest by designated timestamp, no order by, select all columns
+            // LatestBy light emits ordinary sub-query winners in map order without a designated
+            // timestamp. Only scalar-expiry expansion can opt into the direct-table hoist.
             assertQuery("(tab where name in ('c1')) latest on ts partition by id")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
                             """);
 
-            // latest by designated timestamp, ordered by another timestamp, select all columns
+            // Ordering the input by another timestamp still leaves the latest-by output in map order.
             assertQuery("(tab where name in ('c1') order by other_ts) latest on ts partition by id")
                     .noLeakCheck()
                     .expectSize()
@@ -5007,10 +5032,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
                             """);
 
-            // latest by designated timestamp, select subset of columns
+            // Projecting a subset of the winners does not restore timestamp ordering.
             assertQuery("select value, ts from (tab where name in ('c1')) latest on ts partition by id")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("""
                             value\tts
                             113\t1970-01-01T00:00:00.000003Z
@@ -5021,6 +5047,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("(tab where name in ('c1','c2')) latest on ts partition by id, name")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
@@ -5029,7 +5056,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             d2\tc2\t222\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000005Z
                             """);
 
-            // latest by non-designated timestamp, ordered
+            // Choosing winners by a non-designated timestamp also keeps LatestBy light without
+            // advertising timestamp ordering.
             assertQuery("(tab where name in ('c1') order by other_ts) latest on other_ts partition by id")
                     .noLeakCheck()
                     .expectSize()
@@ -5055,6 +5083,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("(tab where name in ('c3')) latest on ts partition by id")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("id\tname\tvalue\tts\tother_ts\n");
         });
     }

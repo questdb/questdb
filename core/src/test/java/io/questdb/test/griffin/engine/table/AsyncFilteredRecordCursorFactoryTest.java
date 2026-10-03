@@ -1598,6 +1598,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isExpiryReadFilterEnabled() {
+            return sqlExecutionContext.isExpiryReadFilterEnabled();
+        }
+
+        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1716,6 +1721,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setCloneSymbolTables(boolean cloneSymbolTables) {
             sqlExecutionContext.setCloneSymbolTables(cloneSymbolTables);
+        }
+
+        @Override
+        public void setExpiryReadFilterEnabled(boolean enabled) {
+            sqlExecutionContext.setExpiryReadFilterEnabled(enabled);
         }
 
         @Override
