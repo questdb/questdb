@@ -49,7 +49,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.ValidityOps;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -1936,8 +1935,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
         }
-        // the segment's rows before the added column are NULL; no WAL column has validity memory
-        ValidityOps.of(metadata.getColumnNullPolicy(columnIndex)).fill(0, 0, rowCount, false);
+        // validity batch site: a column with a validity bitmap would mark these rows NULL here
     }
 
     private void setFixColumnNulls(int type, int columnIndex, long rowCount) {

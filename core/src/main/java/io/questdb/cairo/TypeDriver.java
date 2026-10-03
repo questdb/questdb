@@ -184,17 +184,6 @@ public interface TypeDriver {
     TypeConstant getTypeConstant(int columnType);
 
     /**
-     * The validity operations of a column of this type under the type's NULL policy, for storage
-     * code that holds only the column type (the out-of-order jobs, frame columns, fills of
-     * decoded buffers). Code that holds the column takes {@link ValidityOps#of(NullPolicy)} of
-     * the column's policy instead. Derived from {@link #getNullPolicy()}, so no type declares it
-     * (FR-008).
-     */
-    default ValidityOps getValidityOps() {
-        return ValidityOps.of(getNullPolicy());
-    }
-
-    /**
      * How this type's values travel on the result protocols (F41): the byte form and NULL test the
      * protocol writers key on. Types that write the same bytes share a kind; see {@link WireKind}.
      * Per-row callers read {@link WireKind#of(int)}, which asks this once per tag.

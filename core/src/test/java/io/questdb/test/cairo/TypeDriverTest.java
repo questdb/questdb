@@ -44,7 +44,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampTypeDriver;
 import io.questdb.cairo.TypeDriver;
-import io.questdb.cairo.ValidityOps;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.WireKind;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -110,7 +109,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -953,38 +951,6 @@ public class TypeDriverTest {
             assertS10VarSize(rnd.nextInt(), i < 20_000);
         }
         assertS10VarSize(-1, true);
-    }
-
-    @Test
-    public void testValidityOpsFollowNullPolicy() {
-        // every policy on this branch keeps NULL in the value or has none, so every column and
-        // every type answers NONE, whose operations write nothing (F36, F37)
-        for (NullPolicy policy : NullPolicy.values()) {
-            Assert.assertSame(policy.name(), ValidityOps.NONE, ValidityOps.of(policy));
-        }
-        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-            if (!PSEUDO_TAGS.contains(ColumnTypeTag.of(tag))) {
-                Assert.assertSame(ColumnType.nameOf(tag), ValidityOps.NONE, ColumnType.getTypeDriver(tag).getValidityOps());
-            }
-        }
-        final int size = 64;
-        final long buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try (MemoryCARW mem = Vm.getCARWInstance(4096, 1, MemoryTag.NATIVE_DEFAULT)) {
-            Vect.memset(buf, size, 0xA5);
-            final ValidityOps ops = ValidityOps.NONE;
-            ops.fill(buf, 3, 100, false);
-            ops.fill(buf, 3, 100, true);
-            ops.copy(buf, 0, buf + 8, 5, 100);
-            ops.merge(0, 0, buf, 2, buf + 16, buf + 24, 7);
-            ops.appendNull(mem);
-            ops.appendValid(mem);
-            for (int b = 0; b < size; b++) {
-                Assert.assertEquals("byte " + b, (byte) 0xA5, Unsafe.getByte(buf + b));
-            }
-            Assert.assertEquals(0, mem.getAppendOffset());
-        } finally {
-            Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
-        }
     }
 
     private static void appendTypeFacts(StringSink sink, String label, int type) {

@@ -362,8 +362,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // Call to setPartAuxVectorNull must be after shiftCopyAuxVector
                     // because the data has to be shifted before being overwritten.
                     columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + auxSizeOld, 0, srcDataTop);
-                    // the materialized column top is NULL rows; no column here has validity memory
-                    columnTypeDriver.getValidityOps().fill(0, 0, srcDataTop, false);
+                    // validity batch site: a column with a validity bitmap would mark these rows NULL here
                     srcDataTop = 0;
                     srcDataFixOffset = auxSizeOld;
                 } else {
@@ -2506,8 +2505,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     final TypeDriver typeDriver = ColumnType.getTypeDriver(columnType);
                     typeDriver.setNull(srcDataFixAddr + srcDataActualBytesOld, srcDataTop);
-                    // the materialized column top is NULL rows; no column here has validity memory
-                    typeDriver.getValidityOps().fill(0, 0, srcDataTop, false);
+                    // validity batch site: a column with a validity bitmap would mark these rows NULL here
                     // srcDataActualBytesNew may be zero, so that the below memcpy call is no-op.
                     Vect.memcpy(srcDataFixAddr + srcDataActualBytesOld + (srcDataTop << shl), srcDataFixAddr, srcDataActualBytesNew);
                     srcDataTop = 0;
