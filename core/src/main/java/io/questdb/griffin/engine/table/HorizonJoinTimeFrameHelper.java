@@ -953,21 +953,25 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
         long result = Long.MIN_VALUE;
 
-        int rowVisitCount = 0;
-        for (long r = rowLo; r < scanHi; r++) {
-            if ((++rowVisitCount & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        long r = rowLo;
+        long chunkHi = Math.min(rowLo + CIRCUIT_BREAKER_CHECK_INTERVAL - 1, scanHi);
+        while (true) {
+            for (; r < chunkHi; r++) {
+                timeFrameCursor.recordAtRowIndex(record, r);
+                // Scale slave timestamp to common unit for cross-resolution support
+                long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+                if (timestamp <= targetTimestamp) {
+                    result = r;
+                } else {
+                    // Found first row > target, return previous row if any
+                    return result;
+                }
             }
-            timeFrameCursor.recordAtRowIndex(record, r);
-            // Scale slave timestamp to common unit for cross-resolution support
-            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
-
-            if (timestamp <= targetTimestamp) {
-                result = r;
-            } else {
-                // Found first row > target, return previous row if any
-                return result;
+            if (r >= scanHi) {
+                break;
             }
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            chunkHi = Math.min(chunkHi + CIRCUIT_BREAKER_CHECK_INTERVAL, scanHi);
         }
 
         // Reached scan limit
