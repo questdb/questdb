@@ -697,6 +697,43 @@ final class FilterPushdownPass implements Mutable {
         }
     }
 
+    private void filterSharedDomains0(LogicalPlan plan) {
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            filterSharedDomains0(plan.inputAt(i));
+        }
+        if (!(plan instanceof AggregatePlan aggregate) || aggregate.getSharedSource() == null
+                || !(aggregate.getInput() instanceof ScanPlan scan)) {
+            return;
+        }
+        final LogicalPlan source = LogicalPlans.skipFilters(aggregate.getSharedSource().getInput());
+        if (source == aggregate.getSharedSource().getInput() || !(source instanceof ScanPlan sourceScan)
+                || !sourceScan.getTableToken().equals(scan.getTableToken())) {
+            return;
+        }
+        final int position = aggregate.getPosition();
+        final ProjectPlan mapping = narrowingProjects.next().of(scan, position);
+        final IntList inputIds = aggregate.getSharedInputIds();
+        final IntList sourceIds = aggregate.getSharedSourceIds();
+        for (int i = 0, n = inputIds.size(); i < n; i++) {
+            final int index = scan.getOutput().getColumnIndexById(inputIds.getQuick(i));
+            if (index >= 0) {
+                final int type = scan.getOutput().getColumnType(index);
+                mapping.getExpressions().add(narrowingColumns.next().of(inputIds.getQuick(i), type, position));
+                mapping.getOutput().add(sourceIds.getQuick(i), scan.getOutput().getColumnName(index), type, true);
+            }
+        }
+        LogicalPlan input = scan;
+        for (LogicalPlan filter = aggregate.getSharedSource().getInput(); filter != source; filter = filter.inputAt(0)) {
+            final BoundExpression predicate = ((FilterPlan) filter).getPredicate();
+            if (LogicalPlans.readsOnly(predicate, mapping.getOutput())) {
+                final FilterPlan copy = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mapping), predicate.getPosition());
+                copy.deriveOutput();
+                input = copy;
+            }
+        }
+        aggregate.replaceInput(0, input);
+    }
+
     private ProjectPlan groupingKeyView(AggregatePlan aggregate) {
         ProjectPlan view = null;
         final ObjList<BoundExpression> grouping = aggregate.getGroupingExpressions();
@@ -1112,6 +1149,43 @@ final class FilterPushdownPass implements Mutable {
         }
     }
 
+    private void pushJoinFilters0(LogicalPlan plan) throws SqlException {
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            pushJoinFilters0(plan.inputAt(i));
+        }
+        if (!(plan instanceof JoinPlan join)) {
+            return;
+        }
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        if (ordered.size() == 0) {
+            assert join.getInputs().size() == 2;
+            ordered.addAll(join.getInputs());
+            final JoinInput slave = ordered.getQuick(1);
+            if (slave.getJoinType() == JoinKind.CROSS && slave.getMasterKeyColumnIds().size() > 0) {
+                slave.setJoinType(JoinKind.INNER);
+            }
+        }
+        for (int i = 0, n = ordered.size(); i < n; i++) {
+            final JoinInput step = ordered.getQuick(i);
+            final BoundExpression keyFilter = step.getKeyFilter();
+            if (keyFilter != null) {
+                step.setKeyFilter(null);
+                if (pushSourceJoinFilter(step, keyFilter) && step.isSubquery()) {
+                    unqualifyFilteredKeys(step, keyFilter);
+                }
+            }
+            // WHERE conjuncts go to their sources before inner ON conjuncts.
+            step.setPostJoinFilter(pushSingleSourceJoinFilter(join, step.getPostJoinFilter(), i));
+            if (step.getJoinType() == JoinKind.INNER || step.getJoinType() == JoinKind.CROSS) {
+                step.setOnResidual(hoistEarlierJoinConjuncts(join, pushSingleSourceJoinFilter(join, step.getOnResidual(), i), i));
+                step.setPostJoinFilter(hoistEarlierJoinConjuncts(join, step.getPostJoinFilter(), i));
+            }
+        }
+        deriveTransitiveFilters(join, null);
+        join.getFilterConjuncts().clear();
+        join.getFilterConjunctOrigins().clear();
+    }
+
     private boolean pushSetBranch(SetOperationPlan operation, int branchIndex, BoundExpression predicate, int timestampIndex) throws SqlException {
         final LogicalPlan branch = operation.inputAt(branchIndex);
         final OutputSchema output = operation.getOutput();
@@ -1250,41 +1324,9 @@ final class FilterPushdownPass implements Mutable {
      * A decorrelation domain re-reads a master input; the master's own filters also narrow the
      * domain to the keys the join can match.
      */
-    void filterSharedDomains(LogicalPlan plan) {
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            filterSharedDomains(plan.inputAt(i));
-        }
-        if (!(plan instanceof AggregatePlan aggregate) || aggregate.getSharedSource() == null
-                || !(aggregate.getInput() instanceof ScanPlan scan)) {
-            return;
-        }
-        final LogicalPlan source = LogicalPlans.skipFilters(aggregate.getSharedSource().getInput());
-        if (source == aggregate.getSharedSource().getInput() || !(source instanceof ScanPlan sourceScan)
-                || !sourceScan.getTableToken().equals(scan.getTableToken())) {
-            return;
-        }
-        final int position = aggregate.getPosition();
-        final ProjectPlan mapping = narrowingProjects.next().of(scan, position);
-        final IntList inputIds = aggregate.getSharedInputIds();
-        final IntList sourceIds = aggregate.getSharedSourceIds();
-        for (int i = 0, n = inputIds.size(); i < n; i++) {
-            final int index = scan.getOutput().getColumnIndexById(inputIds.getQuick(i));
-            if (index >= 0) {
-                final int type = scan.getOutput().getColumnType(index);
-                mapping.getExpressions().add(narrowingColumns.next().of(inputIds.getQuick(i), type, position));
-                mapping.getOutput().add(sourceIds.getQuick(i), scan.getOutput().getColumnName(index), type, true);
-            }
-        }
-        LogicalPlan input = scan;
-        for (LogicalPlan filter = aggregate.getSharedSource().getInput(); filter != source; filter = filter.inputAt(0)) {
-            final BoundExpression predicate = ((FilterPlan) filter).getPredicate();
-            if (LogicalPlans.readsOnly(predicate, mapping.getOutput())) {
-                final FilterPlan copy = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mapping), predicate.getPosition());
-                copy.deriveOutput();
-                input = copy;
-            }
-        }
-        aggregate.replaceInput(0, input);
+    LogicalPlan filterSharedDomains(LogicalPlan root) {
+        filterSharedDomains0(root);
+        return root;
     }
 
     LogicalPlan pushDownFilters(LogicalPlan root) throws SqlException {
@@ -1297,40 +1339,8 @@ final class FilterPushdownPass implements Mutable {
      * pushes key filters and single-source ON/WHERE conjuncts into join inputs, hoists conjuncts to
      * the earliest step that can evaluate them and derives transitive filters over equi-join keys.
      */
-    void pushJoinFilters(LogicalPlan plan) throws SqlException {
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            pushJoinFilters(plan.inputAt(i));
-        }
-        if (!(plan instanceof JoinPlan join)) {
-            return;
-        }
-        final ObjList<JoinInput> ordered = join.getOrderedInputs();
-        if (ordered.size() == 0) {
-            assert join.getInputs().size() == 2;
-            ordered.addAll(join.getInputs());
-            final JoinInput slave = ordered.getQuick(1);
-            if (slave.getJoinType() == JoinKind.CROSS && slave.getMasterKeyColumnIds().size() > 0) {
-                slave.setJoinType(JoinKind.INNER);
-            }
-        }
-        for (int i = 0, n = ordered.size(); i < n; i++) {
-            final JoinInput step = ordered.getQuick(i);
-            final BoundExpression keyFilter = step.getKeyFilter();
-            if (keyFilter != null) {
-                step.setKeyFilter(null);
-                if (pushSourceJoinFilter(step, keyFilter) && step.isSubquery()) {
-                    unqualifyFilteredKeys(step, keyFilter);
-                }
-            }
-            // WHERE conjuncts go to their sources before inner ON conjuncts.
-            step.setPostJoinFilter(pushSingleSourceJoinFilter(join, step.getPostJoinFilter(), i));
-            if (step.getJoinType() == JoinKind.INNER || step.getJoinType() == JoinKind.CROSS) {
-                step.setOnResidual(hoistEarlierJoinConjuncts(join, pushSingleSourceJoinFilter(join, step.getOnResidual(), i), i));
-                step.setPostJoinFilter(hoistEarlierJoinConjuncts(join, step.getPostJoinFilter(), i));
-            }
-        }
-        deriveTransitiveFilters(join, null);
-        join.getFilterConjuncts().clear();
-        join.getFilterConjunctOrigins().clear();
+    LogicalPlan pushJoinFilters(LogicalPlan root) throws SqlException {
+        pushJoinFilters0(root);
+        return root;
     }
 }

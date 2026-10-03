@@ -81,7 +81,7 @@ final class BindContext implements Mutable {
     final IntHashSet ambiguousTimestampColumnIds = new IntHashSet();
     final ObjList<BoundExpression> argumentScratch = new ObjList<>(2);
     final ObjectPool<ExpressionNode> bindingExpressions;
-    final CharacterStore characterStore = new CharacterStore(1024, 16);
+    final CharacterStore characterStore;
     final ObjectPool<ColumnExpression> columns = new ObjectPool<>(ColumnExpression.FACTORY, 16);
     final ObjectPool<ConstantExpression> constants = new ObjectPool<>(ConstantExpression.FACTORY, 4);
     final ObjList<ColumnExpression> cursorColumns = new ObjList<>();
@@ -147,8 +147,9 @@ final class BindContext implements Mutable {
     boolean isSubqueryFailed;
     int nextColumnId;
 
-    BindContext(FunctionParser functionParser, ObjectPool<ExpressionNode> bindingExpressions, SqlBinder subqueryBinder) {
+    BindContext(FunctionParser functionParser, ObjectPool<ExpressionNode> bindingExpressions, CharacterStore characterStore, SqlBinder subqueryBinder) {
         this.bindingExpressions = bindingExpressions;
+        this.characterStore = characterStore;
         this.outerColumnScratch = projectionAliasIndexes;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
         this.expressionRewriter = new BoundExpressionRewriter(functionFactoryCache, columns, constants, functions, outerColumns,
@@ -177,7 +178,6 @@ final class BindContext implements Mutable {
         aliases.clear();
         ambiguousTimestampColumnIds.clear();
         aliasSequences.clear();
-        characterStore.clear();
         distincts.clear();
         filters.clear();
         fills.clear();

@@ -237,7 +237,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     /**
      * Determines the appropriate timestamp type based on the string precision and year range.
      * If the string contains nanosecond precision (more than 6 digits after seconds) and
-     * the year is within nano timestamp range (< 2262), returns nano type;
+     * the year is within nano timestamp range (&lt; 2262), returns nano type;
      * otherwise returns the original signature type.
      *
      * @param timestampStr the timestamp string to analyze

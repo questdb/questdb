@@ -348,7 +348,8 @@ public final class FunctionInstantiator implements Mutable {
             // owns it after detachment, including if a later sibling fails.
             final PreparedFunctions.Entry entry = prepared.findOwned(expression, -1);
             if (entry != null) {
-                if (isPreparationCompatible(entry, input, metadata)) {
+                // A column reference over metadata reads the metadata's column, as a fresh one below does.
+                if (isPreparationCompatible(entry, input, metadata) && (metadata == null || !(expression instanceof ColumnExpression))) {
                     return adoptPreparation(entry, input, metadata);
                 }
                 Misc.free(prepared.detach(entry));

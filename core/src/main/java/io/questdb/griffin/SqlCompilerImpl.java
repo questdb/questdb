@@ -282,7 +282,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
             binder = new SqlBinder(configuration, functionParser, this);
             final BindContext planNodes = binder.ctx;
-            optimiser = new SqlOptimiser(characterStore, planNodes, scratchIds);
+            optimiser = new SqlOptimiser(characterStore, planNodes, scratchIds, indexScratch, valueScratch, masterKeyScratch);
         } catch (Throwable th) {
             close();
             throw th;
@@ -434,9 +434,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * @param batchText        - block of queries to process
      * @param executionContext - SQL execution context
      * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
-     * @throws SqlException              - in case of syntax error
-     * @throws PeerDisconnectedException - when peer is disconnected
-     * @throws PeerIsSlowToReadException - when peer is too slow
+     * @throws SqlException                                 - in case of syntax error
+     * @throws io.questdb.network.PeerDisconnectedException - when peer is disconnected
+     * @throws io.questdb.network.PeerIsSlowToReadException - when peer is too slow
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
     @Override
@@ -6211,6 +6211,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     updateColumnNames
             );
         }
+    }
+
+    CharacterStore getCharacterStore() {
+        return characterStore;
     }
 
     OutputSchema getEmptySchema() {

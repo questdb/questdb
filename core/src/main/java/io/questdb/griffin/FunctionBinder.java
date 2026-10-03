@@ -123,7 +123,7 @@ public final class FunctionBinder implements Mutable {
      */
     @TestOnly
     public static FunctionBinder newStandalone(FunctionParser parser) {
-        return new BindContext(parser, new ObjectPool<>(ExpressionNode.FACTORY, 32), null).functionBinder;
+        return new BindContext(parser, new ObjectPool<>(ExpressionNode.FACTORY, 32), new CharacterStore(1024, 16), null).functionBinder;
     }
 
     /**

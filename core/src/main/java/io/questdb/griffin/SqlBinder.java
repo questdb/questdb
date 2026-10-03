@@ -97,10 +97,10 @@ final class SqlBinder implements Closeable, Mutable {
     private final AggregateBinder aggregateBinder;
     private final SqlCompilerImpl compiler;
     private final CairoConfiguration configuration;
-    private final ObjList<CharSequence> cursorNames = new ObjList<>();
-    private final IntList cursorProjectionSources = new IntList();
-    private final IntList cursorSourceIndexes = new IntList();
-    private final ObjList<ExpressionNode> cursorSources = new ObjList<>();
+    private final ObjList<CharSequence> cursorNames;
+    private final IntList cursorProjectionSources;
+    private final IntList cursorSourceIndexes;
+    private final ObjList<ExpressionNode> cursorSources;
     private final FunctionParser functionParser;
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<CharSequence>> hintScopes = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 4);
     private final JoinBinder joinBinder;
@@ -141,15 +141,19 @@ final class SqlBinder implements Closeable, Mutable {
         this.configuration = configuration;
         this.functionParser = functionParser;
         final OutputSchema emptySchema = compiler.getEmptySchema();
-        this.ctx = new BindContext(functionParser, compiler.getSqlNodePool(), this);
+        this.ctx = new BindContext(functionParser, compiler.getSqlNodePool(), compiler.getCharacterStore(), this);
         this.translatingAliases = new TranslatingAliases(ctx.joinNativeTimestampIds);
         this.windowBinder = new WindowBinder(ctx, functionParser);
+        this.cursorNames = windowBinder.windowNames;
+        this.cursorProjectionSources = windowBinder.windowAliasCopyColumns;
+        this.cursorSourceIndexes = windowBinder.windowAliasReferenceColumns;
+        this.cursorSources = windowBinder.windowCopyOrigins;
         this.lateralBinder = new LateralBinder(ctx, this);
         this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, compiler.getScratchIds(), compiler.getIndexScratch(),
                 compiler.getValueScratch(), compiler.getSlaveKeyScratch());
         this.sampleByBinder = new SampleByBinder(ctx, this, configuration, functionParser, emptySchema, windowBinder, joinBinder);
         this.orderBinder = new OrderBinder(ctx, emptySchema, sampleByBinder);
-        this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder);
+        this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder, windowBinder);
         this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder);
         this.pivotBinder = new PivotBinder(ctx, this, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
                 compiler.getScratchSink());
@@ -1461,9 +1465,6 @@ final class SqlBinder implements Closeable, Mutable {
         return plan;
     }
 
-    /**
-     * Binds command/VALUES expressions without inventing a relational input.
-     */
     /**
      * Binds the conjuncts of a filter as conjuncts of a WHERE clause, each one that fails deferred; the caller
      * combines them with the filter's other conjuncts.

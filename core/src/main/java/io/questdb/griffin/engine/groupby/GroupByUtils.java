@@ -217,7 +217,7 @@ public class GroupByUtils {
     }
 
     /**
-     * Frees the projection functions produced by {@link #assembleGroupByFunctions} exactly once
+     * Frees the projection functions the SAMPLE BY generator assembled exactly once
      * when generation fails after assembly, in Theta(outer + inner) time and constant space by
      * walking the producer's positional correspondence. The first assembly loop adds each parsed
      * Function to both lists, so paired slots share references; the timestamp column appends null

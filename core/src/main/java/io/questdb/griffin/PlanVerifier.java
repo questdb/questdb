@@ -63,8 +63,8 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Checks the structural invariants of a logical plan tree after binding and after every optimiser pass; it runs
- * only under {@code assert} and fails with the violated invariant, the node and the pass that produced the plan.
+ * Checks the structural invariants of a logical plan tree after binding and after optimisation; it runs only under
+ * {@code assert} and fails with the violated invariant, the node and the stage that produced the plan.
  */
 public final class PlanVerifier {
     public static final String AGGREGATE_CALL = "aggregate value is not an aggregate call";
@@ -126,7 +126,7 @@ public final class PlanVerifier {
     private String site;
 
     /**
-     * Borrows scratch from the optimiser: the verifier runs between passes and leaves every structure empty.
+     * Borrows scratch from the optimiser: the verifier runs between stages and leaves every structure empty.
      */
     PlanVerifier(ObjList<LogicalPlan> visited, OutputSchema joinScope, IntHashSet columnIds, ObjList<JoinInput> outerInputs) {
         this.visited = visited;
@@ -147,16 +147,14 @@ public final class PlanVerifier {
      * Verifies the plan a pass produced; dependent join steps and outer columns must be gone.
      */
     public boolean verify(LogicalPlan root, String pass) {
-        isDependentStepAllowed = false;
-        return check(root, pass);
+        return check(root, pass, false);
     }
 
     /**
      * Verifies the binder's output, where a dependent join step still reads the inputs before it through outer columns.
      */
     public boolean verifyBound(LogicalPlan root) {
-        isDependentStepAllowed = true;
-        return check(root, "SqlBinder.bind");
+        return check(root, "SqlBinder.bind", true);
     }
 
     private static void addColumns(OutputSchema target, OutputSchema source) {
@@ -195,9 +193,10 @@ public final class PlanVerifier {
         };
     }
 
-    private boolean check(LogicalPlan root, String pass) {
+    private boolean check(LogicalPlan root, String pass, boolean isDependentStepAllowed) {
         this.root = root;
         this.pass = pass;
+        this.isDependentStepAllowed = isDependentStepAllowed;
         clear();
         try {
             plan(root);
@@ -205,6 +204,7 @@ public final class PlanVerifier {
             clear();
             this.root = null;
             this.pass = null;
+            this.isDependentStepAllowed = false;
             aliasScope = null;
             node = null;
             scope = null;

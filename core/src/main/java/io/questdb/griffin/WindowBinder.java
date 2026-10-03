@@ -75,8 +75,22 @@ final class WindowBinder implements Mutable {
             throw new UnsupportedOperationException();
         }
     };
+    // The lists bindWindows() fills and reads are lent to AggregateBinder and to SqlBinder's cursor-column
+    // projection, which run after the block's windows are bound.
+    final ObjList<ExpressionNode> windowAliasCopies = new ObjList<>();
+    final IntList windowAliasCopyColumns = new IntList();
     final IntList windowAliasIds = new IntList();
+    final IntList windowAliasReferenceColumns = new IntList();
+    final ObjList<ExpressionNode> windowAliasReferences = new ObjList<>();
+    final ObjList<ExpressionNode> windowAliasResolutions = new ObjList<>();
+    final IntList windowColumnIds = new IntList();
+    final ObjList<ExpressionNode> windowCopies = new ObjList<>();
+    final ObjList<ExpressionNode> windowCopyOrigins = new ObjList<>();
+    final ObjList<DeferredErrorExpression> windowErrors = new ObjList<>();
+    final IntList windowGroupMembers = new IntList();
+    final IntList windowLevels = new IntList();
     final ObjList<CharSequence> windowNames = new ObjList<>();
+    final ObjList<ExpressionNode> windowNodes = new ObjList<>();
     final ObjList<ExpressionNode> windowOrderExpressions = new ObjList<>();
     /**
      * Per select column, the deferred error of a window call it holds that failed to bind, otherwise null.
@@ -86,23 +100,11 @@ final class WindowBinder implements Mutable {
     private final VirtualRecord bindPartitionRecord = new VirtualRecord(new ObjList<>());
     private final BindContext ctx;
     private final FunctionParser functionParser;
-    private final ObjList<ExpressionNode> windowAliasCopies = new ObjList<>();
-    private final IntList windowAliasCopyColumns = new IntList();
-    private final IntList windowAliasReferenceColumns = new IntList();
-    private final ObjList<ExpressionNode> windowAliasReferences = new ObjList<>();
-    private final ObjList<ExpressionNode> windowAliasResolutions = new ObjList<>();
-    private final IntList windowColumnIds = new IntList();
-    private final ObjList<DeferredErrorExpression> windowErrors = new ObjList<>();
+    private final IntHashSet windowInheritancePositions = new IntHashSet();
     /**
      * Per window call, the first of its ORDER BY expressions that is not a column, otherwise null.
      */
     private final ObjList<ExpressionNode> windowOrderViolations = new ObjList<>();
-    private final ObjList<ExpressionNode> windowCopies = new ObjList<>();
-    private final ObjList<ExpressionNode> windowCopyOrigins = new ObjList<>();
-    private final IntList windowGroupMembers = new IntList();
-    private final IntHashSet windowInheritancePositions = new IntHashSet();
-    private final IntList windowLevels = new IntList();
-    private final ObjList<ExpressionNode> windowNodes = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap windowSelfReferences = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceHashSet windowTranslatedNames;
     private final LowerCaseCharSequenceIntHashMap windowTranslatedSequences;

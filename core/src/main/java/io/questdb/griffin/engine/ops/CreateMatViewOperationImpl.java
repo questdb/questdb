@@ -420,7 +420,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             if (timestamp == null && isSelectSampleBy(queryModel, sampleBy)) {
                 // SAMPLE BY buckets the base designated timestamp, which the view must select.
                 final String tsName = sampleByTimestampName(sqlExecutionContext, baseTableToken);
-                if (tsName != null && !isColumnSelected(columns, tsName)) {
+                if (tsName != null && createColumnModelMap.get(tsName) == null && !isColumnSelected(columns, tsName)) {
                     throw SqlException.position(selectTextPosition)
                             .put("TIMESTAMP column does not exist or not present in select list [name=")
                             .put(tsName).put(']');

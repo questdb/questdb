@@ -1110,7 +1110,7 @@ public class CompiledFilterIRSerializer implements Mutable {
     /**
      * Writes IR of the filter described by the given expression tree to memory.
      *
-     * @param node        filter expression tree's root node.
+     * @param predicate   bound filter predicate.
      * @param forceScalar set use only scalar instruction set execution hint in the returned options.
      * @param debug       set enable the debug flag in the returned options.
      * @param nullChecks  a flag for JIT, allowing or disallowing generation of null check

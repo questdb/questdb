@@ -139,7 +139,7 @@ final class SortEliminationPass {
 
     private static void replaceReorderedInput(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
         final int previousTimestampId = plan.inputAt(0).getOutput().getTimestampColumnId();
-        final LogicalPlan replacement = removeReorderedSorts(plan.inputAt(0), isReordered, isSetBranchReordered);
+        final LogicalPlan replacement = removeReorderedSorts0(plan.inputAt(0), isReordered, isSetBranchReordered);
         plan.replaceInput(0, replacement);
         final int timestampId = replacement.getOutput().getTimestampColumnId();
         if (timestampId == previousTimestampId || plan.getOutput().getTimestampIndex() >= 0) {
@@ -157,11 +157,11 @@ final class SortEliminationPass {
         }
     }
 
-    static void markMarkoutHorizons(LogicalPlan plan) {
+    private static void markMarkoutHorizons0(LogicalPlan plan) {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             final LogicalPlan input = plan.inputAt(i);
             if (input != null) {
-                markMarkoutHorizons(input);
+                markMarkoutHorizons0(input);
             }
         }
         if (plan instanceof SortPlan sort) {
@@ -169,11 +169,15 @@ final class SortEliminationPass {
         }
     }
 
-    static LogicalPlan removeReorderedSorts(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
+    /**
+     * {@code isReordered}: a consumer above re-sorts or discards the order of {@code plan};
+     * {@code isSetBranchReordered}: that consumer is a set operation, whose branch order never survives.
+     */
+    private static LogicalPlan removeReorderedSorts0(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
         switch (plan) {
             case SortPlan sort -> {
                 final LogicalPlan source = LogicalPlans.skipProjects(sort.getInput());
-                final LogicalPlan input = removeReorderedSorts(sort.getInput(), true, false);
+                final LogicalPlan input = removeReorderedSorts0(sort.getInput(), true, false);
                 if (source instanceof WindowPlan) {
                     sort.replaceInput(0, input);
                     return sort;
@@ -219,21 +223,38 @@ final class SortEliminationPass {
                 for (int i = 0, n = ordered.size(); i < n; i++) {
                     final JoinInput input = ordered.getQuick(i);
                     if (input.getInput() != null) {
-                        input.setInput(removeReorderedSorts(input.getInput(), i == 0 && isMasterReordered, false));
+                        input.setInput(removeReorderedSorts0(input.getInput(), i == 0 && isMasterReordered, false));
                     }
                 }
             }
             case SetOperationPlan _ -> {
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
-                    plan.replaceInput(i, removeReorderedSorts(plan.inputAt(i), isReordered, isReordered));
+                    plan.replaceInput(i, removeReorderedSorts0(plan.inputAt(i), isReordered, isReordered));
                 }
             }
             default -> {
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
-                    plan.replaceInput(i, removeReorderedSorts(plan.inputAt(i), false, false));
+                    plan.replaceInput(i, removeReorderedSorts0(plan.inputAt(i), false, false));
                 }
             }
         }
         return plan;
+    }
+
+    /**
+     * Marks a sort over a {@code markout_horizon}-hinted CROSS JOIN whose key is {@code master.ts + slave.offset},
+     * so the generator can use the markout factory.
+     */
+    LogicalPlan markMarkoutHorizons(LogicalPlan root) {
+        markMarkoutHorizons0(root);
+        return root;
+    }
+
+    /**
+     * Drops the sorts whose order a consumer re-sorts or discards, and the sorts of a single row that keep its
+     * designated timestamp; a window's own ORDER BY and a markout sort stay.
+     */
+    LogicalPlan removeReorderedSorts(LogicalPlan root) {
+        return removeReorderedSorts0(root, false, false);
     }
 }

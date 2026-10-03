@@ -41,9 +41,12 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
 /**
- * Runs the semantics-preserving plan rewrites in a fixed order. The optimiser owns the scratch the
- * passes share and the {@link OptimiserContext} of the query level being rewritten, and hands them, with
- * the statement binder's plan-node pools, to each pass through its constructor.
+ * Runs the semantics-preserving plan rewrites in a fixed order. Every pass step takes the plan root and
+ * returns the root of the rewritten plan, the same node unless the step replaces it. The optimiser owns
+ * the plan-shaped scratch the passes share and the {@link OptimiserContext} of the query level being
+ * rewritten, borrows the compiler's leaf scratch (the column-id set and three index lists, which the
+ * generators and join ordering use in windows no optimisation can run in), and hands them, with the
+ * statement binder's plan-node pools, to each pass through its constructor.
  */
 final class SqlOptimiser implements Mutable {
     private final AggregateInputOrderPass aggregateInputOrder;
@@ -54,15 +57,16 @@ final class SqlOptimiser implements Mutable {
     private final DecorrelationPass decorrelation;
     private final ObjList<BoundExpression> expressionScratch = new ObjList<>();
     private final FilterPushdownPass filterPushdown;
-    private final IntList indexScratch = new IntList();
-    private final IntList keyScratch = new IntList();
+    private final IntList indexScratch;
+    private final IntList keyScratch;
     private final NegativeLimitReversalPass negativeLimitReversal;
     private final ObjList<LogicalPlan> planScratch = new ObjList<>();
     private final ProjectionMergePass projectionMerge;
     private final OutputSchema schemaScratch = new OutputSchema();
+    private final SortEliminationPass sortElimination = new SortEliminationPass();
     private final ObjList<JoinInput> stepScratch = new ObjList<>();
     private final TimestampEndpointPass timestampEndpoint;
-    private final IntList valueScratch = new IntList();
+    private final IntList valueScratch;
     private final PlanVerifier verifier;
     private final WindowCsePass windowCse;
 
@@ -70,7 +74,17 @@ final class SqlOptimiser implements Mutable {
      * Allocates plan nodes from the given pools, whose owner empties them once the optimised plan and
      * every nested sub-query plan it optimised are no longer used.
      */
-    SqlOptimiser(CharacterStore characterStore, BindContext planNodes, IntHashSet columnIds) {
+    SqlOptimiser(
+            CharacterStore characterStore,
+            BindContext planNodes,
+            IntHashSet columnIds,
+            IntList indexScratch,
+            IntList valueScratch,
+            IntList keyScratch
+    ) {
+        this.indexScratch = indexScratch;
+        this.valueScratch = valueScratch;
+        this.keyScratch = keyScratch;
         final ObjectPool<ColumnExpression> columns = planNodes.columns;
         final ObjectPool<ConstantExpression> constants = planNodes.constants;
         final ObjectPool<FilterPlan> filters = planNodes.filters;
@@ -124,31 +138,28 @@ final class SqlOptimiser implements Mutable {
         context.of(rewriter, functionBinder, instantiator, functionSources, nextColumnId, executionContext);
         assert verifier.verifyBound(root);
         LogicalPlan plan = decorrelation.decorrelate(root);
-        assert verifier.verify(plan, "DecorrelationPass.decorrelate");
-        timestampEndpoint.limitEndpointInputs(plan);
-        assert verifier.verify(plan, "TimestampEndpointPass.limitEndpointInputs");
+
+        // Aggregate shapes. The endpoint LIMIT comes first so the later passes keep filters below it.
+        plan = timestampEndpoint.limitEndpointInputs(plan);
         plan = aggregateRewrite.rewriteAggregates(plan);
-        assert verifier.verify(plan, "AggregateRewritePass.rewriteAggregates");
-        filterPushdown.pushJoinFilters(plan);
-        assert verifier.verify(plan, "FilterPushdownPass.pushJoinFilters");
-        aggregateInputOrder.collectOrderedBranchAggregates(plan);
-        assert verifier.verify(plan, "AggregateInputOrderPass.collectOrderedBranchAggregates");
+
+        // Filter placement. Ordered set-operation branches are marked after join filters settle and
+        // before pushdown and pruning, which read the marks when they drop an aggregate's input order.
+        plan = filterPushdown.pushJoinFilters(plan);
+        plan = aggregateInputOrder.collectOrderedBranchAggregates(plan);
         plan = filterPushdown.pushDownFilters(plan);
-        assert verifier.verify(plan, "FilterPushdownPass.pushDownFilters");
-        filterPushdown.filterSharedDomains(plan);
-        assert verifier.verify(plan, "FilterPushdownPass.filterSharedDomains");
-        windowCse.mergeWindowCalls(plan);
-        assert verifier.verify(plan, "WindowCsePass.mergeWindowCalls");
-        columnPruning.prune(plan);
-        assert verifier.verify(plan, "ColumnPruningPass.prune");
+        plan = filterPushdown.filterSharedDomains(plan);
+
+        // Window calls merge over their final inputs, before pruning drops the columns a merge leaves unread.
+        plan = windowCse.mergeWindowCalls(plan);
+        plan = columnPruning.prune(plan);
         plan = projectionMerge.collapseColumnProjects(plan);
-        assert verifier.verify(plan, "ProjectionMergePass.collapseColumnProjects");
+
+        // Sort and LIMIT shape.
         plan = negativeLimitReversal.reverseNegativeLimits(plan);
-        assert verifier.verify(plan, "NegativeLimitReversalPass.reverseNegativeLimits");
-        SortEliminationPass.markMarkoutHorizons(plan);
-        assert verifier.verify(plan, "SortEliminationPass.markMarkoutHorizons");
-        plan = SortEliminationPass.removeReorderedSorts(plan, false, false);
-        assert verifier.verify(plan, "SortEliminationPass.removeReorderedSorts");
+        plan = sortElimination.markMarkoutHorizons(plan);
+        plan = sortElimination.removeReorderedSorts(plan);
+        assert verifier.verify(plan, "SqlOptimiser.optimise");
         return plan;
     }
 }

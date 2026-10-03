@@ -974,12 +974,13 @@ final class ColumnPruningPass implements Mutable {
         return isChanged;
     }
 
-    void prune(LogicalPlan root) {
+    LogicalPlan prune(LogicalPlan root) {
         pruneAncestors.clear();
         requiredColumnIds.clear();
         for (int i = 0, n = root.getOutput().getColumnCount(); i < n; i++) {
             requiredColumnIds.add(root.getOutput().getColumnId(i));
         }
         pruneColumns(root);
+        return root;
     }
 }

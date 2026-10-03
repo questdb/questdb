@@ -71,10 +71,10 @@ import static io.questdb.griffin.OrderBinder.orderProjectionIndex;
 final class AggregateBinder implements Mutable {
     final ObjList<ExpressionNode> aggregateNodes = new ObjList<>();
     final ObjList<ExpressionNode> groupingNodes = new ObjList<>();
-    private final ObjList<ExpressionNode> aggregateNodeStack = new ObjList<>();
-    private final ObjList<ExpressionNode> aggregateOrderExpressions = new ObjList<>();
-    private final IntList aggregateProjectionIndexes = new IntList();
-    private final ObjList<ExpressionNode> aggregateSelectExpressions = new ObjList<>();
+    private final ObjList<ExpressionNode> aggregateNodeStack;
+    private final ObjList<ExpressionNode> aggregateOrderExpressions;
+    private final IntList aggregateProjectionIndexes;
+    private final ObjList<ExpressionNode> aggregateSelectExpressions;
     private final SqlBinder binder;
     private final IntObjHashMap<ExpressionNode> columnSpellings = new IntObjHashMap<>();
     private final CairoConfiguration configuration;
@@ -83,17 +83,26 @@ final class AggregateBinder implements Mutable {
      * Aggregate calls that failed to bind, each with the grouping column that holds its error and its index
      * among the aggregates as written.
      */
-    private final IntList deferredAggregateColumnIds = new IntList();
-    private final ObjList<ExpressionNode> deferredAggregateNodes = new ObjList<>();
-    private final IntList deferredAggregateOrdinals = new IntList();
-    private final ObjList<DeferredErrorExpression> deferredAggregates = new ObjList<>();
-    private final ObjList<ExpressionNode> fillValues = new ObjList<>();
+    private final IntList deferredAggregateColumnIds;
+    private final ObjList<ExpressionNode> deferredAggregateNodes;
+    private final IntList deferredAggregateOrdinals;
+    private final ObjList<DeferredErrorExpression> deferredAggregates;
+    private final ObjList<ExpressionNode> fillValues;
     private final ExpressionNode normalizedCount;
     private final OrderBinder orderBinder;
     private final IntList orderOutputIndexes;
     private final SampleByBinder sampleByBinder;
 
-    AggregateBinder(BindContext ctx, SqlBinder binder, CairoConfiguration configuration, OrderBinder orderBinder, SampleByBinder sampleByBinder) {
+    // Borrows the window-phase lists of WindowBinder: a block binds its windows before its aggregation and
+    // DISTINCT, and nothing of the aggregate phase runs while bindWindows() holds them.
+    AggregateBinder(
+            BindContext ctx,
+            SqlBinder binder,
+            CairoConfiguration configuration,
+            OrderBinder orderBinder,
+            SampleByBinder sampleByBinder,
+            WindowBinder windowBinder
+    ) {
         this.ctx = ctx;
         this.binder = binder;
         this.configuration = configuration;
@@ -101,21 +110,21 @@ final class AggregateBinder implements Mutable {
         this.sampleByBinder = sampleByBinder;
         this.orderOutputIndexes = orderBinder.orderOutputIndexes;
         this.normalizedCount = orderBinder.normalizedCount;
+        this.aggregateNodeStack = windowBinder.windowAliasResolutions;
+        this.aggregateOrderExpressions = windowBinder.windowAliasCopies;
+        this.aggregateProjectionIndexes = windowBinder.windowLevels;
+        this.aggregateSelectExpressions = windowBinder.windowAliasReferences;
+        this.deferredAggregateColumnIds = windowBinder.windowColumnIds;
+        this.deferredAggregateNodes = windowBinder.windowNodes;
+        this.deferredAggregateOrdinals = windowBinder.windowGroupMembers;
+        this.deferredAggregates = windowBinder.windowErrors;
+        this.fillValues = windowBinder.windowCopies;
     }
 
     @Override
     public void clear() {
         aggregateNodes.clear();
-        aggregateNodeStack.clear();
-        aggregateOrderExpressions.clear();
-        aggregateProjectionIndexes.clear();
-        aggregateSelectExpressions.clear();
         columnSpellings.clear();
-        deferredAggregateColumnIds.clear();
-        deferredAggregateNodes.clear();
-        deferredAggregateOrdinals.clear();
-        deferredAggregates.clear();
-        fillValues.clear();
         groupingNodes.clear();
     }
 
