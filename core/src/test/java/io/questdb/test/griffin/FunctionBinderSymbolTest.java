@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -50,7 +49,7 @@ import org.junit.Test;
 
 public class FunctionBinderSymbolTest extends AbstractCairoTest {
     @Test
-    public void testStaticDictionaryRelocationWorkersAndCompilerLifetime() throws Exception {
+    public void testStaticDictionaryWorkersAndCompilerLifetime() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE fb_symbol(unused INT,s SYMBOL,t SYMBOL)");
             execute("INSERT INTO fb_symbol VALUES(1,'alpha','alpha'),(2,'beta','gamma'),(3,null,null)");
@@ -58,11 +57,11 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
             final FunctionParser parser = parser(constructed);
             try (RecordCursorFactory original = select("SELECT unused,s,t FROM fb_symbol");
                  RecordCursorFactory narrowed = select("SELECT s,t FROM fb_symbol");
-                 FunctionBinder binder = new FunctionBinder(parser)) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final OutputSchema full = schema(original.getMetadata(), 100);
                 final OutputSchema pruned = schema(narrowed.getMetadata(), 101);
                 final BoundExpression expression = binder.bind(binary("=", literal("s"), literal("t")), full, null, sqlExecutionContext);
-                Assert.assertEquals(1, constructed.size());
+                Assert.assertEquals(0, constructed.size());
                 try (Function owner = binder.instantiate(expression, pruned, narrowed.getMetadata(), sqlExecutionContext);
                      Function worker = binder.instantiate(expression, full, original.getMetadata(), sqlExecutionContext)) {
                     Assert.assertSame(constructed.getQuick(0), owner);
@@ -94,22 +93,22 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFinalDynamicDictionaryRebuildsSelectedClosure() throws Exception {
+    public void testFinalDynamicDictionaryBuildsSelectedClosure() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE fb_symbol(s SYMBOL,t SYMBOL)");
             execute("INSERT INTO fb_symbol VALUES('alpha','alpha'),('beta','gamma'),(null,null)");
             final ObjList<Function> constructed = new ObjList<>();
             final FunctionParser parser = parser(constructed);
             try (RecordCursorFactory dynamic = select("SELECT s,t FROM fb_symbol UNION ALL SELECT t,s FROM fb_symbol");
-                 FunctionBinder binder = new FunctionBinder(parser)) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 Assert.assertFalse(dynamic.getMetadata().isSymbolTableStatic(0));
                 final OutputSchema boundInput = schema(dynamic.getMetadata(), 100);
                 boundInput.setSymbolTableStatic(0, true);
                 boundInput.setSymbolTableStatic(1, true);
                 final BoundExpression expression = binder.bind(binary("=", literal("s"), literal("t")), boundInput, null, sqlExecutionContext);
                 try (Function actual = binder.instantiate(expression, boundInput, dynamic.getMetadata(), sqlExecutionContext)) {
-                    Assert.assertEquals(2, constructed.size());
-                    Assert.assertNotSame(constructed.getQuick(0), actual);
+                    Assert.assertEquals(1, constructed.size());
+                    Assert.assertSame(constructed.getQuick(0), actual);
                     binder.clear();
                     parser.clear();
                     for (int pass = 0; pass < 2; pass++) {
@@ -139,18 +138,20 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
                     Assert.assertEquals(0, index);
                     return 42;
                 }
+
                 @Override
                 public CharSequence getStrA(int index) {
                     Assert.assertEquals(1, index);
                     return "text";
                 }
+
                 @Override
                 public Utf8Sequence getVarcharA(int index) {
                     Assert.assertEquals(2, index);
                     return text;
                 }
             };
-            try (FunctionBinder binder = new FunctionBinder(parser);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser);
                  Function integer = binder.instantiate(binder.bind(literal("i"), input, null, sqlExecutionContext), input);
                  Function string = binder.instantiate(binder.bind(literal("s"), input, null, sqlExecutionContext), input);
                  Function varchar = binder.instantiate(binder.bind(literal("v"), input, null, sqlExecutionContext), input)) {
@@ -200,7 +201,7 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
                          RecordCursorFactory narrowed = select(isDynamic
                                  ? "SELECT s FROM fb_symbol UNION ALL SELECT s FROM fb_symbol"
                                  : "SELECT s FROM fb_symbol");
-                         FunctionBinder binder = new FunctionBinder(parser)) {
+                         FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                         final OutputSchema full = schema(original.getMetadata(), 100);
                         final OutputSchema pruned = schema(narrowed.getMetadata(), 101);
                         final ObjList<ExpressionNode> args = new ObjList<>(literal("s"), constant("'alpha'"), constant("10"), constant("-1"));

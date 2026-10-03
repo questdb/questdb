@@ -85,6 +85,11 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final int MODE_TIME_WEIGHTED = 2;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

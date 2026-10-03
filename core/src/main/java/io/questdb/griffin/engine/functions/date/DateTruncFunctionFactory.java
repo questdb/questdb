@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -36,57 +37,37 @@ import io.questdb.std.ObjList;
 
 public class DateTruncFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        final int type = argTypes.getQuick(1);
+        return ColumnType.isTimestamp(type) ? ResultTypes.timestampAtLeastMicros(type) : ColumnType.UNDEFINED;
+    }
+
+    @Override
     public String getSignature() {
         return "date_trunc(sN)";
     }
 
     @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final String unit = unit(args.getQuick(0).getStrA(null), argPositions.getQuick(0));
+        return !isIdentity(unit, timestampType(args.getQuick(1)));
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function kindFunction = args.getQuick(0);
-        CharSequence kind = kindFunction.getStrA(null);
-        Function innerFunction = args.getQuick(1);
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(innerFunction.getType()), ColumnType.TIMESTAMP_MICRO);
-        if (kind == null) {
-            throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
-        } else if (isTimeUnit(kind, "nanosecond")) {
-            // optimize, nothing to truncate
-            if (ColumnType.isTimestampNano(timestampType)) {
-                return innerFunction;
-            }
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "nanosecond", timestampType);
-        } else if (isTimeUnit(kind, "microsecond")) {
-            // optimize, nothing to truncate
-            if (ColumnType.isTimestampMicro(timestampType)) {
-                return innerFunction;
-            }
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "microsecond", timestampType);
-        } else if (isTimeUnit(kind, "millisecond")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "millisecond", timestampType);
-        } else if (isTimeUnit(kind, "second")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "second", timestampType);
-        } else if (isTimeUnit(kind, "minute")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "minute", timestampType);
-        } else if (isTimeUnit(kind, "hour")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "hour", timestampType);
-        } else if (isTimeUnit(kind, "day")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "day", timestampType);
-        } else if (isTimeUnit(kind, "week")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "week", timestampType);
-        } else if (isTimeUnit(kind, "month")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "month", timestampType);
-        } else if (isTimeUnit(kind, "quarter")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "quarter", timestampType);
-        } else if (isTimeUnit(kind, "year")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "year", timestampType);
-        } else if (isTimeUnit(kind, "decade")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "decade", timestampType);
-        } else if (Chars.equals(kind, "century") || Chars.equals(kind, "centuries")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "century", timestampType);
-        } else if (isTimeUnit(kind, "millennium")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "millennium", timestampType);
-        } else {
-            throw SqlException.$(argPositions.getQuick(0), "invalid unit '").put(kind).put('\'');
+        final String unit = unit(args.getQuick(0).getStrA(null), argPositions.getQuick(0));
+        final Function innerFunction = args.getQuick(1);
+        final int timestampType = timestampType(innerFunction);
+        // optimize, nothing to truncate
+        if (isIdentity(unit, timestampType)) {
+            return innerFunction;
         }
+        return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, unit, timestampType);
+    }
+
+    private static boolean isIdentity(String unit, int timestampType) {
+        return unit.equals("nanosecond") && ColumnType.isTimestampNano(timestampType)
+                || unit.equals("microsecond") && ColumnType.isTimestampMicro(timestampType);
     }
 
     private static boolean isTimeUnit(CharSequence arg, String constant) {
@@ -101,5 +82,58 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         }
 
         return false;
+    }
+
+    private static int timestampType(Function innerFunction) {
+        return ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(innerFunction.getType()), ColumnType.TIMESTAMP_MICRO);
+    }
+
+    private static String unit(CharSequence kind, int position) throws SqlException {
+        if (kind == null) {
+            throw SqlException.position(position).put("invalid unit 'null'");
+        }
+        if (isTimeUnit(kind, "nanosecond")) {
+            return "nanosecond";
+        }
+        if (isTimeUnit(kind, "microsecond")) {
+            return "microsecond";
+        }
+        if (isTimeUnit(kind, "millisecond")) {
+            return "millisecond";
+        }
+        if (isTimeUnit(kind, "second")) {
+            return "second";
+        }
+        if (isTimeUnit(kind, "minute")) {
+            return "minute";
+        }
+        if (isTimeUnit(kind, "hour")) {
+            return "hour";
+        }
+        if (isTimeUnit(kind, "day")) {
+            return "day";
+        }
+        if (isTimeUnit(kind, "week")) {
+            return "week";
+        }
+        if (isTimeUnit(kind, "month")) {
+            return "month";
+        }
+        if (isTimeUnit(kind, "quarter")) {
+            return "quarter";
+        }
+        if (isTimeUnit(kind, "year")) {
+            return "year";
+        }
+        if (isTimeUnit(kind, "decade")) {
+            return "decade";
+        }
+        if (Chars.equals(kind, "century") || Chars.equals(kind, "centuries")) {
+            return "century";
+        }
+        if (isTimeUnit(kind, "millennium")) {
+            return "millennium";
+        }
+        throw SqlException.$(position, "invalid unit '").put(kind).put('\'');
     }
 }

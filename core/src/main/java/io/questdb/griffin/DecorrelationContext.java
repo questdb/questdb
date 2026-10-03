@@ -58,17 +58,15 @@ final class DecorrelationContext implements Mutable {
     final BindContext planNodes;
     final IntList scratch;
     final IntIntHashMap substitution = new IntIntHashMap();
+    private final OptimiserContext context;
     private final OutputSchema schemaScratch;
     int carrierSequence;
-    FunctionBinder functionBinder;
-    TableFunctionSources functionSources;
     JoinPlan master;
     int masterLimit;
-    int nextColumnId;
     int outerRefSequence = -1;
-    private SqlExecutionContext executionContext;
 
     DecorrelationContext(
+            OptimiserContext context,
             BindContext planNodes,
             CharacterStore characterStore,
             ObjList<BoundExpression> callArguments,
@@ -78,6 +76,7 @@ final class DecorrelationContext implements Mutable {
             ObjList<LogicalPlan> chain,
             OutputSchema schemaScratch
     ) {
+        this.context = context;
         this.planNodes = planNodes;
         this.characterStore = characterStore;
         this.callArguments = callArguments;
@@ -86,7 +85,7 @@ final class DecorrelationContext implements Mutable {
         this.mappedColumnIds = mappedColumnIds;
         this.chain = chain;
         this.schemaScratch = schemaScratch;
-        this.copier = new LogicalPlanCopier(planNodes);
+        this.copier = new LogicalPlanCopier(context, planNodes);
     }
 
     @Override
@@ -97,12 +96,8 @@ final class DecorrelationContext implements Mutable {
         outerAliases.clear();
         substitution.clear();
         carrierSequence = 0;
-        executionContext = null;
-        functionBinder = null;
-        functionSources = null;
         master = null;
         masterLimit = 0;
-        nextColumnId = 0;
         outerRefSequence = -1;
     }
 
@@ -183,7 +178,7 @@ final class DecorrelationContext implements Mutable {
     }
 
     BoundExpression bindCall(CharSequence name, int position, OutputSchema input) throws SqlException {
-        final BoundExpression bound = functionBinder.bindCall(name, position, callArguments, input, executionContext);
+        final BoundExpression bound = context.bindCall(name, position, callArguments, input);
         callArguments.clear();
         return bound;
     }
@@ -202,7 +197,7 @@ final class DecorrelationContext implements Mutable {
     void exposeColumn(ProjectPlan project, OutputSchema input, int columnId, CharSequence name, int position) {
         final int type = input.getColumnType(input.getColumnIndexById(columnId));
         project.getExpressions().add(planNodes.columns.next().of(columnId, type, position));
-        project.getOutput().add(nextColumnId++, name, type, false);
+        project.getOutput().add(context.newColumnId(), name, type, false);
     }
 
     boolean hasOuterRefName(LogicalPlan plan) {
@@ -231,16 +226,47 @@ final class DecorrelationContext implements Mutable {
                 output.add(columnId, name, type, false);
             }
             if (i < n) {
-                output.add(copy.getColumnId(i), copy.getColumnName(i), copy.getColumnType(i), copy.getMetadata(i), copy.isVisible(i),
-                        copy.getColumnQualifier(i));
-                output.setSymbolTableStatic(output.getColumnCount() - 1, copy.isSymbolTableStatic(i));
-                if (copy.isNameProtected(i)) {
-                    output.protectName(output.getColumnCount() - 1);
-                }
+                addColumn(output, copy, i);
             }
         }
         output.setTimestampIndex(output.getColumnIndexById(timestampId));
         copy.clear();
+    }
+
+    /**
+     * Lays out {@code output} as the columns of {@code input} in input order, adding the missing ones hidden, followed
+     * by the columns the node itself defines; the designated timestamp keeps its column.
+     */
+    void alignColumns(OutputSchema output, OutputSchema input) {
+        final OutputSchema copy = schemaScratch;
+        copy.copyFrom(output);
+        final int timestampId = output.getTimestampColumnId();
+        output.clear();
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            final int index = copy.getColumnIndexById(input.getColumnId(i));
+            if (index < 0) {
+                output.add(input.getColumnId(i), input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), false,
+                        input.getColumnQualifier(i));
+            } else {
+                addColumn(output, copy, index);
+            }
+        }
+        for (int i = 0, n = copy.getColumnCount(); i < n; i++) {
+            if (input.getColumnIndexById(copy.getColumnId(i)) < 0) {
+                addColumn(output, copy, i);
+            }
+        }
+        output.setTimestampIndex(output.getColumnIndexById(timestampId));
+        copy.clear();
+    }
+
+    static void addColumn(OutputSchema output, OutputSchema source, int index) {
+        output.add(source.getColumnId(index), source.getColumnName(index), source.getColumnType(index), source.getMetadata(index),
+                source.isVisible(index), source.getColumnQualifier(index));
+        output.setSymbolTableStatic(output.getColumnCount() - 1, source.isSymbolTableStatic(index));
+        if (source.isNameProtected(index)) {
+            output.protectName(output.getColumnCount() - 1);
+        }
     }
 
     CharSequence joinedName(OutputSchema output, int columnId) {
@@ -295,7 +321,7 @@ final class DecorrelationContext implements Mutable {
             substitution.put(scratch.getQuick(i), masterColumn(scratch.getQuick(i)));
         }
         scratch.setPos(columnBase);
-        return functionBinder.remapColumns(expression, substitution);
+        return context.getRewriter().remapColumns(expression, substitution);
     }
 
     int masterInput(int outerId) {
@@ -305,14 +331,6 @@ final class DecorrelationContext implements Mutable {
             }
         }
         return -1;
-    }
-
-    DecorrelationContext of(FunctionBinder functionBinder, TableFunctionSources functionSources, int nextColumnId, SqlExecutionContext executionContext) {
-        this.functionBinder = functionBinder;
-        this.functionSources = functionSources;
-        this.nextColumnId = nextColumnId;
-        this.executionContext = executionContext;
-        return this;
     }
 
     CharSequence outerRefName(int outerId) {
@@ -364,7 +382,6 @@ final class DecorrelationContext implements Mutable {
         for (int k = base, n = mappedOuterIds.size(); k < n; k++) {
             substitution.put(mappedOuterIds.getQuick(k), mappedColumnIds.getQuick(k));
         }
-        copier.of(functionBinder, functionSources, nextColumnId);
         copier.remap(node, substitution);
     }
 }

@@ -80,6 +80,11 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = NAME + "(L)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

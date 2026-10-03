@@ -45,7 +45,6 @@ import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
-import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -9342,21 +9341,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVirtualColumnRejectsNonTimestampPlanTimestampIndex() throws Exception {
+    public void testVirtualColumnOrderedByCastTimestampKeepsNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                compiler.setLogicalGenerationTestHook(plan -> {
-                    if (plan instanceof ProjectPlan project && project.getOutput().getTimestampIndex() < 0) {
-                        project.getOutput().setTimestampIndex(0);
-                    }
-                });
-                try (RecordCursorFactory ignored = compiler.compile("SELECT x + 1 AS ts FROM long_sequence(1)", sqlExecutionContext).getRecordCursorFactory()) {
-                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
-                    Assert.assertEquals(9, e.getPosition());
-                }
-            }
+            execute("CREATE TABLE vc_ts (ts TIMESTAMP, v LONG) TIMESTAMP(ts)");
+            execute("INSERT INTO vc_ts VALUES (1, 10), (2, 20)");
+            assertQuery("SELECT ts::LONG AS t, v FROM vc_ts ORDER BY t")
+                    .expectSize()
+                    .returns("t\tv\n1\t10\n2\t20\n");
         });
     }
 

@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -64,7 +66,7 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         int targetType = ColumnType.getDecimalType(targetPrecision, fromScale);
 
         var transformer = new DynamicTransformer(roundingScale, fromScale, roundingMode);
-        return DecimalTransformerFactory.newInstance(value, targetType, transformer);
+        return new DynamicScaleFunction(DecimalTransformerFactory.newInstance(value, targetType, transformer), value, roundingScale);
     }
 
     @Override
@@ -198,6 +200,69 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         public boolean transform(Decimal64 value, Record record) {
             value.round(scale, roundingMode);
             return true;
+        }
+    }
+
+    private static class DynamicScaleFunction extends DecimalFunction implements BinaryFunction {
+        private final Function rounded;
+        private final Function scale;
+        private final Function value;
+
+        private DynamicScaleFunction(Function rounded, Function value, Function scale) {
+            super(rounded.getType());
+            this.rounded = rounded;
+            this.value = value;
+            this.scale = scale;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            rounded.getDecimal128(rec, sink);
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return rounded.getDecimal16(rec);
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            rounded.getDecimal256(rec, sink);
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return rounded.getDecimal32(rec);
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return rounded.getDecimal64(rec);
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return rounded.getDecimal8(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return rounded.getName();
+        }
+
+        @Override
+        public Function getRight() {
+            return scale;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 

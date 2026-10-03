@@ -37,7 +37,7 @@ import io.questdb.std.ObjectFactory;
 public final class WindowSpec implements Mutable {
     public static final ObjectFactory<WindowSpec> FACTORY = WindowSpec::new;
     private final IntList orderByColumnIds = new IntList();
-    private final IntList orderByDirections = new IntList();
+    private final ObjList<SortDirection> orderByDirections = new ObjList<>();
     private final ObjList<CharSequence> orderByNames = new ObjList<>();
     private final IntList orderByPositions = new IntList();
     private final ObjList<BoundExpression> partitionBy = new ObjList<>();
@@ -93,7 +93,9 @@ public final class WindowSpec implements Mutable {
         return framingMode;
     }
 
-    /** The syntax a live-view checkpoint identity derives from; null outside a live-view compile. */
+    /**
+     * The syntax a live-view checkpoint identity derives from; null outside a live-view compile.
+     */
     public LiveViewWindowDescription getLiveViewDescription() {
         return liveViewDescription;
     }
@@ -107,7 +109,7 @@ public final class WindowSpec implements Mutable {
         return orderByColumnIds;
     }
 
-    public IntList getOrderByDirections() {
+    public ObjList<SortDirection> getOrderByDirections() {
         return orderByDirections;
     }
 
@@ -163,10 +165,6 @@ public final class WindowSpec implements Mutable {
         return isSubsampleKeepFlag;
     }
 
-    public void setLiveViewDescription(LiveViewWindowDescription liveViewDescription) {
-        this.liveViewDescription = liveViewDescription;
-    }
-
     public WindowSpec of(WindowExpression expression) {
         exclusionKind = expression.getExclusionKind();
         exclusionKindPos = expression.getExclusionKindPos();
@@ -205,5 +203,9 @@ public final class WindowSpec implements Mutable {
         rowsLoExprTimeUnit = spec.rowsLoExprTimeUnit;
         rowsLoKindPos = spec.rowsLoKindPos;
         return this;
+    }
+
+    public void setLiveViewDescription(LiveViewWindowDescription liveViewDescription) {
+        this.liveViewDescription = liveViewDescription;
     }
 }

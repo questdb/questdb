@@ -1442,7 +1442,7 @@ public class QueryAssertion {
         try (SqlCompilerImpl planCompiler = new SqlCompilerImpl(engine)) {
             final CompiledQuery cq = planCompiler.compile(query, context);
             try (RecordCursorFactory ignore = cq.getRecordCursorFactory()) {
-                TestUtils.assertEquals(expectedPlan, new LogicalPlanPrinter().print(planCompiler.getLogicalPlanForTesting()));
+                TestUtils.assertEquals(expectedPlan, new LogicalPlanPrinter().print(planCompiler.getPlanForTesting()));
             } finally {
                 cq.closeAllButSelect();
             }

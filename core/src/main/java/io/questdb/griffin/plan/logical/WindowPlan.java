@@ -59,11 +59,6 @@ public final class WindowPlan extends UnaryPlan {
         return specs;
     }
 
-    @Override
-    public Type getType() {
-        return Type.WINDOW;
-    }
-
     /**
      * True when the ORDER BY of the SELECT that computes these windows sorts their output.
      */

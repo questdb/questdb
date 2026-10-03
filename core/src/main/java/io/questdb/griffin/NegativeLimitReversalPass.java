@@ -25,16 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -42,26 +42,22 @@ import io.questdb.std.ObjectPool;
 /**
  * Reads the last rows of an ascending timestamp-led sort as the first rows of the reversed sort.
  */
-final class NegativeLimitReversalPass implements Mutable {
+final class NegativeLimitReversalPass {
     private final ObjectPool<ConstantExpression> constants;
     private final IntList limitKeyIds;
-    private final ObjList<SortPlan> restoredSorts = new ObjList<>();
+    private final ObjList<LogicalPlan> restoredSorts;
     private final ObjectPool<SortPlan> sorts;
 
-    NegativeLimitReversalPass(ObjectPool<ConstantExpression> constants, ObjectPool<SortPlan> sorts, IntList limitKeyIds) {
+    NegativeLimitReversalPass(ObjectPool<ConstantExpression> constants, ObjectPool<SortPlan> sorts, IntList limitKeyIds, ObjList<LogicalPlan> restoredSorts) {
         this.constants = constants;
         this.sorts = sorts;
         this.limitKeyIds = limitKeyIds;
-    }
-
-    @Override
-    public void clear() {
-        restoredSorts.clear();
+        this.restoredSorts = restoredSorts;
     }
 
     private static boolean isTableSource(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
-        return plan.getType() == LogicalPlan.Type.SCAN;
+        return plan instanceof ScanPlan;
     }
 
     private static int liftColumnId(LogicalPlan plan, LogicalPlan target, int columnId) {
@@ -73,23 +69,17 @@ final class NegativeLimitReversalPass implements Mutable {
         return index < 0 ? -1 : plan.getOutput().getColumnId(index);
     }
 
-    /**
-     * Reads the last rows of an ascending timestamp-led multi-key sort as the
-     * first rows of the reversed sort below the projection, then restores the order:
-     * {@code ORDER BY ts, a LIMIT -n} becomes {@code ORDER BY ts, a} over {@code ORDER BY ts DESC, a DESC LIMIT n}.
-     * An enclosing sort replaces the restoring one.
-     */
-    LogicalPlan reverseNegativeLimits(LogicalPlan plan) {
+    private LogicalPlan reverseNegativeLimits0(LogicalPlan plan) {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             final LogicalPlan input = plan.inputAt(i);
-            final LogicalPlan reversed = reverseNegativeLimits(input);
+            final LogicalPlan reversed = reverseNegativeLimits0(input);
             if (reversed != input) {
                 plan.replaceInput(i, reversed);
             }
         }
-        if (plan.getType() == LogicalPlan.Type.SORT) {
+        if (plan instanceof SortPlan) {
             LogicalPlan parent = plan;
-            while (parent.inputAt(0).getType() == LogicalPlan.Type.PROJECT) {
+            while (parent.inputAt(0) instanceof ProjectPlan) {
                 parent = parent.inputAt(0);
             }
             if (restoredSorts.indexOf(parent.inputAt(0)) >= 0) {
@@ -102,17 +92,17 @@ final class NegativeLimitReversalPass implements Mutable {
         }
         final LogicalPlan upperTop = limit.getInput();
         LogicalPlan upperBottom = limit;
-        while (upperBottom.inputAt(0).getType() == LogicalPlan.Type.PROJECT) {
+        while (upperBottom.inputAt(0) instanceof ProjectPlan) {
             upperBottom = upperBottom.inputAt(0);
         }
         if (!(upperBottom.inputAt(0) instanceof SortPlan sort)) {
             return plan;
         }
         final IntList ids = sort.getColumnIds();
-        final IntList directions = sort.getDirections();
+        final ObjList<SortDirection> directions = sort.getDirections();
         if (limit.getHi() != null || !(limit.getLo() instanceof ConstantExpression lo)
                 || lo.getLongValue() >= 0 || lo.getLongValue() == Numbers.LONG_NULL
-                || directions.size() < 2 || directions.getQuick(0) != QueryModel.ORDER_DIRECTION_ASCENDING
+                || directions.size() < 2 || directions.getQuick(0) != SortDirection.ASCENDING
                 || sort.isMarkoutHorizon() || ids.getQuick(0) != sort.getInput().getOutput().getTimestampColumnId()) {
             return plan;
         }
@@ -146,18 +136,16 @@ final class NegativeLimitReversalPass implements Mutable {
         }
         for (int i = 0, n = directions.size(); i < n; i++) {
             ids.setQuick(i, sourceIds.getQuick(i));
-            directions.setQuick(i, directions.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING
-                    ? QueryModel.ORDER_DIRECTION_ASCENDING : QueryModel.ORDER_DIRECTION_DESCENDING);
+            directions.setQuick(i, directions.getQuick(i) == SortDirection.DESCENDING ? SortDirection.ASCENDING : SortDirection.DESCENDING);
         }
         sort.markReversal();
         sort.replaceInput(0, source);
-        sort.getOutput().copyFrom(source.getOutput());
-        sort.getOutput().setTimestampIndex(source.getOutput().getColumnIndexById(ids.getQuick(0)));
+        sort.deriveOutput();
         final BoundExpression count = lo.getDataType() == ColumnType.INT
                 ? constants.next().ofInt((int) -lo.getLongValue(), lo.getPosition())
                 : constants.next().ofLong(-lo.getLongValue(), lo.getPosition());
         limit.of(sort, count, null, limit.getPosition());
-        limit.getOutput().copyFrom(sort.getOutput());
+        limit.deriveOutput();
         final LogicalPlan lower = lowerBottom == null ? limit : lowerTop;
         if (lowerBottom != null) {
             lowerBottom.replaceInput(0, limit);
@@ -167,9 +155,19 @@ final class NegativeLimitReversalPass implements Mutable {
         }
         final LogicalPlan upper = upperBottom == limit ? lower : upperTop;
         restored.replaceInput(0, upper);
-        restored.getOutput().copyFrom(upper.getOutput());
-        restored.getOutput().setTimestampIndex(upper.getOutput().getColumnIndexById(restored.getColumnIds().getQuick(0)));
+        restored.deriveOutput();
         restoredSorts.add(restored);
         return restored;
+    }
+
+    /**
+     * Reads the last rows of an ascending timestamp-led multi-key sort as the
+     * first rows of the reversed sort below the projection, then restores the order:
+     * {@code ORDER BY ts, a LIMIT -n} becomes {@code ORDER BY ts, a} over {@code ORDER BY ts DESC, a DESC LIMIT n}.
+     * An enclosing sort replaces the restoring one.
+     */
+    LogicalPlan reverseNegativeLimits(LogicalPlan root) {
+        restoredSorts.clear();
+        return reverseNegativeLimits0(root);
     }
 }

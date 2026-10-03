@@ -88,6 +88,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
      * @return the signature string
      */
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

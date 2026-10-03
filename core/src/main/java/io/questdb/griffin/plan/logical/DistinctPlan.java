@@ -32,11 +32,6 @@ import io.questdb.std.ObjectFactory;
 public final class DistinctPlan extends UnaryPlan {
     public static final ObjectFactory<DistinctPlan> FACTORY = DistinctPlan::new;
 
-    @Override
-    public Type getType() {
-        return Type.DISTINCT;
-    }
-
     public DistinctPlan of(LogicalPlan input, int position) {
         configure(input, position);
         return this;

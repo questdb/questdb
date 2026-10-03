@@ -83,6 +83,11 @@ public class NthValueLongWindowFunctionFactory extends AbstractWindowFunctionFac
     private static final String SIGNATURE = NAME + "(LL)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

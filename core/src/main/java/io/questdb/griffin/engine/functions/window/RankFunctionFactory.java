@@ -78,6 +78,11 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = NAME + "()";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

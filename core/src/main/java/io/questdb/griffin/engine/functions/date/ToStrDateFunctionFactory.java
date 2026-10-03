@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -50,8 +51,19 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
     private static final FiberLocal<StringSink> tlSink = new FiberLocal<>(StringSink::new);
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
+
+    @Override
     public String getSignature() {
         return "to_str(Ms)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        dateFormat(args.getQuick(1), argPositions);
+        return !args.getQuick(0).isConstant();
     }
 
     @Override
@@ -63,12 +75,8 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function fmt = args.getQuick(1);
+        DateFormat dateFormat = dateFormat(fmt, argPositions);
         CharSequence format = fmt.getStrA(null);
-        if (format == null) {
-            throw SqlException.$(argPositions.getQuick(1), "format must not be null");
-        }
-
-        DateFormat dateFormat = DateFormatFactory.INSTANCE.get(format);
         Function var = args.getQuick(0);
         if (var.isConstant()) {
             long value = var.getDate(null);
@@ -82,7 +90,18 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             return StrConstant.fromValue(sink);
         }
 
-        return new ToCharDateVCFFunc(args.getQuick(0), DateFormatFactory.INSTANCE.get(format), configuration.getDefaultDateLocale(), format);
+        return new ToCharDateVCFFunc(args.getQuick(0), dateFormat, configuration.getDefaultDateLocale(), format);
+    }
+
+    /**
+     * The format a constant format argument spells; raises the error for a NULL format.
+     */
+    private static DateFormat dateFormat(Function fmt, IntList argPositions) throws SqlException {
+        final CharSequence format = fmt.getStrA(null);
+        if (format == null) {
+            throw SqlException.$(argPositions.getQuick(1), "format must not be null");
+        }
+        return DateFormatFactory.INSTANCE.get(format);
     }
 
     private static class ToCharDateVCFFunc extends StrFunction implements UnaryFunction {

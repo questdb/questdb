@@ -83,6 +83,11 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

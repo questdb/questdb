@@ -38,17 +38,19 @@ public final class LimitPlan extends UnaryPlan {
         lo = null;
     }
 
+    /**
+     * Sets the output to the input's columns and designated timestamp: a limit only drops rows.
+     */
+    public void deriveOutput() {
+        getOutput().copyFrom(getInput().getOutput());
+    }
+
     public BoundExpression getHi() {
         return hi;
     }
 
     public BoundExpression getLo() {
         return lo;
-    }
-
-    @Override
-    public Type getType() {
-        return Type.LIMIT;
     }
 
     public LimitPlan of(LogicalPlan input, BoundExpression lo, BoundExpression hi, int position) {

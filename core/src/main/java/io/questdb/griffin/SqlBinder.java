@@ -39,28 +39,35 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.DeferredErrorExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
+import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
@@ -75,55 +82,47 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.BindContext.blockGroupBy;
-import static io.questdb.griffin.BindContext.getColumnIndexQuiet;
-import static io.questdb.griffin.BindContext.hasColumnReference;
-import static io.questdb.griffin.BindContext.hasComputedProjection;
-import static io.questdb.griffin.BindContext.isRowCount;
-import static io.questdb.griffin.BindContext.isWildcard;
-import static io.questdb.griffin.BindContext.joinColumnSource;
-import static io.questdb.griffin.BindContext.sourceAlias;
-import static io.questdb.griffin.OrderBinder.hasComputedOrder;
-import static io.questdb.griffin.OrderBinder.hasProjectedOrder;
-import static io.questdb.griffin.OrderBinder.isRowCountOrder;
-import static io.questdb.griffin.OrderBinder.isSelectedOrder;
-import static io.questdb.griffin.TemporalJoinBinder.horizonJoinIndex;
-import static io.questdb.griffin.TemporalJoinBinder.validateTimestampOffset;
-import static io.questdb.griffin.TemporalJoinBinder.validateTimestampOffsetUnit;
-import static io.questdb.griffin.TemporalJoinBinder.windowJoinIndex;
+import static io.questdb.griffin.BindContext.*;
+import static io.questdb.griffin.OrderBinder.*;
+import static io.questdb.griffin.TemporalJoinBinder.*;
 
 final class SqlBinder implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(SqlBinder.class);
     private static final int MAX_RETAINED_SUBQUERY_DEPTH = 8;
     final BindContext ctx;
-    final JoinBinder joinBinder;
-    final SampleByBinder sampleByBinder;
-    final TemporalJoinBinder temporalJoinBinder;
     private final AggregateBinder aggregateBinder;
     private final SqlCompilerImpl compiler;
-    private final StringSink deferredErrorMessage = new StringSink();
-    private final ObjList<CharSequence> hintAliases = new ObjList<>();
-    private final ObjList<QueryModel> hintAliasModels = new ObjList<>();
+    private final CairoConfiguration configuration;
+    private final ObjList<CharSequence> cursorNames = new ObjList<>();
+    private final IntList cursorProjectionSources = new IntList();
+    private final IntList cursorSourceIndexes = new IntList();
+    private final ObjList<ExpressionNode> cursorSources = new ObjList<>();
+    private final FunctionParser functionParser;
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<CharSequence>> hintScopes = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 4);
+    private final JoinBinder joinBinder;
     private final LateralBinder lateralBinder;
     private final OrderBinder orderBinder;
-    private final IntList outputColumnPositions = new IntList();
+    // Set-operation column types while binding, the root's output column positions after binding.
+    private final IntList outputColumnScratch = new IntList();
+    private final BoolList pendingSubqueries = new BoolList();
     private final PivotBinder pivotBinder;
-    private final IntList setTypes = new IntList();
+    private final SubqueryMetadataFactory rootMetadata = new SubqueryMetadataFactory();
+    private final SampleByBinder sampleByBinder;
     private final ObjList<SqlBinder> subqueryBinders = new ObjList<>();
     private final ObjList<RecordCursorFactory> subqueryFactories = new ObjList<>();
-    private final TranslatingAliases translatingAliases = new TranslatingAliases();
+    private final IntList subqueryPositions = new IntList();
+    private final TemporalJoinBinder temporalJoinBinder;
+    private final TranslatingAliases translatingAliases;
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> updateTargetNames = new ObjList<>();
     private final WindowBinder windowBinder;
     private final LongList withinPrefixes = new LongList();
-    private int deferredErrorPosition = -1;
+    private DeferredErrorExpression deferredError;
     private boolean isUpdate;
     private SqlParserCallback parserCallback;
     private LogicalPlan predicateSource;
@@ -139,17 +138,20 @@ final class SqlBinder implements Closeable, Mutable {
 
     SqlBinder(CairoConfiguration configuration, FunctionParser functionParser, SqlCompilerImpl compiler) {
         this.compiler = compiler;
-        this.ctx = new BindContext(configuration, functionParser, compiler.getSqlNodePool(), compiler.getEmptySchema());
-        ctx.functionBinder.setSubqueryBinder(this);
-        this.orderBinder = new OrderBinder(ctx, this);
-        this.aggregateBinder = new AggregateBinder(ctx, this, orderBinder);
-        this.windowBinder = new WindowBinder(ctx, this, aggregateBinder, compiler.getAsm(), compiler.getEntityColumnFilter());
+        this.configuration = configuration;
+        this.functionParser = functionParser;
+        final OutputSchema emptySchema = compiler.getEmptySchema();
+        this.ctx = new BindContext(functionParser, compiler.getSqlNodePool(), this);
+        this.translatingAliases = new TranslatingAliases(ctx.joinNativeTimestampIds);
+        this.windowBinder = new WindowBinder(ctx, functionParser);
         this.lateralBinder = new LateralBinder(ctx, this);
-        this.joinBinder = new JoinBinder(ctx, this, lateralBinder, compiler.getScratchIds(), compiler.getIndexScratch(),
-                compiler.getValueScratch(), compiler.getMasterKeyScratch(), compiler.getSlaveKeyScratch());
-        this.sampleByBinder = new SampleByBinder(ctx, this, windowBinder, orderBinder, aggregateBinder, joinBinder);
-        this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, orderBinder, aggregateBinder, joinBinder);
-        this.pivotBinder = new PivotBinder(ctx, this, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
+        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, compiler.getScratchIds(), compiler.getIndexScratch(),
+                compiler.getValueScratch(), compiler.getSlaveKeyScratch());
+        this.sampleByBinder = new SampleByBinder(ctx, this, configuration, functionParser, emptySchema, windowBinder, joinBinder);
+        this.orderBinder = new OrderBinder(ctx, emptySchema, sampleByBinder);
+        this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder);
+        this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder);
+        this.pivotBinder = new PivotBinder(ctx, this, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
                 compiler.getScratchSink());
     }
 
@@ -165,7 +167,7 @@ final class SqlBinder implements Closeable, Mutable {
         updateTimestampIndex = -1;
         ctx.clear();
         root = null;
-        deferredErrorPosition = -1;
+        deferredError = null;
         windowBinder.clear();
         temporalJoinBinder.clear();
         sampleByBinder.clear();
@@ -174,14 +176,12 @@ final class SqlBinder implements Closeable, Mutable {
         orderBinder.clear();
         joinBinder.clear();
         lateralBinder.clear();
-        hintAliasModels.clear();
-        hintAliases.clear();
+        clearCursorColumns();
         for (int i = 0, n = hintScopes.getPos(); i < n; i++) {
             hintScopes.peekQuick(i).clear();
         }
         hintScopes.clear();
-        outputColumnPositions.clear();
-        setTypes.clear();
+        outputColumnScratch.clear();
         isUpdate = false;
         updateTargetNames.clear();
         predicateSource = null;
@@ -229,7 +229,9 @@ final class SqlBinder implements Closeable, Mutable {
         }
     }
 
-    /** Makes a computed column's alias resolvable by later columns; a plain column alias names its input column. */
+    /**
+     * Makes a computed column's alias resolvable by later columns; a plain column alias names its input column.
+     */
     private static void exposeProjectionReference(OutputSchema scope, ProjectPlan project, CharSequence alias, OutputSchema source) {
         if (scope == null || getColumnIndexQuiet(source, alias) >= 0 || getColumnIndexQuiet(scope, alias) >= 0) {
             return;
@@ -258,12 +260,11 @@ final class SqlBinder implements Closeable, Mutable {
     }
 
     private static int getOutputColumnPosition(LogicalPlan output, int index) {
-        while (output.getType() == LogicalPlan.Type.LIMIT || output.getType() == LogicalPlan.Type.SORT
-                || output.getType() == LogicalPlan.Type.SET_OPERATION || output.getType() == LogicalPlan.Type.DISTINCT) {
+        while (output instanceof LimitPlan || output instanceof SortPlan || output instanceof SetOperationPlan || output instanceof DistinctPlan) {
             output = output.inputAt(0);
         }
         return switch (output) {
-            case AggregatePlan aggregate when aggregate.getType() == LogicalPlan.Type.AGGREGATE -> aggregate.getAggregates().getQuick(index).getPosition();
+            case AggregatePlan aggregate -> aggregate.getAggregates().getQuick(index).getPosition();
             case ProjectPlan project -> project.getExpressions().get(index).getPosition();
             default -> throw new IllegalStateException("output column is neither aggregated nor projected");
         };
@@ -278,6 +279,18 @@ final class SqlBinder implements Closeable, Mutable {
         return false;
     }
 
+    private static boolean hasSchema(RecordMetadata metadata, OutputSchema output) {
+        if (metadata.getColumnCount() != output.getColumnCount()) {
+            return false;
+        }
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) != output.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean isProjectionReference(ExpressionNode expression, OutputSchema source, OutputSchema scope) {
         return Chars.indexOfLastUnquoted(expression.token, '.') < 0 && getColumnIndexQuiet(source, expression.token) < 0
                 && getColumnIndexQuiet(scope, expression.token) >= 0;
@@ -285,16 +298,29 @@ final class SqlBinder implements Closeable, Mutable {
 
     private static boolean isReferenced(ProjectPlan project, int columnId) {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (FunctionBinder.references(project.getExpressions().getQuick(i), columnId)) {
+            if (BoundExpressionRewriter.references(project.getExpressions().getQuick(i), columnId)) {
                 return true;
             }
         }
         return false;
     }
 
+    private static SetOperationKind setOperationKind(int modelOperation) {
+        return switch (modelOperation) {
+            case QueryModel.SET_OPERATION_UNION -> SetOperationKind.UNION;
+            case QueryModel.SET_OPERATION_UNION_ALL -> SetOperationKind.UNION_ALL;
+            case QueryModel.SET_OPERATION_EXCEPT -> SetOperationKind.EXCEPT;
+            case QueryModel.SET_OPERATION_EXCEPT_ALL -> SetOperationKind.EXCEPT_ALL;
+            case QueryModel.SET_OPERATION_INTERSECT -> SetOperationKind.INTERSECT;
+            case QueryModel.SET_OPERATION_INTERSECT_ALL -> SetOperationKind.INTERSECT_ALL;
+            default -> throw new IllegalArgumentException("set operation: " + modelOperation);
+        };
+    }
+
     private static void validateLatestByColumn(int columnType, int position, CharSequence name) throws SqlException {
         switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT, ColumnType.INT, ColumnType.IPv4,
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT, ColumnType.INT,
+                 ColumnType.IPv4,
                  ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE,
                  ColumnType.LONG256, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE, ColumnType.SYMBOL,
                  ColumnType.UUID, ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG,
@@ -314,20 +340,20 @@ final class SqlBinder implements Closeable, Mutable {
 
     private int addCursorNode(ExpressionNode node, CharSequence name) {
         int index = -1;
-        for (int i = 0, n = ctx.cursorSources.size(); i < n && index < 0; i++) {
-            if (ExpressionNode.compareNodesExact(ctx.cursorSources.getQuick(i), node)) {
+        for (int i = 0, n = cursorSources.size(); i < n && index < 0; i++) {
+            if (ExpressionNode.compareNodesExact(cursorSources.getQuick(i), node)) {
                 index = i;
             }
         }
         if (index < 0) {
-            index = ctx.cursorSources.size();
-            ctx.cursorSources.add(node);
+            index = cursorSources.size();
+            cursorSources.add(node);
             final CharSequence base = name != null ? name : node.token;
             final int dot = Chars.indexOfLastUnquoted(base, '.');
-            ctx.cursorNames.add(dot < 0 ? base : base.subSequence(dot + 1, base.length()));
+            cursorNames.add(dot < 0 ? base : base.subSequence(dot + 1, base.length()));
         }
         ctx.cursorNodes.add(node);
-        ctx.cursorSourceIndexes.add(index);
+        cursorSourceIndexes.add(index);
         return index;
     }
 
@@ -341,25 +367,25 @@ final class SqlBinder implements Closeable, Mutable {
             join = inputJoin;
         } else {
             join = ctx.joins.next().of(position);
-            join.getInputs().add(ctx.joinInputs.next().of(input, QueryModel.JOIN_CROSS, inputAlias, position));
+            join.getInputs().add(ctx.joinInputs.next().of(input, JoinKind.CROSS, inputAlias, position));
             join.getOrderedInputs().add(join.getInputs().getLast());
             joinBinder.addJoinOutput(join, input.getOutput(), inputAlias);
             join.getOutput().setTimestampIndex(input.getOutput().getTimestampIndex());
         }
-        for (int i = 0, n = ctx.cursorSources.size(); i < n; i++) {
-            final CharSequence name = uniqueCursorName(ctx.cursorNames.getQuick(i), join.getOutput());
-            ctx.cursorNames.setQuick(i, name);
-            final FunctionSourcePlan record = ctx.functionSources.bindRecord(ctx.cursorSources.getQuick(i), name, executionContext, ctx.nextColumnId++);
+        for (int i = 0, n = cursorSources.size(); i < n; i++) {
+            final CharSequence name = uniqueCursorName(cursorNames.getQuick(i), join.getOutput());
+            cursorNames.setQuick(i, name);
+            final FunctionSourcePlan record = ctx.functionSources.bindRecord(cursorSources.getQuick(i), name, executionContext, ctx.nextColumnId++);
             final CharacterStoreEntry entry = ctx.characterStore.newEntry();
             entry.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(i + 1);
             final CharSequence alias = entry.toImmutable();
-            final JoinInput step = ctx.joinInputs.next().of(record, QueryModel.JOIN_CROSS, alias, position);
+            final JoinInput step = ctx.joinInputs.next().of(record, JoinKind.CROSS, alias, position);
             join.getInputs().add(step);
             join.getOrderedInputs().add(step);
             joinBinder.addJoinOutput(join, record.getOutput(), alias);
         }
         for (int i = 0, n = ctx.cursorNodes.size(); i < n; i++) {
-            final int columnIndex = getColumnIndexQuiet(join.getOutput(), ctx.cursorNames.getQuick(ctx.cursorSourceIndexes.getQuick(i)));
+            final int columnIndex = getColumnIndexQuiet(join.getOutput(), cursorNames.getQuick(cursorSourceIndexes.getQuick(i)));
             ctx.cursorColumns.add(ctx.columns.next().of(join.getOutput().getColumnId(columnIndex), ColumnType.RECORD, ctx.cursorNodes.getQuick(i).position));
         }
         return join;
@@ -370,7 +396,7 @@ final class SqlBinder implements Closeable, Mutable {
         if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
             final BoundExpression left = bindFilterConjunct(expression.lhs, input, alias, true, executionContext);
             final BoundExpression right = bindFilterConjunct(expression.rhs, input, alias, true, executionContext);
-            return ctx.functionBinder.combineConjunction(left, right, expression.position);
+            return ctx.expressionRewriter.combineConjunction(left, right, expression.position);
         }
         if (distributeSetFilter(expression, input, input.getOutput(), alias, executionContext)) {
             return ctx.constants.next().ofBoolean(true, expression.position);
@@ -379,16 +405,22 @@ final class SqlBinder implements Closeable, Mutable {
         if (hasSinglePredicateSource(expression, input, alias)) {
             ctx.copyTimestampScope(input.getOutput());
         }
-        final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, input.getOutput(), alias,
-                ctx.joinNativeTimestampIds, isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext);
-        if (!isAndArgument) {
-            return bound;
+        try {
+            final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, input.getOutput(), alias,
+                    ctx.joinNativeTimestampIds, isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext);
+            if (!isAndArgument) {
+                return bound;
+            }
+            final BoundExpression predicate = ctx.functionBinder.toBooleanSubquery(bound);
+            if (!hasColumnReference(expression)) {
+                validateStandaloneConjunct(expression, predicate);
+            } else if (predicate.getDataType() != ColumnType.BOOLEAN && predicate.getDataType() != ColumnType.NULL) {
+                return ctx.nonBooleanConjunct(expression, predicate.getDataType(), predicate.getPosition(), input instanceof ScanPlan, -1);
+            }
+            return predicate;
+        } catch (SqlException e) {
+            return ctx.deferConjunct(e, expression, input.getOutput(), alias, -1);
         }
-        final BoundExpression predicate = ctx.functionBinder.toBooleanSubquery(bound);
-        if (!hasColumnReference(expression)) {
-            validateStandaloneConjunct(expression, predicate);
-        }
-        return predicate;
     }
 
     private LogicalPlan bindFunctionSource(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
@@ -397,23 +429,40 @@ final class SqlBinder implements Closeable, Mutable {
         return sourcePlan;
     }
 
-    private LogicalPlan bindQueryBlock(QueryModel model, SqlExecutionContext executionContext, boolean isOrderAndLimitEnabled) throws SqlException {
+    private LogicalPlan bindQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final LowerCaseCharSequenceObjHashMap<CharSequence> previousHints = ctx.currentHints;
+        final ExpressionNode originatingView = model.getOriginatingViewNameExpr();
+        final int previousRequirementPosition = originatingView == null ? -1
+                : functionParser.enterExecutionRequirementPosition(originatingView.position);
+        ctx.currentHints = mergeHints(model, ctx.currentHints);
+        try {
+            return bindQueryWithHints(model, executionContext);
+        } finally {
+            ctx.currentHints = previousHints;
+            if (originatingView != null) {
+                functionParser.restoreExecutionRequirementPosition(previousRequirementPosition);
+            }
+        }
+    }
+
+    private LogicalPlan bindQueryBlock(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final LowerCaseCharSequenceObjHashMap<CharSequence> previousHints = ctx.currentHints;
         ctx.currentHints = mergeHints(model, ctx.currentHints);
         if (model.getNestedModel() != null) {
             ctx.currentHints = mergeHints(model.getNestedModel(), ctx.currentHints);
         }
         try {
-            return bindQueryBlockWithHints(model, executionContext, isOrderAndLimitEnabled);
+            return bindQueryBlockWithHints(model, executionContext);
         } finally {
             ctx.currentHints = previousHints;
         }
     }
 
-    private LogicalPlan bindQueryBlockWithHints(QueryModel model, SqlExecutionContext executionContext, boolean isOrderAndLimitEnabled) throws SqlException {
+    private LogicalPlan bindQueryBlockWithHints(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.isPivot() && model.getBottomUpColumns().size() == 0) {
             return pivotBinder.rewritePivot(model, executionContext);
         }
+        final boolean isOrderBound = !ctx.isSetOperationBranch;
         final QueryModel source = model.getNestedModel();
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             if (model.getBottomUpColumns().getQuick(i) instanceof WindowExpression window
@@ -432,7 +481,7 @@ final class SqlBinder implements Closeable, Mutable {
             if (subsample.paramCount != 2) {
                 throw SqlException.$(subsample.position, "sdt() requires exactly 2 arguments: column and compdev");
             }
-            if (model.isDistinct() || aggregateBinder.hasAggregation(model, source)) {
+            if (model.isDistinct() || ctx.hasAggregation(model, source)) {
                 throw SqlException.$(subsample.position, "SUBSAMPLE sdt is not supported in an aggregation context");
             }
         }
@@ -446,7 +495,7 @@ final class SqlBinder implements Closeable, Mutable {
         ExpressionNode where = source.getWhereClause() == null ? null
                 : SqlUtil.optimiseBooleanNot(ExpressionNode.deepClone(ctx.bindingExpressions, source.getWhereClause()), ctx.bindingExpressions);
         if (windowJoinIndex(source) > 0) {
-            return temporalJoinBinder.bindWindowJoinQuery(model, source, where, isOrderAndLimitEnabled, executionContext);
+            return temporalJoinBinder.bindWindowJoinQuery(model, source, where, executionContext);
         }
         final boolean isHorizonJoin = horizonJoinIndex(source) > 0;
         final int outerColumnBase = ctx.functionBinder.getOuterColumnIds().size();
@@ -470,11 +519,11 @@ final class SqlBinder implements Closeable, Mutable {
 
         final LatestByPlan latest = source.getLatestBy().size() > 0 ? bindLatestBy(sourcePlan, source) : null;
         LogicalPlan input = sourcePlan;
-        if (where != null && latest != null && sourcePlan.getType() == LogicalPlan.Type.SCAN && ctx.configuration.useWithinLatestByOptimisation()) {
+        if (where != null && latest != null && sourcePlan instanceof ScanPlan && configuration.useWithinLatestByOptimisation()) {
             withinPrefixes.clear();
             validateWithin(where, sourcePlan.getOutput(), sourceAlias(source), executionContext);
         }
-        if (where != null && sourcePlan.getType() != LogicalPlan.Type.JOIN) {
+        if (where != null && !(sourcePlan instanceof JoinPlan)) {
             BoundExpression predicate;
             collectKeySubqueryColumns(sourcePlan, latest, executionContext);
             try {
@@ -484,18 +533,14 @@ final class SqlBinder implements Closeable, Mutable {
                 if (!ctx.isInsideJoin) {
                     throw e;
                 }
-                if (deferredErrorPosition < 0) {
-                    deferredErrorPosition = e.getPosition();
-                    deferredErrorMessage.clear();
-                    deferredErrorMessage.put(e.getFlyweightMessage());
-                }
+                deferError(e);
                 predicate = null;
             } finally {
                 ctx.functionBinder.getKeySubqueryColumnIds().clear();
             }
             if (predicate != null && (!(predicate instanceof ConstantExpression constant) || constant.getLongValue() == 0)) {
                 final FilterPlan filter = ctx.filters.next().of(input, predicate, predicate.getPosition());
-                filter.getOutput().copyFrom(input.getOutput());
+                filter.deriveOutput();
                 input = filter;
             }
         }
@@ -512,7 +557,7 @@ final class SqlBinder implements Closeable, Mutable {
         if (!isHorizonJoin) {
             aggregateBinder.validateGroupByKeys(model, source);
         }
-        if (model.isDistinct() && isOrderAndLimitEnabled) {
+        if (model.isDistinct() && isOrderBound) {
             aggregateBinder.validateDistinctOrder(model, source, sourcePlan.getOutput());
         }
         windowBinder.validateWindowOrder(model, source);
@@ -520,7 +565,9 @@ final class SqlBinder implements Closeable, Mutable {
         if (hasWindows && model.isUpdate()) {
             throw windowBinder.updateWindowException(model);
         }
-        windowBinder.validateWindowAggregation(model, source, isOrderAndLimitEnabled);
+        if (!windowBinder.isAggregationFree(model, source) || model.isDistinct() && aggregateBinder.isDistinctRewritten(model, source)) {
+            windowBinder.validateWindowAggregation(model, source);
+        }
         if (hasWindows) {
             input = windowBinder.bindWindows(model, source, input, executionContext);
             if (sampleByBucket != null && windowBinder.isAggregationFree(model, source)) {
@@ -538,23 +585,21 @@ final class SqlBinder implements Closeable, Mutable {
                 && ctx.functionBinder.getOuterColumnIds().size() == outerColumnBase
                 && isRowCount(model.getBottomUpColumns().getQuick(0).getAst())
                 && isRowCountOrder(model.getBottomUpColumns().getQuick(0), source)) {
-            final LogicalPlan counted = orderBinder.bindRowCount(model, source, input,
-                    isOrderAndLimitEnabled && source.getSubsample() == null, executionContext);
+            final LogicalPlan counted = orderBinder.bindRowCount(model, source, input, executionContext);
             return source.getSubsample() == null ? counted : sampleByBinder.bindSubsample(counted, sourcePlan, source, executionContext);
         }
 
-        if (aggregateBinder.hasAggregation(model, source) || isHorizonJoin || model.isDistinct() && !hasWindows && aggregateBinder.isDistinctRewritten(model, source, isOrderAndLimitEnabled)) {
+        if (ctx.hasAggregation(model, source) || isHorizonJoin || model.isDistinct() && !hasWindows && aggregateBinder.isDistinctRewritten(model, source)) {
             if (model.isUpdate()) {
-                throw aggregateBinder.updateAggregateException(model);
+                throw AggregateBinder.updateAggregateException(model, ctx.functionFactoryCache);
             }
             if (!hasWindows && !isHorizonJoin && collectCursorColumns(model)) {
                 input = bindCursorColumns(input, sourceAlias(source), model.getModelPosition(), executionContext);
             }
             final LogicalPlan aggregated = aggregateBinder.bindAggregation(model, source, input,
-                    isOrderAndLimitEnabled && source.getSubsample() == null, hasWindows ? ctx.windowSelectExpressions : null,
+                    hasWindows ? windowBinder.windowSelectExpressions : null, hasWindows ? windowBinder.windowOrderExpressions : source.getOrderBy(),
                     sampleByBucket, sampleBy, executionContext);
-            return source.getSubsample() == null ? aggregated
-                    : sampleByBinder.bindSubsampleOutput(model, source, sourcePlan, aggregated, isOrderAndLimitEnabled, executionContext);
+            return source.getSubsample() == null ? aggregated : bindSubsampleOutput(model, source, sourcePlan, aggregated, executionContext);
         }
 
         if (subsample != null && !hasWindows && source.getSampleBy() == null && !sampleByBinder.hasSubsampleTimestampProjection(model, source, sourcePlan)) {
@@ -572,7 +617,7 @@ final class SqlBinder implements Closeable, Mutable {
         final ProjectPlan project = ctx.projects.next().of(input, model.getModelPosition());
         ctx.sourceProjectionIndexes.setAll(sourcePlan.getOutput().getColumnCount(), -1);
         final OutputSchema referenceScope = hasWindows ? windowReferenceScope(model, sourcePlan.getOutput())
-                : !model.isUpdate() && hasProjectionReferences(model, sourcePlan.getOutput()) ? projectionReferenceScope(sourcePlan.getOutput()) : null;
+                : !model.isUpdate() && windowBinder.hasProjectionReferences(model, sourcePlan.getOutput()) ? projectionReferenceScope(sourcePlan.getOutput()) : null;
         // Qualified sources can hold distinct columns of one name. A virtual projection names a
         // plain column after its translating alias, which an earlier function argument may take.
         final TranslatingAliases translating = !hasWindows && !model.isUpdate() && referenceScope == null
@@ -582,11 +627,19 @@ final class SqlBinder implements Closeable, Mutable {
         }
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-            final ExpressionNode expression = hasWindows ? ctx.windowSelectExpressions.getQuick(i) : column.getAst();
-            if (!model.isUpdate() && isWildcard(expression)) {
+            final ExpressionNode expression = hasWindows ? windowBinder.windowSelectExpressions.getQuick(i) : column.getAst();
+            final DeferredErrorExpression windowError = hasWindows ? windowBinder.windowSelectErrors.getQuick(i) : null;
+            if (windowError != null) {
+                if (getColumnIndexQuiet(project.getOutput(), column.getName()) >= 0) {
+                    throw SqlException.duplicateColumn(0, column.getName());
+                }
+                ctx.addProjection(project, windowError, null, column.getName(), true);
+                ctx.projectionAliasIndexes.add(project.getExpressions().size() - 1);
+                exposeProjectionReference(referenceScope, project, column.getName(), sourcePlan.getOutput());
+            } else if (!model.isUpdate() && isWildcard(expression)) {
                 boolean hasMatch = false;
                 for (int k = 0, count = sourcePlan.getOutput().getColumnCount(); k < count; k++) {
-                    if (ctx.isWildcardColumn(expression, sourcePlan.getOutput(), k, sourceAlias(source))) {
+                    if (isWildcardColumn(expression, sourcePlan.getOutput(), k, sourceAlias(source))) {
                         ctx.addProjection(project, sourcePlan.getOutput(), k, sourcePlan.getOutput().getColumnName(k), expression.position, true);
                         hasMatch = true;
                     }
@@ -596,8 +649,8 @@ final class SqlBinder implements Closeable, Mutable {
                 }
             } else if (expression.type != ExpressionNode.LITERAL || ctx.functionBinder.isOuterColumn(expression,
                     hasWindows ? ctx.windowBindingScope(sourcePlan.getOutput()) : sourcePlan.getOutput(), sourceAlias(source))) {
-                final int cursorSource = i < ctx.cursorProjectionSources.size() ? ctx.cursorProjectionSources.getQuick(i) : -1;
-                CharSequence name = cursorSource < 0 ? column.getName() : ctx.cursorNames.getQuick(cursorSource);
+                final int cursorSource = i < cursorProjectionSources.size() ? cursorProjectionSources.getQuick(i) : -1;
+                CharSequence name = cursorSource < 0 ? column.getName() : cursorNames.getQuick(cursorSource);
                 if (!model.isUpdate() && getColumnIndexQuiet(project.getOutput(), name) >= 0) {
                     throw SqlException.duplicateColumn(0, name);
                 }
@@ -605,11 +658,25 @@ final class SqlBinder implements Closeable, Mutable {
                 final int preferredType = targetIndex >= 0 ? updateTableColumnTypes.getQuick(targetIndex) : ColumnType.STRING;
                 final OutputSchema scope = referenceScope != null ? referenceScope
                         : hasWindows ? ctx.windowBindingScope(sourcePlan.getOutput()) : sourcePlan.getOutput();
-                final BoundExpression bound = targetIndex >= 0
-                        ? ctx.functionBinder.bindUpdateAssignment(expression, scope, sourceAlias(source), preferredType, executionContext)
-                        : ctx.cursorNodes.size() == 0
-                        ? ctx.functionBinder.bind(expression, scope, sourceAlias(source), preferredType, executionContext)
-                        : ctx.functionBinder.bind(expression, scope, sourceAlias(source), preferredType, ctx.cursorNodes, ctx.cursorColumns, executionContext);
+                final BoundExpression bound;
+                try {
+                    bound = targetIndex >= 0
+                            ? ctx.functionBinder.bindUpdateAssignment(expression, scope, sourceAlias(source), preferredType, executionContext)
+                            : ctx.cursorNodes.size() > 0
+                              ? ctx.functionBinder.bind(expression, scope, sourceAlias(source), preferredType, ctx.cursorNodes, ctx.cursorColumns, executionContext)
+                              : model.isUpdate()
+                                ? ctx.functionBinder.bind(expression, scope, sourceAlias(source), preferredType, executionContext)
+                                : ctx.bindDeferrable(expression, scope, sourceAlias(source), preferredType, executionContext);
+                } catch (SqlException e) {
+                    // UPDATE builds its filter before its assignments.
+                    if (model.isUpdate() && input instanceof FilterPlan filter) {
+                        final BoundExpression filterError = LogicalPlans.firstGenerationError(filter.getPredicate());
+                        if (filterError != null) {
+                            LogicalPlans.raiseGenerationError(filterError);
+                        }
+                    }
+                    throw e;
+                }
                 if (!model.isUpdate() && ColumnType.isCursor(bound.getDataType())) {
                     throw SqlException.$(expression.position, "cursor function cannot be used as a column [column=").put(name).put(']');
                 }
@@ -630,10 +697,11 @@ final class SqlBinder implements Closeable, Mutable {
                         null, column.getAlias() != null ? column.getAlias() : expression.token, true);
                 ctx.projectionAliasIndexes.add(project.getExpressions().size() - 1);
             } else {
-                final int aliasIndex = hasWindows && ctx.windowAliasIds.getQuick(i) >= 0
-                        ? sourcePlan.getOutput().getColumnIndexById(ctx.windowAliasIds.getQuick(i)) : -1;
+                final int aliasIndex = hasWindows && windowBinder.windowAliasIds.getQuick(i) >= 0
+                        ? sourcePlan.getOutput().getColumnIndexById(windowBinder.windowAliasIds.getQuick(i)) : -1;
                 final int index = aliasIndex >= 0 ? aliasIndex
-                        : ctx.bindColumnIndex(expression, hasWindows ? ctx.windowBindingScope(sourcePlan.getOutput()) : sourcePlan.getOutput(), source);
+                        : model.isUpdate() ? ctx.bindColumnIndex(expression, sourcePlan.getOutput(), source)
+                          : ctx.bindForwardedColumnIndex(expression, hasWindows ? ctx.windowBindingScope(sourcePlan.getOutput()) : sourcePlan.getOutput(), sourceAlias(source));
                 CharSequence name = column.getAlias() != null ? column.getAlias() : sourcePlan.getOutput().getColumnName(index);
                 boolean requiresUpdateCast = false;
                 if (model.isUpdate()) {
@@ -666,7 +734,7 @@ final class SqlBinder implements Closeable, Mutable {
         if (source.getJoinModels().size() > 1) {
             throwDeferredError();
         }
-        ctx.clearCursorColumns();
+        clearCursorColumns();
 
         if (model.isUpdate()) {
             prepareUpdateAssignments(model, project);
@@ -675,25 +743,25 @@ final class SqlBinder implements Closeable, Mutable {
         if (source.getSubsample() != null) {
             orderBinder.designateTimestamp(project);
             if (model.isDistinct()) {
-                final LogicalPlan distinct = aggregateBinder.bindDistinct(model, source, sourcePlan, project, false, executionContext);
-                return sampleByBinder.bindSubsampleOutput(model, source, sourcePlan, distinct, isOrderAndLimitEnabled, executionContext);
+                final LogicalPlan distinct = aggregateBinder.bindDistinct(model, source, sourcePlan, project, executionContext);
+                return bindSubsampleOutput(model, source, sourcePlan, distinct, executionContext);
             }
-            final LogicalPlan sampled = isOrderAndLimitEnabled && source.getOrderBy().size() > 0
+            final LogicalPlan sampled = isOrderBound && source.getOrderBy().size() > 0
                     ? orderBinder.bindOutputOrder(model, sourcePlan, project, source, sourceAlias(source),
-                    hasWindows ? ctx.windowOrderExpressions : null, executionContext)
+                    hasWindows ? windowBinder.windowOrderExpressions : null, executionContext)
                     : sampleByBinder.bindSubsample(project, sourcePlan, source, executionContext);
-            return isOrderAndLimitEnabled ? orderBinder.bindLimit(sampled, model, executionContext) : sampled;
+            return isOrderBound ? orderBinder.bindLimit(sampled, model, executionContext) : sampled;
         }
         LogicalPlan result = model.isDistinct()
-                ? aggregateBinder.bindDistinct(model, source, sourcePlan, project, isOrderAndLimitEnabled, executionContext)
-                : isOrderAndLimitEnabled && (hasComputedOrder(project, source)
-                || source.getOrderBy().size() > 0 && (hasComputedProjection(project) || sourcePlan.getType() == LogicalPlan.Type.JOIN
-                || sourcePlan.getType() == LogicalPlan.Type.SET_OPERATION && isSelectedOrder(project, source, sourcePlan.getOutput(), sourceAlias(source)))
+                ? aggregateBinder.bindDistinct(model, source, sourcePlan, project, executionContext)
+                : isOrderBound && (hasComputedOrder(project, source)
+                || source.getOrderBy().size() > 0 && (hasComputedProjection(project) || sourcePlan instanceof JoinPlan
+                || sourcePlan instanceof SetOperationPlan && isSelectedOrder(project, source, sourcePlan.getOutput(), sourceAlias(source)))
                 || LogicalPlans.hasRepeatedColumn(project) && hasProjectedOrder(project, source)
-)
-                  ? orderBinder.bindOutputOrder(model, sourcePlan, project, source, sourceAlias(source), hasWindows ? ctx.windowOrderExpressions : null, executionContext)
-                  : isOrderAndLimitEnabled ? orderBinder.bindSourceOrder(sourcePlan, project, source, sourceAlias(source)) : orderBinder.designateTimestamp(project);
-        return isOrderAndLimitEnabled ? orderBinder.bindLimit(result, model, executionContext) : result;
+        )
+                  ? orderBinder.bindOutputOrder(model, sourcePlan, project, source, sourceAlias(source), hasWindows ? windowBinder.windowOrderExpressions : null, executionContext)
+                  : isOrderBound ? orderBinder.bindSourceOrder(sourcePlan, project, source, sourceAlias(source)) : orderBinder.designateTimestamp(project);
+        return isOrderBound ? orderBinder.bindLimit(result, model, executionContext) : result;
     }
 
     private LogicalPlan bindQueryWithHints(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -704,7 +772,7 @@ final class SqlBinder implements Closeable, Mutable {
             }
         }
         final boolean wasSetOperationBranch = ctx.isSetOperationBranch;
-        ctx.isSetOperationBranch = model.getUnionModel() != null;
+        ctx.isSetOperationBranch = false;
         try {
             return bindSetOperation(model, executionContext);
         } finally {
@@ -780,30 +848,30 @@ final class SqlBinder implements Closeable, Mutable {
             throw SqlException.$(expression.position, "boolean expression expected");
         }
         final FilterPlan filter = ctx.filters.next().of(branch, predicate, predicate.getPosition());
-        filter.getOutput().copyFrom(output);
+        filter.deriveOutput();
         return filter;
     }
 
     private LogicalPlan bindSetOperation(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getUnionModel() == null) {
-            return bindQueryBlock(model, executionContext, true);
+            return bindQueryBlock(model, executionContext);
         }
         final LogicalPlan show = bindShow(model, executionContext);
-        LogicalPlan result = show != null ? show : bindQueryBlock(model, executionContext, false);
+        LogicalPlan result = show != null ? show : bindSetOperationBranch(model, executionContext);
         QueryModel branch = model;
         while (branch.getUnionModel() != null) {
             final QueryModel next = branch.getUnionModel();
             final LogicalPlan nextShow = bindShow(next, executionContext);
-            LogicalPlan right = nextShow != null ? nextShow : bindQueryBlock(next, executionContext, false);
+            LogicalPlan right = nextShow != null ? nextShow : bindSetOperationBranch(next, executionContext);
             final boolean continuesUnion = next.getUnionModel() != null
                     && (next.getSetOperationType() == QueryModel.SET_OPERATION_UNION
                     || next.getSetOperationType() == QueryModel.SET_OPERATION_UNION_ALL);
             final SetOperationPlan operation = ctx.setOperations.next().of(
-                    result, right, branch.getSetOperationType(), branch.getModelPosition(), next.getModelPosition(), !continuesUnion
+                    result, right, setOperationKind(branch.getSetOperationType()), branch.getModelPosition(), next.getModelPosition(), !continuesUnion
             );
-            SetOperationBinder.resolveTypes(operation, setTypes);
-            for (int i = 0, n = setTypes.size(); i < n; i++) {
-                operation.getOutput().add(ctx.nextColumnId++, result.getOutput().getColumnName(i), setTypes.getQuick(i), result.getOutput().isVisible(i));
+            SetOperationBinder.resolveTypes(operation, outputColumnScratch);
+            for (int i = 0, n = outputColumnScratch.size(); i < n; i++) {
+                operation.getOutput().add(ctx.nextColumnId++, result.getOutput().getColumnName(i), outputColumnScratch.getQuick(i), result.getOutput().isVisible(i));
                 operation.getOutput().setSymbolTableStatic(i, SetOperationBinder.isSymbolTableStatic(operation, i));
                 final int leftId = result.getOutput().getColumnId(i);
                 final int rightId = right.getOutput().getColumnId(i);
@@ -841,6 +909,15 @@ final class SqlBinder implements Closeable, Mutable {
                     : orderBinder.bindSourceOrder(result, projection, ordering, null);
         }
         return orderBinder.bindLimit(result, branch, executionContext);
+    }
+
+    private LogicalPlan bindSetOperationBranch(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        ctx.isSetOperationBranch = true;
+        try {
+            return bindQueryBlock(model, executionContext);
+        } finally {
+            ctx.isSetOperationBranch = false;
+        }
     }
 
     private LogicalPlan bindShow(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -925,6 +1002,35 @@ final class SqlBinder implements Closeable, Mutable {
         }
     }
 
+    private LogicalPlan bindSubsampleOutput(
+            QueryModel model, QueryModel source, LogicalPlan sourcePlan, LogicalPlan input, SqlExecutionContext executionContext
+    ) throws SqlException {
+        final boolean isOrderBound = !ctx.isSetOperationBranch;
+        final LogicalPlan result;
+        if (isOrderBound && source.getOrderBy().size() > 0) {
+            for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
+                final ExpressionNode order = source.getOrderBy().getQuick(i);
+                if (order.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(order, input.getOutput(), sourceAlias(source)) == -1) {
+                    final int dot = Chars.indexOfLastUnquoted(order.token, '.');
+                    if (dot > -1 && FunctionBinder.isUnknownQualifier(GenericLexer.unquote(order.token.subSequence(0, dot)), input.getOutput(), sourceAlias(source))) {
+                        throw SqlException.$(order.position, "Invalid table name or alias");
+                    }
+                    throw orderNotSelected(order);
+                }
+            }
+            final ProjectPlan projection = ctx.projects.next().of(input, source.getSubsamplePosition());
+            projection.getOutput().copyFrom(input.getOutput());
+            for (int i = 0, n = input.getOutput().getColumnCount(); i < n; i++) {
+                projection.getExpressions().add(ctx.columns.next().of(input.getOutput().getColumnId(i), input.getOutput().getColumnType(i), model.getModelPosition()));
+            }
+            result = sampleByBinder.bindSubsample(orderBinder.bindSubsampleInputOrder(model, input, projection, source, sourceAlias(source), executionContext),
+                    sourcePlan, source, executionContext);
+        } else {
+            result = sampleByBinder.bindSubsample(input, sourcePlan, source, executionContext);
+        }
+        return isOrderBound ? orderBinder.bindLimit(result, model, executionContext) : result;
+    }
+
     private LogicalPlan bindTimestamp(LogicalPlan input, QueryModel source) throws SqlException {
         final ExpressionNode timestamp = source.getTimestamp();
         if (timestamp == null) {
@@ -939,7 +1045,7 @@ final class SqlBinder implements Closeable, Mutable {
         if (!ColumnType.isTimestamp(output.getColumnType(index))) {
             throw SqlException.$(timestamp.position, "not a TIMESTAMP");
         }
-        if (input.getType() == LogicalPlan.Type.SCAN) {
+        if (input instanceof ScanPlan) {
             // SQL can designate another timestamp. Partition intervals still use
             // the table's native timestamp, retained separately on the scan.
             output.setTimestampIndex(index);
@@ -957,6 +1063,15 @@ final class SqlBinder implements Closeable, Mutable {
         return project;
     }
 
+    private void clearCursorColumns() {
+        ctx.cursorColumns.clear();
+        cursorNames.clear();
+        ctx.cursorNodes.clear();
+        cursorProjectionSources.clear();
+        cursorSourceIndexes.clear();
+        cursorSources.clear();
+    }
+
     private Throwable clearSubqueries(Throwable primary) {
         for (int i = 0; i < subqueryCount; i++) {
             primary = Misc.freeBestEffort(primary, subqueryFactories.getQuick(i));
@@ -967,6 +1082,8 @@ final class SqlBinder implements Closeable, Mutable {
             }
         }
         subqueryFactories.clear();
+        pendingSubqueries.clear();
+        subqueryPositions.clear();
         subqueryCount = 0;
         if (scalarBoundDepth >= MAX_RETAINED_SUBQUERY_DEPTH - 1 && subqueryBinders.size() > 0) {
             // One deeply nested query must not pin a binder per nesting level for the binder lifetime.
@@ -977,19 +1094,19 @@ final class SqlBinder implements Closeable, Mutable {
     }
 
     private Throwable closePrepared(Throwable primary) {
-        return clearSubqueries(ctx.functionSources.closePrepared(ctx.functionBinder.closePrepared(primary)));
+        return clearSubqueries(ctx.functionSources.closePrepared(ctx.preparedFunctions.closePrepared(primary)));
     }
 
     private boolean collectCursorColumns(QueryModel model) {
-        ctx.clearCursorColumns();
+        clearCursorColumns();
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        ctx.cursorProjectionSources.setAll(columns.size(), -1);
+        cursorProjectionSources.setAll(columns.size(), -1);
         for (int i = 0, n = columns.size(); i < n; i++) {
             final ExpressionNode ast = columns.getQuick(i).getAst();
             if (ctx.isCursorCall(ast)) {
-                final int count = ctx.cursorSources.size();
+                final int count = cursorSources.size();
                 if (addCursorNode(ast, columns.getQuick(i).getName()) == count) {
-                    ctx.cursorProjectionSources.setQuick(i, count);
+                    cursorProjectionSources.setQuick(i, count);
                 }
             } else {
                 collectCursorNodes(ast);
@@ -1011,25 +1128,6 @@ final class SqlBinder implements Closeable, Mutable {
         for (int i = 0, n = node.args.size(); i < n; i++) {
             collectCursorNodes(node.args.getQuick(i));
         }
-    }
-
-    // Hints can name aliases assigned to unnamed subqueries before join rewriting.
-    private void collectHintAliases(QueryModel model) {
-        if (model == null) {
-            return;
-        }
-        if (model.getName() == null && hintAliasModels.indexOf(model) < 0) {
-            hintAliasModels.add(model);
-            final CharacterStoreEntry alias = ctx.characterStore.newEntry();
-            alias.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(hintAliases.size());
-            hintAliases.add(alias.toImmutable());
-        }
-        final ObjList<QueryModel> sources = model.getJoinModels();
-        for (int i = 1, n = sources.size(); i < n; i++) {
-            collectHintAliases(sources.getQuick(i));
-        }
-        collectHintAliases(model.getNestedModel());
-        collectHintAliases(model.getUnionModel());
     }
 
     /**
@@ -1084,6 +1182,18 @@ final class SqlBinder implements Closeable, Mutable {
         return true;
     }
 
+    /**
+     * Keeps the first error of a joined source's filter for when the enclosing select list binds without
+     * one; close failures of every swallowed error stay reachable from the deferred one.
+     */
+    private void deferError(SqlException e) {
+        if (deferredError == null) {
+            deferredError = ctx.deferredErrors.next().of(e);
+        } else {
+            deferredError.addSuppressed(e);
+        }
+    }
+
     private int getUpdateColumnIndex(CharSequence name) {
         final ObjList<CharSequence> columns = updateTableColumnNames;
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -1097,12 +1207,32 @@ final class SqlBinder implements Closeable, Mutable {
     }
 
     private boolean isCursorNameTaken(CharSequence name) {
-        for (int i = 0, n = ctx.cursorNames.size(); i < n; i++) {
-            if (ctx.cursorNames.getQuick(i) != name && Chars.equalsIgnoreCase(ctx.cursorNames.getQuick(i), name)) {
+        for (int i = 0, n = cursorNames.size(); i < n; i++) {
+            if (cursorNames.getQuick(i) != name && Chars.equalsIgnoreCase(cursorNames.getQuick(i), name)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private LowerCaseCharSequenceObjHashMap<CharSequence> mergeHints(
+            QueryModel model,
+            LowerCaseCharSequenceObjHashMap<CharSequence> inherited
+    ) {
+        if (model.isCteModel()) {
+            inherited = null;
+        }
+        final LowerCaseCharSequenceObjHashMap<CharSequence> own = model.getHints();
+        if (own.size() == 0) {
+            return inherited;
+        }
+        final LowerCaseCharSequenceObjHashMap<CharSequence> merged = hintScopes.next();
+        merged.putAll(own);
+        if (inherited != null) {
+            // A containing SELECT overrides the same hint in a nested SELECT.
+            merged.putAll(inherited);
+        }
+        return merged;
     }
 
     private void prepareUpdateAssignments(QueryModel model, ProjectPlan project) throws SqlException {
@@ -1146,39 +1276,6 @@ final class SqlBinder implements Closeable, Mutable {
     private OutputSchema projectionReferenceScope(OutputSchema source) {
         ctx.scratchScope.copyFrom(source);
         return ctx.scratchScope;
-    }
-
-    /**
-     * A window function argument may name an earlier computed column, which it reads through a
-     * self-reference column of the inner projection.
-     */
-    private boolean referencesEarlierAlias(ExpressionNode node, ObjList<QueryColumn> columns, int columnIndex, OutputSchema source,
-                                           boolean isWindowArgument) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            if (Chars.indexOfLastUnquoted(node.token, '.') >= 0 || getColumnIndexQuiet(source, node.token) >= 0) {
-                return false;
-            }
-            for (int i = 0; i < columnIndex; i++) {
-                if (Chars.equalsIgnoreCase(columns.getQuick(i).getName(), GenericLexer.unquote(node.token))) {
-                    return !isWindowArgument || !windowBinder.isPureComputedColumn(columns.getQuick(i).getAst());
-                }
-            }
-            return false;
-        }
-        isWindowArgument |= node.windowExpression != null;
-        if (referencesEarlierAlias(node.lhs, columns, columnIndex, source, isWindowArgument)
-                || referencesEarlierAlias(node.rhs, columns, columnIndex, source, isWindowArgument)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (referencesEarlierAlias(node.args.getQuick(i), columns, columnIndex, source, isWindowArgument)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private boolean referencesOnlyColumn(ExpressionNode expression, OutputSchema output, CharSequence alias, int index) {
@@ -1226,8 +1323,8 @@ final class SqlBinder implements Closeable, Mutable {
     }
 
     private void throwDeferredError() throws SqlException {
-        if (deferredErrorPosition >= 0) {
-            throw SqlException.$(deferredErrorPosition, deferredErrorMessage);
+        if (deferredError != null) {
+            throw deferredError.raise();
         }
     }
 
@@ -1239,6 +1336,27 @@ final class SqlBinder implements Closeable, Mutable {
             candidate = entry.toImmutable();
         }
         return candidate;
+    }
+
+    private void validateWithin(ExpressionNode node, OutputSchema input, CharSequence alias,
+                                SqlExecutionContext executionContext) throws SqlException {
+        if (node == null || node.type == ExpressionNode.QUERY) {
+            return;
+        }
+        if (SqlKeywords.isWithinKeyword(node.token)) {
+            validateWithinCall(node, input, alias, executionContext);
+            return;
+        }
+        if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
+            final boolean isRightWithin = node.rhs != null && SqlKeywords.isWithinKeyword(node.rhs.token);
+            if (isRightWithin) {
+                validateWithinCall(node.rhs, input, alias, executionContext);
+            }
+            validateWithin(node.lhs, input, alias, executionContext);
+            if (!isRightWithin) {
+                validateWithin(node.rhs, input, alias, executionContext);
+            }
+        }
     }
 
     private void validateWithinArgument(ExpressionNode argument, OutputSchema input, CharSequence alias, int columnType,
@@ -1315,18 +1433,12 @@ final class SqlBinder implements Closeable, Mutable {
         }
     }
 
-    /**
-     * A SELECT column over windows reads an earlier column by alias when that column computes a
-     * window function, so both read one value.
-     */
     private OutputSchema windowReferenceScope(QueryModel model, OutputSchema source) {
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        for (int i = 1, n = columns.size(); i < n; i++) {
-            if (referencesEarlierAlias(ctx.windowSelectExpressions.getQuick(i), columns, i, source, false)) {
-                return projectionReferenceScope(ctx.windowBindingScope(source));
-            }
-        }
-        return null;
+        return windowBinder.hasWindowProjectionReferences(model, source) ? projectionReferenceScope(ctx.windowBindingScope(source)) : null;
+    }
+
+    static SortDirection sortDirection(int modelDirection) {
+        return modelDirection == QueryModel.ORDER_DIRECTION_DESCENDING ? SortDirection.DESCENDING : SortDirection.ASCENDING;
     }
 
     /**
@@ -1336,15 +1448,14 @@ final class SqlBinder implements Closeable, Mutable {
     LogicalPlan bind(QueryModel model, SqlParserCallback parserCallback, SqlExecutionContext executionContext) throws SqlException {
         clear();
         this.parserCallback = parserCallback;
-        ctx.executionContext = executionContext;
         isUpdate = model.isUpdate();
-        collectHintAliases(model);
-        final SqlBinder previous = ctx.functionParser.swapSubqueryBinder(this);
+        joinBinder.collectHintAliases(model);
+        final SqlBinder previous = functionParser.swapSubqueryBinder(this);
         final LogicalPlan plan;
         try {
             plan = bindQuery(model, executionContext);
         } finally {
-            ctx.functionParser.swapSubqueryBinder(previous);
+            functionParser.swapSubqueryBinder(previous);
         }
         throwDeferredError();
         return plan;
@@ -1353,6 +1464,14 @@ final class SqlBinder implements Closeable, Mutable {
     /**
      * Binds command/VALUES expressions without inventing a relational input.
      */
+    /**
+     * Binds the conjuncts of a filter as conjuncts of a WHERE clause, each one that fails deferred; the caller
+     * combines them with the filter's other conjuncts.
+     */
+    BoundExpression bindConjuncts(ExpressionNode expression, LogicalPlan input, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+        return bindFilterConjunct(expression, input, sourceAlias(source), true, executionContext);
+    }
+
     Function bindExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException {
         assert root == null;
         if (expression == null) {
@@ -1366,14 +1485,15 @@ final class SqlBinder implements Closeable, Mutable {
         Function function = null;
         try {
             final BoundExpression bound = ctx.functionBinder.bind(expression, ctx.scratchScope, null, preferredType, executionContext);
-            function = ctx.functionBinder.instantiate(bound, ctx.scratchScope, metadata, executionContext);
+            completeSubqueries(executionContext);
+            function = ctx.functionInstantiator.instantiate(bound, ctx.scratchScope, metadata, executionContext);
             // Only the executable closure escapes a standalone expression. Reuse
             // preparation storage per VALUES cell, not once per entire statement.
-            ctx.functionBinder.clear();
+            ctx.clearExpressions();
             return function;
         } catch (Throwable th) {
             Misc.free(function, th);
-            final Throwable failure = ctx.functionBinder.closePrepared(th);
+            final Throwable failure = ctx.preparedFunctions.closePrepared(th);
             assert failure == th;
             throw th;
         } finally {
@@ -1421,31 +1541,15 @@ final class SqlBinder implements Closeable, Mutable {
             final BoundExpression bound = ctx.functionBinder.toBooleanSubquery(
                     bindFilterConjunct(expression, input, sourceAlias(source), false, executionContext));
             if (bound.getDataType() != ColumnType.BOOLEAN) {
-                throw SqlException.$(expression.position, "boolean expression expected");
+                return ctx.nonBooleanConjunct(expression, bound.getDataType(), expression.position, input instanceof ScanPlan, -1);
             }
             return bound;
         }
         final int index = ctx.bindColumnIndex(expression, metadata, source);
         if (metadata.getColumnType(index) != ColumnType.BOOLEAN) {
-            throw SqlException.$(expression.position, "boolean expression expected");
+            return ctx.nonBooleanConjunct(expression, metadata.getColumnType(index), expression.position, input instanceof ScanPlan, -1);
         }
         return ctx.columns.next().of(metadata.getColumnId(index), ColumnType.BOOLEAN, expression.position);
-    }
-
-    LogicalPlan bindQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final LowerCaseCharSequenceObjHashMap<CharSequence> previousHints = ctx.currentHints;
-        final ExpressionNode originatingView = model.getOriginatingViewNameExpr();
-        final int previousRequirementPosition = originatingView == null ? -1
-                : ctx.functionParser.enterExecutionRequirementPosition(originatingView.position);
-        ctx.currentHints = mergeHints(model, ctx.currentHints);
-        try {
-            return bindQueryWithHints(model, executionContext);
-        } finally {
-            ctx.currentHints = previousHints;
-            if (originatingView != null) {
-                ctx.functionParser.restoreExecutionRequirementPosition(previousRequirementPosition);
-            }
-        }
     }
 
     LogicalPlan bindSource(QueryModel model, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
@@ -1458,18 +1562,14 @@ final class SqlBinder implements Closeable, Mutable {
         }
     }
 
-    RecordCursorFactory claimSubquery(int index) {
-        final RecordCursorFactory factory = subqueryFactories.getQuick(index);
-        subqueryFactories.setQuick(index, null);
-        return factory;
-    }
-
     int compileSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
         if (subqueryBinders.size() == subqueryCount) {
-            subqueryBinders.add(new SqlBinder(ctx.configuration, ctx.functionParser, compiler));
+            subqueryBinders.add(new SqlBinder(configuration, functionParser, compiler));
         }
         final int index = subqueryCount++;
         subqueryFactories.extendAndSet(index, null);
+        pendingSubqueries.extendAndSet(index, false);
+        subqueryPositions.extendAndSet(index, position);
         final SqlBinder subquery = subqueryBinders.getQuick(index);
         subquery.scalarBoundDepth = scalarBoundDepth + 1;
         final boolean isWindowContextPushed = !executionContext.getWindowContext().isEmpty();
@@ -1477,14 +1577,53 @@ final class SqlBinder implements Closeable, Mutable {
             executionContext.pushWindowContext();
         }
         try {
-            compiler.compileLogicalPlan(subquery, model, parserCallback, executionContext);
-            subqueryFactories.setQuick(index, generateSubquery(index, position, executionContext));
+            compiler.bindPlan(subquery, model, parserCallback, executionContext);
+        } catch (Throwable th) {
+            ctx.isSubqueryFailed = true;
+            throw th;
         } finally {
             if (isWindowContextPushed) {
                 executionContext.popWindowContext();
             }
         }
+        subquery.rootMetadata.of(subquery.root.getOutput());
+        pendingSubqueries.set(index, true);
         return index;
+    }
+
+    /**
+     * Completes, in bind order, every sub-query bound but not complete yet. Runs once the statement is bound, so
+     * binding errors of every level precede sub-query optimisation and generation errors, and before the level is
+     * optimised, so its optimiser sees the stability the generated factories prove.
+     */
+    void completeSubqueries(SqlExecutionContext executionContext) throws SqlException {
+        for (int i = 0; i < subqueryCount; i++) {
+            completeSubquery(i, executionContext);
+        }
+    }
+
+    /**
+     * Completes the sub-query when it is bound only: completes its own sub-queries, optimises it, generates its
+     * factory for the first consumer and hands its consumers the optimised plan and the factory's stability.
+     */
+    void completeSubquery(int index, SqlExecutionContext executionContext) throws SqlException {
+        if (!pendingSubqueries.get(index)) {
+            return;
+        }
+        pendingSubqueries.set(index, false);
+        final SqlBinder subquery = subqueryBinders.getQuick(index);
+        final RecordCursorFactory factory;
+        try {
+            subquery.completeSubqueries(executionContext);
+            compiler.optimisePlan(subquery, executionContext);
+            assert hasSchema(subquery.rootMetadata.getMetadata(), subquery.root.getOutput()) : "optimised sub-query output differs from its bound output";
+            factory = generateSubquery(index, executionContext);
+        } catch (Throwable th) {
+            ctx.isSubqueryFailed = true;
+            throw th;
+        }
+        subqueryFactories.setQuick(index, factory);
+        ctx.functionBinder.completeCursors(index, subquery.root, factory.isStableWithinExecution());
     }
 
     /**
@@ -1530,7 +1669,7 @@ final class SqlBinder implements Closeable, Mutable {
             final LogicalPlan branch = operation.inputAt(i);
             if (branch instanceof SetOperationPlan branchOperation) {
                 isDistributed &= distributeSetFilter(expression, branchOperation, columnIndex, scope, scopeIndex, alias, executionContext);
-            } else if (LogicalPlans.skipProjects(branch).getType() == LogicalPlan.Type.LATEST_BY) {
+            } else if (LogicalPlans.skipProjects(branch) instanceof LatestByPlan) {
                 isDistributed = false;
             } else {
                 operation.replaceInput(i, bindSetBranchFilter(expression, branch, columnIndex, scope, scopeIndex, alias, executionContext));
@@ -1556,7 +1695,10 @@ final class SqlBinder implements Closeable, Mutable {
         assert failure == primary;
     }
 
-    RecordCursorFactory generateSubquery(int index, int position, SqlExecutionContext executionContext) throws SqlException {
+    /**
+     * Generates a new, owned factory of the sub-query.
+     */
+    RecordCursorFactory generateSubquery(int index, SqlExecutionContext executionContext) throws SqlException {
         final SqlBinder subquery = subqueryBinders.getQuick(index);
         executionContext.pushTimestampRequiredFlag(false);
         boolean hasPushedWindowContext = false;
@@ -1566,8 +1708,11 @@ final class SqlBinder implements Closeable, Mutable {
                 hasPushedWindowContext = true;
             }
             final RecordCursorFactory factory = compiler.generatePlan(subquery, false, executionContext);
+            assert hasSchema(factory.getMetadata(), subquery.root.getOutput()) : "generated sub-query metadata differs from its plan";
+            assert !LogicalPlans.isSequenceStable(subquery.root, executionContext) || factory.isStableWithinExecution()
+                    : "generated sub-query is less stable than its plan";
             if (!executionContext.allowNonDeterministicFunctions() && factory.usesExternalDataSource()) {
-                final SqlException exception = SqlException.nonDeterministicColumn(position, "sub-query",
+                final SqlException exception = SqlException.nonDeterministicColumn(subqueryPositions.getQuick(index), "sub-query",
                         executionContext.isLiveViewCompile() ? "live view" : "materialized view");
                 Misc.free(factory, exception);
                 throw exception;
@@ -1581,8 +1726,16 @@ final class SqlBinder implements Closeable, Mutable {
         }
     }
 
+    BoundExpressionRewriter getExpressionRewriter() {
+        return ctx.expressionRewriter;
+    }
+
     FunctionBinder getFunctionBinder() {
         return ctx.functionBinder;
+    }
+
+    FunctionInstantiator getFunctionInstantiator() {
+        return ctx.functionInstantiator;
     }
 
     TableFunctionSources getFunctionSources() {
@@ -1602,11 +1755,11 @@ final class SqlBinder implements Closeable, Mutable {
 
     IntList getOutputColumnPositions() {
         // Borrowed binder scratch; callers must consume it before reuse or clear().
-        outputColumnPositions.clear();
+        outputColumnScratch.clear();
         for (int i = 0, n = root.getOutput().getColumnCount(); i < n; i++) {
-            outputColumnPositions.add(getOutputColumnPosition(i));
+            outputColumnScratch.add(getOutputColumnPosition(i));
         }
-        return outputColumnPositions;
+        return outputColumnScratch;
     }
 
     LogicalPlan getRoot() {
@@ -1619,6 +1772,10 @@ final class SqlBinder implements Closeable, Mutable {
 
     int getSubqueryFirstColumnPosition(int index) {
         return subqueryBinders.getQuick(index).getOutputColumnPosition(0);
+    }
+
+    RecordCursorFactory getSubqueryMetadata(int index) {
+        return subqueryBinders.getQuick(index).rootMetadata;
     }
 
     LogicalPlan getSubqueryPlan(int index) {
@@ -1657,20 +1814,6 @@ final class SqlBinder implements Closeable, Mutable {
         return updateTargetNames;
     }
 
-    /**
-     * Whether a SELECT column names an earlier column's alias that no source column shadows.
-     * Such a reference reads the earlier column's value rather than evaluating it again.
-     */
-    boolean hasProjectionReferences(QueryModel model, OutputSchema source) {
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        for (int i = 1, n = columns.size(); i < n; i++) {
-            if (referencesEarlierAlias(columns.getQuick(i).getAst(), columns, i, source, false)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     boolean hasSinglePredicateSource(ExpressionNode expression, LogicalPlan input, CharSequence alias) throws SqlException {
         assert predicateSource == null;
         try {
@@ -1680,97 +1823,46 @@ final class SqlBinder implements Closeable, Mutable {
         }
     }
 
-    CharSequence hintAlias(QueryModel model) {
-        final CharSequence name = model.getName();
-        return name != null ? name : hintAliases.getQuick(hintAliasModels.indexOf(model));
-    }
-
     boolean isUpdate() {
         return isUpdate;
-    }
-
-    LowerCaseCharSequenceObjHashMap<CharSequence> mergeHints(
-            QueryModel model,
-            LowerCaseCharSequenceObjHashMap<CharSequence> inherited
-    ) {
-        if (model.isCteModel()) {
-            inherited = null;
-        }
-        final LowerCaseCharSequenceObjHashMap<CharSequence> own = model.getHints();
-        if (own.size() == 0) {
-            return inherited;
-        }
-        final LowerCaseCharSequenceObjHashMap<CharSequence> merged = hintScopes.next();
-        merged.putAll(own);
-        if (inherited != null) {
-            // A containing SELECT overrides the same hint in a nested SELECT.
-            merged.putAll(inherited);
-        }
-        return merged;
-    }
-
-    void retainImplicitTimestamp(LogicalPlan plan) {
-        if (plan.getOutput().getTimestampIndex() >= 0) {
-            return;
-        }
-        if (plan instanceof ProjectPlan project) {
-            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression)) {
-                    return;
-                }
-            }
-            retainImplicitTimestamp(project.getInput());
-            final OutputSchema input = project.getInput().getOutput();
-            final int timestampIndex = input.getTimestampIndex();
-            if (timestampIndex >= 0) {
-                final int columnId = ctx.nextColumnId++;
-                project.getExpressions().add(ctx.columns.next().of(input.getColumnId(timestampIndex),
-                        input.getColumnType(timestampIndex), project.getPosition()));
-                // An implicit timestamp belongs to the record layout, never the
-                // enclosing query's SQL name scope or wildcard expansion.
-                project.getOutput().add(columnId, "", input.getColumnType(timestampIndex), input.getMetadata(timestampIndex), false);
-                project.getOutput().setTimestampIndex(project.getOutput().getColumnCount() - 1);
-                ctx.inheritTimestampBinding(input.getColumnId(timestampIndex), columnId);
-            }
-        } else if (plan.getType() == LogicalPlan.Type.FILTER || plan.getType() == LogicalPlan.Type.LIMIT) {
-            final LogicalPlan input = plan.inputAt(0);
-            retainImplicitTimestamp(input);
-            plan.getOutput().copyFrom(input.getOutput());
-        }
-        // Other operators establish their own ordering or equality contract.
-        // In particular, never enlarge a DISTINCT or set-operation tuple.
     }
 
     void setRoot(LogicalPlan root) {
         this.root = root;
     }
 
-    void validateWithin(ExpressionNode node, OutputSchema input, CharSequence alias,
-                                SqlExecutionContext executionContext) throws SqlException {
-        if (node == null || node.type == ExpressionNode.QUERY) {
-            return;
+    /**
+     * Returns an owned factory of the sub-query: the one generated for its first consumer, otherwise a new one.
+     */
+    RecordCursorFactory takeSubquery(int index, SqlExecutionContext executionContext) throws SqlException {
+        completeSubquery(index, executionContext);
+        final RecordCursorFactory factory = subqueryFactories.getQuick(index);
+        if (factory != null) {
+            subqueryFactories.setQuick(index, null);
+            return factory;
         }
-        if (SqlKeywords.isWithinKeyword(node.token)) {
-            validateWithinCall(node, input, alias, executionContext);
-            return;
-        }
-        if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
-            final boolean isRightWithin = node.rhs != null && SqlKeywords.isWithinKeyword(node.rhs.token);
-            if (isRightWithin) {
-                validateWithinCall(node.rhs, input, alias, executionContext);
-            }
-            validateWithin(node.lhs, input, alias, executionContext);
-            if (!isRightWithin) {
-                validateWithin(node.rhs, input, alias, executionContext);
-            }
-        }
+        return generateSubquery(index, executionContext);
     }
 
-    /** Projection aliases: the first reference to a column fixes its alias. */
+    /**
+     * Projection aliases: the first reference to a column fixes its alias.
+     */
     private static final class TranslatingAliases {
-        private final IntHashSet columnIds = new IntHashSet();
+        private final IntHashSet columnIds;
         private final LowerCaseCharSequenceHashSet names = new LowerCaseCharSequenceHashSet();
         private final LowerCaseCharSequenceIntHashMap sequences = new LowerCaseCharSequenceIntHashMap();
+
+        // Borrows the join timestamp scope, which only predicate binding fills, never a projection loop.
+        private TranslatingAliases(IntHashSet columnIds) {
+            this.columnIds = columnIds;
+        }
+
+        private void addColumn(ColumnExpression column, OutputSchema input, CharacterStore store) {
+            final int index = input.getColumnIndexById(column.getColumnId());
+            if (index >= 0) {
+                add(column.getColumnId(), input.getColumnName(index), store);
+            }
+        }
 
         CharSequence add(int columnId, CharSequence name, CharacterStore store) {
             if (!columnIds.add(columnId)) {
@@ -1809,13 +1901,6 @@ final class SqlBinder implements Closeable, Mutable {
             names.clear();
             sequences.clear();
             return this;
-        }
-
-        private void addColumn(ColumnExpression column, OutputSchema input, CharacterStore store) {
-            final int index = input.getColumnIndexById(column.getColumnId());
-            if (index >= 0) {
-                add(column.getColumnId(), input.getColumnName(index), store);
-            }
         }
     }
 }

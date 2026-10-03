@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -39,8 +40,23 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
     public static final String NAME = "timestamp_floor";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+    }
+
+    @Override
     public String getSignature() {
         return NAME + "(sN)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final CharSequence str = args.getQuick(0).getStrA(null);
+        final char c = stride(str) > 0 ? unit(str) : 1;
+        return switch (c) {
+            case 'M', 'y', 'w', 'd', 'h', 'm', 's', 'T', 'U', 'n' -> true;
+            default -> throw invalidUnit(c, str, argPositions.getQuick(0));
+        };
     }
 
     @Override
@@ -52,25 +68,8 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence str = args.getQuick(0).getStrA(null);
-        int stride = 1;
-        char c = 0;
-        if (str != null) {
-            if (str.length() == 1) {
-                c = str.charAt(0);
-            } else if (str.length() > 1) {
-                c = str.charAt(str.length() - 1);
-                try {
-                    stride = Numbers.parseInt(str, 0, str.length() - 1);
-                    if (stride <= 0) {
-                        c = 1;
-                    }
-                } catch (NumericException ignored) {
-                    c = 1;
-                }
-            } else {
-                c = 1; // report it as an empty unit rather than null
-            }
-        }
+        final int stride = stride(str);
+        final char c = stride > 0 ? unit(str) : 1;
         Function arg = args.getQuick(1);
         int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(arg.getType()), ColumnType.TIMESTAMP_MICRO);
         switch (c) {
@@ -94,11 +93,36 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
                 return createFloorFunction(arg, "microsecond", stride, timestampType);
             case 'n':
                 return createFloorFunction(arg, "nanosecond", stride, timestampType);
-            case 0:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(str).put('\'');
+                throw invalidUnit(c, str, argPositions.getQuick(0));
         }
+    }
+
+    private static SqlException invalidUnit(char unit, CharSequence str, int position) {
+        return unit == 0
+                ? SqlException.position(position).put("invalid unit 'null'")
+                : SqlException.position(position).put("invalid unit '").put(str).put('\'');
+    }
+
+    private static int stride(CharSequence str) {
+        if (str == null || str.length() < 2) {
+            return 1;
+        }
+        try {
+            return Numbers.parseInt(str, 0, str.length() - 1);
+        } catch (NumericException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * The last letter of a unit spelling: 0 for a null spelling, 1 for an empty one.
+     */
+    private static char unit(CharSequence str) {
+        if (str == null) {
+            return 0;
+        }
+        return str.isEmpty() ? 1 : str.charAt(str.length() - 1);
     }
 
     private static Function createFloorFunction(Function arg, String unit, int stride, int timestampType) {

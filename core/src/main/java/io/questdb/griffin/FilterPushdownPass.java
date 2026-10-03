@@ -25,16 +25,19 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.DeferredErrorExpression;
+import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -43,6 +46,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.UnaryPlan;
@@ -63,6 +67,7 @@ final class FilterPushdownPass implements Mutable {
     private static final int RUNTIME_LEAVES = 1;
     private static final int STATIC_LEAVES = 0;
     private final AggregateInputOrderPass aggregateInputOrder;
+    private final OptimiserContext context;
     private final ObjList<BoundExpression> expressionScratch;
     private final ObjectPool<FilterPlan> filters;
     private final IntList latestKeyPositions;
@@ -72,13 +77,12 @@ final class FilterPushdownPass implements Mutable {
     private final ObjectPool<ProjectPlan> narrowingProjects;
     private final IntList transitiveFactOrigins;
     private final ObjList<BoundExpression> transitiveFacts;
-    private SqlExecutionContext executionContext;
-    private FunctionBinder functionBinder;
     private boolean isLatestKeyScope;
     private LogicalPlan latestKeyLimit;
     private SortPlan latestKeySort;
 
     FilterPushdownPass(
+            OptimiserContext context,
             AggregateInputOrderPass aggregateInputOrder,
             ObjList<BoundExpression> expressionScratch,
             ObjectPool<FilterPlan> filters,
@@ -88,6 +92,7 @@ final class FilterPushdownPass implements Mutable {
             IntList transitiveFactOrigins,
             ObjList<BoundExpression> transitiveFacts
     ) {
+        this.context = context;
         this.aggregateInputOrder = aggregateInputOrder;
         this.expressionScratch = expressionScratch;
         this.filters = filters;
@@ -100,8 +105,6 @@ final class FilterPushdownPass implements Mutable {
 
     @Override
     public void clear() {
-        executionContext = null;
-        functionBinder = null;
         isLatestKeyScope = false;
         latestKeyLimit = null;
         latestKeySort = null;
@@ -167,20 +170,21 @@ final class FilterPushdownPass implements Mutable {
 
     private static boolean hasMasterNullingJoin(JoinPlan join) {
         for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            final int type = join.getInputs().getQuick(i).getJoinType();
-            if (type == QueryModel.JOIN_RIGHT_OUTER || type == QueryModel.JOIN_FULL_OUTER) {
+            final JoinKind type = join.getInputs().getQuick(i).getJoinType();
+            if (type == JoinKind.RIGHT_OUTER || type == JoinKind.FULL_OUTER) {
                 return true;
             }
         }
         return false;
     }
 
-    /** Whether a join step is neither INNER, CROSS nor LEFT/RIGHT/FULL OUTER, so equality facts cannot cross it. */
+    /**
+     * Whether a join step is neither INNER, CROSS nor LEFT/RIGHT/FULL OUTER, so equality facts cannot cross it.
+     */
     private static boolean hasNonTransitiveJoin(JoinPlan join) {
         for (int i = 1, n = join.getInputs().size(); i < n; i++) {
             switch (join.getInputs().getQuick(i).getJoinType()) {
-                case QueryModel.JOIN_INNER, QueryModel.JOIN_CROSS, QueryModel.JOIN_LEFT_OUTER,
-                        QueryModel.JOIN_RIGHT_OUTER, QueryModel.JOIN_FULL_OUTER -> {
+                case INNER, CROSS, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER -> {
                 }
                 default -> {
                     return true;
@@ -190,7 +194,9 @@ final class FilterPushdownPass implements Mutable {
         return false;
     }
 
-    /** Whether the expression, or any call a constant folds from, has a NULL literal argument. */
+    /**
+     * Whether the expression, or any call a constant folds from, has a NULL literal argument.
+     */
     private static boolean hasNullLiteral(BoundExpression expression) {
         if (expression instanceof ConstantExpression constant) {
             return constant.getDataType() == ColumnType.NULL || constant.getSource() != null && hasNullLiteral(constant.getSource());
@@ -253,8 +259,8 @@ final class FilterPushdownPass implements Mutable {
 
     private static boolean isInnerJoinRegion(JoinPlan join) {
         for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            final int type = join.getInputs().getQuick(i).getJoinType();
-            if (type != QueryModel.JOIN_INNER && type != QueryModel.JOIN_CROSS) {
+            final JoinKind type = join.getInputs().getQuick(i).getJoinType();
+            if (type != JoinKind.INNER && type != JoinKind.CROSS) {
                 return false;
             }
         }
@@ -355,9 +361,9 @@ final class FilterPushdownPass implements Mutable {
     }
 
     private static boolean isSetBranchSelectionBarrier(LogicalPlan plan) {
-        return switch (plan.getType()) {
-            case LIMIT, LATEST_BY, WINDOW -> true;
-            case FILTER, PROJECT, SORT -> isSetBranchSelectionBarrier(plan.inputAt(0));
+        return switch (plan) {
+            case LimitPlan _, LatestByPlan _, WindowPlan _ -> true;
+            case FilterPlan _, ProjectPlan _, SortPlan _ -> isSetBranchSelectionBarrier(plan.inputAt(0));
             default -> false;
         };
     }
@@ -366,11 +372,6 @@ final class FilterPushdownPass implements Mutable {
         final FunctionExpression call = (FunctionExpression) selector;
         final String name = call.getName();
         return "=".equals(name) || "in".equals(name) && call.getArgumentCount() == 2;
-    }
-
-    // Bind variables report non-determinism for plan caching, yet hold one value per execution.
-    private static boolean isUnstable(BoundExpression predicate) {
-        return (predicate.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION) == 0;
     }
 
     private static boolean isSubsampleKeepFilter(FilterPlan filter) {
@@ -392,7 +393,9 @@ final class FilterPushdownPass implements Mutable {
                 && column.getColumnId() == input.getTimestampColumnId();
     }
 
-    /** A conjunct that pins a direct column reference: column = constant or column ~ pattern, free of NULL literals. */
+    /**
+     * A conjunct that pins a direct column reference: column = constant or column ~ pattern, free of NULL literals.
+     */
     private static boolean isTransitiveFact(BoundExpression predicate) {
         final ColumnExpression column = transitiveFilterColumn(predicate);
         if (column == null) {
@@ -407,6 +410,11 @@ final class FilterPushdownPass implements Mutable {
         };
     }
 
+    // Bind variables report non-determinism for plan caching, yet hold one value per execution.
+    private static boolean isUnstable(BoundExpression predicate) {
+        return !LogicalPlans.isStableWithinExecution(predicate);
+    }
+
     private static int joinSourceOrdinal(BoundExpression expression, JoinPlan join) {
         if (expression instanceof ColumnExpression column) {
             for (int i = 0, n = join.getInputs().size(); i < n; i++) {
@@ -415,6 +423,9 @@ final class FilterPushdownPass implements Mutable {
                 }
             }
             throw new IllegalStateException("join predicate input has changed");
+        }
+        if (expression instanceof DeferredErrorExpression deferred) {
+            return deferred.getJoinInput();
         }
         int source = -1;
         if (expression instanceof FunctionExpression function) {
@@ -588,8 +599,8 @@ final class FilterPushdownPass implements Mutable {
             final BoundExpression conjunct = conjuncts.getQuick(i);
             final int origin = origins.getQuick(i);
             if (!isInnerRegion && origin >= 0) {
-                final int type = join.getInputs().getQuick(origin).getJoinType();
-                if (type != QueryModel.JOIN_INNER && type != QueryModel.JOIN_CROSS) {
+                final JoinKind type = join.getInputs().getQuick(origin).getJoinType();
+                if (type != JoinKind.INNER && type != JoinKind.CROSS) {
                     continue;
                 }
             }
@@ -627,9 +638,9 @@ final class FilterPushdownPass implements Mutable {
         mappingProjection.of(target, predicate.getPosition());
         mappingProjection.getOutput().add(masterId, target.getOutput().getColumnName(index), column.getDataType(), true);
         mappingProjection.getExpressions().add(mappingColumn.of(slaveId, column.getDataType(), column.getPosition()));
-        FunctionExpression derived = (FunctionExpression) functionBinder.copyRemappedColumns(predicate, mappingProjection);
+        FunctionExpression derived = (FunctionExpression) context.getRewriter().copyRemappedColumns(predicate, mappingProjection);
         if (((FunctionExpression) predicate).argumentAt(1) == column) {
-            derived = functionBinder.commuteEquality(derived);
+            derived = context.getRewriter().commuteEquality(derived);
         }
         if (pushSourceJoinFilter(slave, derived) && slave.isSubquery()) {
             slave.unqualifySlaveKeyName(keyIndex);
@@ -707,20 +718,20 @@ final class FilterPushdownPass implements Mutable {
 
     private BoundExpression hoistEarlierJoinConjuncts(JoinPlan join, BoundExpression predicate, int position) throws SqlException {
         if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            return functionBinder.replaceConjunction(call, hoistEarlierJoinConjuncts(join, call.argumentAt(0), position),
+            return context.getRewriter().replaceConjunction(call, hoistEarlierJoinConjuncts(join, call.argumentAt(0), position),
                     hoistEarlierJoinConjuncts(join, call.argumentAt(1), position));
         }
-        if (predicate == null || !LogicalPlans.isOrderIndependent(predicate)) {
+        if (predicate == null || !LogicalPlans.isOrderIndependent(predicate) || LogicalPlans.hasDeferredConjunct(predicate)) {
             return predicate;
         }
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         final int target = latestJoinPosition(predicate, join);
-        if (target < 1 || target >= position || ordered.getQuick(target).getJoinType() != QueryModel.JOIN_LEFT_OUTER) {
+        if (target < 1 || target >= position || ordered.getQuick(target).getJoinType() != JoinKind.LEFT_OUTER) {
             return predicate;
         }
         for (int i = target + 1; i < position; i++) {
             switch (ordered.getQuick(i).getJoinType()) {
-                case QueryModel.JOIN_INNER, QueryModel.JOIN_CROSS, QueryModel.JOIN_LEFT_OUTER -> {
+                case INNER, CROSS, LEFT_OUTER -> {
                 }
                 default -> {
                     return predicate;
@@ -728,12 +739,12 @@ final class FilterPushdownPass implements Mutable {
             }
         }
         final JoinInput step = ordered.getQuick(target);
-        step.setPostJoinFilter(functionBinder.combineConjunction(step.getPostJoinFilter(), predicate, predicate.getPosition()));
+        step.setPostJoinFilter(context.getRewriter().combineConjunction(step.getPostJoinFilter(), predicate, predicate.getPosition()));
         return null;
     }
 
     private boolean isNullRejectingFact(FunctionExpression fact) {
-        return functionBinder.isNullRejecting(fact, fact.argumentAt(0) == transitiveFilterColumn(fact) ? 0 : 1, executionContext);
+        return context.isNullRejecting(fact, fact.argumentAt(0) == transitiveFilterColumn(fact) ? 0 : 1);
     }
 
     /**
@@ -750,7 +761,7 @@ final class FilterPushdownPass implements Mutable {
         }
         int boundaryPosition = -1;
         for (int i = sourcePosition + 1, n = ordered.size(); i < n && boundaryPosition < 0; i++) {
-            if (LogicalPlans.isMasterNullingJoin(ordered.getQuick(i).getJoinType())) {
+            if (ordered.getQuick(i).getJoinType().isMasterNulling()) {
                 boundaryPosition = i;
             }
         }
@@ -767,8 +778,8 @@ final class FilterPushdownPass implements Mutable {
             return LogicalPlans.canPushJoinFilter(join, source, last);
         }
         final JoinInput input = join.getInputs().getQuick(source);
-        if (join.getOrderedInputs().indexOf(input) > 0 && input.getJoinType() != QueryModel.JOIN_INNER
-                && input.getJoinType() != QueryModel.JOIN_CROSS) {
+        if (join.getOrderedInputs().indexOf(input) > 0 && input.getJoinType() != JoinKind.INNER
+                && input.getJoinType() != JoinKind.CROSS) {
             return false;
         }
         if (!hasMasterNullingJoin(join)) {
@@ -793,7 +804,7 @@ final class FilterPushdownPass implements Mutable {
             collectLatestKeyValues(call, keyId, latestKeyPositions);
             final FunctionExpression first = (FunctionExpression) firstLatestKeyEquality(call);
             final BoundExpression key = first.argumentAt(isKeyColumn(first.argumentAt(0), keyId) ? 0 : 1);
-            return functionBinder.symbolIn(key, expressionScratch, latestKeyPositions, call.getFunctionFlags(), call.getPosition());
+            return context.getRewriter().symbolIn(key, expressionScratch, latestKeyPositions, call.getFunctionFlags(), call.getPosition());
         } finally {
             expressionScratch.clear();
             latestKeyPositions.clear();
@@ -867,9 +878,9 @@ final class FilterPushdownPass implements Mutable {
                 final BoundExpression movable = selectComputedProjectionConjuncts(filter.getPredicate(), project, true);
                 if (movable != null) {
                     final BoundExpression residual = selectComputedProjectionConjuncts(filter.getPredicate(), project, false);
-                    final BoundExpression substituted = functionBinder.substituteProjection(movable, project);
+                    final BoundExpression substituted = context.getRewriter().substituteProjection(movable, project);
                     final FilterPlan pushed = filters.next().of(project.getInput(), substituted, substituted.getPosition());
-                    pushed.getOutput().copyFrom(project.getInput().getOutput());
+                    pushed.deriveOutput();
                     project.replaceInput(0, pushDownScopedFilter(pushed));
                     if (residual != null) {
                         filter.of(project, residual, filter.getPosition());
@@ -884,15 +895,15 @@ final class FilterPushdownPass implements Mutable {
             if (input instanceof ProjectPlan project) {
                 // A projected timestamp CAST keeps scalar precision in its consumer's scope.
                 if (!canPushThroughProjection(filter.getPredicate(), project)) {
-                    if (!LogicalPlans.isOrderIndependent(filter.getPredicate())) {
+                    if (!LogicalPlans.isOrderIndependent(filter.getPredicate()) || LogicalPlans.hasDeferredConjunct(filter.getPredicate())) {
                         return result;
                     }
                     final BoundExpression movable = selectProjectionConjuncts(filter.getPredicate(), project, true);
                     if (movable != null) {
                         final BoundExpression residual = selectProjectionConjuncts(filter.getPredicate(), project, false);
-                        final BoundExpression remapped = functionBinder.remapColumns(movable, project);
+                        final BoundExpression remapped = context.getRewriter().remapColumns(movable, project);
                         final FilterPlan pushed = filters.next().of(project.getInput(), remapped, remapped.getPosition());
-                        pushed.getOutput().copyFrom(project.getInput().getOutput());
+                        pushed.deriveOutput();
                         project.replaceInput(0, pushDownFilter(pushed));
                         filter.of(project, residual, filter.getPosition());
                     }
@@ -902,7 +913,7 @@ final class FilterPushdownPass implements Mutable {
                 crossedProject = project;
                 // Remapping completes before edges change. The binder remains the sole
                 // owner of any prepared closure; the rule owns descriptions only.
-                predicate = functionBinder.remapColumns(filter.getPredicate(), project);
+                predicate = context.getRewriter().remapColumns(filter.getPredicate(), project);
             } else if (input instanceof FilterPlan inner) {
                 if (isSubsampleKeepFilter(inner) || isUnstable(inner.getPredicate()) || isUnstable(filter.getPredicate())) {
                     return result;
@@ -912,14 +923,14 @@ final class FilterPushdownPass implements Mutable {
                 LogicalPlans.collectConjuncts(filter.getPredicate(), expressionScratch);
                 BoundExpression combined = inner.getPredicate();
                 for (int i = 0, n = expressionScratch.size(); i < n; i++) {
-                    combined = functionBinder.combineConjunction(combined, expressionScratch.getQuick(i), filter.getPosition());
+                    combined = context.getRewriter().combineConjunction(combined, expressionScratch.getQuick(i), filter.getPosition());
                 }
                 expressionScratch.clear();
                 filter.of(inner.getInput(), combined, filter.getPosition());
-                filter.getOutput().copyFrom(inner.getInput().getOutput());
+                filter.deriveOutput();
                 continue;
             } else if (input instanceof SortPlan sort) {
-                if (!LogicalPlans.isOrderIndependent(filter.getPredicate())) {
+                if (!LogicalPlans.isOrderIndependent(filter.getPredicate()) || LogicalPlans.hasDeferredConjunct(filter.getPredicate())) {
                     final BoundExpression movable = selectOrderIndependentConjuncts(filter.getPredicate(), true);
                     if (movable == null) {
                         return result;
@@ -927,7 +938,7 @@ final class FilterPushdownPass implements Mutable {
                     final BoundExpression residual = selectOrderIndependentConjuncts(filter.getPredicate(), false);
                     final LogicalPlan belowSort = sort.getInput();
                     final FilterPlan pushed = filters.next().of(belowSort, movable, movable.getPosition());
-                    pushed.getOutput().copyFrom(belowSort.getOutput());
+                    pushed.deriveOutput();
                     sort.replaceInput(0, pushDownFilter(pushed));
                     filter.of(sort, residual, filter.getPosition());
                     return result;
@@ -962,10 +973,9 @@ final class FilterPushdownPass implements Mutable {
                     filter.of(input, residual, filter.getPosition());
                 }
                 return result;
-            } else if (input instanceof AggregatePlan aggregate && input.getType() == LogicalPlan.Type.AGGREGATE
-                    && aggregate.getInput().getType() != LogicalPlan.Type.HORIZON_JOIN) {
+            } else if (input instanceof AggregatePlan aggregate && !(aggregate.getInput() instanceof HorizonJoinPlan)) {
                 final ProjectPlan keys = groupingKeyView(aggregate);
-                if (keys == null || isUnstable(filter.getPredicate())) {
+                if (keys == null || isUnstable(filter.getPredicate()) || LogicalPlans.hasDeferredConjunct(filter.getPredicate())) {
                     return result;
                 }
                 final BoundExpression movable = selectKeyConjuncts(filter.getPredicate(), keys, true);
@@ -973,9 +983,9 @@ final class FilterPushdownPass implements Mutable {
                     return result;
                 }
                 final BoundExpression residual = selectKeyConjuncts(filter.getPredicate(), keys, false);
-                final BoundExpression remapped = functionBinder.remapColumns(movable, keys);
+                final BoundExpression remapped = context.getRewriter().remapColumns(movable, keys);
                 final FilterPlan pushed = filters.next().of(aggregate.getInput(), remapped, remapped.getPosition());
-                pushed.getOutput().copyFrom(aggregate.getInput().getOutput());
+                pushed.deriveOutput();
                 aggregate.replaceInput(0, pushDownScopedFilter(pushed));
                 if (residual != null) {
                     filter.of(input, residual, filter.getPosition());
@@ -986,13 +996,12 @@ final class FilterPushdownPass implements Mutable {
                 }
                 parent.replaceInput(0, input);
                 return result;
-            } else if (input.getType() == LogicalPlan.Type.FILL) {
+            } else if (input instanceof FillPlan) {
                 // Keyed fill emits the same buckets for each surviving key, so key-only
                 // conjuncts filter the aggregate input instead.
                 final LogicalPlan fillInput = input.inputAt(0);
-                final ProjectPlan keys = fillInput instanceof AggregatePlan aggregate && fillInput.getType() == LogicalPlan.Type.AGGREGATE
-                        ? groupingKeyView(aggregate) : null;
-                if (keys == null || !LogicalPlans.isOrderIndependent(filter.getPredicate())) {
+                final ProjectPlan keys = fillInput instanceof AggregatePlan aggregate ? groupingKeyView(aggregate) : null;
+                if (keys == null || !LogicalPlans.isOrderIndependent(filter.getPredicate()) || LogicalPlans.hasDeferredConjunct(filter.getPredicate())) {
                     return result;
                 }
                 final BoundExpression movable = selectKeyConjuncts(filter.getPredicate(), keys, true);
@@ -1001,7 +1010,7 @@ final class FilterPushdownPass implements Mutable {
                 }
                 final BoundExpression residual = selectKeyConjuncts(filter.getPredicate(), keys, false);
                 final FilterPlan pushed = filters.next().of(fillInput, movable, movable.getPosition());
-                pushed.getOutput().copyFrom(fillInput.getOutput());
+                pushed.deriveOutput();
                 input.replaceInput(0, pushDownFilter(pushed));
                 if (residual != null) {
                     filter.of(input, residual, filter.getPosition());
@@ -1020,7 +1029,7 @@ final class FilterPushdownPass implements Mutable {
                     if (parent instanceof SortPlan sort && crossedProject != null && crossedProject.getInput() == sort) {
                         if (sort.getColumnIds().size() == 1
                                 && sort.getColumnIds().getQuick(0) == input.getOutput().getTimestampColumnId()
-                                && sort.getDirections().getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                                && sort.getDirections().getQuick(0) == SortDirection.ASCENDING) {
                             crossedProject.replaceInput(0, filter);
                         }
                     }
@@ -1028,7 +1037,7 @@ final class FilterPushdownPass implements Mutable {
                 }
                 final LogicalPlan scan = input.inputAt(0);
                 final FilterPlan pushed = filters.next().of(scan, keys, keys.getPosition());
-                pushed.getOutput().copyFrom(scan.getOutput());
+                pushed.deriveOutput();
                 input.replaceInput(0, pushed);
                 final BoundExpression residual = withoutConjunct(filter.getPredicate(), selector);
                 if (residual != null) {
@@ -1047,7 +1056,7 @@ final class FilterPushdownPass implements Mutable {
             }
             final LogicalPlan newInput = crossed.getInput();
             filter.of(newInput, predicate, filter.getPosition());
-            filter.getOutput().copyFrom(newInput.getOutput());
+            filter.deriveOutput();
             crossed.replaceInput(0, filter);
             if (parent == null) {
                 result = crossed;
@@ -1087,7 +1096,7 @@ final class FilterPushdownPass implements Mutable {
         if (plan instanceof FilterPlan filter) {
             return pushDownFilter(filter);
         }
-        if (plan instanceof AggregatePlan aggregate && plan.getType() == LogicalPlan.Type.AGGREGATE) {
+        if (plan instanceof AggregatePlan aggregate) {
             aggregateInputOrder.removeInputOrder(aggregate);
         }
         return plan;
@@ -1116,9 +1125,9 @@ final class FilterPushdownPass implements Mutable {
         mappingProjection.of(branch, predicate.getPosition());
         mappingProjection.getOutput().add(output.getColumnId(timestampIndex), output.getColumnName(timestampIndex), type, true);
         mappingProjection.getExpressions().add(mappingColumn.of(branch.getOutput().getColumnId(timestampIndex), type, predicate.getPosition()));
-        final BoundExpression replacement = functionBinder.copyRemappedColumns(predicate, mappingProjection);
+        final BoundExpression replacement = context.getRewriter().copyRemappedColumns(predicate, mappingProjection);
         final FilterPlan pushed = filters.next().of(branch, replacement, predicate.getPosition());
-        pushed.getOutput().copyFrom(branch.getOutput());
+        pushed.deriveOutput();
         // A row-selection barrier keeps the filter above the whole branch.
         operation.replaceInput(branchIndex, isSetBranchSelectionBarrier(branch) ? pushed : pushDownScopedFilter(pushed));
         return true;
@@ -1128,9 +1137,10 @@ final class FilterPushdownPass implements Mutable {
         if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
             final BoundExpression left = pushSetConjuncts(operation, call.argumentAt(0), timestampIndex);
             final BoundExpression right = pushSetConjuncts(operation, call.argumentAt(1), timestampIndex);
-            return functionBinder.replaceConjunction(call, left, right);
+            return context.getRewriter().replaceConjunction(call, left, right);
         }
-        if (isUnstable(predicate) || singleColumnId(predicate) != operation.getOutput().getColumnId(timestampIndex)) {
+        if (isUnstable(predicate) || LogicalPlans.hasDeferredConjunct(predicate)
+                || singleColumnId(predicate) != operation.getOutput().getColumnId(timestampIndex)) {
             return predicate;
         }
         final boolean isLeftPushed = pushSetBranch(operation, 0, predicate, timestampIndex);
@@ -1149,7 +1159,9 @@ final class FilterPushdownPass implements Mutable {
         return residual;
     }
 
-    /** Returns whether the filter moved below the input's top operator. */
+    /**
+     * Returns whether the filter moved below the input's top operator.
+     */
     private boolean pushSourceJoinFilter(JoinInput occurrence, BoundExpression predicate) throws SqlException {
         if (predicate == null) {
             return false;
@@ -1157,7 +1169,7 @@ final class FilterPushdownPass implements Mutable {
         final LogicalPlan input = occurrence.getInput();
         assert input != null;
         final FilterPlan filter = filters.next().of(input, predicate, predicate.getPosition());
-        filter.getOutput().copyFrom(input.getOutput());
+        filter.deriveOutput();
         final LogicalPlan pushed = pushDownScopedFilter(filter);
         occurrence.setInput(pushed);
         return pushed != filter;
@@ -1170,12 +1182,12 @@ final class FilterPushdownPass implements Mutable {
      */
     private BoundExpression selectComputedProjectionConjuncts(BoundExpression predicate, ProjectPlan project, boolean isMovable) {
         if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            return functionBinder.replaceConjunction(call,
+            return context.getRewriter().replaceConjunction(call,
                     selectComputedProjectionConjuncts(call.argumentAt(0), project, isMovable),
                     selectComputedProjectionConjuncts(call.argumentAt(1), project, isMovable));
         }
         final int leaves = projectedLeaves(predicate, project);
-        final boolean isPushable = LogicalPlans.isOrderIndependent(predicate) && leaves != OTHER_LEAVES
+        final boolean isPushable = LogicalPlans.isOrderIndependent(predicate) && !LogicalPlans.hasDeferredConjunct(predicate) && leaves != OTHER_LEAVES
                 && (leaves != OFFSET_LEAVES || !hasInputTimestamp(project));
         return isPushable == isMovable ? predicate : null;
     }
@@ -1185,7 +1197,7 @@ final class FilterPushdownPass implements Mutable {
                 && call.isAnd()) {
             final BoundExpression left = selectJoinConjuncts(call.argumentAt(0), join, lastInput, selectedSource);
             final BoundExpression right = selectJoinConjuncts(call.argumentAt(1), join, lastInput, selectedSource);
-            return functionBinder.replaceConjunction(call, left, right);
+            return context.getRewriter().replaceConjunction(call, left, right);
         }
         final int source = joinSourceOrdinal(predicate, join);
         final int target = source >= 0 && (LogicalPlans.isOrderIndependent(predicate) || isColumnValueComparison(predicate))
@@ -1196,7 +1208,7 @@ final class FilterPushdownPass implements Mutable {
     private BoundExpression selectKeyConjuncts(BoundExpression predicate, ProjectPlan keys, boolean isMovable) {
         if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2
                 && call.isAnd()) {
-            return functionBinder.replaceConjunction(call,
+            return context.getRewriter().replaceConjunction(call,
                     selectKeyConjuncts(call.argumentAt(0), keys, isMovable),
                     selectKeyConjuncts(call.argumentAt(1), keys, isMovable));
         }
@@ -1206,17 +1218,17 @@ final class FilterPushdownPass implements Mutable {
     private BoundExpression selectOrderIndependentConjuncts(BoundExpression predicate, boolean isMovable) {
         if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2
                 && call.isAnd()) {
-            return functionBinder.replaceConjunction(call,
+            return context.getRewriter().replaceConjunction(call,
                     selectOrderIndependentConjuncts(call.argumentAt(0), isMovable),
                     selectOrderIndependentConjuncts(call.argumentAt(1), isMovable));
         }
-        return LogicalPlans.isOrderIndependent(predicate) == isMovable ? predicate : null;
+        return (LogicalPlans.isOrderIndependent(predicate) && !LogicalPlans.hasDeferredConjunct(predicate)) == isMovable ? predicate : null;
     }
 
     private BoundExpression selectProjectionConjuncts(BoundExpression predicate, ProjectPlan project, boolean isMovable) {
         if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2
                 && call.isAnd()) {
-            return functionBinder.replaceConjunction(call,
+            return context.getRewriter().replaceConjunction(call,
                     selectProjectionConjuncts(call.argumentAt(0), project, isMovable),
                     selectProjectionConjuncts(call.argumentAt(1), project, isMovable));
         }
@@ -1228,7 +1240,7 @@ final class FilterPushdownPass implements Mutable {
             return null;
         }
         if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            return functionBinder.replaceConjunction(call,
+            return context.getRewriter().replaceConjunction(call,
                     withoutConjunct(call.argumentAt(0), conjunct), withoutConjunct(call.argumentAt(1), conjunct));
         }
         return predicate;
@@ -1267,18 +1279,12 @@ final class FilterPushdownPass implements Mutable {
         for (LogicalPlan filter = aggregate.getSharedSource().getInput(); filter != source; filter = filter.inputAt(0)) {
             final BoundExpression predicate = ((FilterPlan) filter).getPredicate();
             if (LogicalPlans.readsOnly(predicate, mapping.getOutput())) {
-                final FilterPlan copy = filters.next().of(input, functionBinder.copyRemappedColumns(predicate, mapping), predicate.getPosition());
-                copy.getOutput().copyFrom(scan.getOutput());
+                final FilterPlan copy = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mapping), predicate.getPosition());
+                copy.deriveOutput();
                 input = copy;
             }
         }
         aggregate.replaceInput(0, input);
-    }
-
-    FilterPushdownPass of(FunctionBinder functionBinder, SqlExecutionContext executionContext) {
-        this.functionBinder = functionBinder;
-        this.executionContext = executionContext;
-        return this;
     }
 
     LogicalPlan pushDownFilters(LogicalPlan root) throws SqlException {
@@ -1303,8 +1309,8 @@ final class FilterPushdownPass implements Mutable {
             assert join.getInputs().size() == 2;
             ordered.addAll(join.getInputs());
             final JoinInput slave = ordered.getQuick(1);
-            if (slave.getJoinType() == QueryModel.JOIN_CROSS && slave.getMasterKeyColumnIds().size() > 0) {
-                slave.setJoinType(QueryModel.JOIN_INNER);
+            if (slave.getJoinType() == JoinKind.CROSS && slave.getMasterKeyColumnIds().size() > 0) {
+                slave.setJoinType(JoinKind.INNER);
             }
         }
         for (int i = 0, n = ordered.size(); i < n; i++) {
@@ -1318,11 +1324,13 @@ final class FilterPushdownPass implements Mutable {
             }
             // WHERE conjuncts go to their sources before inner ON conjuncts.
             step.setPostJoinFilter(pushSingleSourceJoinFilter(join, step.getPostJoinFilter(), i));
-            if (step.getJoinType() == QueryModel.JOIN_INNER || step.getJoinType() == QueryModel.JOIN_CROSS) {
+            if (step.getJoinType() == JoinKind.INNER || step.getJoinType() == JoinKind.CROSS) {
                 step.setOnResidual(hoistEarlierJoinConjuncts(join, pushSingleSourceJoinFilter(join, step.getOnResidual(), i), i));
                 step.setPostJoinFilter(hoistEarlierJoinConjuncts(join, step.getPostJoinFilter(), i));
             }
         }
         deriveTransitiveFilters(join, null);
+        join.getFilterConjuncts().clear();
+        join.getFilterConjunctOrigins().clear();
     }
 }

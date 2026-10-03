@@ -63,6 +63,7 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -105,7 +106,7 @@ final class ProjectionFactoryGenerator {
     }
 
     private static RecordCursorFactory newSelected(GenericRecordMetadata metadata, IntList mapping, RecordCursorFactory base, LogicalPlan input) {
-        if (input.getType() == LogicalPlan.Type.JOIN && base instanceof SelectedRecordCursorFactory selected) {
+        if (input instanceof JoinPlan && base instanceof SelectedRecordCursorFactory selected) {
             final IntList inner = selected.getColumnCrossIndex();
             for (int i = 0, n = mapping.size(); i < n; i++) {
                 mapping.setQuick(i, inner.getQuick(mapping.getQuick(i)));
@@ -134,9 +135,9 @@ final class ProjectionFactoryGenerator {
      * source columns through, so the projection above still counts their reads.
      */
     private static void setInputReferenceCounts(GenerationFrame frame, LogicalPlan plan) {
-        final boolean isJoin = plan.getType() == LogicalPlan.Type.JOIN;
+        final boolean isJoin = plan instanceof JoinPlan;
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final boolean isPassThrough = isJoin && LogicalPlans.skipFilters(plan.inputAt(i)).getType() != LogicalPlan.Type.PROJECT;
+            final boolean isPassThrough = isJoin && !(LogicalPlans.skipFilters(plan.inputAt(i)) instanceof ProjectPlan);
             final OutputSchema input = plan.inputAt(i).getOutput();
             for (int j = 0, m = input.getColumnCount(); j < m; j++) {
                 final int columnId = input.getColumnId(j);
@@ -195,7 +196,7 @@ final class ProjectionFactoryGenerator {
 
     private int generateVirtualProjection(GenerationFrame frame, ProjectPlan project, int inputSlot, int slot, int timestampIndex, SqlExecutionContext executionContext) throws SqlException {
         final OutputSchema input = project.getInput().getOutput();
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.resources.getQuick(inputSlot);
+        final RecordCursorFactory base = frame.resources.factory(inputSlot);
         final int count = project.getExpressions().size();
         final ObjList<Function> functions = new ObjList<>(count);
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -222,7 +223,7 @@ final class ProjectionFactoryGenerator {
             scope = input;
             scopeMetadata = null;
         }
-        final int firstFunctionSlot = frame.resources.resources.size();
+        final int firstFunctionSlot = frame.resources.nextSlot();
         for (int i = 0; i < count; i++) {
             final int functionSlot = frame.resources.reserve();
             final BoundExpression expression = project.getExpressions().getQuick(i);
@@ -230,7 +231,7 @@ final class ProjectionFactoryGenerator {
             final int columnIndex;
             if (project.hasUpdateConversions()) {
                 columnIndex = expression instanceof ColumnExpression column ? input.getColumnIndexById(column.getColumnId()) : -1;
-                function = frame.functionBinder.instantiateUpdateAssignment(expression, project.getUpdateTargetTypes().getQuick(i),
+                function = frame.functionInstantiator.instantiateUpdateAssignment(expression, project.getUpdateTargetTypes().getQuick(i),
                         input, base.getMetadata(), executionContext);
             } else if (expression instanceof ColumnExpression column) {
                 columnIndex = input.getColumnIndexById(column.getColumnId());
@@ -239,8 +240,8 @@ final class ProjectionFactoryGenerator {
                         columnIndex >= 0 ? reservedSlots + columnIndex : scope.getColumnIndexById(column.getColumnId()), scopeMetadata);
             } else {
                 columnIndex = -1;
-                function = reservedSlots == 0 ? frame.functionBinder.instantiate(expression, input, base.getMetadata(), executionContext)
-                        : frame.functionBinder.instantiate(expression, scope, scopeMetadata, executionContext);
+                function = reservedSlots == 0 ? frame.functionInstantiator.instantiate(expression, input, base.getMetadata(), executionContext)
+                        : frame.functionInstantiator.instantiate(expression, scope, scopeMetadata, executionContext);
             }
             try {
                 if (project.hasUpdateConversions() && FunctionBinder.updateColumnType(function, project.getUpdateTargetTypes().getQuick(i))
@@ -337,7 +338,8 @@ final class ProjectionFactoryGenerator {
             case ColumnType.STRING -> new StrFunctionMemoizer(function);
             case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> new VarcharFunctionMemoizer(function);
             case ColumnType.SYMBOL -> new SymbolFunctionMemoizer(function);
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> new GeoHashFunctionMemoizer(function);
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    new GeoHashFunctionMemoizer(function);
             case ColumnType.BINARY -> new BinFunctionMemoizer(function);
             case ColumnType.LONG128 -> new Long128FunctionMemoizer(function);
             case ColumnType.INTERVAL -> new IntervalFunctionMemoizer(function);
@@ -373,7 +375,7 @@ final class ProjectionFactoryGenerator {
                     frame.setReferenceCount(columnId, Math.min(2, frame.getReferenceCount(columnId) + 1));
                 }
             }
-            case AggregatePlan aggregate -> {
+            case GroupingPlan aggregate -> {
                 setReferenceCounts(frame, aggregate.getInput().getOutput(), 0);
                 final int timestampId = aggregate instanceof SampleByPlan sample ? sample.getTimestampColumnId() : -1;
                 if (timestampId >= 0) {
@@ -424,7 +426,8 @@ final class ProjectionFactoryGenerator {
                     }
                 }
             }
-            case WindowJoinPlan _, HorizonJoinPlan _, DistinctPlan _, LatestByPlan _, FillPlan _ -> setInputReferenceCounts(frame, plan);
+            case WindowJoinPlan _, HorizonJoinPlan _, DistinctPlan _, LatestByPlan _, FillPlan _ ->
+                    setInputReferenceCounts(frame, plan);
             default -> {
             }
         }
@@ -435,7 +438,7 @@ final class ProjectionFactoryGenerator {
 
     int generateProjection(GenerationFrame frame, ProjectPlan project, int inputSlot, int slot, int timestampIndex, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = project.getInput();
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.resources.getQuick(inputSlot);
+        final RecordCursorFactory base = frame.resources.factory(inputSlot);
         if (!project.hasTimestampDeclaration() && timestampIndex >= 0 && base.getMetadata().getTimestampIndex() < 0
                 && !hasExplicitJoinTimestamp(input)
                 && project.getExpressions().getQuick(timestampIndex) instanceof ColumnExpression timestamp
@@ -456,8 +459,8 @@ final class ProjectionFactoryGenerator {
         }
         // A SELECT list over GROUP BY keeps the key spelling when it only changes the name case.
         final LogicalPlan source = LogicalPlans.skipFilters(input);
-        final boolean isKeySpellingKept = source instanceof AggregatePlan aggregate && source.getType() == LogicalPlan.Type.AGGREGATE
-                && aggregate.hasKeySpellingKept() && aggregate.getInput().getType() != LogicalPlan.Type.HORIZON_JOIN;
+        final boolean isKeySpellingKept = source instanceof AggregatePlan aggregate
+                && aggregate.hasKeySpellingKept() && !(aggregate.getInput() instanceof HorizonJoinPlan);
         boolean isIdentity = project.getOutput().getColumnCount() == base.getMetadata().getColumnCount()
                 && timestampIndex == base.getMetadata().getTimestampIndex();
         for (int i = 0, n = project.getExpressions().size(); isIdentity && i < n; i++) {

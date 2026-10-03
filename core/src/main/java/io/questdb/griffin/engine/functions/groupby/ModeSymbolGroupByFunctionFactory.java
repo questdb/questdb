@@ -37,6 +37,11 @@ import io.questdb.std.ObjList;
 public class ModeSymbolGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SYMBOL;
+    }
+
+    @Override
     public String getSignature() {
         return "mode(K)";
     }

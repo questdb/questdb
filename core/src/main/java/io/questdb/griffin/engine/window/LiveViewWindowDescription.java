@@ -46,8 +46,8 @@ public final class LiveViewWindowDescription {
     private final int orderByDirection;
     private final CharSequence orderByName;
     private final int orderByPosition;
-    private final ObjList<CharSequence> partitionColumns;
     private final String orderSignature;
+    private final ObjList<CharSequence> partitionColumns;
     private final String partitionSignature;
     private final int position;
     private final long rowsHi;
@@ -111,12 +111,16 @@ public final class LiveViewWindowDescription {
         return orderByCount;
     }
 
-    /** The direction of the first ORDER BY term. */
+    /**
+     * The direction of the first ORDER BY term.
+     */
     public int getOrderByDirection() {
         return orderByDirection;
     }
 
-    /** The first ORDER BY term as written. */
+    /**
+     * The first ORDER BY term as written.
+     */
     public CharSequence getOrderByName() {
         return orderByName;
     }
@@ -133,7 +137,9 @@ public final class LiveViewWindowDescription {
         return partitionColumns.size();
     }
 
-    /** The PARTITION BY term's column name, or null when the term is an expression. */
+    /**
+     * The PARTITION BY term's column name, or null when the term is an expression.
+     */
     public CharSequence getPartitionColumn(int index) {
         return partitionColumns.getQuick(index);
     }
@@ -178,12 +184,16 @@ public final class LiveViewWindowDescription {
         return rowsLoKind;
     }
 
-    /** Whether the frame is literally UNBOUNDED PRECEDING ... CURRENT ROW, the frame an anchor resets. */
+    /**
+     * Whether the frame is literally UNBOUNDED PRECEDING ... CURRENT ROW, the frame an anchor resets.
+     */
     public boolean isAnchorReset() {
         return isAnchorReset;
     }
 
-    /** Whether an ANCHOR owns the window, directly or through a named window definition. */
+    /**
+     * Whether an ANCHOR owns the window, directly or through a named window definition.
+     */
     public boolean isAnchored() {
         return isAnchored;
     }

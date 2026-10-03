@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
@@ -56,6 +57,11 @@ import io.questdb.std.Unsafe;
 
 public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFactory {
     public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((_, _) -> true);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
 
     @Override
     public String getSignature() {

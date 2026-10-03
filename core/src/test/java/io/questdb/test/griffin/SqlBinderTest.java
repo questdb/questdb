@@ -320,11 +320,11 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableAsSelectUsesLogicalCompilerDuringDeferredExecution() throws Exception {
+    public void testCreateTableAsSelectBindsDuringDeferredExecution() throws Exception {
         assertMemoryLeak(() -> {
             final int[] generatedQueries = {0};
             try (
-                    CairoEngine statementEngine = newLogicalEngine(generatedQueries);
+                    CairoEngine statementEngine = newGenerationCountingEngine(generatedQueries);
                     SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(statementEngine, 1)
                             .with(AllowAllSecurityContext.INSTANCE)
             ) {
@@ -353,11 +353,11 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateViewUsesLogicalWildcardMetadataAndExplainDoesNotCreate() throws Exception {
+    public void testCreateViewUsesBoundWildcardMetadataAndExplainDoesNotCreate() throws Exception {
         assertMemoryLeak(() -> {
             final int[] generatedQueries = {0};
             try (
-                    CairoEngine statementEngine = newLogicalEngine(generatedQueries);
+                    CairoEngine statementEngine = newGenerationCountingEngine(generatedQueries);
                     SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(statementEngine, 1)
                             .with(AllowAllSecurityContext.INSTANCE)
             ) {
@@ -409,14 +409,14 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplainUsesLogicalQueryWithoutWriting() throws Exception {
+    public void testExplainBindsQueryWithoutWriting() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
             execute("CREATE TABLE lp_target (id LONG)");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                assertLogicalExplain(compiler, "EXPLAIN SELECT id FROM lp_rows WHERE active", "Frame forward scan on: lp_rows");
-                assertLogicalExplain(compiler, "EXPLAIN INSERT INTO lp_target SELECT id FROM lp_rows", "Insert into table: lp_target");
-                assertLogicalExplain(compiler, "EXPLAIN CREATE TABLE lp_copy AS (SELECT id FROM lp_rows)", "Create table: lp_copy");
+                assertExplainContains(compiler, "EXPLAIN SELECT id FROM lp_rows WHERE active", "Frame forward scan on: lp_rows");
+                assertExplainContains(compiler, "EXPLAIN INSERT INTO lp_target SELECT id FROM lp_rows", "Insert into table: lp_target");
+                assertExplainContains(compiler, "EXPLAIN CREATE TABLE lp_copy AS (SELECT id FROM lp_rows)", "Create table: lp_copy");
                 Assert.assertNull(engine.getTableTokenIfExists("lp_copy"));
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_target", sqlExecutionContext
@@ -467,12 +467,12 @@ public class SqlBinderTest extends AbstractCairoTest {
                         SqlExecutionContext executionContext,
                         boolean generateProgressLogger
                 ) throws SqlException {
-                    final LogicalPlan plan = getLogicalPlanForTesting();
+                    final LogicalPlan plan = getPlanForTesting();
                     Assert.assertNotNull(plan);
                     final String before = describePlan(plan);
                     final RecordCursorFactory factory = super.generateSelectOneShot(model, executionContext, generateProgressLogger);
                     try {
-                        Assert.assertSame(plan, getLogicalPlanForTesting());
+                        Assert.assertSame(plan, getPlanForTesting());
                         Assert.assertEquals(before, describePlan(plan));
                         return factory;
                     } catch (Throwable th) {
@@ -485,7 +485,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                         "SELECT id AS renamed, id AS duplicate FROM lp_rows WHERE active ORDER BY ts DESC LIMIT 2",
                         sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    final LogicalPlan root = compiler.getLogicalPlanForTesting();
+                    final LogicalPlan root = compiler.getPlanForTesting();
                     final ProjectPlan project = (ProjectPlan) root.inputAt(0);
                     final int sourceId = ((ColumnExpression) project.getExpressions().getQuick(0)).getColumnId();
                     Assert.assertEquals(sourceId, ((ColumnExpression) project.getExpressions().getQuick(1)).getColumnId());
@@ -518,14 +518,14 @@ public class SqlBinderTest extends AbstractCairoTest {
             execute("CREATE TABLE lp_invalid (id INT, active UUID)");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 execute(compiler, "INSERT INTO lp_target (id,name) SELECT id,label FROM lp_rows WHERE active");
-                Assert.assertNotNull(compiler.getLogicalPlanForTesting());
+                Assert.assertNotNull(compiler.getPlanForTesting());
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT name,id FROM lp_target ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
                     assertResult(factory, "name\tid\nb\t2\nc\t3\n\t4\n");
                 }
                 execute(compiler, "INSERT INTO lp_clone SELECT * FROM lp_rows");
-                Assert.assertEquals(5, compiler.getLogicalPlanForTesting().getOutput().getColumnCount());
+                Assert.assertEquals(5, compiler.getPlanForTesting().getOutput().getColumnCount());
                 assertFailure(compiler, "INSERT INTO lp_target (name,id) SELECT * FROM lp_rows", "column count mismatch", -1);
                 assertFailure(compiler, "INSERT INTO lp_invalid SELECT * FROM lp_rows", "inconvertible types", -1);
                 try (RecordCursorFactory factory = compiler.compile(
@@ -543,7 +543,7 @@ public class SqlBinderTest extends AbstractCairoTest {
             createRows();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 execute(compiler, "INSERT INTO lp_rows VALUES (5,true,'e','E','2020-01-01T00:00:04.000000Z')");
-                Assert.assertNull(compiler.getLogicalPlanForTesting());
+                Assert.assertNull(compiler.getPlanForTesting());
                 execute(compiler, "ALTER TABLE lp_rows ADD COLUMN added INT");
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id,added FROM lp_rows ORDER BY id", sqlExecutionContext
@@ -556,6 +556,28 @@ public class SqlBinderTest extends AbstractCairoTest {
                 ).getRecordCursorFactory()) {
                     assertResult(factory, "id\n");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinedSourceFilterErrorKeepsCloseFailures() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_left (id LONG)");
+            execute("CREATE TABLE lp_right (id LONG)");
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 1);
+            try (OwnershipFixture fixture = new OwnershipFixture(engine);
+                 SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                final RuntimeException cleanup = new RuntimeException("owned_long close");
+                fixture.failLongClose(cleanup);
+                final SqlException actual = Assert.assertThrows(SqlException.class, () -> compiler.compile(
+                        "SELECT l.id FROM lp_left l JOIN (SELECT id FROM lp_right WHERE abs(owned_long($1), id) = 1) r ON l.id = r.id",
+                        sqlExecutionContext
+                ));
+                TestUtils.assertContains(actual.getFlyweightMessage(), "there is no matching function `abs`");
+                Assert.assertTrue(OwnershipFixture.hasSuppressed(actual, cleanup));
+                fixture.assertAllClosedOnce();
             }
         });
     }
@@ -583,7 +605,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 ).getRecordCursorFactory()) {
                     Assert.assertEquals(2, attempts[0]);
                     assertResult(factory, "id\n1\n2\n3\n4\n");
-                    LogicalPlan scan = compiler.getLogicalPlanForTesting();
+                    LogicalPlan scan = compiler.getPlanForTesting();
                     while (scan.inputCount() > 0) {
                         scan = scan.inputAt(0);
                     }
@@ -649,7 +671,7 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSpliceThenInnerJoinUsesLogicalPlan() throws Exception {
+    public void testSpliceThenInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
             assertRows("SELECT a.id FROM lp_rows a SPLICE JOIN lp_rows b ON a.id=b.id "
@@ -666,7 +688,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 assertFailure(compiler, "SELECT id FROM lp_rows WHERE lp_missing_fn(id) > 1", "unknown function name", -1);
                 assertFailure(compiler, "SELECT id AS missing FROM lp_rows ORDER BY lp_missing_fn(id)", "unknown function name", -1);
                 assertFailure(compiler, "SELECT lp_missing_agg(id) FROM lp_rows", "unknown function name", -1);
-                assertFailure(compiler, "SELECT id FROM lp_rows GROUP BY lp_missing_fn(id)", "unknown function name", -1);
+                assertFailure(compiler, "SELECT id FROM lp_rows GROUP BY lp_missing_fn(id)", "column must appear in GROUP BY clause or aggregate function", -1);
                 assertFailure(compiler, "SELECT DISTINCT lp_missing_fn(id) FROM lp_rows", "unknown function name", -1);
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_rows WHERE active ORDER BY id", sqlExecutionContext
@@ -684,7 +706,7 @@ public class SqlBinderTest extends AbstractCairoTest {
             execute("INSERT INTO lp_update VALUES (1,0,true,'2020-01-01T00:00:00.000000Z'),(2,0,false,'2020-01-01T00:00:01.000000Z')");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 execute(compiler, "UPDATE lp_update AS u SET COPIED = u.id WHERE u.active");
-                Assert.assertNotNull(compiler.getLogicalPlanForTesting());
+                Assert.assertNotNull(compiler.getPlanForTesting());
                 assertFailure(compiler, "UPDATE lp_update SET ts = ts", "Designated timestamp column cannot be updated", -1);
                 assertFailure(compiler, "UPDATE lp_update SET missing = id", "Invalid column", -1);
                 try (RecordCursorFactory factory = compiler.compile(
@@ -880,7 +902,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                     .put(output.getColumnType(i)).put(':').put(output.isVisible(i)).put(';');
         }
         sink.put(']').put(output.getTimestampColumnId());
-        if (plan.getType() == LogicalPlan.Type.PROJECT) {
+        if (plan instanceof ProjectPlan) {
             final ProjectPlan project = (ProjectPlan) plan;
             for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
                 sink.put('>').put(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
@@ -921,12 +943,12 @@ public class SqlBinderTest extends AbstractCairoTest {
         }
     }
 
-    private void assertLogicalExplain(SqlCompilerImpl compiler, String sql, String expected) throws Exception {
+    private void assertExplainContains(SqlCompilerImpl compiler, String sql, String expected) throws Exception {
         try (
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
-            Assert.assertNotNull(compiler.getLogicalPlanForTesting());
+            Assert.assertNotNull(compiler.getPlanForTesting());
             final StringSink plan = new StringSink();
             while (cursor.hasNext()) {
                 plan.put(cursor.getRecord().getStrA(0)).put('\n');
@@ -955,7 +977,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 """);
     }
 
-    private CairoEngine newLogicalEngine(int[] generatedQueries) throws IOException {
+    private CairoEngine newGenerationCountingEngine(int[] generatedQueries) throws IOException {
         return new CairoEngine(new DefaultTestCairoConfiguration(temp.newFolder().getAbsolutePath())) {
             @Override
             public SqlCompilerFactory getSqlCompilerFactory() {
@@ -967,7 +989,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                                 SqlExecutionContext executionContext,
                                 boolean generateProgressLogger
                         ) throws SqlException {
-                            Assert.assertNotNull(getLogicalPlanForTesting());
+                            Assert.assertNotNull(getPlanForTesting());
                             generatedQueries[0]++;
                             return super.generateSelectOneShot(model, executionContext, generateProgressLogger);
                         }

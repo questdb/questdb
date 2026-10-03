@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -34,8 +33,11 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -43,9 +45,11 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
+import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -79,6 +83,7 @@ import static io.questdb.griffin.ScalarCompensation.*;
  */
 final class DecorrelationPass implements Mutable {
     private final ScalarCompensation compensation;
+    private final OptimiserContext context;
     private final DecorrelationContext ctx;
     private final DecorrelationDomains domains;
     private final CorrelationKeys keys;
@@ -94,6 +99,7 @@ final class DecorrelationPass implements Mutable {
      * scratch the optimiser lends to its passes.
      */
     DecorrelationPass(
+            OptimiserContext context,
             BindContext planNodes,
             CharacterStore characterStore,
             ObjList<BoundExpression> callArguments,
@@ -102,15 +108,17 @@ final class DecorrelationPass implements Mutable {
             IntList valueScratch,
             IntList keyScratch,
             ObjList<LogicalPlan> planScratch,
-            OutputSchema schemaScratch
+            OutputSchema schemaScratch,
+            ObjList<JoinInput> stepScratch
     ) {
+        this.context = context;
         liftedConjuncts = conjunctScratch;
-        ctx = new DecorrelationContext(planNodes, characterStore, callArguments, indexScratch, valueScratch, keyScratch, planScratch,
+        ctx = new DecorrelationContext(context, planNodes, characterStore, callArguments, indexScratch, valueScratch, keyScratch, planScratch,
                 schemaScratch);
-        domains = new DecorrelationDomains(ctx);
-        keys = new CorrelationKeys(ctx);
-        compensation = new ScalarCompensation(ctx, domains, conjunctScratch);
-        rewriter = new CorrelatedChainRewriter(ctx, keys, compensation);
+        domains = new DecorrelationDomains(context, ctx, stepScratch);
+        keys = new CorrelationKeys(context, ctx);
+        compensation = new ScalarCompensation(context, ctx, domains, conjunctScratch);
+        rewriter = new CorrelatedChainRewriter(context, ctx, keys, compensation);
     }
 
     @Override
@@ -123,6 +131,19 @@ final class DecorrelationPass implements Mutable {
         domains.clear();
         keys.clear();
         compensation.clear();
+    }
+
+    /**
+     * Conjuncts recorded as transitive facts never count a correlated one, and decorrelation has rewritten them.
+     */
+    private static void dropOuterConjuncts(JoinPlan join) {
+        final ObjList<BoundExpression> conjuncts = join.getFilterConjuncts();
+        for (int i = conjuncts.size() - 1; i > -1; i--) {
+            if (LogicalPlans.hasOuterColumn(conjuncts.getQuick(i))) {
+                conjuncts.remove(i);
+                join.getFilterConjunctOrigins().removeIndex(i);
+            }
+        }
     }
 
     private static boolean hasDependentStep(JoinPlan join) {
@@ -151,7 +172,7 @@ final class DecorrelationPass implements Mutable {
 
     private static boolean isChainNode(LogicalPlan node, boolean hasProject) {
         return switch (node) {
-            case LimitPlan _, SortPlan _, DistinctPlan _, WindowPlan _, AggregatePlan _, FillPlan _, FilterPlan _,
+            case LimitPlan _, SortPlan _, DistinctPlan _, WindowPlan _, GroupingPlan _, FillPlan _, FilterPlan _,
                  LatestByPlan _ -> true;
             case ProjectPlan _ -> !hasProject;
             default -> false;
@@ -191,7 +212,7 @@ final class DecorrelationPass implements Mutable {
             final int columnId = input.getColumnId(i);
             if (ctx.mappedIndex(columnId, lo, hi) < 0 && ctx.mappedIndex(columnId, extraLo, extraHi) < 0) {
                 project.getExpressions().add(ctx.planNodes.columns.next().of(columnId, input.getColumnType(i), position));
-                project.getOutput().add(ctx.nextColumnId++, input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), input.isVisible(i));
+                project.getOutput().add(context.newColumnId(), input.getColumnName(i), input.getColumnType(i), input.getMetadata(i), input.isVisible(i));
             }
         }
         for (int k = 0, m = domains.domainOuterIds.size(); k < m; k++) {
@@ -322,10 +343,39 @@ final class DecorrelationPass implements Mutable {
         final OutputSchema output = operation.getOutput();
         final OutputSchema leftOutput = operation.getLeft().getOutput();
         for (int i = output.getColumnCount(), k = 0, n = leftOutput.getColumnCount(); i < n; i++, k++) {
-            output.add(ctx.nextColumnId, leftOutput.getColumnName(i), leftOutput.getColumnType(i), false);
-            ctx.addMapping(domains.domainOuterIds.getQuick(k), ctx.nextColumnId++);
+            final int columnId = context.newColumnId();
+            output.add(columnId, leftOutput.getColumnName(i), leftOutput.getColumnType(i), false);
+            ctx.addMapping(domains.domainOuterIds.getQuick(k), columnId);
         }
         return operation;
+    }
+
+    /**
+     * Lays out a window join over its decorrelated master: master columns, then the step aggregates, with each
+     * step's scopes rebuilt over that layout.
+     */
+    private void alignWindowJoin(WindowJoinPlan windowJoin) {
+        final OutputSchema output = windowJoin.getOutput();
+        final OutputSchema master = windowJoin.getMaster().getOutput();
+        ctx.alignColumns(output, master);
+        int prefix = master.getColumnCount();
+        for (int s = 0, m = windowJoin.getSteps().size(); s < m; s++) {
+            final WindowJoinStep step = windowJoin.getSteps().getQuick(s);
+            final OutputSchema masterScope = step.getMasterScope();
+            masterScope.clear();
+            for (int i = 0; i < prefix; i++) {
+                addColumn(masterScope, output, i);
+            }
+            final OutputSchema scope = step.getScope();
+            scope.copyFrom(masterScope);
+            final OutputSchema slave = step.getSlave().getOutput();
+            for (int i = 0, n = slave.getColumnCount(); i < n; i++) {
+                scope.add(slave.getColumnId(i), slave.getColumnName(i), slave.getColumnType(i), slave.getMetadata(i), slave.isVisible(i),
+                        step.getSlaveAlias());
+                scope.setSymbolTableStatic(scope.getColumnCount() - 1, slave.isSymbolTableStatic(i));
+            }
+            prefix += step.getAggregateColumnIds().size();
+        }
     }
 
     /**
@@ -348,21 +398,22 @@ final class DecorrelationPass implements Mutable {
                             compensation.drivenInputs.add(input);
                             compensation.uncompensatedScalars.add(driven);
                         } else if (input.getInput() instanceof ProjectPlan project && compensation.isScalarProjection(project)
-                                && input.getJoinType() == QueryModel.JOIN_INNER && rejectsZeroCount(input.getOnResidual(), project)) {
+                                && input.getJoinType() == JoinKind.INNER && rejectsZeroCount(input.getOnResidual(), project)) {
                             compensation.uncompensatedScalars.add(project);
                         }
                         input.setInput(decorrelateBlock(input.getInput(), false, inputBase));
                         if (driven != null && compensation.scalarAggregateBelow(driven) != null) {
                             compensation.exposeCarriers(driven);
-                            input.setJoinType(QueryModel.JOIN_LEFT_OUTER);
+                            input.setJoinType(JoinKind.LEFT_OUTER);
                         }
                         keys.joinMappedInput(input, inputBase, base);
-                        if (i > 0 && (input.getJoinType() == QueryModel.JOIN_LEFT_OUTER || input.getJoinType() == QueryModel.JOIN_FULL_OUTER)) {
+                        if (i > 0 && (input.getJoinType() == JoinKind.LEFT_OUTER || input.getJoinType() == JoinKind.FULL_OUTER)) {
                             keys.deferMapping(input, inputBase);
                         }
                     }
                 }
                 rebuildJoinOutput(join);
+                dropOuterConjuncts(join);
                 return join;
             }
             case SetOperationPlan operation -> {
@@ -370,12 +421,12 @@ final class DecorrelationPass implements Mutable {
             }
             case WindowJoinPlan windowJoin -> {
                 windowJoin.replaceInput(0, decorrelateBlock(windowJoin.getMaster(), false, base));
-                appendMissingColumns(windowJoin.getOutput(), windowJoin.getMaster().getOutput());
+                alignWindowJoin(windowJoin);
                 return windowJoin;
             }
             case HorizonJoinPlan horizon -> {
                 horizon.replaceInput(0, decorrelateBlock(horizon.getMaster(), false, base));
-                appendMissingColumns(horizon.getOutput(), horizon.getMaster().getOutput());
+                ctx.alignColumns(horizon.getOutput(), horizon.getMaster().getOutput());
                 return horizon;
             }
             default -> {
@@ -415,7 +466,7 @@ final class DecorrelationPass implements Mutable {
             final BoundExpression outerLimit = limit == null ? null : outerLimit(limit);
             final BoundExpression limitLo = limit == null ? null : limit.getLo();
             final BoundExpression limitHi = limit == null ? null : limit.getHi();
-            final boolean isLeft = step.getJoinType() == QueryModel.JOIN_LEFT_OUTER;
+            final boolean isLeft = step.getJoinType() == JoinKind.LEFT_OUTER;
             final int conditionKeyCount = step.getMasterKeyColumnIds().size();
             final boolean isTrivialCondition = conditionKeyCount == 0 && isTrue(step.getOnResidual());
             final ProjectPlan rejecting = isLeft ? null : compensation.zeroRejectingScalar(step.getInput());
@@ -432,7 +483,7 @@ final class DecorrelationPass implements Mutable {
                     throw SqlException.$(outerLimit.getPosition(), OUTER_LIMIT_OVER_COUNT);
                 }
                 compensation.exposeCarriers(scalarBody);
-                forwardColumns(body, scalarBody);
+                compensation.forwardColumns(body, scalarBody);
             }
             final OutputSchema output = body.getOutput();
             for (int i = base, n = ctx.mappedOuterIds.size(); i < n; i++) {
@@ -453,7 +504,7 @@ final class DecorrelationPass implements Mutable {
             if (scalarBody != null) {
                 final BoundExpression guard = limit == null ? null : compensation.limitGuard(ctx.masterExpression(limitLo), ctx.masterExpression(limitHi), join.getOutput());
                 if (!isLeft && isTrivialCondition) {
-                    step.setJoinType(QueryModel.JOIN_LEFT_OUTER);
+                    step.setJoinType(JoinKind.LEFT_OUTER);
                     compensation.compensateStep(step, scalarBody, base, null, null);
                     if (guard != null) {
                         step.setPostJoinFilter(guard);
@@ -461,8 +512,8 @@ final class DecorrelationPass implements Mutable {
                 } else {
                     compensation.compensateStep(step, scalarBody, base, guard, isLeft ? keys.stepCondition(join, step, conditionKeyCount) : null);
                 }
-            } else if (step.getJoinType() == QueryModel.JOIN_CROSS && step.getMasterKeyColumnIds().size() > 0) {
-                step.setJoinType(QueryModel.JOIN_INNER);
+            } else if (step.getJoinType() == JoinKind.CROSS && step.getMasterKeyColumnIds().size() > 0) {
+                step.setJoinType(JoinKind.INNER);
             }
             ctx.mappedOuterIds.setPos(base);
             ctx.mappedColumnIds.setPos(base);
@@ -493,7 +544,7 @@ final class DecorrelationPass implements Mutable {
                 final OutputSchema input = project.getInput().getOutput();
                 final int type = input.getColumnType(input.getColumnIndexById(columnId));
                 project.getExpressions().add(ctx.planNodes.columns.next().of(columnId, type, project.getPosition()));
-                exposed = ctx.nextColumnId++;
+                exposed = context.newColumnId();
                 output.add(exposed, liftedName(output, input.getColumnName(input.getColumnIndexById(columnId))), type, false);
             }
             ctx.substitution.put(columnId, exposed);
@@ -564,8 +615,8 @@ final class DecorrelationPass implements Mutable {
         }
         rebuildJoinOutput(join);
         for (int i = 0, n = liftedConjuncts.size(); i < n; i++) {
-            final BoundExpression conjunct = ctx.functionBinder.remapColumns(liftedConjuncts.getQuick(i), ctx.substitution);
-            step.setOnResidual(step.getOnResidual() == null ? conjunct : ctx.functionBinder.combineConjunction(step.getOnResidual(), conjunct, conjunct.getPosition()));
+            final BoundExpression conjunct = context.getRewriter().remapColumns(liftedConjuncts.getQuick(i), ctx.substitution);
+            step.setOnResidual(step.getOnResidual() == null ? conjunct : context.getRewriter().combineConjunction(step.getOnResidual(), conjunct, conjunct.getPosition()));
         }
         final OutputSchema output = project.getOutput();
         for (int i = 0, n = liftedSelections.size(); i < n; i++) {
@@ -573,7 +624,7 @@ final class DecorrelationPass implements Mutable {
             final int index = output.getColumnIndexById(columnId);
             compensation.compensatedIds.add(columnId);
             compensation.compensatedNames.add(output.getColumnName(index));
-            compensation.compensations.add(ctx.functionBinder.remapColumns(liftedSelections.getQuick(i), ctx.substitution));
+            compensation.compensations.add(context.getRewriter().remapColumns(liftedSelections.getQuick(i), ctx.substitution));
             project.getExpressions().remove(index);
             output.remove(index);
             join.getOutput().remove(join.getOutput().getColumnIndexById(columnId));
@@ -597,7 +648,7 @@ final class DecorrelationPass implements Mutable {
             if (right == null) {
                 return left;
             }
-            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : ctx.functionBinder.replaceConjunction(call, left, right);
+            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : context.getRewriter().replaceConjunction(call, left, right);
         }
         if (isUnmappedOuter(predicate, base) && isLiftable(predicate)) {
             liftedConjuncts.add(predicate);
@@ -727,7 +778,7 @@ final class DecorrelationPass implements Mutable {
                 final int domainId = ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size());
                 JoinBinder.addJoinKey(domainStep, columnId, domainId, source.getOutput().getColumnName(source.getOutput().getColumnIndexById(columnId)),
                         domainOutput.getColumnName(domainOutput.getColumnIndexById(domainId)), domainStep.getPosition());
-                domainStep.setJoinType(QueryModel.JOIN_INNER);
+                domainStep.setJoinType(JoinKind.INNER);
                 keys.droppedEqualities.add(outerId);
                 keys.droppedEqualities.add(columnId);
             }
@@ -737,7 +788,7 @@ final class DecorrelationPass implements Mutable {
             final JoinInput first = join.getOrderedInputs().getQuick(0);
             first.setInput(domains.crossDomain(first.getInput(), domain, source.getPosition()));
         } else {
-            final JoinInput step = ctx.planNodes.joinInputs.next().of(domain, QueryModel.JOIN_CROSS, domains.domainAlias(), source.getPosition());
+            final JoinInput step = ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domains.domainAlias(), source.getPosition());
             for (int i = 1, n = join.getInputs().size(); i < n; i++) {
                 final JoinInput input = join.getInputs().getQuick(i);
                 input.setPostJoinFilter(domains.moveDomainConjuncts(input.getPostJoinFilter(), step));
@@ -770,21 +821,18 @@ final class DecorrelationPass implements Mutable {
             }
         }
         if (compensation.consumerRemap.size() > 0) {
-            ctx.copier.of(ctx.functionBinder, ctx.functionSources, ctx.nextColumnId);
             ctx.copier.remap(plan, compensation.consumerRemap);
+        }
+        if (domains.decorrelatedSteps.size() > 0) {
+            switch (plan) {
+                case ProjectPlan _, GroupingPlan _, JoinPlan _, SetOperationPlan _, ScanPlan _,
+                     FunctionSourcePlan _ -> {
+                }
+                case WindowJoinPlan windowJoin -> alignWindowJoin(windowJoin);
+                default -> ctx.alignColumns(plan.getOutput(), plan.inputAt(0).getOutput());
+            }
         }
         return plan instanceof JoinPlan join && hasDependentStep(join) ? decorrelateJoin(join) : result;
     }
 
-    /**
-     * The first column id the rewritten plan does not use.
-     */
-    int getNextColumnId() {
-        return ctx.nextColumnId;
-    }
-
-    DecorrelationPass of(FunctionBinder functionBinder, TableFunctionSources functionSources, int nextColumnId, SqlExecutionContext executionContext) {
-        ctx.of(functionBinder, functionSources, nextColumnId, executionContext);
-        return this;
-    }
 }

@@ -45,6 +45,11 @@ import io.questdb.std.Transient;
 public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return "l2price(DD[]D[])";
     }

@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
@@ -59,7 +58,7 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
                 final OutputSchema pruned = new OutputSchema().add(70, "ts", type, true)
                         .add(71, "zone", ColumnType.STRING, true);
                 final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     for (String name : new String[]{"to_utc", "to_timezone"}) {
                         final int direction = name.equals("to_utc") ? -1 : 1;
                         for (boolean columnZone : new boolean[]{false, true}) {
@@ -103,7 +102,7 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
                     bindVariableService.setStr(0, "Europe/Berlin");
                     final Function retained;
                     final Function worker;
-                    try (FunctionBinder binder = new FunctionBinder(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                         final BoundExpression expression = binder.bind(call(name, literal("ts"),
                                 ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, "$1", 0, 1)), input, null, sqlExecutionContext);
                         retained = binder.instantiate(expression, input, sqlExecutionContext);
@@ -133,7 +132,7 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema();
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
                     final long hour = type == ColumnType.TIMESTAMP_MICRO ? 3_600_000_000L : 3_600_000_000_000L;
                     for (String name : new String[]{"to_utc", "to_timezone"}) {

@@ -4232,6 +4232,83 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralCountCompensationRepeatedCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '1970-01-01T00:00:00.000001Z'),
+                    (1, '1970-01-01T00:00:00.000002Z'),
+                    (2, '1970-01-01T00:00:00.000003Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.later AND NOT sub.later AS never, sub.later OR NOT sub.later AS always, sub.later
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count()::timestamp > (SELECT min(ts) FROM trades) AS later
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tnever\talways\tlater
+                            1\tfalse\ttrue\ttrue
+                            2\tfalse\ttrue\tfalse
+                            3\tfalse\ttrue\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCompensationRepeatedDescriptions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            bindVariableService.setLong("bonus", 10);
+            assertQuery("""
+                    SELECT o.id, sub.v * sub.v + sub.v AS w
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT (count() + :bonus + (2 * 3))::DECIMAL(10, 2) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tw
+                            1\t342.0000
+                            2\t306.0000
+                            3\t272.0000
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftLateralCountDistinctAndApproxCountDistinctOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (k INT)");

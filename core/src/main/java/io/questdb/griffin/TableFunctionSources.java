@@ -100,7 +100,8 @@ final class TableFunctionSources implements Closeable, Mutable {
         path = Misc.free(path);
     }
 
-    private static void describe(FunctionSourcePlan plan, RecordMetadata metadata, int firstColumnId) {
+    private static void describe(FunctionSourcePlan plan, RecordCursorFactory factory, int firstColumnId) {
+        final RecordMetadata metadata = factory.getMetadata();
         final OutputSchema output = plan.getOutput();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.RECORD) {
@@ -111,6 +112,7 @@ final class TableFunctionSources implements Closeable, Mutable {
             plan.getSourceColumnIndexes().add(i);
         }
         output.setTimestampIndex(metadata.getTimestampIndex());
+        plan.setSequenceStable(factory.isStableWithinExecution());
     }
 
     private static TableToken existingShowTable(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
@@ -134,7 +136,7 @@ final class TableFunctionSources implements Closeable, Mutable {
             throw new IllegalStateException("table-function source was not prepared");
         }
         final int slot = slots.getQuick(index);
-        if (resources.resources.getQuick(slot) == null) {
+        if (!resources.isOwned(slot)) {
             final QueryModel show = index < showModels.size() ? showModels.getQuick(index) : null;
             if (show != null) {
                 return createShowFactory(show, executionContext, callback, path());
@@ -147,7 +149,7 @@ final class TableFunctionSources implements Closeable, Mutable {
             }
             return function.getRecordCursorFactory();
         }
-        final Function function = (Function) resources.detach(slot);
+        final Function function = resources.detachFunction(slot);
         return function.getRecordCursorFactory();
     }
 
@@ -208,7 +210,7 @@ final class TableFunctionSources implements Closeable, Mutable {
             if (!(function instanceof CursorFunction)) {
                 throw SqlException.$(expression.position, "function must return CURSOR");
             }
-            describe(plan, function.getRecordCursorFactory().getMetadata(), firstColumnId);
+            describe(plan, function.getRecordCursorFactory(), firstColumnId);
             plan.setProjectable(function.getRecordCursorFactory() instanceof ProjectableRecordCursorFactory);
             return plan;
         } catch (Throwable th) {
@@ -234,6 +236,7 @@ final class TableFunctionSources implements Closeable, Mutable {
                 throw SqlException.$(expression.position, "function must return CURSOR");
             }
             final RecordMetadata metadata = function.getRecordCursorFactory().getMetadata();
+            plan.setSequenceStable(function.getRecordCursorFactory().isStableWithinExecution());
             final OutputSchema record = plan.getRecordSchema();
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 record.add(i, metadata.getColumnName(i), metadata.getColumnType(i), true);
@@ -260,7 +263,7 @@ final class TableFunctionSources implements Closeable, Mutable {
         try {
             resources.own(slot, new CursorFunction(createShowFactory(model, executionContext, callback, path())));
             parser.markCursorFunctionInstantiated();
-            describe(plan, ((Function) resources.resources.getQuick(slot)).getRecordCursorFactory().getMetadata(), firstColumnId);
+            describe(plan, resources.function(slot).getRecordCursorFactory(), firstColumnId);
             return plan;
         } catch (Throwable th) {
             resources.closeOwned(th);
@@ -285,6 +288,7 @@ final class TableFunctionSources implements Closeable, Mutable {
         copy.getRecordSchema().copyFrom(plan.getRecordSchema());
         copy.getSourceColumnIndexes().addAll(plan.getSourceColumnIndexes());
         copy.setProjectable(plan.isProjectable());
+        copy.setSequenceStable(plan.isSequenceStable());
         copy.setRecordName(plan.getRecordName());
         prepared.add(copy);
         expressions.add(expressions.getQuick(index));

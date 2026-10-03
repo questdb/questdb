@@ -40,6 +40,11 @@ public class MinDateWindowFunctionFactory extends AbstractWindowFunctionFactory 
     private static final String SIGNATURE = MinTimestampWindowFunctionFactory.NAME + "(M)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
@@ -36,7 +35,9 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.ColumnType.*;
 
-/** Binding-side typing of UNION/EXCEPT/INTERSECT: output column types, symbol columns and timestamp. */
+/**
+ * Binding-side typing of UNION/EXCEPT/INTERSECT: output column types, symbol columns and timestamp.
+ */
 public final class SetOperationBinder {
     // @formatter:off
     /**
@@ -209,12 +210,18 @@ public final class SetOperationBinder {
         return result;
     }
 
+    private static boolean isSymbolColumn(LogicalPlan plan, int index) {
+        return ColumnType.isSymbol(plan.getOutput().getColumnType(index))
+                || plan instanceof SetOperationPlan operation && !operation.isSymbolRestorationRequired()
+                && operation.getSymbolColumns().contains(index);
+    }
+
     static boolean isCastRequired(SetOperationPlan plan) {
         final OutputSchema left = plan.getLeft().getOutput();
         final OutputSchema right = plan.getRight().getOutput();
         for (int i = 0, n = left.getColumnCount(); i < n; i++) {
             final int type = left.getColumnType(i);
-            if (type != right.getColumnType(i) || isUnion(plan.getOperation()) && ColumnType.isSymbol(type)) {
+            if (type != right.getColumnType(i) || plan.getOperation().isUnion() && ColumnType.isSymbol(type)) {
                 return true;
             }
         }
@@ -222,16 +229,12 @@ public final class SetOperationBinder {
     }
 
     static boolean isSymbolTableStatic(SetOperationPlan plan, int index) {
-        return !isUnion(plan.getOperation()) && !isCastRequired(plan)
+        return !plan.getOperation().isUnion() && !isCastRequired(plan)
                 && plan.getLeft().getOutput().isSymbolTableStatic(index);
     }
 
-    static boolean isUnion(int operation) {
-        return operation == QueryModel.SET_OPERATION_UNION || operation == QueryModel.SET_OPERATION_UNION_ALL;
-    }
-
     static int resolveTimestampIndex(SetOperationPlan plan) {
-        return isUnion(plan.getOperation()) || isCastRequired(plan)
+        return plan.getOperation().isUnion() || isCastRequired(plan)
                 ? -1 : plan.getLeft().getOutput().getTimestampIndex();
     }
 
@@ -241,7 +244,7 @@ public final class SetOperationBinder {
         if (left.getColumnCount() != right.getColumnCount()) {
             throw SqlException.$(plan.getRightPosition(), "queries have different number of columns");
         }
-        final boolean union = isUnion(plan.getOperation());
+        final boolean union = plan.getOperation().isUnion();
         final boolean castRequired = isCastRequired(plan);
         targetTypes.clear();
         plan.getSymbolColumns().clear();
@@ -257,11 +260,5 @@ public final class SetOperationBinder {
             }
             targetTypes.add(type);
         }
-    }
-
-    private static boolean isSymbolColumn(LogicalPlan plan, int index) {
-        return ColumnType.isSymbol(plan.getOutput().getColumnType(index))
-                || plan instanceof SetOperationPlan operation && !operation.isSymbolRestorationRequired()
-                && operation.getSymbolColumns().contains(index);
     }
 }

@@ -1416,7 +1416,7 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
     private void assertDistinctRewriteShape(String sql, boolean isAbandoned) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                final String plan = new LogicalPlanPrinter().print(compiler.getLogicalPlanForTesting()).toString();
+                final String plan = new LogicalPlanPrinter().print(compiler.getPlanForTesting()).toString();
                 Assert.assertEquals(sql, isAbandoned, plan.contains("Distinct\n"));
                 if (!isAbandoned) {
                     Assert.assertTrue(sql, plan.contains("Aggregate\n"));

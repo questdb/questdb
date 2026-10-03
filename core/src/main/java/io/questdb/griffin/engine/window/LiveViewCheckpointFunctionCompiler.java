@@ -442,13 +442,13 @@ public final class LiveViewCheckpointFunctionCompiler {
      * two searches read the same row from two cursors and have to land on the same key
      * both times, and a key that answers {@code now()} does not.
      *
-     * @param baseMetadata     the base factory's metadata, which the key projector's
-     *                         columns, its key functions and the designated timestamp are
-     *                         resolved against
-     * @param configuration    for the projector's codegen
-     * @param asm              the compiler's bytecode assembler
-     * @param keyCompiler      compiles an expression key into the plan's own function,
-     *                         separate from the copy the window runtime partitions by
+     * @param baseMetadata  the base factory's metadata, which the key projector's
+     *                      columns, its key functions and the designated timestamp are
+     *                      resolved against
+     * @param configuration for the projector's codegen
+     * @param asm           the compiler's bytecode assembler
+     * @param keyCompiler   compiles an expression key into the plan's own function,
+     *                      separate from the copy the window runtime partitions by
      */
     @Nullable
     public static LiveViewCheckpointRowsPlan rowsPlan(
@@ -1123,7 +1123,9 @@ public final class LiveViewCheckpointFunctionCompiler {
         return LiveViewCheckpointAnchorPlan.of(unit, stride, segmentOffset, timestampType);
     }
 
-    /** Compiles a PARTITION BY expression of the window at a function index into a key function the plan owns. */
+    /**
+     * Compiles a PARTITION BY expression of the window at a function index into a key function the plan owns.
+     */
     @FunctionalInterface
     public interface PartitionKeyCompiler {
         Function compile(int functionIndex, int keyIndex) throws SqlException;

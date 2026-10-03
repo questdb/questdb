@@ -654,7 +654,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                 TestUtils.assertContains(failure.getMessage(), "HORIZON JOIN requires offset configuration");
                 Assert.assertEquals(TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
                 Assert.assertEquals(0, engine.getBusyReaderCount());
-                // The logical path validates the offsets before it creates any sub-query or filter.
+                // The compiler validates the offsets before it creates any sub-query or filter.
                 Assert.assertEquals(0, TestFaultFunctionFactory.created());
                 Assert.assertEquals(0, failure.getSuppressed().length);
             } finally {

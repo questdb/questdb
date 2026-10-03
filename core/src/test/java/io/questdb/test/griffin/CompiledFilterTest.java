@@ -1290,6 +1290,23 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNeverMatchingNarrowInDoesNotDeclineJit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (anint INT, abyte BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, 1, '2024-01-01T00:00:00.000000Z'),
+                        (2, 0, '2024-01-01T00:00:01.000000Z'),
+                        (1, 0, '2024-01-01T00:00:02.000000Z')
+                    """);
+            assertNeverMatchingInRows("SELECT count(*) FROM x WHERE anint = 1 AND abyte IN (null)", "count\n0\n");
+            assertNeverMatchingInRows("SELECT count(*) FROM x WHERE abyte IN (null) AND anint = 1", "count\n0\n");
+            assertNeverMatchingInRows("SELECT count(*) FROM x WHERE anint = 1 OR abyte IN (null)", "count\n2\n");
+            assertNeverMatchingInRows("SELECT count(*) FROM x WHERE anint = 1 AND abyte IN (null, null)", "count\n0\n");
+        });
+    }
+
+    @Test
     public void testNullTokenDoesNotForceNarrowI64Widening() throws Exception {
         assertMemoryLeak(() -> {
             // null / true / false end in 'l' / 'e' and were folded into
@@ -1427,6 +1444,36 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     Assert.assertTrue("must JIT: " + q, factory.usesCompiledFilter());
                 }
             }
+        });
+    }
+
+    @Test
+    public void testOperatorNamedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        "not" BOOLEAN, "and" INT, "in" INT, "or" LONG, "<" INT, "=" INT, ">=" SHORT, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                        (true, 1, 1, 1, 1, 1, 1, '2024-01-01T00:00:00.000000Z'),
+                        (false, 2, 2, 0, -3, 2, 2, '2024-01-01T00:00:01.000000Z'),
+                        (true, 3, 5, 7, 3, 3, -1, '2024-01-01T00:00:02.000000Z')
+                    """);
+            assertOperatorNamedColumnRows("WHERE \"not\"", "1\n3\n");
+            assertOperatorNamedColumnRows("WHERE NOT \"not\"", "2\n");
+            assertOperatorNamedColumnRows("WHERE NOT (\"not\" AND \"and\" > 1)", "1\n2\n");
+            assertOperatorNamedColumnRows("WHERE \"not\" AND \">=\" > 0", "1\n");
+            assertOperatorNamedColumnRows("WHERE \"and\" = 1 AND \"or\" > 0", "1\n");
+            assertOperatorNamedColumnRows("WHERE \"or\" = 1 OR \"and\" = 2", "1\n2\n");
+            assertOperatorNamedColumnRows("WHERE \"in\" IN (1, 5)", "1\n3\n");
+            assertOperatorNamedColumnRows("WHERE \"in\" IN (5) AND \">=\" < 0", "3\n");
+            assertOperatorNamedColumnRows("WHERE \"<\" = 3", "3\n");
+            assertOperatorNamedColumnRows("WHERE -\"<\" = 3", "2\n");
+            assertOperatorNamedColumnRows("WHERE \"=\" = 2 OR \"<\" < 0", "2\n");
+            assertOperatorNamedColumnRows("WHERE \"<\" + \"in\" > 3", "3\n");
+            assertOperatorNamedColumnRows("WHERE \">=\" >= 1 AND \"or\" <> 0", "1\n");
         });
     }
 
@@ -1839,6 +1886,25 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .returns(expected);
             assertSqlRunWithJit(query);
         });
+    }
+
+    private void assertNeverMatchingInRows(String sql, String expected) throws Exception {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        assertQuery(sql).noLeakCheck().expectSize().noRandomAccess().returns(expected);
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        assertQuery(sql).noLeakCheck().expectSize().noRandomAccess().withPlanContaining("Async JIT Filter").returns(expected);
+    }
+
+    private void assertOperatorNamedColumnRows(String where, String expectedIds) throws Exception {
+        final String sql = "SELECT \"and\" FROM x " + where;
+        final String expected = "and\n" + expectedIds;
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        assertQuery(sql).noLeakCheck().returns(expected);
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        assertQuery(sql).noLeakCheck().returns(expected);
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertTrue(sql, factory.usesCompiledFilter());
+        }
     }
 
     private void indexBindVariableReplacedContext(boolean jit) throws SqlException {

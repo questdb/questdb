@@ -48,8 +48,8 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -194,6 +194,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public byte getIndexType(int index) {
+        return createTableOperation.getIndexType(index);
+    }
+
+    @Override
     public MatViewDefinition getMatViewDefinition() {
         return viewDefinition;
     }
@@ -311,11 +316,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public boolean isDeferred() {
         return deferred;
-    }
-
-    @Override
-    public byte getIndexType(int index) {
-        return createTableOperation.getIndexType(index);
     }
 
     @Override
@@ -529,43 +529,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
-    /** Whether the SAMPLE BY buckets the base table directly, rather than a joined source or a sub-query. */
-    private static boolean isSelectSampleBy(QueryModel model, ExpressionNode sampleBy) {
-        while (model != null && model.getJoinModels().size() <= 1) {
-            if (model.getSampleBy() == sampleBy) {
-                return model.getTableNameExpr() != null;
-            }
-            if (model.isNestedModelIsSubQuery()) {
-                return false;
-            }
-            model = model.getNestedModel();
-        }
-        return false;
-    }
-
-    private static boolean isColumnSelected(ObjList<QueryColumn> columns, CharSequence name) {
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final ExpressionNode ast = columns.getQuick(i).getAst();
-            if (ast == null || ast.type != ExpressionNode.LITERAL) {
-                continue;
-            }
-            final CharSequence token = ast.token;
-            final int dot = Chars.indexOfLastUnquoted(token, '.');
-            final CharSequence column = dot < 0 ? token : token.subSequence(dot + 1, token.length());
-            if (Chars.equals(column, '*') || Chars.equalsIgnoreCase(GenericLexer.unquote(column), name)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static String sampleByTimestampName(SqlExecutionContext sqlExecutionContext, TableToken baseTableToken) {
-        try (TableMetadata metadata = sqlExecutionContext.getCairoEngine().getTableMetadata(baseTableToken)) {
-            final int index = metadata.getTimestampIndex();
-            return index < 0 ? null : Chars.toString(metadata.getColumnName(index));
-        }
-    }
-
     @Override
     public void validateAndUpdateMetadataFromSelect(
             @NotNull RecordMetadata selectMetadata,
@@ -661,6 +624,38 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
+    private static boolean isColumnSelected(ObjList<QueryColumn> columns, CharSequence name) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast == null || ast.type != ExpressionNode.LITERAL) {
+                continue;
+            }
+            final CharSequence token = ast.token;
+            final int dot = Chars.indexOfLastUnquoted(token, '.');
+            final CharSequence column = dot < 0 ? token : token.subSequence(dot + 1, token.length());
+            if (Chars.equals(column, '*') || Chars.equalsIgnoreCase(GenericLexer.unquote(column), name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the SAMPLE BY buckets the base table directly, rather than a joined source or a sub-query.
+     */
+    private static boolean isSelectSampleBy(QueryModel model, ExpressionNode sampleBy) {
+        while (model != null && model.getJoinModels().size() <= 1) {
+            if (model.getSampleBy() == sampleBy) {
+                return model.getTableNameExpr() != null;
+            }
+            if (model.isNestedModelIsSubQuery()) {
+                return false;
+            }
+            model = model.getNestedModel();
+        }
+        return false;
+    }
+
     private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, QueryModel queryModel) {
         final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
         if (dotIndex > -1) {
@@ -671,6 +666,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             return columnNode.token;
         }
         return null;
+    }
+
+    private static String sampleByTimestampName(SqlExecutionContext sqlExecutionContext, TableToken baseTableToken) {
+        try (TableMetadata metadata = sqlExecutionContext.getCairoEngine().getTableMetadata(baseTableToken)) {
+            final int index = metadata.getTimestampIndex();
+            return index < 0 ? null : Chars.toString(metadata.getColumnName(index));
+        }
     }
 
     private boolean hasNoAggregates(FunctionFactoryCache functionFactoryCache, QueryModel queryModel, int columnIndex) {

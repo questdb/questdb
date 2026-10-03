@@ -363,13 +363,13 @@ final class SymbolKeyExtractor implements Mutable {
         }
     }
 
-    private BoundExpression extractKeys(BoundExpression predicate, FunctionBinder binder) {
+    private BoundExpression extractKeys(BoundExpression predicate, BoundExpressionRewriter rewriter) {
         if (columnId < 0) {
             return predicate;
         }
         analyze(predicate);
         applyExclusions();
-        return intrinsics.size() == 0 ? predicate : residual(predicate, binder);
+        return intrinsics.size() == 0 ? predicate : residual(predicate, rewriter);
     }
 
     private boolean hasRejectedValue(FunctionExpression call, boolean isBindRejected) {
@@ -422,12 +422,12 @@ final class SymbolKeyExtractor implements Mutable {
         }
     }
 
-    private BoundExpression residual(BoundExpression predicate, FunctionBinder binder) {
+    private BoundExpression residual(BoundExpression predicate, BoundExpressionRewriter rewriter) {
         if (isMarked(predicate)) {
             return null;
         }
         if (predicate instanceof FunctionExpression call && call.isAnd()) {
-            return binder.replaceConjunction(call, residual(call.argumentAt(0), binder), residual(call.argumentAt(1), binder));
+            return rewriter.replaceConjunction(call, residual(call.argumentAt(0), rewriter), residual(call.argumentAt(1), rewriter));
         }
         return predicate;
     }
@@ -501,9 +501,11 @@ final class SymbolKeyExtractor implements Mutable {
         };
     }
 
-    /** The caller owns the returned key function; bind values remain deferred until cursor open. */
+    /**
+     * The caller owns the returned key function; bind values remain deferred until cursor open.
+     */
     static Function instantiateValue(BoundExpression value, OutputSchema input, RecordMetadata metadata,
-                                     FunctionBinder binder, SqlExecutionContext executionContext) throws SqlException {
+                                     FunctionInstantiator instantiator, SqlExecutionContext executionContext) throws SqlException {
         if (value instanceof ConstantExpression constant) {
             return switch (ColumnType.tagOf(constant.getDataType())) {
                 case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL
@@ -512,7 +514,7 @@ final class SymbolKeyExtractor implements Mutable {
                 default -> StrConstant.fromValue(constant.getStrValue());
             };
         }
-        final Function function = binder.instantiate(value, input, metadata, executionContext);
+        final Function function = instantiator.instantiate(value, input, metadata, executionContext);
         try {
             function.init(null, executionContext);
             return function;
@@ -522,17 +524,17 @@ final class SymbolKeyExtractor implements Mutable {
         }
     }
 
-    BoundExpression extract(BoundExpression predicate, int candidateColumnId, FunctionBinder binder) {
+    BoundExpression extract(BoundExpression predicate, int candidateColumnId, BoundExpressionRewriter rewriter) {
         clear();
         columnId = candidateColumnId;
-        return extractKeys(predicate, binder);
+        return extractKeys(predicate, rewriter);
     }
 
     BoundExpression extractIndexed(BoundExpression predicate, OutputSchema input, RecordMetadata metadata,
-                                   TableReader reader, FunctionBinder binder) {
+                                   TableReader reader, BoundExpressionRewriter rewriter) {
         clear();
         selectColumn(predicate, input, metadata, reader);
-        return extractKeys(predicate, binder);
+        return extractKeys(predicate, rewriter);
     }
 
     int getColumnId() {

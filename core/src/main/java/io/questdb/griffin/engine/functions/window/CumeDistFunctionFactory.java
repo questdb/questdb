@@ -80,6 +80,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = NAME + "()";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

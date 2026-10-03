@@ -68,6 +68,11 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final ArrayColumnTypes SUM_COLUMN_TYPES_LV;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

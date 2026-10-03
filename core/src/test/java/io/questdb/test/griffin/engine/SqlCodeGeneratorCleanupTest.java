@@ -28,14 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
-import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.GenerationStepContext;
 
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.Arrays;
 
 public class SqlCodeGeneratorCleanupTest extends AbstractCairoTest {
 
@@ -48,60 +46,75 @@ public class SqlCodeGeneratorCleanupTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLogicalCaptureFailureClosesPreparedFunctionsOnce() throws Exception {
-        assertLogicalGenerationFailure(0);
+    public void testRegeneratedBranchFailureClosesAdoptedFunctionsOnce() throws Exception {
+        assertEveryGenerationFailure("SELECT x::TIMESTAMP ts, x FROM long_sequence(200) WHERE x IN (101, 200) AND "
+                + TestFaultFunctionFactory.CALL + " LIMIT 1");
     }
 
     @Test
-    public void testLogicalRegeneratedBranchFailureClosesAdoptedFunctionsOnce() throws Exception {
-        assertLogicalGenerationFailure(1);
+    public void testUnionTailFailureClosesGroupedHeadFunctionsOnce() throws Exception {
+        assertEveryGenerationFailure("SELECT x::TIMESTAMP ts, max(x) x FROM long_sequence(200) WHERE x IN (1, 101) AND "
+                + TestFaultFunctionFactory.CALL + " GROUP BY ts "
+                + "UNION ALL SELECT x::TIMESTAMP ts, x FROM long_sequence(200) WHERE x = 200 AND " + TestFaultFunctionFactory.CALL);
     }
 
-    @Test
-    public void testLogicalUnionTailFailureClosesGroupedHeadFunctionsOnce() throws Exception {
-        assertLogicalGenerationFailure(2);
+    private static boolean isSuppressedBy(Throwable primary, Throwable failure) {
+        for (Throwable suppressed : primary.getSuppressed()) {
+            if (suppressed == failure || isSuppressedBy(suppressed, failure)) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private void assertLogicalGenerationFailure(int failureMode) throws Exception {
+    /**
+     * Fails generation at each of its steps in turn, after binding prepared the counted functions,
+     * while every created instance fails to close.
+     */
+    private void assertEveryGenerationFailure(String source) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE u AS (SELECT x::TIMESTAMP ts FROM long_sequence(50)) TIMESTAMP(ts)");
-            String source = failureMode == 2
-                    ? "SELECT x::TIMESTAMP ts, max(x) x FROM long_sequence(200) WHERE x IN (1, 101) AND " + TestFaultFunctionFactory.CALL + " GROUP BY ts "
-                    + "UNION ALL SELECT x::TIMESTAMP ts, x FROM long_sequence(200) WHERE x = 200 AND " + TestFaultFunctionFactory.CALL
-                    : "SELECT x::TIMESTAMP ts, x FROM long_sequence(200) WHERE x IN (101, 200) AND " + TestFaultFunctionFactory.CALL + " LIMIT 1";
-            String query = "SELECT o.ts, o.x, l.c FROM (" + source + ") o "
+            final String query = "SELECT o.ts, o.x, l.c FROM (" + source + ") o "
                     + "JOIN LATERAL (SELECT count() c FROM u WHERE u.ts <= o.ts AND " + TestFaultFunctionFactory.CALL + ") l ON true ORDER BY o.x";
-            // Mode 0 fails before any source is generated; modes 1 and 2 fail on the second table-function
-            // source, after the first one and its filter were adopted by generated factories.
-            final int failingSource = failureMode == 0 ? 0 : 2;
-            final OutOfMemoryError failure = new OutOfMemoryError("injected logical generation");
-            final int[] sourceCount = {0};
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                compiler.setLogicalGenerationTestHook(plan -> {
-                    if (failingSource == 0 && sourceCount[0]++ == 0
-                            || plan.getType() == LogicalPlan.Type.FUNCTION_SOURCE && ++sourceCount[0] == failingSource) {
-                        throw failure;
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    GenerationStepContext context = new GenerationStepContext(engine)
+            ) {
+                final int[] steps = {0};
+                context.setStep(() -> steps[0]++);
+                compiler.compile(query, context).getRecordCursorFactory().close();
+                final int stepCount = steps[0];
+                Assert.assertTrue("generation must have steps", stepCount > 1);
+                for (int i = 0; i < stepCount; i++) {
+                    final int failingStep = i;
+                    final OutOfMemoryError failure = new OutOfMemoryError("injected logical generation");
+                    steps[0] = 0;
+                    context.setStep(() -> {
+                        if (steps[0]++ == failingStep) {
+                            throw failure;
+                        }
+                    });
+                    TestFaultFunctionFactory.armCloseFailures();
+                    try {
+                        try (RecordCursorFactory ignored = compiler.compile(query, context).getRecordCursorFactory()) {
+                            Assert.fail("generation must fail");
+                        } catch (OutOfMemoryError e) {
+                            Assert.assertSame(failure, e);
+                        }
+                        Assert.assertTrue("must prepare counted functions", TestFaultFunctionFactory.created() > 0);
+                        Assert.assertEquals("each prepared function closes exactly once",
+                                TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
+                        for (int j = 0, n = TestFaultFunctionFactory.closeFailureCount(); j < n; j++) {
+                            Assert.assertTrue("close failures must not replace the primary error",
+                                    isSuppressedBy(failure, TestFaultFunctionFactory.closeFailure(j)));
+                        }
+                    } finally {
+                        TestFaultFunctionFactory.disarm();
                     }
-                });
-                TestFaultFunctionFactory.armCloseFailures();
-                try {
-                    try (RecordCursorFactory ignored = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                        Assert.fail("generation must fail");
-                    } catch (OutOfMemoryError e) {
-                        Assert.assertSame(failure, e);
-                    }
-                    Assert.assertTrue("must prepare counted functions", TestFaultFunctionFactory.created() > 0);
-                    Assert.assertEquals("each prepared function closes exactly once",
-                            TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
-                    for (int i = 0, n = TestFaultFunctionFactory.closeFailureCount(); i < n; i++) {
-                        Assert.assertTrue("close failures must not replace the primary error",
-                                Arrays.asList(failure.getSuppressed()).contains(TestFaultFunctionFactory.closeFailure(i)));
-                    }
-                } finally {
-                    TestFaultFunctionFactory.disarm();
                 }
-                compiler.setLogicalGenerationTestHook(null);
+                context.setStep(null);
                 assertQuery("SELECT x FROM long_sequence(2) WHERE x = 2").withCompiler(compiler).returns("x\n2\n");
             }
         });
-    }}
+    }
+}

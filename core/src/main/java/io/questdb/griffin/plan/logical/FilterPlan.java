@@ -38,13 +38,15 @@ public final class FilterPlan extends UnaryPlan {
         predicate = null;
     }
 
-    public BoundExpression getPredicate() {
-        return predicate;
+    /**
+     * Sets the output to the input's columns and designated timestamp: a filter only drops rows.
+     */
+    public void deriveOutput() {
+        getOutput().copyFrom(getInput().getOutput());
     }
 
-    @Override
-    public Type getType() {
-        return Type.FILTER;
+    public BoundExpression getPredicate() {
+        return predicate;
     }
 
     public FilterPlan of(LogicalPlan input, BoundExpression predicate, int position) {

@@ -31,7 +31,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
@@ -40,10 +39,18 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory;
 import io.questdb.griffin.engine.functions.math.AddIntFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ConcatFunctionFactory;
+import io.questdb.griffin.engine.functions.str.SubStringFunctionFactory;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.model.ExpressionNode;
@@ -83,9 +90,9 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final OutputSchema original = new OutputSchema().add(10, "unused", ColumnType.INT, true)
                     .add(27, "i", ColumnType.INT, true);
             final OutputSchema pruned = new OutputSchema().add(27, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression expression = binder.bind(binary("=", 5,
-                        binary("+", 2, literal("t.i", 0), constant("1", 4)), constant("4", 7)),
+                                binary("&", 2, literal("t.i", 0), constant("7", 4)), constant("3", 7)),
                         original, "t", sqlExecutionContext);
                 Assert.assertEquals(2, constructions[0]);
                 final FunctionExpression call = (FunctionExpression) expression;
@@ -108,18 +115,201 @@ public class FunctionBinderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantArgumentsLeaveCallsUnconstructedUntilGeneration() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] constructions = {0};
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+                @Override
+                public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                               ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                    constructions[0]++;
+                    return super.createFunction(overload, position, name, args, positions, context);
+                }
+            };
+            final OutputSchema input = new OutputSchema().add(7, "i", ColumnType.INT, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                final FunctionExpression expression = (FunctionExpression) binder.bind(binary("=", 5,
+                                binary("+", 2, literal("i", 0), binary("*", 9, constant("2", 8), constant("3", 10))), constant("10", 12)),
+                        input, "t", sqlExecutionContext);
+                Assert.assertEquals(1, constructions[0]);
+                Assert.assertTrue(((FunctionExpression) expression.argumentAt(0)).argumentAt(1) instanceof ConstantExpression);
+                final BoundExpression nullSum = binder.bind(binary("+", 2, literal("i", 0), constant("null", 4)), input, "t", sqlExecutionContext);
+                Assert.assertTrue(nullSum instanceof ConstantExpression);
+                Assert.assertEquals(2, constructions[0]);
+                try (Function function = binder.instantiate(expression, input, sqlExecutionContext)) {
+                    Assert.assertEquals(4, constructions[0]);
+                    Assert.assertTrue(function.getBool(intRecord(4)));
+                    Assert.assertFalse(function.getBool(intRecord(5)));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCallRaisesConstantArgumentErrorInConstructionOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final OutputSchema input = new OutputSchema().add(7, "ts", ColumnType.TIMESTAMP_MICRO, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                final ExpressionNode dateAdd = call("dateadd", 10, new ObjList<>(constant("'x'", 18), constant("1", 23), literal("ts", 26)));
+                try {
+                    binder.bind(binary("=", 8, literal("missing", 0), dateAdd), input, "t", sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(18, e.getPosition());
+                    TestUtils.assertEquals("invalid time period [unit=x]", e.getFlyweightMessage());
+                }
+                try {
+                    binder.bind(call("timestamp_floor", 0, new ObjList<>(constant("'0d'", 16), literal("ts", 22))), input, "t", sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(16, e.getPosition());
+                    TestUtils.assertEquals("invalid unit '0d'", e.getFlyweightMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCallAdoptsBindTimeConstantOnceAndClosesItOnEveryPath() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] constructions = {0};
+            final int[] closes = {0};
+            final java.util.ArrayList<FunctionFactory> factories = new java.util.ArrayList<>();
+            factories.add(new SubStringFunctionFactory());
+            factories.add(new ConcatFunctionFactory());
+            factories.add(new FunctionFactory() {
+                @Override
+                public String getSignature() {
+                    return "counted_len()";
+                }
+
+                @Override
+                public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+                                            io.questdb.cairo.CairoConfiguration configuration, SqlExecutionContext context) {
+                    constructions[0]++;
+                    return new CountingIntConstant(2, closes);
+                }
+            });
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, factories));
+            final OutputSchema input = new OutputSchema().add(0, "s", ColumnType.STRING, true)
+                    .add(1, "i", ColumnType.INT, true).add(2, "x", ColumnType.STRING, true);
+            final OutputSchema withoutX = new OutputSchema().add(0, "s", ColumnType.STRING, true)
+                    .add(1, "i", ColumnType.INT, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                final BoundExpression substring = binder.bind(countedSubstring(), input, "t", sqlExecutionContext);
+                Assert.assertTrue(substring instanceof FunctionExpression);
+                Assert.assertEquals(1, constructions[0]);
+                Assert.assertEquals(0, closes[0]);
+                try (
+                        Function first = binder.instantiate(substring, withoutX, sqlExecutionContext);
+                        Function second = binder.instantiate(substring, withoutX, sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(((TernaryFunction) first).getRight() instanceof CountingIntConstant);
+                    Assert.assertFalse(((TernaryFunction) second).getRight() instanceof CountingIntConstant);
+                    Assert.assertEquals(1, constructions[0]);
+                    binder.clear();
+                    Assert.assertEquals(0, closes[0]);
+                    TestUtils.assertEquals("bc", first.getStrA(textAndIntRecord("abcdef", 2)));
+                    TestUtils.assertEquals("bc", second.getStrA(textAndIntRecord("abcdef", 2)));
+                }
+                Assert.assertEquals(1, closes[0]);
+
+                // A call that is never generated leaves its constant to the prepared functions.
+                binder.bind(countedSubstring(), input, "t", sqlExecutionContext);
+                binder.clear();
+                Assert.assertEquals(2, constructions[0]);
+                Assert.assertEquals(2, closes[0]);
+
+                // Binding fails after the call handed its constant over.
+                try {
+                    final ExpressionNode negative = call("substring", 40, new ObjList<>(literal("s", 50), literal("i", 52), constant("-1", 54)));
+                    binder.bind(call("concat", 0, new ObjList<>(negative, countedSubstring())), input, "t", sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(40, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "negative substring length is not allowed");
+                }
+                Assert.assertEquals(3, constructions[0]);
+                Assert.assertEquals(3, closes[0]);
+                binder.clear();
+                Assert.assertEquals(3, closes[0]);
+
+                // Generation fails after the call adopted its constant.
+                final BoundExpression concat = binder.bind(call("concat", 0, new ObjList<>(countedSubstring(), literal("x", 30))),
+                        input, "t", sqlExecutionContext);
+                try {
+                    binder.instantiate(concat, withoutX, sqlExecutionContext);
+                    Assert.fail();
+                } catch (IllegalStateException e) {
+                    Assert.assertEquals("bound function input has changed", e.getMessage());
+                }
+                Assert.assertEquals(4, constructions[0]);
+                Assert.assertEquals(4, closes[0]);
+                binder.clear();
+                Assert.assertEquals(4, closes[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testFoldClosesAndForgetsTheLeavesOfTheDroppedOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<Function> folded = new ObjList<>();
+            final java.util.ArrayList<FunctionFactory> factories = new java.util.ArrayList<>();
+            factories.add(new OrFunctionFactory());
+            factories.add(new LtLongFunctionFactory());
+            factories.add(new FunctionFactory() {
+                @Override
+                public String getSignature() {
+                    return "fold_false(L)";
+                }
+
+                @Override
+                public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+                                            io.questdb.cairo.CairoConfiguration configuration, SqlExecutionContext context) {
+                    // Folds without closing its operand, as a fold that drops an operand may.
+                    folded.add(args.getQuick(0));
+                    return BooleanConstant.FALSE;
+                }
+            });
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, factories));
+            final OutputSchema input = new OutputSchema().add(1, "cnt", ColumnType.LONG, true)
+                    .add(7, "v", ColumnType.LONG, true);
+            final OutputSchema withoutCnt = new OutputSchema().add(7, "v", ColumnType.LONG, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
+                final ExpressionNode dropped = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "fold_false", 0, 0);
+                dropped.paramCount = 1;
+                dropped.rhs = literal("cnt", 11);
+                final BoundExpression predicate = binder.bindPredicate(binary("or", 17, dropped,
+                        binary("<", 22, literal("v", 20), constant("5", 24))), input, "t", sqlExecutionContext);
+                Assert.assertTrue(predicate instanceof FunctionExpression call && "<".contentEquals(call.getName()));
+                Assert.assertEquals(1, folded.size());
+                Assert.assertTrue(folded.getQuick(0) instanceof BindableColumn);
+                Assert.assertFalse(((BindableColumn) folded.getQuick(0)).isOpen());
+                try (Function function = binder.instantiate(predicate, withoutCnt)) {
+                    Assert.assertFalse(((BindableColumn) folded.getQuick(0)).isOpen());
+                    binder.clear();
+                    Assert.assertTrue(function.getBool(numericRecord(ColumnType.LONG, 0, 4)));
+                    Assert.assertFalse(function.getBool(numericRecord(ColumnType.LONG, 0, 6)));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGeneratedAliasPreservesRegistrationArgumentOrder() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(7, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         binary("<=", 3, literal("i", 0), constant("4", 6)), input, "t", sqlExecutionContext);
                 TestUtils.assertEquals("<=(II)", expression.getSignature());
                 Assert.assertEquals(0, expression.getArgumentPosition(0));
                 Assert.assertEquals(6, expression.getArgumentPosition(1));
                 Assert.assertTrue(expression.argumentAt(0) instanceof ColumnExpression);
-                try (Function function = binder.instantiate(expression, input)) {
+                try (Function function = binder.instantiate(expression, input, sqlExecutionContext)) {
                     Assert.assertTrue(function.getBool(intRecord(3)));
                     Assert.assertTrue(function.getBool(intRecord(4)));
                     Assert.assertFalse(function.getBool(intRecord(5)));
@@ -133,11 +323,11 @@ public class FunctionBinderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(7, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         binary("=", 3, literal("i", 0), constant("null", 5)), input, "t", sqlExecutionContext);
                 TestUtils.assertEquals("=(Is)", expression.getSignature());
-                try (Function function = binder.instantiate(expression, input)) {
+                try (Function function = binder.instantiate(expression, input, sqlExecutionContext)) {
                     Assert.assertTrue(function.getBool(intRecord(Integer.MIN_VALUE)));
                     Assert.assertFalse(function.getBool(intRecord(1)));
                 }
@@ -150,7 +340,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(7, "l", ColumnType.LONG, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         binary("=", 2, literal("l", 0), constant("null", 4)), input, "t", sqlExecutionContext);
                 TestUtils.assertEquals("=(LK)", expression.getSignature());
@@ -172,14 +362,14 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(2, "discarded", ColumnType.INT, true)
                     .add(8, "kept", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(binary("=", 15,
-                        binary("+", 10, literal("discarded", 0), constant("null", 12)), literal("kept", 17)),
+                                binary("+", 10, literal("discarded", 0), constant("null", 12)), literal("kept", 17)),
                         input, "t", sqlExecutionContext);
                 Assert.assertTrue(expression.argumentAt(0) instanceof ConstantExpression);
                 Assert.assertEquals(ColumnType.INT, expression.argumentAt(0).getDataType());
                 final OutputSchema pruned = new OutputSchema().add(8, "kept", ColumnType.INT, true);
-                try (Function function = binder.instantiate(expression, pruned)) {
+                try (Function function = binder.instantiate(expression, pruned, sqlExecutionContext)) {
                     Assert.assertTrue(function.getBool(intRecord(Integer.MIN_VALUE)));
                     Assert.assertFalse(function.getBool(intRecord(1)));
                 }
@@ -198,13 +388,13 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 final OutputSchema input = new OutputSchema().add(1, "discarded", ColumnType.INT, true)
                         .add(8, "value", type, true);
                 final OutputSchema pruned = new OutputSchema().add(8, "value", type, true);
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final FunctionExpression expression = (FunctionExpression) binder.bind(
                             binary("+", 6, literal("value", 0), constant("1", 8)), input, "t", sqlExecutionContext);
                     Assert.assertEquals(type, expression.getDataType());
                     TestUtils.assertEquals(signatures[i], expression.getSignature());
                     Assert.assertEquals(ColumnType.INT, expression.argumentAt(1).getDataType());
-                    try (Function function = binder.instantiate(expression, pruned)) {
+                    try (Function function = binder.instantiate(expression, pruned, sqlExecutionContext)) {
                         binder.clear();
                         input.clear();
                         pruned.clear();
@@ -237,7 +427,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
     public void testFloatingConstantsAndNullFoldsSnapshotActualTypes() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final OutputSchema empty = new OutputSchema();
                 final ConstantExpression sum = (ConstantExpression) binder.bind(
                         binary("+", 4, constant("1.25", 0), constant("2.25", 6)), empty, "t", sqlExecutionContext);
@@ -271,13 +461,13 @@ public class FunctionBinderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(7, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression cast = (FunctionExpression) binder.bind(
                         binary("cast", 0, literal("i", 5), constant("long", 10)), input, "t", sqlExecutionContext);
                 TestUtils.assertEquals("cast(Il)", cast.getSignature());
                 Assert.assertTrue(cast.argumentAt(1) instanceof TypeExpression);
                 Assert.assertEquals(ColumnType.LONG, cast.argumentAt(1).getDataType());
-                try (Function function = binder.instantiate(cast, input)) {
+                try (Function function = binder.instantiate(cast, input, sqlExecutionContext)) {
                     Assert.assertEquals(3L, function.getLong(intRecord(3)));
                     Assert.assertEquals(Long.MIN_VALUE, function.getLong(intRecord(Integer.MIN_VALUE)));
                 }
@@ -307,7 +497,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             bindVariableService.clear();
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(7, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(binary("=", 2,
                         literal("i", 0), binary("+", 7, parameter("$1", 4), constant("1", 9))), input, "t", sqlExecutionContext);
                 final FunctionExpression runtimeConstant = (FunctionExpression) expression.argumentAt(1);
@@ -336,7 +526,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             bindVariableService.clear();
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema empty = new OutputSchema();
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression projection = binder.bind(parameter("$1", 0), empty, "t", ColumnType.STRING, sqlExecutionContext);
                 Assert.assertEquals(ColumnType.STRING, projection.getDataType());
                 Assert.assertTrue(((BindVariableExpression) projection).isDirectReference());
@@ -376,10 +566,13 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final OutputSchema input = new OutputSchema().add(1, "unused", ColumnType.LONG, true)
                     .add(7, "v", ColumnType.LONG, true);
             final OutputSchema pruned = new OutputSchema().add(7, "v", ColumnType.LONG, true);
-            final ObjList<ExpressionNode> inArguments = new ObjList<>(literal("v", 0), constant("1", 5), constant("2", 7));
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            final ObjList<ExpressionNode> inArguments = new ObjList<>(literal("v", 0), constant("1", 5), constant("2", 7), parameter("$1", 9));
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 1);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression left = binder.bind(call("in", 2, inArguments), input, null, sqlExecutionContext);
-                final BoundExpression right = binder.bind(binary(">", 15, literal("v", 13), constant("0", 17)), input, null, sqlExecutionContext);
+                final BoundExpression right = binder.bind(call("in", 15, new ObjList<>(literal("v", 13), constant("1", 18), constant("2", 20), constant("3", 22), parameter("$1", 24))),
+                        input, null, sqlExecutionContext);
                 final FunctionExpression combined = andDescription(parser, left, right);
                 final ScanPlan scan = new ScanPlan();
                 scan.getOutput().add(27, "v", ColumnType.LONG, true);
@@ -396,6 +589,8 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     try (Function second = binder.instantiate(combined, input, sqlExecutionContext)) {
                         Assert.assertEquals(6, constructed.size());
                         binder.clear();
+                        first.init(null, sqlExecutionContext);
+                        second.init(null, sqlExecutionContext);
                         Assert.assertTrue(first.getBool(numericRecord(ColumnType.LONG, 0, 1)));
                         Assert.assertTrue(second.getBool(numericRecord(ColumnType.LONG, 1, 2)));
                         Assert.assertFalse(first.getBool(numericRecord(ColumnType.LONG, 0, 3)));
@@ -416,6 +611,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 // the closed native root and the still-owned right preparation.
                 try (Function recovered = binder.instantiate(nativeLeft, pruned, sqlExecutionContext)) {
                     binder.clear();
+                    recovered.init(null, sqlExecutionContext);
                     Assert.assertTrue(recovered.getBool(numericRecord(ColumnType.LONG, 0, 2)));
                 }
             }
@@ -428,7 +624,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             bindVariableService.clear();
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema();
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression parameter = binder.bindPredicate(parameter("$1", 7), input, null,
                         null, ColumnType.BOOLEAN, sqlExecutionContext);
                 Assert.assertEquals(ColumnType.BOOLEAN, parameter.getDataType());
@@ -460,7 +656,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             scan.getOutput().add(7, "value", ColumnType.INT, true);
             final ProjectPlan projection = new ProjectPlan().of(scan, 0);
             projection.getOutput().add(20, "alias", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final ColumnExpression castInput = (ColumnExpression) binder.bind(
                         binary("cast", 0, literal("value", 5), constant("int", 14)), scan.getOutput(), null, sqlExecutionContext);
                 projection.getExpressions().add(castInput);
@@ -506,9 +702,9 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final ProjectPlan projection = new ProjectPlan().of(scan, 0);
             projection.getOutput().add(20, "alias", ColumnType.INT, true);
             projection.getExpressions().add(new ColumnExpression().of(7, ColumnType.INT, 5));
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression original = (FunctionExpression) binder.bind(binary("<=", 6,
-                        binary("+", 3, literal("alias", 0), constant("1", 5)), constant("4", 9)),
+                                binary("&", 3, literal("alias", 0), constant("7", 5)), constant("3", 9)),
                         projection.getOutput(), "t", sqlExecutionContext);
                 Assert.assertEquals(2, constructions[0]);
                 final FunctionExpression replacement = (FunctionExpression) binder.remapColumns(original, projection);
@@ -540,9 +736,9 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final OutputSchema original = new OutputSchema().add(1, "unused", ColumnType.INT, true)
                     .add(7, "value", ColumnType.INT, true);
             final OutputSchema pruned = new OutputSchema().add(7, "value", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression expression = binder.bind(binary("<=", 6,
-                        binary("+", 3, literal("value", 0), constant("1", 5)), constant("4", 9)),
+                                binary("+", 3, literal("value", 0), constant("1", 5)), constant("4", 9)),
                         original, "t", sqlExecutionContext);
                 try (
                         Function first = binder.instantiate(expression, original, sqlExecutionContext);
@@ -571,9 +767,9 @@ public class FunctionBinderTest extends AbstractCairoTest {
             bindVariableService.clear();
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(7, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression expression = binder.bind(binary("=", 2, literal("i", 0),
-                        binary("cast", 4, binary("+", 8, parameter("$1", 6), constant("1", 10)), constant("long", 15))),
+                                binary("cast", 4, binary("+", 8, parameter("$1", 6), constant("1", 10)), constant("long", 15))),
                         input, "t", sqlExecutionContext);
                 try (
                         Function first = binder.instantiate(expression, input, sqlExecutionContext);
@@ -608,7 +804,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final OutputSchema input = new OutputSchema().add(7, "i", ColumnType.INT, true)
                     .add(8, "j", ColumnType.INT, true);
             final OutputSchema missing = new OutputSchema().add(7, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression expression = binder.bind(binary("<", 4,
                         binary("+", 2, literal("i", 0), constant("1", 3)), literal("j", 6)), input, "t", sqlExecutionContext);
                 try (Function first = binder.instantiate(expression, input, sqlExecutionContext)) {
@@ -668,7 +864,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 }
             };
             final OutputSchema input = new OutputSchema().add(0, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final ExpressionNode parent = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "failing", 0, 0);
                 parent.paramCount = 1;
                 parent.rhs = binary("+", 12, literal("i", 10), constant("1", 14));
@@ -684,7 +880,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 Assert.assertEquals(1, closes[0]);
                 final BoundExpression expression = binder.bind(binary("+", 2, literal("i", 0), constant("2", 4)),
                         input, "t", sqlExecutionContext);
-                try (Function function = binder.instantiate(expression, input)) {
+                try (Function function = binder.instantiate(expression, input, sqlExecutionContext)) {
                     Assert.assertEquals(5, function.getInt(intRecord(3)));
                 }
                 Assert.assertEquals(2, constructions[0]);
@@ -700,9 +896,9 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final OutputSchema original = new OutputSchema().add(1, "unused", ColumnType.INT, true)
                     .add(7, "ts", ColumnType.TIMESTAMP_MICRO, true);
             final OutputSchema pruned = new OutputSchema().add(7, "ts", ColumnType.TIMESTAMP_MICRO, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(binary("<", 3,
-                        literal("ts", 0), constant("'1970-01-01T00:00:00.000001001Z'", 5)),
+                                literal("ts", 0), constant("'1970-01-01T00:00:00.000001001Z'", 5)),
                         original, "t", sqlExecutionContext);
                 final ConstantExpression timestamp = (ConstantExpression) expression.argumentAt(1);
                 Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, timestamp.getDataType());
@@ -727,7 +923,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 }
                 original.setTimestampIndex(1);
                 final FunctionExpression predicate = (FunctionExpression) binder.bindPredicate(binary("<", 3,
-                        literal("ts", 0), constant("'1970-01-01T00:00:00.000001001Z'", 5)),
+                                literal("ts", 0), constant("'1970-01-01T00:00:00.000001001Z'", 5)),
                         original, "t", sqlExecutionContext);
                 Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, predicate.argumentAt(1).getDataType());
                 Assert.assertEquals(2, ((ConstantExpression) predicate.argumentAt(1)).getLongValue());
@@ -742,7 +938,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             bindVariableService.setTimestampNano(0, 1001);
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(7, "ts", ColumnType.TIMESTAMP_NANO, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         binary("=", 3, literal("ts", 0), parameter("$1", 5)), input, "t", sqlExecutionContext);
                 Assert.assertEquals(ColumnType.TIMESTAMP_NANO, expression.argumentAt(0).getDataType());
@@ -772,7 +968,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(7, "a", ColumnType.STRING, true)
                     .add(8, "b", ColumnType.STRING, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression decoded = binder.bind(constant("'''quoted'''", 0), input, "t", sqlExecutionContext);
                 final BoundExpression comparison = binder.bind(binary("=", 2, literal("a", 0), literal("b", 4)),
                         input, "t", sqlExecutionContext);
@@ -828,7 +1024,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             };
             final OutputSchema input = new OutputSchema();
             final ExpressionNode count = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "count", 0, 7);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 try {
                     binder.bind(count, input, null, sqlExecutionContext);
                     Assert.fail("aggregate admitted in scalar context");
@@ -904,7 +1100,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     originalMetadata.add(new TableColumnMetadata("v", type));
                     final GenericRecordMetadata prunedMetadata = new GenericRecordMetadata();
                     prunedMetadata.add(new TableColumnMetadata("v", type));
-                    try (FunctionBinder binder = new FunctionBinder(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                         final FunctionExpression expression = binder.bindAggregate(
                                 unary(name, 7, literal("v", 11)), original, "t", sqlExecutionContext);
                         Assert.assertTrue(expression.isAggregate());
@@ -974,7 +1170,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             originalMetadata.add(new TableColumnMetadata("unused", ColumnType.INT));
             originalMetadata.add(new TableColumnMetadata("physical_name", ColumnType.INT));
             final int[] pageLookups = {0, 0};
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = binder.bindAggregate(unary("sum", 0, literal("i", 4)),
                         original, "t", sqlExecutionContext);
                 Assert.assertEquals(1, constructed.size());
@@ -1037,7 +1233,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(27, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = binder.bindAggregate(unary("sum", 0,
                         binary("+", 6, literal("i", 4), constant("1", 8))), input, "t", sqlExecutionContext);
                 Assert.assertTrue(expression.isAggregate());
@@ -1095,7 +1291,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 }
             };
             final OutputSchema input = new OutputSchema().add(27, "i", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 try {
                     binder.bindAggregate(unary("sum", 0, unary("max", 4, literal("i", 8))), input, null, sqlExecutionContext);
                     Assert.fail("nested aggregate admitted");
@@ -1131,7 +1327,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final ObjList<ColumnExpression> replacements = new ObjList<>();
             nodes.add(aggregate);
             replacements.add(new ColumnExpression().of(41, ColumnType.LONG, 99));
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression root = binder.bind(aggregate, input, null, nodes, replacements, sqlExecutionContext);
                 Assert.assertEquals(4, root.getPosition());
                 Assert.assertEquals(41, ((ColumnExpression) root).getColumnId());
@@ -1179,7 +1375,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final ObjList<ColumnExpression> replacements = new ObjList<>();
             nodes.add(key);
             replacements.add(new ColumnExpression().of(41, ColumnType.BOOLEAN, 5));
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression expression = binder.bind(root, input, null, nodes, replacements, sqlExecutionContext);
                 Assert.assertTrue(expression instanceof ConstantExpression);
                 try (Function function = binder.instantiate(expression, new OutputSchema(), sqlExecutionContext)) {
@@ -1197,7 +1393,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 final OutputSchema input = new OutputSchema().add(1, "unused", ColumnType.INT, true)
                         .add(9, "value", type, true);
                 final OutputSchema pruned = new OutputSchema().add(9, "value", type, true);
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final BoundExpression expression = binder.bind(unary("abs", 0, literal("value", 4)), input, "t", sqlExecutionContext);
                     try (Function first = binder.instantiate(expression, pruned, sqlExecutionContext);
                          Function second = binder.instantiate(expression, pruned, sqlExecutionContext)) {
@@ -1225,7 +1421,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final OutputSchema dates = new OutputSchema().add(1, "unused", ColumnType.INT, true)
                     .add(8, "d", ColumnType.DATE, true);
             final OutputSchema prunedDates = new OutputSchema().add(8, "d", ColumnType.DATE, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression date = (FunctionExpression) binder.bind(binary("=", 2,
                         literal("d", 0), constant("'1970-01-01'", 4)), dates, "t", sqlExecutionContext);
                 Assert.assertEquals(ColumnType.DATE, date.argumentAt(1).getDataType());
@@ -1278,7 +1474,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final OutputSchema input = new OutputSchema().add(1, "unused", ColumnType.INT, true)
                     .add(8, "ip", ColumnType.IPv4, true);
             final OutputSchema pruned = new OutputSchema().add(8, "ip", ColumnType.IPv4, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(unary("length", 0, literal("ip", 7)),
                         input, "t", sqlExecutionContext);
                 final FunctionExpression cast = (FunctionExpression) expression.argumentAt(0);
@@ -1320,7 +1516,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 for (int i = 1; i <= size; i++) {
                     arguments.add(constant(Integer.toString(i), i * 4));
                 }
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final FunctionExpression expression = (FunctionExpression) binder.bind(call("in", 2, arguments), input, "t", sqlExecutionContext);
                     Assert.assertEquals(size + 1, expression.getArgumentCount());
                     TestUtils.assertEquals("in(LV)", expression.getSignature());
@@ -1352,7 +1548,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 arguments.add(constant("1", 5));
                 arguments.add(parameter("$1", 8));
                 arguments.add(constant("3", 12));
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final FunctionExpression expression = (FunctionExpression) binder.bind(call("in", 2, arguments), input, "t", sqlExecutionContext);
                     Assert.assertEquals(ColumnType.STRING, expression.argumentAt(2).getDataType());
                     try (Function first = binder.instantiate(expression, input, sqlExecutionContext);
@@ -1396,7 +1592,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 arguments.add(binary("+", 6, literal("v", 4), constant("1", 8)));
                 arguments.add(constant("null", 11));
                 arguments.add(constant("2", 17));
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final BoundExpression expression = binder.bind(call("in", 2, arguments), input, "t", sqlExecutionContext);
                     try (Function first = binder.instantiate(expression, input, sqlExecutionContext);
                          Function second = binder.instantiate(expression, input, sqlExecutionContext)) {
@@ -1424,7 +1620,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             arguments.add(literal("flag", 5));
             arguments.add(literal("i", 15));
             arguments.add(literal("l", 22));
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(call("case", 0, arguments), input, "t", sqlExecutionContext);
                 TestUtils.assertEquals("case(V)", expression.getSignature());
                 Assert.assertEquals(ColumnType.LONG, expression.getDataType());
@@ -1475,7 +1671,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             arguments.add(constant("2", 27));
             arguments.add(binary("+", 35, literal("v", 33), constant("1", 37)));
             arguments.add(constant("null", 45));
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(call("switch", 0, arguments), input, "t", sqlExecutionContext);
                 TestUtils.assertEquals("switch(V)", expression.getSignature());
                 Assert.assertEquals(ColumnType.LONG, expression.getDataType());
@@ -1525,7 +1721,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             arguments.add(call("in", 12, in));
             arguments.add(constant("1", 29));
             arguments.add(parameter("$1", 36));
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 try {
                     binder.bind(call("case", 0, arguments), input, "t", sqlExecutionContext);
                     Assert.fail();
@@ -1562,7 +1758,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             arguments.add(constant("false", 35));
             arguments.add(constant("false", 45));
             arguments.add(call("in", 82, in));
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 BoundExpression expression = binder.bind(call("switch", 0, arguments), input, "t", sqlExecutionContext);
                 final Record record = new Record() {
                     @Override
@@ -1601,7 +1797,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testQualifiedColumnsRetainIdsThroughRelocationAndCompilerReuse() throws Exception {
+    public void testQualifiedColumnsRetainIdsThroughLayoutsAndCompilerReuse() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema()
@@ -1611,12 +1807,12 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final OutputSchema reordered = new OutputSchema()
                     .add(12, "right_id", ColumnType.INT, true)
                     .add(7, "left_id", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         binary("<", 5, literal("L.ID", 0), literal("r.id", 7)), input, "ignored", sqlExecutionContext);
                 Assert.assertEquals(7, ((ColumnExpression) expression.argumentAt(0)).getColumnId());
                 Assert.assertEquals(12, ((ColumnExpression) expression.argumentAt(1)).getColumnId());
-                try (Function retained = binder.instantiate(expression, reordered);
+                try (Function retained = binder.instantiate(expression, reordered, sqlExecutionContext);
                      Function rebuilt = binder.instantiate(expression, input, sqlExecutionContext)) {
                     binder.clear();
                     parser.clear();
@@ -1649,7 +1845,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     .add(7, "id", ColumnType.INT, null, true, "left")
                     .add(12, "ID", ColumnType.INT, null, true, "right")
                     .add(13, "unique", ColumnType.INT, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 assertBindingError(binder, input, "id", "left", "Ambiguous column [name=id]");
                 assertBindingError(binder, input, "other.id", "other", "Invalid table name or alias");
                 assertBindingError(binder, input, "left.missing", "left", "Invalid column: left.missing");
@@ -1671,7 +1867,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     .add(7, "a.b", ColumnType.INT, null, true, "source.dot")
                     .add(12, "in", ColumnType.INT, null, true, "source.dot")
                     .add(13, "\"a,b\"", ColumnType.INT, null, true, "source.dot");
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 Assert.assertEquals(7, ((ColumnExpression) binder.bind(literal("\"SOURCE.DOT\".\"A.B\"", 9), input, null, sqlExecutionContext)).getColumnId());
                 Assert.assertEquals(7, ((ColumnExpression) binder.bind(literal("\"a.b\"", 9), input, null, sqlExecutionContext)).getColumnId());
                 Assert.assertEquals(12, ((ColumnExpression) binder.bind(literal("\"source.dot\".\"in\"", 9), input, null, sqlExecutionContext)).getColumnId());
@@ -1697,7 +1893,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final ExpressionNode second = binary("+", 20, declared, constant("3", 22));
             final OutputSchema ints = new OutputSchema().add(7, "i", ColumnType.INT, true);
             final OutputSchema longs = new OutputSchema().add(12, "i", ColumnType.LONG, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 try {
                     binder.bind(first, new OutputSchema(), null, sqlExecutionContext);
                     Assert.fail();
@@ -1718,8 +1914,8 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 Assert.assertSame(column, declared.lhs);
                 Assert.assertSame(one, declared.rhs);
                 Assert.assertFalse(one.isConstantExpression);
-                try (Function intFunction = binder.instantiate(intExpression, ints);
-                     Function longFunction = binder.instantiate(longExpression, longs)) {
+                try (Function intFunction = binder.instantiate(intExpression, ints, sqlExecutionContext);
+                     Function longFunction = binder.instantiate(longExpression, longs, sqlExecutionContext)) {
                     binder.clear();
                     parser.clear();
                     Assert.assertEquals(6, intFunction.getInt(intRecord(3)));
@@ -1730,7 +1926,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringTransformsRelocateAndReconstructIndependentBuffers() throws Exception {
+    public void testStringTransformsBindUnconstructedAndBuildIndependentBuffers() throws Exception {
         assertMemoryLeak(() -> {
             final ObjList<String> names = new ObjList<>("lower", "upper", "to_lowercase", "to_uppercase", "trim", "ltrim", "rtrim");
             final ObjList<String> expected = new ObjList<>("  mixed  ", "  MIXED  ", "  mixed  ", "  MIXED  ", "MiXeD", "MiXeD  ", "  MiXeD");
@@ -1747,13 +1943,13 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     .add(7, "label", ColumnType.STRING, true);
             final OutputSchema pruned = new OutputSchema().add(7, "label", ColumnType.STRING, true);
             for (int i = 0; i < names.size(); i++) {
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     constructions[0] = 0;
                     final FunctionExpression expression = (FunctionExpression) binder.bind(
                             unary(names.getQuick(i), 0, literal("label", 9)), input, null, sqlExecutionContext);
                     TestUtils.assertEquals(names.getQuick(i), expression.getName());
-                    Assert.assertEquals(1, constructions[0]);
-                    try (Function retained = binder.instantiate(expression, pruned)) {
+                    Assert.assertEquals(0, constructions[0]);
+                    try (Function retained = binder.instantiate(expression, pruned, sqlExecutionContext)) {
                         Assert.assertEquals(1, constructions[0]);
                         try (Function rebuilt = binder.instantiate(expression, input, sqlExecutionContext)) {
                             Assert.assertEquals(2, constructions[0]);
@@ -1787,7 +1983,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final ObjList<String> expected = new ObjList<>("  'abc'  ", "  'ABC'  ", "  'abc'  ", "  'ABC'  ", "'AbC'", "'AbC'  ", "  'AbC'");
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             for (int i = 0; i < names.size(); i++) {
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final OutputSchema input = new OutputSchema();
                     final BoundExpression expression = binder.bind(unary(names.getQuick(i), 0, constant("'  ''AbC''  '", 6)),
                             input, null, sqlExecutionContext);
@@ -1813,7 +2009,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema();
             bindVariableService.setStr(0, "  MiXeD  ");
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression expression = binder.bind(unary("lower", 0, unary("trim", 6, parameter("$1", 11))),
                         input, null, sqlExecutionContext);
                 Assert.assertTrue((expression.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0);
@@ -1862,7 +2058,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
         };
     }
 
-    private static void assertBindingError(FunctionBinder binder, OutputSchema input, String name, String alias, String message) throws SqlException {
+    private static void assertBindingError(FunctionBindingHarness binder, OutputSchema input, String name, String alias, String message) throws SqlException {
         try {
             binder.bind(literal(name, 17), input, alias, sqlExecutionContext);
             Assert.fail();
@@ -1870,6 +2066,32 @@ public class FunctionBinderTest extends AbstractCairoTest {
             Assert.assertEquals(17, e.getPosition());
             TestUtils.assertEquals(message, e.getFlyweightMessage());
         }
+    }
+
+    private static Record textAndIntRecord(String text, int value) {
+        return new Record() {
+            @Override
+            public int getInt(int col) {
+                Assert.assertEquals(1, col);
+                return value;
+            }
+
+            @Override
+            public CharSequence getStrA(int col) {
+                Assert.assertEquals(0, col);
+                return text;
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return getStrA(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return getStrA(col).length();
+            }
+        };
     }
 
     private static Record timestampRecord(int index, long value) {
@@ -1888,7 +2110,7 @@ public class FunctionBinderTest extends AbstractCairoTest {
         positions.add(right.getPosition());
         return new FunctionExpression().of(
                 parser.getFunctionFactoryCache().getOverloadList("and").getQuick(0),
-                new ObjList<>(left, right), positions, ColumnType.BOOLEAN, BoundExpression.STABLE_WITHIN_EXECUTION, 11);
+                new ObjList<>(left, right), positions, ColumnType.BOOLEAN, left.getFunctionFlags() | right.getFunctionFlags(), 11);
     }
 
     private static ExpressionNode binary(String token, int position, ExpressionNode lhs, ExpressionNode rhs) {
@@ -1918,6 +2140,11 @@ public class FunctionBinderTest extends AbstractCairoTest {
 
     private static ExpressionNode constant(String token, int position) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, position);
+    }
+
+    private static ExpressionNode countedSubstring() {
+        final ExpressionNode length = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "counted_len", 0, 20);
+        return call("substring", 7, new ObjList<>(literal("s", 17), literal("i", 19), length));
     }
 
     private static Record intRecord(int value) {
@@ -2010,6 +2237,20 @@ public class FunctionBinderTest extends AbstractCairoTest {
         expression.paramCount = 1;
         expression.rhs = argument;
         return expression;
+    }
+
+    private static class CountingIntConstant extends IntConstant {
+        private final int[] closes;
+
+        private CountingIntConstant(int value, int[] closes) {
+            super(value);
+            this.closes = closes;
+        }
+
+        @Override
+        public void close() {
+            closes[0]++;
+        }
     }
 
     private static class CountingIntFunction extends IntFunction implements UnaryFunction {

@@ -175,7 +175,7 @@ final class LatestByFactoryGenerator {
         final LogicalPlan input = latest.getInput();
         // LATEST BY locates its timestamp by position; a declaration alone adds nothing.
         final int inputSlot = codeGenerator.generate(frame, SqlCodeGenerator.isTimestampDeclarationOnly(input) ? input.inputAt(0) : input, executionContext);
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.resources.getQuick(inputSlot);
+        final RecordCursorFactory base = frame.resources.factory(inputSlot);
         final OutputSchema schema = input.getOutput();
         final int timestampIndex = schema.getColumnIndexById(latest.getTimestampColumnId());
         final IntList keyIndexes = latestByColumnIndexes;

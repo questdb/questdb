@@ -77,7 +77,7 @@ final class AggregateInputOrderPass implements Mutable {
     private LogicalPlan removeAggregateInputOrder(LogicalPlan plan) {
         switch (plan) {
             case SortPlan sort -> {
-                return LogicalPlans.skipProjects(sort.getInput()).getType() == LogicalPlan.Type.WINDOW
+                return LogicalPlans.skipProjects(sort.getInput()) instanceof WindowPlan
                         ? plan : removeAggregateInputOrder(sort.getInput());
             }
             case WindowPlan window -> {
@@ -94,8 +94,9 @@ final class AggregateInputOrderPass implements Mutable {
                 return plan;
             }
             case FilterPlan filter -> {
-                if (LogicalPlans.isOrderIndependent(filter.getPredicate()) && replaceWithUnorderedInput(filter)) {
-                    filter.getOutput().copyFrom(filter.getInput().getOutput());
+                if (LogicalPlans.isOrderIndependent(filter.getPredicate()) && !LogicalPlans.hasDeferredConjunct(filter.getPredicate())
+                        && replaceWithUnorderedInput(filter)) {
+                    filter.deriveOutput();
                 }
                 return plan;
             }
@@ -129,7 +130,9 @@ final class AggregateInputOrderPass implements Mutable {
         }
     }
 
-    /** Returns whether the input or its designated timestamp changed. */
+    /**
+     * Returns whether the input or its designated timestamp changed.
+     */
     private boolean replaceWithUnorderedInput(UnaryPlan plan) {
         final LogicalPlan input = plan.getInput();
         final int timestampId = input.getOutput().getTimestampColumnId();
@@ -150,8 +153,7 @@ final class AggregateInputOrderPass implements Mutable {
             }
             first = LogicalPlans.skipProjects(first);
             final LogicalPlan branch = LogicalPlans.skipProjects(operation.getRight());
-            if (branch.getType() == LogicalPlan.Type.AGGREGATE && first.getType() != LogicalPlan.Type.AGGREGATE
-                    && first.getType() != LogicalPlan.Type.SORT) {
+            if (branch instanceof AggregatePlan && !(first instanceof AggregatePlan) && !(first instanceof SortPlan)) {
                 orderedBranchAggregates.add(branch);
             }
         }

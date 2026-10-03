@@ -107,6 +107,7 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -132,7 +133,8 @@ import io.questdb.std.ObjList;
 
 import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
-import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.SqlKeywords.isCountKeyword;
+import static io.questdb.griffin.SqlKeywords.isSumKeyword;
 
 final class AggregateFactoryGenerator {
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, _, _, _) -> new CountVectorAggregateFunction(keyKind);
@@ -171,321 +173,85 @@ final class AggregateFactoryGenerator {
         this.horizonSlaveSymbols = horizonSlaveSymbols;
     }
 
-    int generateDistinct(GenerationFrame frame, DistinctPlan distinct, LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {
-        // DISTINCT keeps its input order. A downstream sort must not turn the
-        // timestamp-specialized factory's forward input into a backward scan.
-        final int inputSlot = codeGenerator.generate(frame, distinct.getInput(), executionContext);
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.resources.getQuick(inputSlot);
-        final int slot = frame.resources.reserve();
-        final int loSlot = frame.resources.reserve();
-        final int hiSlot = frame.resources.reserve();
-        Function lo = null;
-        Function hi = null;
-        if (limitAdvice != null && !isTimeSeriesDistinct(base)) {
-            lo = frame.functionBinder.instantiate(limitAdvice.getLo(), emptySchema, executionContext);
-            frame.resources.own(loSlot, lo);
-            if (limitAdvice.getHi() != null) {
-                hi = frame.functionBinder.instantiate(limitAdvice.getHi(), emptySchema, executionContext);
-                frame.resources.own(hiSlot, hi);
-            }
-        }
-        frame.resources.detach(inputSlot);
-        if (lo != null) {
-            frame.resources.detach(loSlot);
-        }
-        if (hi != null) {
-            frame.resources.detach(hiSlot);
-        }
-        frame.resources.own(slot, generateDistinct(base, lo, hi));
-        return slot;
-    }
-
-    void countSharedConsumers(GenerationFrame frame, LogicalPlan plan) {
-        if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null) {
-            final int index = frame.sharedConsumerSources.indexOf(aggregate.getSharedSource());
-            if (index < 0) {
-                frame.sharedConsumerSources.add(aggregate.getSharedSource());
-                frame.sharedConsumerTotals.add(1);
-            } else {
-                frame.sharedConsumerTotals.increment(index);
-            }
-        }
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            countSharedConsumers(frame, plan.inputAt(i));
-        }
-    }
-
-    int generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SortPlan orderAdvice, SqlExecutionContext executionContext,
-                          int requiredOrderColumnId, int requiredScanDirection) throws SqlException {
-        if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
-            return generateHorizonJoin(frame, aggregate, horizon, executionContext);
-        }
-        int inputMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-        for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
-            if (aggregate.getAggregates().getQuick(i).getOverload().isOrderSensitiveAggregate()) {
-                inputMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                break;
-            }
-        }
-        int sharedSlot = generateSharedInput(frame, aggregate);
-        if (sharedSlot < 0 && prepareSharedHead(frame, aggregate)) {
-            try {
-                sharedSlot = codeGenerator.generate(frame, aggregate.getInput(), executionContext, -1, RecordCursorFactory.SCAN_DIRECTION_OTHER, null, null, inputMnemonic);
-            } finally {
-                frame.sharedHeadTarget = null;
-            }
-        }
-        int inputOrderId = -1;
-        final int orderIndex = aggregate.getAggregates().size() == 0 ? aggregate.getOutput().getColumnIndexById(requiredOrderColumnId) : -1;
-        if (orderIndex >= 0 && orderIndex < aggregate.getGroupingExpressions().size()
-                && aggregate.getGroupingExpressions().getQuick(orderIndex) instanceof ColumnExpression key && key.isDirectReference()) {
-            inputOrderId = key.getColumnId();
-        }
-        final LogicalPlan input = skipRenames(aggregate.getInput());
-        final boolean isTimestampDeclared = sharedSlot < 0 && SqlCodeGenerator.isTimestampDeclarationOnly(input);
-        final int inputSlot = sharedSlot >= 0 ? sharedSlot : codeGenerator.generate(frame, isTimestampDeclared ? input.inputAt(0) : input,
-                executionContext, inputOrderId, inputOrderId < 0 ? RecordCursorFactory.SCAN_DIRECTION_OTHER : requiredScanDirection,
-                remapKeyOrderAdvice(frame, aggregate, orderAdvice), null, inputMnemonic);
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.detach(inputSlot);
-        final int timestampIndex = isTimestampDeclared ? input.getOutput().getTimestampIndex() : base.getMetadata().getTimestampIndex();
-        frame.resources.own(slot, generate(frame, aggregate, base, timestampIndex, frame.functionBinder,
-                sharedConsumerCount(frame, aggregate), executionContext));
-        return slot;
-    }
-
-    /** Consumes the input on entry, including on failure. */
-    RecordCursorFactory generate(
-            GenerationFrame frame,
+    private static void assemble(
             AggregatePlan plan,
-            RecordCursorFactory base,
+            RecordMetadata inputMetadata,
             int timestampIndex,
-            FunctionBinder binder,
-            int sharedConsumerCount,
-            SqlExecutionContext executionContext
+            boolean isBaseTimestampAscending,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext,
+            ObjList<GroupByFunction> aggregates,
+            ObjList<Function> keyFunctions,
+            ObjList<Function> recordFunctions,
+            ArrayColumnTypes keyTypes,
+            ArrayColumnTypes valueTypes,
+            ListColumnFilter columnFilter
     ) throws SqlException {
-        boolean isAdopted = false;
+        final OutputSchema input = plan.getInput().getOutput();
+        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
+        recordFunctions.setPos(plan.getOutput().getColumnCount());
+        for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
+            final FunctionExpression call = plan.getAggregates().getQuick(i);
+            final GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(call, input, inputMetadata, executionContext);
+            recordFunctions.setQuick(keys.size() + i, function);
+            aggregates.add(function);
+            GroupByUtils.validateTimestampOrder(function, timestampIndex, isBaseTimestampAscending, call.getPosition());
+            function.initValueTypes(valueTypes);
+        }
+        // RecordSink writes direct columns before computed keys. Output functions
+        // map those physical key slots back to the logical key order.
+        int lastIndex = -1;
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i) instanceof ColumnExpression column) {
+                final int index = input.getColumnIndexById(column.getColumnId());
+                // The map stores a column repeated consecutively as one key.
+                if (index != lastIndex) {
+                    columnFilter.add(index + 1);
+                    keyTypes.add(column.getDataType());
+                    lastIndex = index;
+                }
+                recordFunctions.setQuick(i, GroupByUtils.createColumnFunction(inputMetadata,
+                        valueTypes.getColumnCount() + keyTypes.getColumnCount(), column.getDataType(), index));
+            }
+        }
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final BoundExpression key = keys.getQuick(i);
+            if (!(key instanceof ColumnExpression)) {
+                final Function function = instantiator.instantiate(key, input, inputMetadata, executionContext);
+                keyFunctions.add(function);
+                Function keyColumn = GroupByUtils.createColumnFunction(null,
+                        valueTypes.getColumnCount() + keyTypes.getColumnCount() + 1, function.getType(), -1);
+                keyTypes.add(keyColumn.getType());
+                if (function.getType() == ColumnType.SYMBOL && keyColumn.getType() == ColumnType.STRING) {
+                    keyColumn = new CastStrToSymbolFunctionFactory.Func(keyColumn);
+                }
+                recordFunctions.setQuick(i, keyColumn);
+            }
+        }
+    }
+
+    private static long evalHorizonTimeValue(CharSequence token, int position, TimestampDriver timestampDriver) throws SqlException {
+        int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, position);
+        if (unitIndex == -1) {
+            // Unitless zero (e.g. "0")
+            return 0;
+        }
+        char unit = token.charAt(unitIndex);
+        long value = TimestampSamplerFactory.parseInterval(token, unitIndex, position);
         try {
-            final ObjList<FunctionExpression> aggregates = plan.getAggregates();
-            if (plan.getGroupingExpressions().size() == 0 && aggregates.size() == 0) {
-                // DISTINCT of constants uses global aggregation even over an empty
-                // input. Its outer projection owns the values; COUNT supplies the row.
-                final RecordCursorFactory result = new CountRecordCursorFactory(new GenericRecordMetadata(), base);
-                isAdopted = true;
-                return result;
-            }
-            if (plan.getGroupingExpressions().size() == 0 && aggregates.size() == 1) {
-                final FunctionExpression call = aggregates.getQuick(0);
-                if (call.getArgumentCount() == 0 && call.isAggregate()
-                        && SqlKeywords.isCountKeyword(call.getName())) {
-                    final CharSequence name = plan.getOutput().getColumnName(0);
-                    final RecordMetadata metadata = SqlKeywords.isCountKeyword(name)
-                            ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA
-                            : new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(name), ColumnType.LONG));
-                    if (base instanceof SelectedRecordCursorFactory selected && selected.getMetadata().getColumnCount() == 0) {
-                        base = selected.getBaseFactory();
-                    }
-                    final RecordCursorFactory result = new CountRecordCursorFactory(metadata, base);
-                    isAdopted = true;
-                    return result;
-                }
-            }
-            final RecordCursorFactory posting = tryPostingIndex(frame, plan, binder, executionContext);
-            if (posting != null) {
-                // This source is a native scan, so replacing its unopened cursor has no
-                // table-function or scalar-construction effects to replay.
-                final RecordCursorFactory discarded = base;
-                base = null;
-                try {
-                    discarded.close();
-                } catch (Throwable th) {
-                    Misc.free(posting, th);
-                    throw th;
-                }
-                return posting;
-            }
-            if (isVectorizable(plan, base, executionContext)) {
-                isAdopted = true;
-                return generateVector(plan, base, executionContext);
-            }
-            isAdopted = true;
-            return generateFunctions(frame, plan, base, timestampIndex, binder, sharedConsumerCount, executionContext);
-        } catch (Throwable th) {
-            if (!isAdopted) {
-                Misc.free(base, th);
-            }
-            throw th;
+            return switch (unit) {
+                case 'n' -> timestampDriver.fromNanos(value);
+                case 'U' -> timestampDriver.fromMicros(value);
+                case 'T' -> timestampDriver.fromMillis(value);
+                case 's' -> timestampDriver.fromSeconds(value);
+                case 'm' -> timestampDriver.fromMinutes(Math.toIntExact(value));
+                case 'h' -> timestampDriver.fromHours(Math.toIntExact(value));
+                case 'd' -> timestampDriver.fromDays(Math.toIntExact(value));
+                default -> throw SqlException.$(position, "unsupported HORIZON time unit [unit=").put(unit).put(']');
+            };
+        } catch (ArithmeticException e) {
+            throw SqlException.$(position, "HORIZON time value overflow");
         }
-    }
-
-    /** Consumes the inputs on entry, including on failure. */
-    RecordCursorFactory generateHorizonJoin(
-            GenerationFrame frame,
-            AggregatePlan plan,
-            HorizonJoinPlan horizon,
-            RecordCursorFactory master,
-            ObjList<RecordCursorFactory> slaves,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        JoinRecordMetadata innerMetadata = null;
-        ObjList<Function> keyFunctions = null;
-        ObjList<Function> recordFunctions = null;
-        ObjList<ObjList<GroupByFunction>> workerAggregates = null;
-        ObjList<ObjList<Function>> workerKeys = null;
-        ObjList<Function> workerFilters = null;
-        Function ownedFilter = null;
-        CompiledFilter compiledFilter = null;
-        MemoryCARW bindVariableMemory = null;
-        ObjList<Function> bindVariables = null;
-        boolean isAdopted = false;
-        try {
-            final OutputSchema output = horizon.getOutput();
-            innerMetadata = new JoinRecordMetadata(configuration, output.getColumnCount());
-            final RecordMetadata masterMetadata = master.getMetadata();
-            for (int i = 0, n = masterMetadata.getColumnCount(); i < n; i++) {
-                innerMetadata.add(horizon.getMasterAlias(), masterMetadata.getColumnMetadata(i));
-            }
-            final int offsetIndex = masterMetadata.getColumnCount();
-            innerMetadata.add(horizon.getHorizonAlias(), new TableColumnMetadata(Chars.toString(output.getColumnName(offsetIndex)), ColumnType.LONG));
-            innerMetadata.add(horizon.getHorizonAlias(), new TableColumnMetadata(Chars.toString(output.getColumnName(offsetIndex + 1)),
-                    output.getColumnType(offsetIndex + 1)));
-            for (int s = 0, m = slaves.size(); s < m; s++) {
-                final RecordMetadata slaveMetadata = slaves.getQuick(s).getMetadata();
-                for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-                    innerMetadata.add(horizon.getSlaves().getQuick(s).getAlias(), slaveMetadata.getColumnMetadata(i));
-                }
-            }
-            innerMetadata.setTimestampIndex(masterMetadata.getTimestampIndex());
-            final ObjList<GroupByFunction> aggregates = new ObjList<>(plan.getAggregates().size());
-            keyFunctions = new ObjList<>(plan.getGroupingExpressions().size());
-            recordFunctions = new ObjList<>(plan.getOutput().getColumnCount());
-            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            final ListColumnFilter columnFilter = new ListColumnFilter();
-            assemble(plan, innerMetadata, masterMetadata.getTimestampIndex(), false, binder, executionContext,
-                    aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter);
-            final GenericRecordMetadata metadata = metadata(plan, innerMetadata, recordFunctions);
-            final boolean isEnabled = executionContext.isParallelHorizonJoinEnabled();
-            final FilterPlan filterPlan = findFilterPlan(horizon.getMaster());
-            final boolean isFilterStealable = isEnabled && filterPlan != null && !master.supportsPageFrameCursor()
-                    && (FilterFactoryGenerator.isParallelFilter(master) || !master.implementsLimit() && master instanceof FilteredRecordCursorFactory
-                    && filterPlan.getInput().getType() == LogicalPlan.Type.SCAN) && master.getBaseFactory().supportsPageFrameCursor();
-            final boolean isParallel = isEnabled && (master.supportsPageFrameCursor() || isFilterStealable)
-                    && SqlUtil.isParallelismSupported(keyFunctions) && GroupByUtils.isParallelismSupported(aggregates);
-            IntHashSet filterIndexes = null;
-            if (isParallel) {
-                workerAggregates = workerAggregates(plan, aggregates, innerMetadata, binder, executionContext);
-                workerKeys = workerKeys(plan, keyFunctions, innerMetadata, binder, executionContext);
-                if (isFilterStealable) {
-                    final Function filter = FilterFactoryGenerator.stolenFilter(master);
-                    final BoundExpression predicate = stolenPredicate(frame, filterPlan, master);
-                    workerFilters = FilterFactoryGenerator.compileWorkers(predicate, filterPlan.getInput().getOutput(), masterMetadata, filter, binder, executionContext);
-                    filterIndexes = new IntHashSet();
-                    FilterFactoryGenerator.collectColumnIndexes(predicate, filterPlan.getInput().getOutput(), filterIndexes);
-                    filterIndexes.add(masterMetadata.getTimestampIndex());
-                    master.halfClose();
-                    ownedFilter = filter;
-                    compiledFilter = master.getCompiledFilter();
-                    bindVariableMemory = master.getBindVarMemory();
-                    bindVariables = master.getBindVarFunctions();
-                    master = master.getBaseFactory();
-                }
-            }
-            isAdopted = true;
-            return generateHorizonJoin(horizon, master, slaves, innerMetadata, metadata, columnFilter, keyTypes,
-                    valueTypes, aggregates, workerAggregates, keyFunctions, workerKeys, recordFunctions, compiledFilter,
-                    bindVariableMemory, bindVariables, ownedFilter, filterIndexes, workerFilters, isParallel, executionContext);
-        } catch (Throwable th) {
-            if (!isAdopted) {
-                closeWorkers(workerAggregates, th);
-                closeWorkers(workerKeys, th);
-                Misc.freeObjList(workerFilters, th);
-                Misc.freeObjList(recordFunctions, th);
-                Misc.freeObjList(keyFunctions, th);
-                Misc.free(ownedFilter, th);
-                Misc.free(compiledFilter, th);
-                Misc.free(bindVariableMemory, th);
-                Misc.freeObjList(bindVariables, th);
-                Misc.free(innerMetadata, th);
-                Misc.freeObjList(slaves, th);
-                Misc.free(master, th);
-            }
-            throw th;
-        }
-    }
-
-    int generateHorizonJoin(GenerationFrame frame, AggregatePlan aggregate, HorizonJoinPlan horizon, SqlExecutionContext executionContext)
-            throws SqlException {
-        final int slaveCount = horizon.getSlaves().size();
-        final int masterSlot = codeGenerator.generateJoinInput(frame, horizon.getMaster(), executionContext, true, OrderByMnemonic.ORDER_BY_REQUIRED);
-        final int slotBase = horizonSlaveSlots.size();
-        final int slot;
-        final RecordCursorFactory master;
-        final ObjList<RecordCursorFactory> slaves;
-        try {
-            for (int i = 0; i < slaveCount; i++) {
-                horizonSlaveSlots.add(codeGenerator.generateJoinInput(frame, horizon.getSlaves().getQuick(i).getInput(), executionContext, true, OrderByMnemonic.ORDER_BY_REQUIRED));
-            }
-            slot = frame.resources.reserve();
-            master = (RecordCursorFactory) frame.resources.detach(masterSlot);
-            slaves = new ObjList<>(slaveCount);
-            for (int i = 0; i < slaveCount; i++) {
-                slaves.add((RecordCursorFactory) frame.resources.detach(horizonSlaveSlots.getQuick(slotBase + i)));
-            }
-        } finally {
-            horizonSlaveSlots.setPos(slotBase);
-        }
-        frame.resources.own(slot, generateHorizonJoin(frame, aggregate, horizon, master, slaves, frame.functionBinder, executionContext));
-        return slot;
-    }
-
-    static void closeWorkers(ObjList<? extends ObjList<? extends Function>> workers, Throwable primary) {
-        if (workers != null) {
-            for (int i = 0, n = workers.size(); i < n; i++) {
-                PerWorkerFunctionList.close(workers.getQuick(i), primary);
-            }
-        }
-    }
-
-    static FilterPlan findFilterPlan(LogicalPlan input) {
-        while (input instanceof ProjectPlan project) {
-            final OutputSchema source = project.getInput().getOutput();
-            if (project.getExpressions().size() != source.getColumnCount()) {
-                return null;
-            }
-            for (int i = 0, n = source.getColumnCount(); i < n; i++) {
-                if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column)
-                        || column.getColumnId() != source.getColumnId(i)
-                        || project.getOutput().getColumnType(i) != source.getColumnType(i)) {
-                    return null;
-                }
-            }
-            input = project.getInput();
-        }
-        return input instanceof FilterPlan filter ? filter : null;
-    }
-
-    /**
-     * Skips column projections that keep every input column at its position and type: the aggregate
-     * binds its input by position, so only the names differ.
-     */
-    private static LogicalPlan skipRenames(LogicalPlan plan) {
-        while (plan instanceof ProjectPlan project && !project.hasTimestampDeclaration() && !project.hasUpdateConversions()) {
-            final OutputSchema input = project.getInput().getOutput();
-            final OutputSchema output = project.getOutput();
-            if (output.getColumnCount() != input.getColumnCount() || output.getTimestampIndex() != input.getTimestampIndex()) {
-                return plan;
-            }
-            for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-                if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || !column.isDirectReference() || column.isCast()
-                        || column.getColumnId() != input.getColumnId(i) || output.getColumnType(i) != input.getColumnType(i)) {
-                    return plan;
-                }
-            }
-            plan = project.getInput();
-        }
-        return plan;
     }
 
     private static boolean isThreadSafe(ObjList<? extends Function> functions) {
@@ -518,6 +284,93 @@ final class AggregateFactoryGenerator {
         return metadata;
     }
 
+    /**
+     * Raises, once the input is built, the error of the grouping's failed key or aggregate written first.
+     */
+    private static void raiseDeferredKeys(AggregatePlan aggregate) throws SqlException {
+        DeferredErrorExpression first = null;
+        for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
+            if (aggregate.getGroupingExpressions().getQuick(i) instanceof DeferredErrorExpression deferred
+                    && (first == null || deferred.getPosition() < first.getPosition())) {
+                first = deferred;
+            }
+        }
+        if (first != null) {
+            throw first.raise();
+        }
+    }
+
+    private static void sharedRecordFunctions(
+            AggregatePlan plan,
+            RecordMetadata inputMetadata,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext,
+            ObjList<Function> recordFunctions,
+            ArrayColumnTypes valueTypes,
+            ObjList<Function> functions
+    ) throws SqlException {
+        final OutputSchema input = plan.getInput().getOutput();
+        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
+        functions.setPos(recordFunctions.size());
+        for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
+            final int index = keys.size() + i;
+            final GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(plan.getAggregates().getQuick(i), input, inputMetadata, executionContext);
+            functions.setQuick(index, function);
+            function.initSharedFrom((GroupByFunction) recordFunctions.getQuick(index));
+        }
+        int keySlot = valueTypes.getColumnCount();
+        int lastIndex = -1;
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i) instanceof ColumnExpression column) {
+                final int index = input.getColumnIndexById(column.getColumnId());
+                if (index != lastIndex) {
+                    keySlot++;
+                    lastIndex = index;
+                }
+                functions.setQuick(i, GroupByUtils.createColumnFunction(inputMetadata,
+                        keySlot, column.getDataType(), index));
+            }
+        }
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (!(keys.getQuick(i) instanceof ColumnExpression)) {
+                final Function owner = recordFunctions.getQuick(i);
+                final int type = owner instanceof CastStrToSymbolFunctionFactory.Func ? ColumnType.STRING : owner.getType();
+                Function keyColumn = GroupByUtils.createColumnFunction(null, ++keySlot, type, -1);
+                if (owner instanceof CastStrToSymbolFunctionFactory.Func) {
+                    keyColumn = new CastStrToSymbolFunctionFactory.Func(keyColumn);
+                }
+                functions.setQuick(i, keyColumn);
+            }
+        }
+    }
+
+    /**
+     * Skips column projections that keep every input column at its position and type: the aggregate
+     * binds its input by position, so only the names differ.
+     */
+    private static LogicalPlan skipRenames(LogicalPlan plan) {
+        while (plan instanceof ProjectPlan project && !project.hasTimestampDeclaration() && !project.hasUpdateConversions()) {
+            final OutputSchema input = project.getInput().getOutput();
+            final OutputSchema output = project.getOutput();
+            if (output.getColumnCount() != input.getColumnCount() || output.getTimestampIndex() != input.getTimestampIndex()) {
+                return plan;
+            }
+            for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+                if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || !column.isDirectReference() || column.isCast()
+                        || column.getColumnId() != input.getColumnId(i) || output.getColumnType(i) != input.getColumnType(i)) {
+                    return plan;
+                }
+            }
+            plan = project.getInput();
+        }
+        return plan;
+    }
+
+    private static BoundExpression stolenPredicate(GenerationFrame frame, FilterPlan filterPlan, RecordCursorFactory filter) {
+        final BoundExpression predicate = FilterFactoryGenerator.getParallelPredicate(frame, filter);
+        return predicate != null ? predicate : filterPlan.getPredicate();
+    }
+
     private static VectorAggregateFunctionConstructor vectorConstructor(FunctionExpression call) {
         if (!call.isAggregate()) {
             return null;
@@ -544,18 +397,77 @@ final class AggregateFactoryGenerator {
         return null;
     }
 
-    private boolean isVectorizable(AggregatePlan plan, RecordCursorFactory base, SqlExecutionContext executionContext) {
-        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-        final ColumnExpression key = keys.size() == 1 ? vectorKey(keys.getQuick(0)) : null;
-        if (key == null || !canVectorizeGroupBy(base, executionContext)) {
-            return false;
+    private static ObjList<ObjList<GroupByFunction>> workerAggregates(
+            AggregatePlan plan,
+            ObjList<GroupByFunction> aggregates,
+            RecordMetadata inputMetadata,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (isThreadSafe(aggregates)) {
+            return null;
         }
-        for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
-            if (vectorConstructor(plan.getAggregates().getQuick(i)) == null) {
-                return false;
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        final ObjList<ObjList<GroupByFunction>> workers = new ObjList<>(workerCount);
+        instantiator.beginWorkerClones();
+        try {
+            for (int w = 0; w < workerCount; w++) {
+                final PerWorkerFunctionList<GroupByFunction> functions = new PerWorkerFunctionList<>(aggregates.size());
+                workers.add(functions);
+                for (int i = 0, n = aggregates.size(); i < n; i++) {
+                    final GroupByFunction owner = aggregates.getQuick(i);
+                    if (owner.isThreadSafe()) {
+                        functions.add(owner, false);
+                    } else {
+                        final GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(plan.getAggregates().getQuick(i),
+                                plan.getInput().getOutput(), inputMetadata, executionContext);
+                        functions.add(function, true);
+                        function.initValueIndex(owner.getValueIndex());
+                    }
+                }
             }
+            return workers;
+        } catch (Throwable th) {
+            closeWorkers(workers, th);
+            throw th;
+        } finally {
+            instantiator.endWorkerClones();
         }
-        return true;
+    }
+
+    private static ObjList<ObjList<Function>> workerKeys(
+            AggregatePlan plan,
+            ObjList<Function> keyFunctions,
+            RecordMetadata inputMetadata,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (isThreadSafe(keyFunctions)) {
+            return null;
+        }
+        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        final ObjList<ObjList<Function>> workers = new ObjList<>(workerCount);
+        instantiator.beginWorkerClones();
+        try {
+            for (int w = 0; w < workerCount; w++) {
+                final PerWorkerFunctionList<Function> functions = new PerWorkerFunctionList<>(keyFunctions.size());
+                workers.add(functions);
+                for (int i = 0, k = 0, n = keys.size(); i < n; i++) {
+                    if (!(keys.getQuick(i) instanceof ColumnExpression)) {
+                        final Function owner = keyFunctions.getQuick(k++);
+                        functions.add(owner.isThreadSafe() ? owner : instantiator.instantiate(keys.getQuick(i), plan.getInput().getOutput(),
+                                inputMetadata, executionContext), !owner.isThreadSafe());
+                    }
+                }
+            }
+            return workers;
+        } catch (Throwable th) {
+            closeWorkers(workers, th);
+            throw th;
+        } finally {
+            instantiator.endWorkerClones();
+        }
     }
 
     private RecordCursorFactory generateFunctions(
@@ -563,7 +475,7 @@ final class AggregateFactoryGenerator {
             AggregatePlan plan,
             RecordCursorFactory base,
             int timestampIndex,
-            FunctionBinder binder,
+            FunctionInstantiator instantiator,
             int sharedConsumerCount,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -586,33 +498,33 @@ final class AggregateFactoryGenerator {
             final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             final ListColumnFilter columnFilter = new ListColumnFilter();
             assemble(plan, base.getMetadata(), timestampIndex, SqlCodeGenerator.isBaseTimestampAscending(base, timestampIndex),
-                    binder, executionContext, aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter);
+                    instantiator, executionContext, aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter);
             final GenericRecordMetadata metadata = metadata(plan, base.getMetadata(), recordFunctions);
             if (sharedConsumerCount > 0) {
                 sharedRecordFunctions = new ObjList<>(sharedConsumerCount);
                 for (int i = 0; i < sharedConsumerCount; i++) {
                     final ObjList<Function> functions = new ObjList<>(recordFunctions.size());
                     sharedRecordFunctions.add(functions);
-                    sharedRecordFunctions(plan, base.getMetadata(), binder, executionContext, recordFunctions, valueTypes, functions);
+                    sharedRecordFunctions(plan, base.getMetadata(), instantiator, executionContext, recordFunctions, valueTypes, functions);
                 }
             }
             // Identity projections can disappear during generation. The physical
             // wrapper check confirms that its filter still has this input layout.
             final FilterPlan filterPlan = findFilterPlan(plan.getInput());
             final boolean isFilterStealable = filterPlan != null && (FilterFactoryGenerator.isParallelFilter(base)
-                    || !base.implementsLimit() && base instanceof FilteredRecordCursorFactory && filterPlan.getInput().getType() == LogicalPlan.Type.SCAN)
+                    || !base.implementsLimit() && base instanceof FilteredRecordCursorFactory && filterPlan.getInput() instanceof ScanPlan)
                     && base.getBaseFactory().supportsPageFrameCursor();
             final boolean isParallel = canParallelizeGroupBy(
                     base, keyTypes.getColumnCount(), keyFunctions, aggregates, isFilterStealable, executionContext
             );
             IntHashSet filterIndexes = null;
             if (isParallel) {
-                workerAggregates = workerAggregates(plan, aggregates, base.getMetadata(), binder, executionContext);
-                workerKeys = workerKeys(plan, keyFunctions, base.getMetadata(), binder, executionContext);
+                workerAggregates = workerAggregates(plan, aggregates, base.getMetadata(), instantiator, executionContext);
+                workerKeys = workerKeys(plan, keyFunctions, base.getMetadata(), instantiator, executionContext);
                 if (isFilterStealable) {
                     final Function filter = FilterFactoryGenerator.stolenFilter(base);
                     final BoundExpression predicate = stolenPredicate(frame, filterPlan, base);
-                    workerFilters = FilterFactoryGenerator.compileWorkers(predicate, filterPlan.getInput().getOutput(), base.getMetadata(), filter, binder, executionContext);
+                    workerFilters = FilterFactoryGenerator.compileWorkers(predicate, filterPlan.getInput().getOutput(), base.getMetadata(), filter, instantiator, executionContext);
                     filterIndexes = new IntHashSet();
                     FilterFactoryGenerator.collectColumnIndexes(predicate, filterPlan.getInput().getOutput(), filterIndexes);
                     // The unopened wrapper owns these until halfClose succeeds. That
@@ -654,183 +566,36 @@ final class AggregateFactoryGenerator {
         }
     }
 
-    private static void assemble(
-            AggregatePlan plan,
-            RecordMetadata inputMetadata,
-            int timestampIndex,
-            boolean isBaseTimestampAscending,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext,
-            ObjList<GroupByFunction> aggregates,
-            ObjList<Function> keyFunctions,
-            ObjList<Function> recordFunctions,
-            ArrayColumnTypes keyTypes,
-            ArrayColumnTypes valueTypes,
-            ListColumnFilter columnFilter
-    ) throws SqlException {
-        final OutputSchema input = plan.getInput().getOutput();
-        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-        recordFunctions.setPos(plan.getOutput().getColumnCount());
-        for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
-            final FunctionExpression call = plan.getAggregates().getQuick(i);
-            final GroupByFunction function = (GroupByFunction) binder.instantiateAggregate(call, input, inputMetadata, executionContext);
-            recordFunctions.setQuick(keys.size() + i, function);
-            aggregates.add(function);
-            GroupByUtils.validateTimestampOrder(function, timestampIndex, isBaseTimestampAscending, call.getPosition());
-            function.initValueTypes(valueTypes);
+    private int generateSharedInput(GenerationFrame frame, AggregatePlan aggregate) {
+        final JoinInput source = aggregate.getSharedSource();
+        final int entry = source == null ? -1 : frame.sharedSources.indexOf(source);
+        if (entry < 0 || !frame.sharedFactories.getQuick(entry).supportsSharedCursors()) {
+            return -1;
         }
-        // RecordSink writes direct columns before computed keys. Output functions
-        // map those physical key slots back to the logical key order.
-        int lastIndex = -1;
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            if (keys.getQuick(i) instanceof ColumnExpression column) {
-                final int index = input.getColumnIndexById(column.getColumnId());
-                // The map stores a column repeated consecutively as one key.
-                if (index != lastIndex) {
-                    columnFilter.add(index + 1);
-                    keyTypes.add(column.getDataType());
-                    lastIndex = index;
-                }
-                recordFunctions.setQuick(i, GroupByUtils.createColumnFunction(inputMetadata,
-                        valueTypes.getColumnCount() + keyTypes.getColumnCount(), column.getDataType(), index));
+        final RecordCursorFactory primary = frame.sharedFactories.getQuick(entry);
+        final RecordMetadata primaryMetadata = primary.getMetadata();
+        final OutputSchema sourceOutput = source.getSourceOutput();
+        final OutputSchema input = aggregate.getInput().getOutput();
+        if (sourceOutput.getColumnCount() != primaryMetadata.getColumnCount()) {
+            return -1;
+        }
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        final IntList mapping = new IntList(input.getColumnCount());
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            final int shared = aggregate.getSharedInputIds().indexOf(input.getColumnId(i), 0, aggregate.getSharedInputIds().size());
+            final int index = shared < 0 ? sourceOutput.getColumnIndexQuiet(input.getColumnName(i))
+                    : sourceOutput.getColumnIndexById(aggregate.getSharedSourceIds().getQuick(shared));
+            if (index < 0 || primaryMetadata.getColumnType(index) != input.getColumnType(i)) {
+                return -1;
             }
+            mapping.add(index);
+            metadata.add(SqlCodeGenerator.copyColumn(primaryMetadata, index, SqlUtil.toColumnName(input.getColumnName(i))));
         }
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            final BoundExpression key = keys.getQuick(i);
-            if (!(key instanceof ColumnExpression)) {
-                final Function function = binder.instantiate(key, input, inputMetadata, executionContext);
-                keyFunctions.add(function);
-                Function keyColumn = GroupByUtils.createColumnFunction(null,
-                        valueTypes.getColumnCount() + keyTypes.getColumnCount() + 1, function.getType(), -1);
-                keyTypes.add(keyColumn.getType());
-                if (function.getType() == ColumnType.SYMBOL && keyColumn.getType() == ColumnType.STRING) {
-                    keyColumn = new CastStrToSymbolFunctionFactory.Func(keyColumn);
-                }
-                recordFunctions.setQuick(i, keyColumn);
-            }
-        }
-    }
-
-    private static void sharedRecordFunctions(
-            AggregatePlan plan,
-            RecordMetadata inputMetadata,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext,
-            ObjList<Function> recordFunctions,
-            ArrayColumnTypes valueTypes,
-            ObjList<Function> functions
-    ) throws SqlException {
-        final OutputSchema input = plan.getInput().getOutput();
-        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-        functions.setPos(recordFunctions.size());
-        for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
-            final int index = keys.size() + i;
-            final GroupByFunction function = (GroupByFunction) binder.instantiateAggregate(plan.getAggregates().getQuick(i), input, inputMetadata, executionContext);
-            functions.setQuick(index, function);
-            function.initSharedFrom((GroupByFunction) recordFunctions.getQuick(index));
-        }
-        int keySlot = valueTypes.getColumnCount();
-        int lastIndex = -1;
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            if (keys.getQuick(i) instanceof ColumnExpression column) {
-                final int index = input.getColumnIndexById(column.getColumnId());
-                if (index != lastIndex) {
-                    keySlot++;
-                    lastIndex = index;
-                }
-                functions.setQuick(i, GroupByUtils.createColumnFunction(inputMetadata,
-                        keySlot, column.getDataType(), index));
-            }
-        }
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            if (!(keys.getQuick(i) instanceof ColumnExpression)) {
-                final Function owner = recordFunctions.getQuick(i);
-                final int type = owner instanceof CastStrToSymbolFunctionFactory.Func ? ColumnType.STRING : owner.getType();
-                Function keyColumn = GroupByUtils.createColumnFunction(null, ++keySlot, type, -1);
-                if (owner instanceof CastStrToSymbolFunctionFactory.Func) {
-                    keyColumn = new CastStrToSymbolFunctionFactory.Func(keyColumn);
-                }
-                functions.setQuick(i, keyColumn);
-            }
-        }
-    }
-
-    private static ObjList<ObjList<GroupByFunction>> workerAggregates(
-            AggregatePlan plan,
-            ObjList<GroupByFunction> aggregates,
-            RecordMetadata inputMetadata,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (isThreadSafe(aggregates)) {
-            return null;
-        }
-        final int workerCount = executionContext.getSharedQueryWorkerCount();
-        final ObjList<ObjList<GroupByFunction>> workers = new ObjList<>(workerCount);
-        binder.beginWorkerClones();
-        try {
-            for (int w = 0; w < workerCount; w++) {
-                final PerWorkerFunctionList<GroupByFunction> functions = new PerWorkerFunctionList<>(aggregates.size());
-                workers.add(functions);
-                for (int i = 0, n = aggregates.size(); i < n; i++) {
-                    final GroupByFunction owner = aggregates.getQuick(i);
-                    if (owner.isThreadSafe()) {
-                        functions.add(owner, false);
-                    } else {
-                        final GroupByFunction function = (GroupByFunction) binder.instantiateAggregate(plan.getAggregates().getQuick(i),
-                                plan.getInput().getOutput(), inputMetadata, executionContext);
-                        functions.add(function, true);
-                        function.initValueIndex(owner.getValueIndex());
-                    }
-                }
-            }
-            return workers;
-        } catch (Throwable th) {
-            closeWorkers(workers, th);
-            throw th;
-        } finally {
-            binder.endWorkerClones();
-        }
-    }
-
-    private static ObjList<ObjList<Function>> workerKeys(
-            AggregatePlan plan,
-            ObjList<Function> keyFunctions,
-            RecordMetadata inputMetadata,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (isThreadSafe(keyFunctions)) {
-            return null;
-        }
-        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-        final int workerCount = executionContext.getSharedQueryWorkerCount();
-        final ObjList<ObjList<Function>> workers = new ObjList<>(workerCount);
-        binder.beginWorkerClones();
-        try {
-            for (int w = 0; w < workerCount; w++) {
-                final PerWorkerFunctionList<Function> functions = new PerWorkerFunctionList<>(keyFunctions.size());
-                workers.add(functions);
-                for (int i = 0, k = 0, n = keys.size(); i < n; i++) {
-                    if (!(keys.getQuick(i) instanceof ColumnExpression)) {
-                        final Function owner = keyFunctions.getQuick(k++);
-                        functions.add(owner.isThreadSafe() ? owner : binder.instantiate(keys.getQuick(i), plan.getInput().getOutput(),
-                                inputMetadata, executionContext), !owner.isThreadSafe());
-                    }
-                }
-            }
-            return workers;
-        } catch (Throwable th) {
-            closeWorkers(workers, th);
-            throw th;
-        } finally {
-            binder.endWorkerClones();
-        }
-    }
-
-    private static BoundExpression stolenPredicate(GenerationFrame frame, FilterPlan filterPlan, RecordCursorFactory filter) {
-        final BoundExpression predicate = FilterFactoryGenerator.getParallelPredicate(frame, filter);
-        return predicate != null ? predicate : filterPlan.getPredicate();
+        final int sharedId = frame.sharedConsumerCounts.getQuick(entry);
+        frame.sharedConsumerCounts.setQuick(entry, sharedId + 1);
+        final int slot = frame.resources.reserve();
+        frame.resources.own(slot, new SelectedRecordCursorFactory(metadata, mapping, new SharedRecordCursorFactory(primary, sharedId)));
+        return slot;
     }
 
     private RecordCursorFactory generateVector(AggregatePlan plan, RecordCursorFactory base, SqlExecutionContext executionContext) {
@@ -884,118 +649,126 @@ final class AggregateFactoryGenerator {
         }
     }
 
-    private RecordCursorFactory tryPostingIndex(GenerationFrame frame, AggregatePlan plan, FunctionBinder binder, SqlExecutionContext executionContext) throws SqlException {
-        if (plan.getAggregates().size() != 0 || plan.getGroupingExpressions().size() != 1
-                || !(plan.getGroupingExpressions().getQuick(0) instanceof ColumnExpression key)
-                || key.getDataType() != ColumnType.SYMBOL || !executionContext.isCoveringIndexEnabled()) {
+    private HorizonJoinKeys horizonJoinKeys(HorizonJoinSlave step, OutputSchema masterOutput, RecordMetadata masterMetadata,
+                                            RecordMetadata slaveMetadata) throws SqlException {
+        final IntList masterIds = step.getMasterKeyColumnIds();
+        if (masterIds.size() == 0) {
             return null;
         }
-        LogicalPlan source = plan.getInput();
-        final BoundExpression predicate;
-        if (source instanceof FilterPlan filter) {
-            predicate = filter.getPredicate();
-            source = filter.getInput();
-        } else {
-            predicate = null;
-        }
-        if (!(source instanceof ScanPlan scan)) {
-            return null;
-        }
-        if (scan.hasHint(ScanPlan.HINT_NO_COVERING) || scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
-            return null;
-        }
-        final OutputSchema schema = scan.getOutput();
-        final int nativeTimestampIndex = schema.getColumnIndexById(scan.getNativeTimestampColumnId());
-        try {
-            if (predicate != null && (nativeTimestampIndex < 0
-                    || frame.intervals.extract(predicate, scan.getNativeTimestampColumnId(), schema, binder, executionContext) != null)) {
-                return null;
+        final HorizonJoinKeys keys = new HorizonJoinKeys();
+        final OutputSchema slaveOutput = step.getInput().getOutput();
+        final IntList masterSymbols = horizonMasterSymbols;
+        final IntList slaveSymbols = horizonSlaveSymbols;
+        masterSymbols.clear();
+        slaveSymbols.clear();
+        for (int i = 0, n = masterIds.size(); i < n; i++) {
+            final int masterIndex = masterOutput.getColumnIndexById(masterIds.getQuick(i));
+            final int slaveIndex = slaveOutput.getColumnIndexById(step.getSlaveKeyColumnIds().getQuick(i));
+            keys.masterColumns.add(masterIndex + 1);
+            keys.slaveColumns.add(slaveIndex + 1);
+            final int masterType = masterMetadata.getColumnType(masterIndex);
+            final int slaveType = slaveMetadata.getColumnType(slaveIndex);
+            if (masterType != slaveType
+                    && !(isSymbolOrStringOrVarchar(masterType) && isSymbolOrStringOrVarchar(slaveType))
+                    && !(isTimestamp(masterType) && isTimestamp(slaveType))) {
+                throw SqlException.$(step.getKeyPositions().getQuick(i), "join column type mismatch");
             }
-            try (TableReader reader = executionContext.getReader(scan.getTableToken(), scan.getMetadataVersion())) {
-                final TableReaderMetadata tableMetadata = reader.getMetadata();
-                final int index = scan.getSourceColumnIndexes().getQuick(schema.getColumnIndexById(key.getColumnId()));
-                if (!IndexType.isPosting(tableMetadata.getColumnIndexType(index))) {
-                    return null;
+            if (ColumnType.isVarchar(slaveType) || ColumnType.isVarchar(masterType)) {
+                keys.types.add(ColumnType.VARCHAR);
+                if (ColumnType.isVarchar(slaveType)) {
+                    keys.masterStringAsVarchar.set(masterIndex);
+                } else {
+                    keys.slaveStringAsVarchar.set(slaveIndex);
                 }
-                RuntimeIntrinsicIntervalModel intervalModel = null;
-                PartitionFrameCursorFactory frames = null;
-                try {
-                    if (predicate != null) {
-                        intervalModel = frame.intervals.build(reader.getPartitionedBy());
-                        if (intervalModel == null || intervalModel.calculateIntervals(executionContext).size() == 0) {
-                            final RuntimeIntrinsicIntervalModel discarded = intervalModel;
-                            intervalModel = null;
-                            Misc.free(discarded);
-                            return null;
-                        }
-                    }
-                    final TableColumnMetadata column = tableMetadata.getColumnMetadata(index);
-                    final GenericRecordMetadata output = new GenericRecordMetadata().add(new TableColumnMetadata(
-                            Chars.toString(plan.getOutput().getColumnName(0)), key.getDataType(), column.getIndexType(),
-                            column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), null, column.getWriterIndex(),
-                            false, 0, column.isSymbolCacheFlag(), column.getSymbolCapacity()));
-                    final GenericRecordMetadata frameMetadata = GenericRecordMetadata.copyOfNew(tableMetadata);
-                    final IntList indexes = new IntList();
-                    indexes.add(index);
-                    if (intervalModel != null) {
-                        final int timestampIndex = tableMetadata.getTimestampIndex();
-                        if (timestampIndex != index) {
-                            indexes.add(timestampIndex);
-                        }
-                        frames = new IntervalPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), intervalModel,
-                                timestampIndex, frameMetadata, ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
-                        intervalModel = null;
-                    } else {
-                        frames = new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), frameMetadata,
-                                ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
-                    }
-                    final RecordCursorFactory result = new PostingIndexDistinctRecordCursorFactory(output, frames, index, 0, indexes);
-                    frames = null;
-                    return result;
-                } catch (Throwable th) {
-                    Misc.free(frames, th);
-                    Misc.free(intervalModel, th);
-                    throw th;
+                keys.slaveSymbolAsString.set(slaveIndex);
+                keys.masterSymbolAsString.set(masterIndex);
+            } else if (slaveType == ColumnType.SYMBOL && masterType == ColumnType.SYMBOL) {
+                keys.types.add(ColumnType.SYMBOL);
+                masterSymbols.add(masterIndex);
+                slaveSymbols.add(slaveIndex);
+            } else if (masterType == ColumnType.SYMBOL || slaveType == ColumnType.SYMBOL) {
+                keys.types.add(ColumnType.STRING);
+                keys.slaveSymbolAsString.set(slaveIndex);
+                keys.masterSymbolAsString.set(masterIndex);
+            } else if (ColumnType.isString(slaveType) || ColumnType.isString(masterType)) {
+                keys.types.add(masterType);
+                keys.slaveSymbolAsString.set(slaveIndex);
+                keys.masterSymbolAsString.set(masterIndex);
+            } else if (slaveType != masterType) {
+                keys.types.add(TIMESTAMP_NANO);
+                if (!isTimestampNano(slaveType)) {
+                    keys.slaveTimestampAsNanos.set(slaveIndex);
                 }
+                if (!isTimestampNano(masterType)) {
+                    keys.masterTimestampAsNanos.set(masterIndex);
+                }
+            } else {
+                keys.types.add(slaveType);
             }
-        } catch (Throwable th) {
-            Misc.clear(frame.intervals, th);
-            throw th;
-        } finally {
-            frame.intervals.clear();
         }
+        if (masterSymbols.size() > 0) {
+            keys.masterSymbolIndexes = masterSymbols.toArray();
+            keys.slaveSymbolIndexes = slaveSymbols.toArray();
+        }
+        keys.masterSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, masterMetadata, keys.masterColumns, null, null,
+                keys.masterSymbolAsString, keys.masterStringAsVarchar, keys.masterTimestampAsNanos);
+        keys.slaveSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, slaveMetadata, keys.slaveColumns, null, null,
+                keys.slaveSymbolAsString, keys.slaveStringAsVarchar, keys.slaveTimestampAsNanos);
+        return keys;
     }
 
-    private int generateSharedInput(GenerationFrame frame, AggregatePlan aggregate) {
-        final JoinInput source = aggregate.getSharedSource();
-        final int entry = source == null ? -1 : frame.sharedSources.indexOf(source);
-        if (entry < 0 || !frame.sharedFactories.getQuick(entry).supportsSharedCursors()) {
-            return -1;
-        }
-        final RecordCursorFactory primary = frame.sharedFactories.getQuick(entry);
-        final RecordMetadata primaryMetadata = primary.getMetadata();
-        final OutputSchema sourceOutput = source.getSourceOutput();
-        final OutputSchema input = aggregate.getInput().getOutput();
-        if (sourceOutput.getColumnCount() != primaryMetadata.getColumnCount()) {
-            return -1;
-        }
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        final IntList mapping = new IntList(input.getColumnCount());
-        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            final int shared = aggregate.getSharedInputIds().indexOf(input.getColumnId(i), 0, aggregate.getSharedInputIds().size());
-            final int index = shared < 0 ? sourceOutput.getColumnIndexQuiet(input.getColumnName(i))
-                    : sourceOutput.getColumnIndexById(aggregate.getSharedSourceIds().getQuick(shared));
-            if (index < 0 || primaryMetadata.getColumnType(index) != input.getColumnType(i)) {
-                return -1;
+    private long[] horizonOffsets(HorizonJoinPlan plan, int timestampType) throws SqlException {
+        final TimestampDriver driver = getTimestampDriver(timestampType);
+        final ObjList<CharSequence> tokens = plan.getOffsets();
+        final IntList positions = plan.getOffsetPositions();
+        final int maxOffsets = configuration.getSqlHorizonJoinMaxOffsets();
+        if (plan.getMode() == HorizonJoinPlan.MODE_RANGE) {
+            final long from = evalHorizonTimeValue(tokens.getQuick(0), positions.getQuick(0), driver);
+            final long to = evalHorizonTimeValue(tokens.getQuick(1), positions.getQuick(1), driver);
+            final long step = evalHorizonTimeValue(tokens.getQuick(2), positions.getQuick(2), driver);
+            if (step <= 0) {
+                throw SqlException.position(positions.getQuick(2)).put("STEP must be positive");
             }
-            mapping.add(index);
-            metadata.add(SqlCodeGenerator.copyColumn(primaryMetadata, index, SqlUtil.toColumnName(input.getColumnName(i))));
+            if (from > to) {
+                throw SqlException.position(positions.getQuick(0)).put("FROM must be less than or equal to TO");
+            }
+            final long count = (to - from) / step + 1;
+            if (count > maxOffsets) {
+                throw SqlException.position(positions.getQuick(0)).put("RANGE generates too many offsets [count=").put(count)
+                        .put(", max=").put(maxOffsets).put(']');
+            }
+            final long[] offsets = new long[(int) count];
+            for (int i = 0; i < count; i++) {
+                offsets[i] = from + i * step;
+            }
+            return offsets;
         }
-        final int sharedId = frame.sharedConsumerCounts.getQuick(entry);
-        frame.sharedConsumerCounts.setQuick(entry, sharedId + 1);
-        final int slot = frame.resources.reserve();
-        frame.resources.own(slot, new SelectedRecordCursorFactory(metadata, mapping, new SharedRecordCursorFactory(primary, sharedId)));
-        return slot;
+        if (tokens.size() > maxOffsets) {
+            throw SqlException.position(plan.getHorizonPosition()).put("LIST has too many offsets [count=").put(tokens.size())
+                    .put(", max=").put(maxOffsets).put(']');
+        }
+        final long[] offsets = new long[tokens.size()];
+        for (int i = 0, n = tokens.size(); i < n; i++) {
+            offsets[i] = evalHorizonTimeValue(tokens.getQuick(i), positions.getQuick(i), driver);
+            if (i > 0 && offsets[i] <= offsets[i - 1]) {
+                throw SqlException.position(positions.getQuick(i)).put("LIST offsets must be monotonically increasing");
+            }
+        }
+        return offsets;
+    }
+
+    private boolean isVectorizable(AggregatePlan plan, RecordCursorFactory base, SqlExecutionContext executionContext) {
+        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
+        final ColumnExpression key = keys.size() == 1 ? vectorKey(keys.getQuick(0)) : null;
+        if (key == null || !canVectorizeGroupBy(base, executionContext)) {
+            return false;
+        }
+        for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
+            if (vectorConstructor(plan.getAggregates().getQuick(i)) == null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -1013,7 +786,7 @@ final class AggregateFactoryGenerator {
             return false;
         }
         LogicalPlan leaf = aggregate.getInput();
-        if (SqlCodeGenerator.unwrapColumnProjections(leaf).getType() != LogicalPlan.Type.SET_OPERATION) {
+        if (!(SqlCodeGenerator.unwrapColumnProjections(leaf) instanceof SetOperationPlan)) {
             return false;
         }
         while (SqlCodeGenerator.unwrapColumnProjections(leaf) instanceof SetOperationPlan operation) {
@@ -1074,6 +847,88 @@ final class AggregateFactoryGenerator {
         return 0;
     }
 
+    private RecordCursorFactory tryPostingIndex(GenerationFrame frame, AggregatePlan plan, FunctionInstantiator instantiator, SqlExecutionContext executionContext) throws SqlException {
+        if (plan.getAggregates().size() != 0 || plan.getGroupingExpressions().size() != 1
+                || !(plan.getGroupingExpressions().getQuick(0) instanceof ColumnExpression key)
+                || key.getDataType() != ColumnType.SYMBOL || !executionContext.isCoveringIndexEnabled()) {
+            return null;
+        }
+        LogicalPlan source = plan.getInput();
+        final BoundExpression predicate;
+        if (source instanceof FilterPlan filter) {
+            predicate = filter.getPredicate();
+            source = filter.getInput();
+        } else {
+            predicate = null;
+        }
+        if (!(source instanceof ScanPlan scan)) {
+            return null;
+        }
+        if (scan.hasHint(ScanPlan.HINT_NO_COVERING) || scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
+            return null;
+        }
+        final OutputSchema schema = scan.getOutput();
+        final int nativeTimestampIndex = schema.getColumnIndexById(scan.getNativeTimestampColumnId());
+        try {
+            if (predicate != null && (nativeTimestampIndex < 0
+                    || frame.intervals.extract(predicate, scan.getNativeTimestampColumnId(), schema, instantiator, frame.expressionRewriter, executionContext) != null)) {
+                return null;
+            }
+            try (TableReader reader = ScanFactoryGenerator.getBoundReader(scan, executionContext)) {
+                final TableReaderMetadata tableMetadata = reader.getMetadata();
+                final int index = scan.getSourceColumnIndexes().getQuick(schema.getColumnIndexById(key.getColumnId()));
+                if (!IndexType.isPosting(tableMetadata.getColumnIndexType(index))) {
+                    return null;
+                }
+                RuntimeIntrinsicIntervalModel intervalModel = null;
+                PartitionFrameCursorFactory frames = null;
+                try {
+                    if (predicate != null) {
+                        intervalModel = frame.intervals.build(reader.getPartitionedBy());
+                        if (intervalModel == null || intervalModel.calculateIntervals(executionContext).size() == 0) {
+                            final RuntimeIntrinsicIntervalModel discarded = intervalModel;
+                            intervalModel = null;
+                            Misc.free(discarded);
+                            return null;
+                        }
+                    }
+                    final TableColumnMetadata column = tableMetadata.getColumnMetadata(index);
+                    final GenericRecordMetadata output = new GenericRecordMetadata().add(new TableColumnMetadata(
+                            Chars.toString(plan.getOutput().getColumnName(0)), key.getDataType(), column.getIndexType(),
+                            column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), null, column.getWriterIndex(),
+                            false, 0, column.isSymbolCacheFlag(), column.getSymbolCapacity()));
+                    final GenericRecordMetadata frameMetadata = GenericRecordMetadata.copyOfNew(tableMetadata);
+                    final IntList indexes = new IntList();
+                    indexes.add(index);
+                    if (intervalModel != null) {
+                        final int timestampIndex = tableMetadata.getTimestampIndex();
+                        if (timestampIndex != index) {
+                            indexes.add(timestampIndex);
+                        }
+                        frames = new IntervalPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), intervalModel,
+                                timestampIndex, frameMetadata, ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
+                        intervalModel = null;
+                    } else {
+                        frames = new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), frameMetadata,
+                                ORDER_ASC, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
+                    }
+                    final RecordCursorFactory result = new PostingIndexDistinctRecordCursorFactory(output, frames, index, 0, indexes);
+                    frames = null;
+                    return result;
+                } catch (Throwable th) {
+                    Misc.free(frames, th);
+                    Misc.free(intervalModel, th);
+                    throw th;
+                }
+            }
+        } catch (Throwable th) {
+            Misc.clear(frame.intervals, th);
+            throw th;
+        } finally {
+            frame.intervals.clear();
+        }
+    }
+
     static boolean canParallelizeGroupBy(
             RecordCursorFactory base,
             int keyCount,
@@ -1094,6 +949,32 @@ final class AggregateFactoryGenerator {
         return executionContext.isParallelGroupByEnabled()
                 && base.supportsPageFrameCursor()
                 && !base.hasParquetConvertedColumns(executionContext);
+    }
+
+    static void closeWorkers(ObjList<? extends ObjList<? extends Function>> workers, Throwable primary) {
+        if (workers != null) {
+            for (int i = 0, n = workers.size(); i < n; i++) {
+                PerWorkerFunctionList.close(workers.getQuick(i), primary);
+            }
+        }
+    }
+
+    static FilterPlan findFilterPlan(LogicalPlan input) {
+        while (input instanceof ProjectPlan project) {
+            final OutputSchema source = project.getInput().getOutput();
+            if (project.getExpressions().size() != source.getColumnCount()) {
+                return null;
+            }
+            for (int i = 0, n = source.getColumnCount(); i < n; i++) {
+                if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column)
+                        || column.getColumnId() != source.getColumnId(i)
+                        || project.getOutput().getColumnType(i) != source.getColumnType(i)) {
+                    return null;
+                }
+            }
+            input = project.getInput();
+        }
+        return input instanceof FilterPlan filter ? filter : null;
     }
 
     // Callers establish the selected aggregate and direct-column shape before this lookup.
@@ -1128,28 +1009,154 @@ final class AggregateFactoryGenerator {
         return base.recordCursorSupportsRandomAccess() && base.getMetadata().getTimestampIndex() >= 0;
     }
 
-    private static long evalHorizonTimeValue(CharSequence token, int position, TimestampDriver timestampDriver) throws SqlException {
-        int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, position);
-        if (unitIndex == -1) {
-            // Unitless zero (e.g. "0")
-            return 0;
+    void countSharedConsumers(GenerationFrame frame, LogicalPlan plan) {
+        if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null) {
+            final int index = frame.sharedConsumerSources.indexOf(aggregate.getSharedSource());
+            if (index < 0) {
+                frame.sharedConsumerSources.add(aggregate.getSharedSource());
+                frame.sharedConsumerTotals.add(1);
+            } else {
+                frame.sharedConsumerTotals.increment(index);
+            }
         }
-        char unit = token.charAt(unitIndex);
-        long value = TimestampSamplerFactory.parseInterval(token, unitIndex, position);
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            countSharedConsumers(frame, plan.inputAt(i));
+        }
+    }
+
+    /**
+     * Consumes the input on entry, including on failure.
+     */
+    RecordCursorFactory generate(
+            GenerationFrame frame,
+            AggregatePlan plan,
+            RecordCursorFactory base,
+            int timestampIndex,
+            FunctionInstantiator instantiator,
+            int sharedConsumerCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        boolean isAdopted = false;
         try {
-            return switch (unit) {
-                case 'n' -> timestampDriver.fromNanos(value);
-                case 'U' -> timestampDriver.fromMicros(value);
-                case 'T' -> timestampDriver.fromMillis(value);
-                case 's' -> timestampDriver.fromSeconds(value);
-                case 'm' -> timestampDriver.fromMinutes(Math.toIntExact(value));
-                case 'h' -> timestampDriver.fromHours(Math.toIntExact(value));
-                case 'd' -> timestampDriver.fromDays(Math.toIntExact(value));
-                default -> throw SqlException.$(position, "unsupported HORIZON time unit [unit=").put(unit).put(']');
-            };
-        } catch (ArithmeticException e) {
-            throw SqlException.$(position, "HORIZON time value overflow");
+            final ObjList<FunctionExpression> aggregates = plan.getAggregates();
+            if (plan.getGroupingExpressions().size() == 0 && aggregates.size() == 0) {
+                // DISTINCT of constants uses global aggregation even over an empty
+                // input. Its outer projection owns the values; COUNT supplies the row.
+                final RecordCursorFactory result = new CountRecordCursorFactory(new GenericRecordMetadata(), base);
+                isAdopted = true;
+                return result;
+            }
+            if (plan.getGroupingExpressions().size() == 0 && aggregates.size() == 1) {
+                final FunctionExpression call = aggregates.getQuick(0);
+                if (call.getArgumentCount() == 0 && call.isAggregate()
+                        && SqlKeywords.isCountKeyword(call.getName())) {
+                    final CharSequence name = plan.getOutput().getColumnName(0);
+                    final RecordMetadata metadata = SqlKeywords.isCountKeyword(name)
+                            ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA
+                            : new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(name), ColumnType.LONG));
+                    if (base instanceof SelectedRecordCursorFactory selected && selected.getMetadata().getColumnCount() == 0) {
+                        base = selected.getBaseFactory();
+                    }
+                    final RecordCursorFactory result = new CountRecordCursorFactory(metadata, base);
+                    isAdopted = true;
+                    return result;
+                }
+            }
+            final RecordCursorFactory posting = tryPostingIndex(frame, plan, instantiator, executionContext);
+            if (posting != null) {
+                // This source is a native scan, so replacing its unopened cursor has no
+                // table-function or scalar-construction effects to replay.
+                final RecordCursorFactory discarded = base;
+                base = null;
+                try {
+                    discarded.close();
+                } catch (Throwable th) {
+                    Misc.free(posting, th);
+                    throw th;
+                }
+                return posting;
+            }
+            if (isVectorizable(plan, base, executionContext)) {
+                isAdopted = true;
+                return generateVector(plan, base, executionContext);
+            }
+            isAdopted = true;
+            return generateFunctions(frame, plan, base, timestampIndex, instantiator, sharedConsumerCount, executionContext);
+        } catch (Throwable th) {
+            if (!isAdopted) {
+                Misc.free(base, th);
+            }
+            throw th;
         }
+    }
+
+    int generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SortPlan orderAdvice, SqlExecutionContext executionContext,
+                          int requiredOrderColumnId, int requiredScanDirection) throws SqlException {
+        if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
+            return generateHorizonJoin(frame, aggregate, horizon, executionContext);
+        }
+        int inputMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+        for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
+            if (aggregate.getAggregates().getQuick(i).getOverload().isOrderSensitiveAggregate()) {
+                inputMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                break;
+            }
+        }
+        int sharedSlot = generateSharedInput(frame, aggregate);
+        if (sharedSlot < 0 && prepareSharedHead(frame, aggregate)) {
+            try {
+                sharedSlot = codeGenerator.generate(frame, aggregate.getInput(), executionContext, -1, RecordCursorFactory.SCAN_DIRECTION_OTHER, null, null, inputMnemonic);
+            } finally {
+                frame.sharedHeadTarget = null;
+            }
+        }
+        int inputOrderId = -1;
+        final int orderIndex = aggregate.getAggregates().size() == 0 ? aggregate.getOutput().getColumnIndexById(requiredOrderColumnId) : -1;
+        if (orderIndex >= 0 && orderIndex < aggregate.getGroupingExpressions().size()
+                && aggregate.getGroupingExpressions().getQuick(orderIndex) instanceof ColumnExpression key && key.isDirectReference()) {
+            inputOrderId = key.getColumnId();
+        }
+        final LogicalPlan input = skipRenames(aggregate.getInput());
+        final boolean isTimestampDeclared = sharedSlot < 0 && SqlCodeGenerator.isTimestampDeclarationOnly(input);
+        final int inputSlot = sharedSlot >= 0 ? sharedSlot : codeGenerator.generate(frame, isTimestampDeclared ? input.inputAt(0) : input,
+                executionContext, inputOrderId, inputOrderId < 0 ? RecordCursorFactory.SCAN_DIRECTION_OTHER : requiredScanDirection,
+                remapKeyOrderAdvice(frame, aggregate, orderAdvice), null, inputMnemonic);
+        raiseDeferredKeys(aggregate);
+        final int slot = frame.resources.reserve();
+        final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
+        final int timestampIndex = isTimestampDeclared ? input.getOutput().getTimestampIndex() : base.getMetadata().getTimestampIndex();
+        frame.resources.own(slot, generate(frame, aggregate, base, timestampIndex, frame.functionInstantiator,
+                sharedConsumerCount(frame, aggregate), executionContext));
+        return slot;
+    }
+
+    int generateDistinct(GenerationFrame frame, DistinctPlan distinct, LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {
+        // DISTINCT keeps its input order. A downstream sort must not turn the
+        // timestamp-specialized factory's forward input into a backward scan.
+        final int inputSlot = codeGenerator.generate(frame, distinct.getInput(), executionContext);
+        final RecordCursorFactory base = frame.resources.factory(inputSlot);
+        final int slot = frame.resources.reserve();
+        final int loSlot = frame.resources.reserve();
+        final int hiSlot = frame.resources.reserve();
+        Function lo = null;
+        Function hi = null;
+        if (limitAdvice != null && !isTimeSeriesDistinct(base)) {
+            lo = frame.functionInstantiator.instantiate(limitAdvice.getLo(), emptySchema, executionContext);
+            frame.resources.own(loSlot, lo);
+            if (limitAdvice.getHi() != null) {
+                hi = frame.functionInstantiator.instantiate(limitAdvice.getHi(), emptySchema, executionContext);
+                frame.resources.own(hiSlot, hi);
+            }
+        }
+        frame.resources.detach(inputSlot);
+        if (lo != null) {
+            frame.resources.detach(loSlot);
+        }
+        if (hi != null) {
+            frame.resources.detach(hiSlot);
+        }
+        frame.resources.own(slot, generateDistinct(base, lo, hi));
+        return slot;
     }
 
     /**
@@ -1229,6 +1236,130 @@ final class AggregateFactoryGenerator {
                 asm, configuration, base, columnFilter, preparedKeyTypes, preparedValueTypes, metadata,
                 groupByFunctions, keyFunctions, recordFunctions, sharedRecordFunctions
         );
+    }
+
+    /**
+     * Consumes the inputs on entry, including on failure.
+     */
+    RecordCursorFactory generateHorizonJoin(
+            GenerationFrame frame,
+            AggregatePlan plan,
+            HorizonJoinPlan horizon,
+            RecordCursorFactory master,
+            ObjList<RecordCursorFactory> slaves,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        JoinRecordMetadata innerMetadata = null;
+        ObjList<Function> keyFunctions = null;
+        ObjList<Function> recordFunctions = null;
+        ObjList<ObjList<GroupByFunction>> workerAggregates = null;
+        ObjList<ObjList<Function>> workerKeys = null;
+        ObjList<Function> workerFilters = null;
+        Function ownedFilter = null;
+        CompiledFilter compiledFilter = null;
+        MemoryCARW bindVariableMemory = null;
+        ObjList<Function> bindVariables = null;
+        boolean isAdopted = false;
+        try {
+            final OutputSchema output = horizon.getOutput();
+            innerMetadata = new JoinRecordMetadata(configuration, output.getColumnCount());
+            final RecordMetadata masterMetadata = master.getMetadata();
+            for (int i = 0, n = masterMetadata.getColumnCount(); i < n; i++) {
+                innerMetadata.add(horizon.getMasterAlias(), masterMetadata.getColumnMetadata(i));
+            }
+            final int offsetIndex = masterMetadata.getColumnCount();
+            innerMetadata.add(horizon.getHorizonAlias(), new TableColumnMetadata(Chars.toString(output.getColumnName(offsetIndex)), ColumnType.LONG));
+            innerMetadata.add(horizon.getHorizonAlias(), new TableColumnMetadata(Chars.toString(output.getColumnName(offsetIndex + 1)),
+                    output.getColumnType(offsetIndex + 1)));
+            for (int s = 0, m = slaves.size(); s < m; s++) {
+                final RecordMetadata slaveMetadata = slaves.getQuick(s).getMetadata();
+                for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                    innerMetadata.add(horizon.getSlaves().getQuick(s).getAlias(), slaveMetadata.getColumnMetadata(i));
+                }
+            }
+            innerMetadata.setTimestampIndex(masterMetadata.getTimestampIndex());
+            final ObjList<GroupByFunction> aggregates = new ObjList<>(plan.getAggregates().size());
+            keyFunctions = new ObjList<>(plan.getGroupingExpressions().size());
+            recordFunctions = new ObjList<>(plan.getOutput().getColumnCount());
+            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            assemble(plan, innerMetadata, masterMetadata.getTimestampIndex(), false, instantiator, executionContext,
+                    aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter);
+            final GenericRecordMetadata metadata = metadata(plan, innerMetadata, recordFunctions);
+            final boolean isEnabled = executionContext.isParallelHorizonJoinEnabled();
+            final FilterPlan filterPlan = findFilterPlan(horizon.getMaster());
+            final boolean isFilterStealable = isEnabled && filterPlan != null && !master.supportsPageFrameCursor()
+                    && (FilterFactoryGenerator.isParallelFilter(master) || !master.implementsLimit() && master instanceof FilteredRecordCursorFactory
+                    && filterPlan.getInput() instanceof ScanPlan) && master.getBaseFactory().supportsPageFrameCursor();
+            final boolean isParallel = isEnabled && (master.supportsPageFrameCursor() || isFilterStealable)
+                    && SqlUtil.isParallelismSupported(keyFunctions) && GroupByUtils.isParallelismSupported(aggregates);
+            IntHashSet filterIndexes = null;
+            if (isParallel) {
+                workerAggregates = workerAggregates(plan, aggregates, innerMetadata, instantiator, executionContext);
+                workerKeys = workerKeys(plan, keyFunctions, innerMetadata, instantiator, executionContext);
+                if (isFilterStealable) {
+                    final Function filter = FilterFactoryGenerator.stolenFilter(master);
+                    final BoundExpression predicate = stolenPredicate(frame, filterPlan, master);
+                    workerFilters = FilterFactoryGenerator.compileWorkers(predicate, filterPlan.getInput().getOutput(), masterMetadata, filter, instantiator, executionContext);
+                    filterIndexes = new IntHashSet();
+                    FilterFactoryGenerator.collectColumnIndexes(predicate, filterPlan.getInput().getOutput(), filterIndexes);
+                    filterIndexes.add(masterMetadata.getTimestampIndex());
+                    master.halfClose();
+                    ownedFilter = filter;
+                    compiledFilter = master.getCompiledFilter();
+                    bindVariableMemory = master.getBindVarMemory();
+                    bindVariables = master.getBindVarFunctions();
+                    master = master.getBaseFactory();
+                }
+            }
+            isAdopted = true;
+            return generateHorizonJoin(horizon, master, slaves, innerMetadata, metadata, columnFilter, keyTypes,
+                    valueTypes, aggregates, workerAggregates, keyFunctions, workerKeys, recordFunctions, compiledFilter,
+                    bindVariableMemory, bindVariables, ownedFilter, filterIndexes, workerFilters, isParallel, executionContext);
+        } catch (Throwable th) {
+            if (!isAdopted) {
+                closeWorkers(workerAggregates, th);
+                closeWorkers(workerKeys, th);
+                Misc.freeObjList(workerFilters, th);
+                Misc.freeObjList(recordFunctions, th);
+                Misc.freeObjList(keyFunctions, th);
+                Misc.free(ownedFilter, th);
+                Misc.free(compiledFilter, th);
+                Misc.free(bindVariableMemory, th);
+                Misc.freeObjList(bindVariables, th);
+                Misc.free(innerMetadata, th);
+                Misc.freeObjList(slaves, th);
+                Misc.free(master, th);
+            }
+            throw th;
+        }
+    }
+
+    int generateHorizonJoin(GenerationFrame frame, AggregatePlan aggregate, HorizonJoinPlan horizon, SqlExecutionContext executionContext)
+            throws SqlException {
+        final int slaveCount = horizon.getSlaves().size();
+        final int masterSlot = codeGenerator.generateJoinInput(frame, horizon.getMaster(), executionContext, true, OrderByMnemonic.ORDER_BY_REQUIRED);
+        final int slotBase = horizonSlaveSlots.size();
+        final int slot;
+        final RecordCursorFactory master;
+        final ObjList<RecordCursorFactory> slaves;
+        try {
+            for (int i = 0; i < slaveCount; i++) {
+                horizonSlaveSlots.add(codeGenerator.generateJoinInput(frame, horizon.getSlaves().getQuick(i).getInput(), executionContext, true, OrderByMnemonic.ORDER_BY_REQUIRED));
+            }
+            slot = frame.resources.reserve();
+            master = frame.resources.detachFactory(masterSlot);
+            slaves = new ObjList<>(slaveCount);
+            for (int i = 0; i < slaveCount; i++) {
+                slaves.add(frame.resources.detachFactory(horizonSlaveSlots.getQuick(slotBase + i)));
+            }
+        } finally {
+            horizonSlaveSlots.setPos(slotBase);
+        }
+        frame.resources.own(slot, generateHorizonJoin(frame, aggregate, horizon, master, slaves, frame.functionInstantiator, executionContext));
+        return slot;
     }
 
     /**
@@ -1438,114 +1569,6 @@ final class AggregateFactoryGenerator {
             }
             throw th;
         }
-    }
-
-    private HorizonJoinKeys horizonJoinKeys(HorizonJoinSlave step, OutputSchema masterOutput, RecordMetadata masterMetadata,
-                                            RecordMetadata slaveMetadata) throws SqlException {
-        final IntList masterIds = step.getMasterKeyColumnIds();
-        if (masterIds.size() == 0) {
-            return null;
-        }
-        final HorizonJoinKeys keys = new HorizonJoinKeys();
-        final OutputSchema slaveOutput = step.getInput().getOutput();
-        final IntList masterSymbols = horizonMasterSymbols;
-        final IntList slaveSymbols = horizonSlaveSymbols;
-        masterSymbols.clear();
-        slaveSymbols.clear();
-        for (int i = 0, n = masterIds.size(); i < n; i++) {
-            final int masterIndex = masterOutput.getColumnIndexById(masterIds.getQuick(i));
-            final int slaveIndex = slaveOutput.getColumnIndexById(step.getSlaveKeyColumnIds().getQuick(i));
-            keys.masterColumns.add(masterIndex + 1);
-            keys.slaveColumns.add(slaveIndex + 1);
-            final int masterType = masterMetadata.getColumnType(masterIndex);
-            final int slaveType = slaveMetadata.getColumnType(slaveIndex);
-            if (masterType != slaveType
-                    && !(isSymbolOrStringOrVarchar(masterType) && isSymbolOrStringOrVarchar(slaveType))
-                    && !(isTimestamp(masterType) && isTimestamp(slaveType))) {
-                throw SqlException.$(step.getKeyPositions().getQuick(i), "join column type mismatch");
-            }
-            if (ColumnType.isVarchar(slaveType) || ColumnType.isVarchar(masterType)) {
-                keys.types.add(ColumnType.VARCHAR);
-                if (ColumnType.isVarchar(slaveType)) {
-                    keys.masterStringAsVarchar.set(masterIndex);
-                } else {
-                    keys.slaveStringAsVarchar.set(slaveIndex);
-                }
-                keys.slaveSymbolAsString.set(slaveIndex);
-                keys.masterSymbolAsString.set(masterIndex);
-            } else if (slaveType == ColumnType.SYMBOL && masterType == ColumnType.SYMBOL) {
-                keys.types.add(ColumnType.SYMBOL);
-                masterSymbols.add(masterIndex);
-                slaveSymbols.add(slaveIndex);
-            } else if (masterType == ColumnType.SYMBOL || slaveType == ColumnType.SYMBOL) {
-                keys.types.add(ColumnType.STRING);
-                keys.slaveSymbolAsString.set(slaveIndex);
-                keys.masterSymbolAsString.set(masterIndex);
-            } else if (ColumnType.isString(slaveType) || ColumnType.isString(masterType)) {
-                keys.types.add(masterType);
-                keys.slaveSymbolAsString.set(slaveIndex);
-                keys.masterSymbolAsString.set(masterIndex);
-            } else if (slaveType != masterType) {
-                keys.types.add(TIMESTAMP_NANO);
-                if (!isTimestampNano(slaveType)) {
-                    keys.slaveTimestampAsNanos.set(slaveIndex);
-                }
-                if (!isTimestampNano(masterType)) {
-                    keys.masterTimestampAsNanos.set(masterIndex);
-                }
-            } else {
-                keys.types.add(slaveType);
-            }
-        }
-        if (masterSymbols.size() > 0) {
-            keys.masterSymbolIndexes = masterSymbols.toArray();
-            keys.slaveSymbolIndexes = slaveSymbols.toArray();
-        }
-        keys.masterSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, masterMetadata, keys.masterColumns, null, null,
-                keys.masterSymbolAsString, keys.masterStringAsVarchar, keys.masterTimestampAsNanos);
-        keys.slaveSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, slaveMetadata, keys.slaveColumns, null, null,
-                keys.slaveSymbolAsString, keys.slaveStringAsVarchar, keys.slaveTimestampAsNanos);
-        return keys;
-    }
-
-    private long[] horizonOffsets(HorizonJoinPlan plan, int timestampType) throws SqlException {
-        final TimestampDriver driver = getTimestampDriver(timestampType);
-        final ObjList<CharSequence> tokens = plan.getOffsets();
-        final IntList positions = plan.getOffsetPositions();
-        final int maxOffsets = configuration.getSqlHorizonJoinMaxOffsets();
-        if (plan.getMode() == HorizonJoinPlan.MODE_RANGE) {
-            final long from = evalHorizonTimeValue(tokens.getQuick(0), positions.getQuick(0), driver);
-            final long to = evalHorizonTimeValue(tokens.getQuick(1), positions.getQuick(1), driver);
-            final long step = evalHorizonTimeValue(tokens.getQuick(2), positions.getQuick(2), driver);
-            if (step <= 0) {
-                throw SqlException.position(positions.getQuick(2)).put("STEP must be positive");
-            }
-            if (from > to) {
-                throw SqlException.position(positions.getQuick(0)).put("FROM must be less than or equal to TO");
-            }
-            final long count = (to - from) / step + 1;
-            if (count > maxOffsets) {
-                throw SqlException.position(positions.getQuick(0)).put("RANGE generates too many offsets [count=").put(count)
-                        .put(", max=").put(maxOffsets).put(']');
-            }
-            final long[] offsets = new long[(int) count];
-            for (int i = 0; i < count; i++) {
-                offsets[i] = from + i * step;
-            }
-            return offsets;
-        }
-        if (tokens.size() > maxOffsets) {
-            throw SqlException.position(plan.getHorizonPosition()).put("LIST has too many offsets [count=").put(tokens.size())
-                    .put(", max=").put(maxOffsets).put(']');
-        }
-        final long[] offsets = new long[tokens.size()];
-        for (int i = 0, n = tokens.size(); i < n; i++) {
-            offsets[i] = evalHorizonTimeValue(tokens.getQuick(i), positions.getQuick(i), driver);
-            if (i > 0 && offsets[i] <= offsets[i - 1]) {
-                throw SqlException.position(positions.getQuick(i)).put("LIST offsets must be monotonically increasing");
-            }
-        }
-        return offsets;
     }
 
     /**

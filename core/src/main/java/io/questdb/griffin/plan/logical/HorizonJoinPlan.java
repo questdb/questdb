@@ -97,11 +97,6 @@ public final class HorizonJoinPlan extends LogicalPlan {
     }
 
     @Override
-    public Type getType() {
-        return Type.HORIZON_JOIN;
-    }
-
-    @Override
     public LogicalPlan inputAt(int index) {
         return index == 0 ? master : slaves.getQuick(index - 1).getInput();
     }

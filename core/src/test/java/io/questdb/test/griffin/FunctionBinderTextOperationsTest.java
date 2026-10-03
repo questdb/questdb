@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -49,7 +48,7 @@ import org.junit.Test;
 
 public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
     @Test
-    public void testVarcharRelocationAdoptsOnceAndRebuildsIndependentNativeBuffers() throws Exception {
+    public void testVarcharBindsUnconstructedAndBuildsIndependentNativeBuffers() throws Exception {
         assertMemoryLeak(() -> {
             final ObjList<Function> constructed = new ObjList<>();
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
@@ -69,10 +68,10 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
             final OutputSchema firstLayout = new OutputSchema().add(70, "v", ColumnType.VARCHAR, true);
             final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                     .add(70, "v", ColumnType.VARCHAR, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final ExpressionNode source = unary("trim", literal("v"));
                 final FunctionExpression expression = (FunctionExpression) binder.bind(source, original, null, sqlExecutionContext);
-                Assert.assertEquals(1, constructed.size());
+                Assert.assertEquals(0, constructed.size());
                 Assert.assertEquals(ColumnType.VARCHAR, expression.getDataType());
                 Assert.assertEquals("trim(Ø)", expression.getSignature());
                 source.clear();
@@ -111,7 +110,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
             final ConstantExpression expression = new ConstantExpression().ofVarchar(source, 0);
             source.clear();
             source.put("changed");
-            try (FunctionBinder binder = new FunctionBinder(parser);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser);
                  Function first = binder.instantiate(expression, input, sqlExecutionContext);
                  Function second = binder.instantiate(expression, input, sqlExecutionContext)) {
                 Assert.assertNotSame(first, second);
@@ -123,7 +122,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
                 Assert.assertEquals("'hé中'", Utf8s.toString(first.getVarcharA(null)));
                 Assert.assertEquals("'hé中'", second.getStrB(null).toString());
             }
-            try (FunctionBinder binder = new FunctionBinder(parser);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser);
                  Function value = binder.instantiate(new ConstantExpression().ofVarchar(null, 0), input, sqlExecutionContext)) {
                 Assert.assertNull(value.getVarcharA(null));
                 Assert.assertTrue(value.isNullConstant());
@@ -136,7 +135,7 @@ public class FunctionBinderTextOperationsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = new OutputSchema().add(4, "v", ColumnType.VARCHAR, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression bytes = (FunctionExpression) binder.bind(unary("length_bytes", literal("v")), input, null, sqlExecutionContext);
                 final FunctionExpression lower = (FunctionExpression) binder.bind(unary("lower", literal("v")), input, null, sqlExecutionContext);
                 try (Function length = binder.instantiate(bytes, input, sqlExecutionContext);

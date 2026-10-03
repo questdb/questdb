@@ -128,6 +128,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,

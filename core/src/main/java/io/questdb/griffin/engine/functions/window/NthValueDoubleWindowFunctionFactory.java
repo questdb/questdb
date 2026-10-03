@@ -82,6 +82,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     private static final String SIGNATURE = NAME + "(DL)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

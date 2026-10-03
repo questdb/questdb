@@ -50,8 +50,19 @@ import io.questdb.std.Transient;
 public class InSymbolFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "in(Kv)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        validateValueTypes(args, argPositions);
+        return args.size() > 1;
     }
 
     @Override
@@ -68,23 +79,13 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             return BooleanConstant.FALSE;
         }
 
+        validateValueTypes(args, argPositions);
         final CharSequenceHashSet set = new CharSequenceHashSet();
         ObjList<Function> deferredValues = null;
         IntList deferredValuePositions = null;
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             int tag = ColumnType.tagOf(func.getType());
-            switch (tag) {
-                case ColumnType.STRING:
-                case ColumnType.VARCHAR:
-                case ColumnType.UNDEFINED:
-                case ColumnType.SYMBOL:
-                case ColumnType.NULL:
-                case ColumnType.CHAR:
-                    break;
-                default:
-                    throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
-            }
             // Defer runtime-constants (bind variables and runtime-constant
             // function chains over them) to init() regardless of whether the
             // type is STRING/VARCHAR or SYMBOL/CHAR. Reading the value here
@@ -125,13 +126,29 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
-        return args.size() > 2;
+    public boolean variadicTypeSupportUndefinedBindVariables(int argCount) {
+        return argCount > 2;
     }
 
     @FunctionalInterface
     interface TestFunc {
         boolean test(Record rec);
+    }
+
+    private static void validateValueTypes(ObjList<Function> args, IntList argPositions) throws SqlException {
+        for (int i = 1, n = args.size(); i < n; i++) {
+            switch (ColumnType.tagOf(args.getQuick(i).getType())) {
+                case ColumnType.STRING:
+                case ColumnType.VARCHAR:
+                case ColumnType.UNDEFINED:
+                case ColumnType.SYMBOL:
+                case ColumnType.NULL:
+                case ColumnType.CHAR:
+                    break;
+                default:
+                    throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
+            }
+        }
     }
 
     private static class Func extends BooleanFunction implements UnaryFunction {

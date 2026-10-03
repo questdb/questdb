@@ -24,25 +24,24 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.DecorrelationContext.appendMissingColumns;
 import static io.questdb.griffin.DecorrelationContext.keyColumnId;
 import static io.questdb.griffin.ScalarCompensation.isImplicitlyKeyedByOuterColumns;
 
@@ -50,23 +49,20 @@ import static io.questdb.griffin.ScalarCompensation.isImplicitlyKeyedByOuterColu
  * Rewrites the chain of a body block to read mapped columns: aggregates group by them, windows partition by
  * them, a LIMIT and LATEST ON rank per them and projections expose them.
  */
-final class CorrelatedChainRewriter implements Mutable {
+final class CorrelatedChainRewriter {
     private final ScalarCompensation compensation;
+    private final OptimiserContext context;
     private final DecorrelationContext ctx;
     private final CorrelationKeys keys;
 
-    CorrelatedChainRewriter(DecorrelationContext ctx, CorrelationKeys keys, ScalarCompensation compensation) {
+    CorrelatedChainRewriter(OptimiserContext context, DecorrelationContext ctx, CorrelationKeys keys, ScalarCompensation compensation) {
+        this.context = context;
         this.ctx = ctx;
         this.keys = keys;
         this.compensation = compensation;
     }
 
-    @Override
-    public void clear() {
-
-    }
-
-    private static int groupingIndex(AggregatePlan aggregate, int columnId) {
+    private static int groupingIndex(GroupingPlan aggregate, int columnId) {
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
         for (int i = 0, n = keys.size(); i < n; i++) {
             if (keys.getQuick(i) instanceof ColumnExpression column && column.getColumnId() == columnId) {
@@ -80,11 +76,11 @@ final class CorrelatedChainRewriter implements Mutable {
      * Groups the aggregate by every mapped column, as a hidden key in front of the aggregates, and maps the
      * outer columns to those keys. Records a keyless aggregate that becomes keyed.
      */
-    private void addMappedKeys(AggregatePlan aggregate, int base) {
+    private void addMappedKeys(GroupingPlan aggregate, int base) {
         final OutputSchema input = aggregate.getInput().getOutput();
         final OutputSchema output = aggregate.getOutput();
-        if (compensation.scalarAggregates.indexOf(aggregate) > -1) {
-            compensation.scalarAggregate = aggregate;
+        if (aggregate instanceof AggregatePlan scalar && compensation.scalarAggregates.indexOf(scalar) > -1) {
+            compensation.scalarAggregate = scalar;
         }
         for (int i = base, n = ctx.mappedOuterIds.size(); i < n; i++) {
             final int columnId = ctx.mappedColumnIds.getQuick(i);
@@ -93,7 +89,7 @@ final class CorrelatedChainRewriter implements Mutable {
                 final int type = input.getColumnType(input.getColumnIndexById(columnId));
                 aggregate.getGroupingExpressions().add(ctx.planNodes.columns.next().of(columnId, type, aggregate.getPosition()));
                 keyIndex = aggregate.getGroupingExpressions().size() - 1;
-                ctx.insertColumn(output, keyIndex, ctx.nextColumnId++, ctx.outerRefName(ctx.mappedOuterIds.getQuick(i)), type);
+                ctx.insertColumn(output, keyIndex, context.newColumnId(), ctx.outerRefName(ctx.mappedOuterIds.getQuick(i)), type);
             }
             ctx.mappedColumnIds.setQuick(i, output.getColumnId(keyIndex));
         }
@@ -132,7 +128,7 @@ final class CorrelatedChainRewriter implements Mutable {
         }
         final int timestampId = latest.getTimestampColumnId();
         spec.getOrderByColumnIds().add(timestampId);
-        spec.getOrderByDirections().add(QueryModel.ORDER_DIRECTION_DESCENDING);
+        spec.getOrderByDirections().add(SortDirection.DESCENDING);
         spec.getOrderByPositions().add(position);
         spec.getOrderByNames().add(output.getColumnName(output.getColumnIndexById(timestampId)));
         return rowNumberFilter(input, spec, "_latest_rn", position, null, null);
@@ -170,8 +166,8 @@ final class CorrelatedChainRewriter implements Mutable {
             for (int i = 0, n = wrapper.getExpressions().size(); i < n; i++) {
                 ctx.substitution.put(wrapper.getOutput().getColumnId(i), ((ColumnExpression) wrapper.getExpressions().getQuick(i)).getColumnId());
             }
-            lo = lo == null ? null : ctx.functionBinder.remapColumns(lo, ctx.substitution);
-            hi = hi == null ? null : ctx.functionBinder.remapColumns(hi, ctx.substitution);
+            lo = lo == null ? null : context.getRewriter().remapColumns(lo, ctx.substitution);
+            hi = hi == null ? null : context.getRewriter().remapColumns(hi, ctx.substitution);
         }
         final LogicalPlan ranked = rowNumberFilter(ordered, spec, "__lateral_rn", position, lo, hi);
         if (wrapper == null) {
@@ -191,7 +187,7 @@ final class CorrelatedChainRewriter implements Mutable {
                 }
                 return project;
             }
-            case AggregatePlan aggregate -> {
+            case GroupingPlan aggregate -> {
                 if (isCorrelated) {
                     addMappedKeys(aggregate, base);
                 }
@@ -203,7 +199,7 @@ final class CorrelatedChainRewriter implements Mutable {
                         prependPartitions(window.getSpecs().getQuick(s), input.getOutput(), base, window.getPosition());
                     }
                 }
-                appendMissingColumns(window.getOutput(), input.getOutput());
+                ctx.alignColumns(window.getOutput(), input.getOutput());
                 return window;
             }
             case LimitPlan limit when isCorrelated -> {
@@ -213,7 +209,7 @@ final class CorrelatedChainRewriter implements Mutable {
                 return rankLatest(latest, input, base);
             }
             default -> {
-                appendMissingColumns(node.getOutput(), input.getOutput());
+                ctx.alignColumns(node.getOutput(), input.getOutput());
                 return node;
             }
         }
@@ -223,8 +219,8 @@ final class CorrelatedChainRewriter implements Mutable {
             throws SqlException {
         final WindowPlan window = ctx.planNodes.windowPlans.next().of(input, position);
         window.getOutput().copyFrom(input.getOutput());
-        final FunctionExpression rowNumber = ctx.functionBinder.describeWindowCall("row_number", position);
-        final int rowNumberId = ctx.nextColumnId++;
+        final FunctionExpression rowNumber = context.getRewriter().describeWindowCall("row_number", position);
+        final int rowNumberId = context.newColumnId();
         window.getFunctions().add(rowNumber);
         window.getSpecs().add(spec);
         window.getFunctionColumnIds().add(rowNumberId);
@@ -236,10 +232,10 @@ final class CorrelatedChainRewriter implements Mutable {
         } else {
             final BoundExpression upper = compensation.limitComparison(">=", hi == null ? lo : hi, rank, window.getOutput(), position);
             predicate = hi != null && lo != null
-                    ? ctx.functionBinder.combineConjunction(upper, compensation.limitComparison("<", lo, rank, window.getOutput(), position), position) : upper;
+                    ? context.getRewriter().combineConjunction(upper, compensation.limitComparison("<", lo, rank, window.getOutput(), position), position) : upper;
         }
         final FilterPlan filter = ctx.planNodes.filters.next().of(window, predicate, position);
-        filter.getOutput().copyFrom(window.getOutput());
+        filter.deriveOutput();
         return filter;
     }
 

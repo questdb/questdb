@@ -35,10 +35,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
@@ -53,6 +54,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.jit.JitFilterBinding;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -6959,6 +6961,38 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampIntervalInTermsKeepTheirOwnIntervals() throws Exception {
+        // Each interval IN reads only its own interval list, also when two of them share one
+        // predicate, where the second term once intersected the first term's intervals.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT timestamp_sequence('2024-01-01T12:00:00', 86_400_000_000L) t, x::INT v
+                        FROM long_sequence(3)
+                    )
+                    """);
+            final String expected = """
+                    t\tv
+                    2024-01-01T12:00:00.000000Z\t1
+                    2024-01-03T12:00:00.000000Z\t3
+                    """;
+            assertJitScalarAndVectorMatchJava("x WHERE t IN '2024-01-01' OR t IN '2024-01-03'", expected);
+            assertJitScalarAndVectorMatchJava("x WHERE (t IN '2024-01-01') <> (t IN '2024-01-03')", expected);
+            assertJitScalarAndVectorMatchJava(
+                    "x WHERE (t IN '2024-01-01') = (t IN '2024-01-03')",
+                    """
+                            t\tv
+                            2024-01-02T12:00:00.000000Z\t2
+                            """
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "x WHERE v > 0 AND (t IN '2024-01-01') <> (t IN '2024-01-03') AND t IN '2024'",
+                    expected
+            );
+        });
+    }
+
+    @Test
     public void testTimestampNull() throws Exception {
         final String query = "x where t <> null";
         final String ddl = "create table x as " +
@@ -9509,7 +9543,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final ObjList<Function> bindVarFunctions = new ObjList<>();
         final MemoryCARW irMemory = Vm.getCARWInstance(2048, 1, MemoryTag.NATIVE_JIT);
         try (
-                SqlCompiler compiler = engine.getSqlCompiler();
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                 RecordCursorFactory factory = select("SELECT * FROM " + tableName)
         ) {
             queryModel.clear();
@@ -9517,9 +9551,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertNoExtractableIntrinsic(filter, factory.getMetadata(), whereExpr);
             Assert.assertTrue("page frames for: " + tableName, factory.supportsPageFrameCursor());
             try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
+                final FilterPlan bound = JitFilterBinding.bind(compiler, sqlExecutionContext, tableName, whereExpr);
                 final int options = new CompiledFilterIRSerializer()
-                        .of(irMemory, sqlExecutionContext, factory.getMetadata(), cursor, bindVarFunctions)
-                        .serialize(filter, false, false, true);
+                        .of(irMemory, sqlExecutionContext, factory.getMetadata(), bound.getInput().getOutput(), cursor, bindVarFunctions)
+                        .serialize(bound.getPredicate(), false, false, true);
                 Assert.assertEquals("exec hint for: " + whereExpr, expectedHint, (options >> 4) & 0b11);
             }
         } finally {

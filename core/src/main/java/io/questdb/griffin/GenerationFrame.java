@@ -84,7 +84,8 @@ final class GenerationFrame implements Closeable, Mutable {
     final ObjList<TableColumnMetadata> windowOutputColumns = new ObjList<>();
     final WindowFactoryGenerator.WindowPartitionKeys windowPartitionKeys = new WindowFactoryGenerator.WindowPartitionKeys();
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
-    FunctionBinder functionBinder;
+    BoundExpressionRewriter expressionRewriter;
+    FunctionInstantiator functionInstantiator;
     TableFunctionSources functionSources;
     boolean isJoinIntervalCapture;
     boolean isJoinSlaveInput;
@@ -141,10 +142,16 @@ final class GenerationFrame implements Closeable, Mutable {
     }
 
     Throwable closePrepared(Throwable primary) {
-        return functionSources.closePrepared(functionBinder.closePrepared(primary));
+        return functionSources.closePrepared(functionInstantiator.closePrepared(primary));
     }
 
-    /** The scope column a projection reserves for its output column at this index. */
+    int getReferenceCount(int columnId) {
+        return columnId < columnReferenceCounts.size() ? columnReferenceCounts.getQuick(columnId) : 0;
+    }
+
+    /**
+     * The scope column a projection reserves for its output column at this index.
+     */
     TableColumnMetadata projectionSlotColumn(int index, int type) {
         TableColumnMetadata column = projectionSlotColumns.getQuiet(index);
         if (column == null || column.getColumnType() != type) {
@@ -152,10 +159,6 @@ final class GenerationFrame implements Closeable, Mutable {
             projectionSlotColumns.extendAndSet(index, column);
         }
         return column;
-    }
-
-    int getReferenceCount(int columnId) {
-        return columnId < columnReferenceCounts.size() ? columnReferenceCounts.getQuick(columnId) : 0;
     }
 
     void setReferenceCount(int columnId, int count) {

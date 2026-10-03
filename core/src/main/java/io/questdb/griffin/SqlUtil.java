@@ -49,13 +49,13 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.Decimals;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
@@ -1693,7 +1693,9 @@ public class SqlUtil {
         ac.setRowsHi(rowsHi);
     }
 
-    /** Normalizes an owned predicate before overload resolution and join/interval analysis. */
+    /**
+     * Normalizes an owned predicate before overload resolution and join/interval analysis.
+     */
     public static ExpressionNode optimiseBooleanNot(ExpressionNode node, ObjectPool<ExpressionNode> pool) {
         return optimiseBooleanNot(node, false, pool);
     }
@@ -2154,7 +2156,7 @@ public class SqlUtil {
     }
 
     private static ExpressionNode optimiseBooleanNot(ExpressionNode node, boolean reverse, ObjectPool<ExpressionNode> pool) {
-        if (node.token != null) {
+        if (node.token != null && node.type != ExpressionNode.LITERAL) {
             switch (notOps.get(node.token)) {
                 case NOT_OP_NOT:
                     if (reverse) {
@@ -2222,7 +2224,7 @@ public class SqlUtil {
                     break;
             }
         } else if (reverse) {
-            // tokenless node, e.g. a sub-query used directly as a boolean predicate:
+            // tokenless node (e.g. a sub-query used directly as a boolean predicate) or a column:
             // like any other non-negatable expression it must be wrapped in NOT,
             // otherwise the negation would be silently discarded
             return negate(node, pool);
@@ -2248,6 +2250,14 @@ public class SqlUtil {
         throw NumericException.instance();
     }
 
+    static boolean isZeroOnEmptyAggregate(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && (Chars.equalsIgnoreCase(node.token, "count")
+                || Chars.equalsIgnoreCase(node.token, "count_distinct")
+                || Chars.equalsIgnoreCase(node.token, "approx_count_distinct"));
+    }
+
     static QueryColumn nextColumn(
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> sqlNodePool,
@@ -2261,14 +2271,6 @@ public class SqlUtil {
 
     static ExpressionNode nextConstant(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
         return nextExpr(pool, ExpressionNode.CONSTANT, token, position);
-    }
-
-    static boolean isZeroOnEmptyAggregate(ExpressionNode node) {
-        return node != null
-                && node.type == ExpressionNode.FUNCTION
-                && (Chars.equalsIgnoreCase(node.token, "count")
-                || Chars.equalsIgnoreCase(node.token, "count_distinct")
-                || Chars.equalsIgnoreCase(node.token, "approx_count_distinct"));
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {

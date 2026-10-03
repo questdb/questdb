@@ -24,11 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -49,9 +49,11 @@ final class CorrelationKeys implements Mutable {
     final ObjList<JoinInput> deferredInputs = new ObjList<>();
     final IntList deferredOuterIds = new IntList();
     final IntList droppedEqualities = new IntList();
+    private final OptimiserContext context;
     private final DecorrelationContext ctx;
 
-    CorrelationKeys(DecorrelationContext ctx) {
+    CorrelationKeys(OptimiserContext context, DecorrelationContext ctx) {
+        this.context = context;
         this.ctx = ctx;
     }
 
@@ -104,7 +106,7 @@ final class CorrelationKeys implements Mutable {
             if (left == null || right == null) {
                 return left == null ? right : left;
             }
-            return ctx.functionBinder.replaceConjunction(call, left, right);
+            return context.getRewriter().replaceConjunction(call, left, right);
         }
         if (!(condition instanceof FunctionExpression call) || !Chars.equals(call.getName(), '=') || call.getArgumentCount() != 2
                 || !(call.argumentAt(0) instanceof ColumnExpression left) || !(call.argumentAt(1) instanceof ColumnExpression right)
@@ -135,10 +137,10 @@ final class CorrelationKeys implements Mutable {
 
     static boolean hasOuterCondition(JoinInput input) {
         return switch (input.getJoinType()) {
-            case QueryModel.JOIN_CROSS -> input.getPostJoinFilter() != null && LogicalPlans.hasOuterColumn(input.getPostJoinFilter());
-            case QueryModel.JOIN_INNER -> input.getOnResidual() != null && LogicalPlans.hasOuterColumn(input.getOnResidual())
+            case CROSS -> input.getPostJoinFilter() != null && LogicalPlans.hasOuterColumn(input.getPostJoinFilter());
+            case INNER -> input.getOnResidual() != null && LogicalPlans.hasOuterColumn(input.getOnResidual())
                     || input.getPostJoinFilter() != null && LogicalPlans.hasOuterColumn(input.getPostJoinFilter());
-            case QueryModel.JOIN_LEFT_OUTER -> input.getOnResidual() != null && LogicalPlans.hasOuterColumn(input.getOnResidual());
+            case LEFT_OUTER -> input.getOnResidual() != null && LogicalPlans.hasOuterColumn(input.getOnResidual());
             default -> false;
         };
     }
@@ -150,7 +152,7 @@ final class CorrelationKeys implements Mutable {
     void addKeyFilter(JoinInput step, int columnId, int keyId, OutputSchema output) throws SqlException {
         final int position = step.getPosition();
         final BoundExpression equality = ctx.bindCall("=", position, ctx.column(output, columnId, position), ctx.column(output, keyId, position), output);
-        step.setKeyFilter(step.getKeyFilter() == null ? equality : ctx.functionBinder.combineConjunction(step.getKeyFilter(), equality, position));
+        step.setKeyFilter(step.getKeyFilter() == null ? equality : context.getRewriter().combineConjunction(step.getKeyFilter(), equality, position));
     }
 
     void collectEqualities(BoundExpression predicate, OutputSchema input, int base) {
@@ -232,7 +234,7 @@ final class CorrelationKeys implements Mutable {
             if (right == null) {
                 return left;
             }
-            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : ctx.functionBinder.replaceConjunction(call, left, right);
+            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : context.getRewriter().replaceConjunction(call, left, right);
         }
         if (call.getArgumentCount() == 2 && "=".equals(call.getName())
                 && (isDroppedEquality(call.argumentAt(0), call.argumentAt(1)) || isDroppedEquality(call.argumentAt(1), call.argumentAt(0)))) {
@@ -258,8 +260,8 @@ final class CorrelationKeys implements Mutable {
             final int earlier = ctx.mappedColumn(outerId, base, inputBase);
             if (earlier > -1) {
                 JoinBinder.addJoinKey(input, earlier, ctx.mappedColumnIds.getQuick(i), ctx.outerRefName(outerId), ctx.outerRefName(outerId), input.getPosition());
-                if (input.getJoinType() == QueryModel.JOIN_CROSS) {
-                    input.setJoinType(QueryModel.JOIN_INNER);
+                if (input.getJoinType() == JoinKind.CROSS) {
+                    input.setJoinType(JoinKind.INNER);
                 }
                 ctx.mappedOuterIds.removeIndex(i);
                 ctx.mappedColumnIds.removeIndex(i);
@@ -287,14 +289,14 @@ final class CorrelationKeys implements Mutable {
      * the ON condition, and of the WHERE conjuncts of an input that does not null-extend.
      */
     void keyOuterConditions(JoinPlan join, JoinInput input) {
-        if (input.getJoinType() != QueryModel.JOIN_LEFT_OUTER) {
+        if (input.getJoinType() != JoinKind.LEFT_OUTER) {
             input.setPostJoinFilter(extractKeys(join, input, input.getPostJoinFilter()));
         }
-        if (input.getJoinType() != QueryModel.JOIN_CROSS) {
+        if (input.getJoinType() != JoinKind.CROSS) {
             input.setOnResidual(extractKeys(join, input, input.getOnResidual()));
         }
-        if (input.getJoinType() == QueryModel.JOIN_CROSS && input.getMasterKeyColumnIds().size() > 0) {
-            input.setJoinType(QueryModel.JOIN_INNER);
+        if (input.getJoinType() == JoinKind.CROSS && input.getMasterKeyColumnIds().size() > 0) {
+            input.setJoinType(JoinKind.INNER);
         }
     }
 
@@ -316,7 +318,7 @@ final class CorrelationKeys implements Mutable {
             final BoundExpression equality = ctx.bindCall("=", position,
                     ctx.planNodes.columns.next().of(slaveId, output.getColumnType(output.getColumnIndexById(slaveId)), position),
                     ctx.planNodes.columns.next().of(masterId, output.getColumnType(output.getColumnIndexById(masterId)), position), output);
-            condition = condition == null ? equality : ctx.functionBinder.combineConjunction(condition, equality, step.getPosition());
+            condition = condition == null ? equality : context.getRewriter().combineConjunction(condition, equality, step.getPosition());
         }
         for (int i = 0; i < keyCount; i++) {
             step.getMasterKeyColumnIds().removeIndex(0);

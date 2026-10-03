@@ -85,6 +85,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
      * @return the signature string "last_value(L)"
      */
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

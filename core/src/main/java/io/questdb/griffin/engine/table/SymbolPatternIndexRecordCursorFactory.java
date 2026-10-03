@@ -109,6 +109,11 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return partitionFrameCursorFactory.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

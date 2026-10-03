@@ -28,7 +28,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
-public final class SampleByPlan extends AggregatePlan {
+/**
+ * A SAMPLE BY grouping: the bucketed timestamp and the keys, with the period, range and fill the clause states.
+ */
+public final class SampleByPlan extends GroupingPlan {
     public static final ObjectFactory<SampleByPlan> FACTORY = SampleByPlan::new;
     public static final int FILL_NONE = 0;
     public static final int FILL_PREV = 1;
@@ -154,11 +157,6 @@ public final class SampleByPlan extends AggregatePlan {
         return to == null ? 0 : to.getPosition();
     }
 
-    @Override
-    public Type getType() {
-        return Type.SAMPLE_BY;
-    }
-
     public boolean isJoinInput() {
         return isJoinInput;
     }
@@ -167,9 +165,8 @@ public final class SampleByPlan extends AggregatePlan {
         return isTimestampRequired;
     }
 
-    @Override
     public SampleByPlan of(LogicalPlan input, int position) {
-        super.of(input, position);
+        configure(input, position);
         return this;
     }
 

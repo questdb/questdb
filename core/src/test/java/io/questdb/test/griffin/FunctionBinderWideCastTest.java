@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -60,7 +59,7 @@ public class FunctionBinderWideCastTest extends AbstractCairoTest {
     public void testGeoHashColumnsKeepEveryPrecisionAcrossLayouts() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 for (int bits = 1; bits <= 60; bits++) {
                     final int type = ColumnType.getGeoHashTypeWithBits(bits);
                     final OutputSchema input = wideSchema(type);
@@ -90,7 +89,7 @@ public class FunctionBinderWideCastTest extends AbstractCairoTest {
     public void testGeoHashNarrowingConstantsAndNullsRetainFullTypes() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final int sourceType = ColumnType.getGeoHashTypeWithBits(60);
                 for (int bits : new int[]{1, 7, 8, 15, 16, 31, 32, 60}) {
                     final int type = ColumnType.getGeoHashTypeWithBits(bits);
@@ -131,7 +130,7 @@ public class FunctionBinderWideCastTest extends AbstractCairoTest {
     public void testWideConstantsOwnCopiedPayloadsAfterBinderReuse() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema empty = new OutputSchema();
                 for (String sql : new String[]{"'00000000-0000-0002-0000-000000000001'::uuid",
                         "0x0000000000000004000000000000000300000000000000020000000000000001::long256",
@@ -165,7 +164,7 @@ public class FunctionBinderWideCastTest extends AbstractCairoTest {
     public void testWideTextCastsOwnIndependentBuffersAfterPruning() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 for (int sourceType : new int[]{ColumnType.UUID, ColumnType.LONG256, ColumnType.getGeoHashTypeWithBits(60)}) {
                     for (String target : new String[]{"string", "varchar"}) {
                         final OutputSchema full = wideSchema(sourceType);
@@ -218,7 +217,7 @@ public class FunctionBinderWideCastTest extends AbstractCairoTest {
                 }
             };
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(parser)) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final OutputSchema input = new OutputSchema().add(70, "id", ColumnType.LONG, true);
                 final String operand = "(CASE WHEN id IN (1,2,3) THEN '00000000-0000-0000-0000-000000000001'::uuid ELSE null::uuid END)";
                 for (String op : new String[]{"=", "!=", "<>"}) {

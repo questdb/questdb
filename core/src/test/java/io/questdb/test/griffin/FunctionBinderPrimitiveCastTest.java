@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -80,7 +79,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 }
             };
             final OutputSchema input = new OutputSchema().add(7, "id", ColumnType.LONG, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final BoundExpression expression = binder.bind(cast(in(constant("2")), "string"), input, null, sqlExecutionContext);
                 Assert.assertTrue(hasNativeChild[0]);
                 Assert.assertEquals(1, foldedCastCalls[0]);
@@ -93,8 +92,10 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 }
                 binder.clear();
                 hasNativeChild[0] = false;
+                bindVariableService.clear();
+                bindVariableService.setLong(0, 2);
                 try {
-                    binder.bind(cast(in(literal("id")), "uuid"), input, null, sqlExecutionContext);
+                    binder.bind(cast(in(parameter("$1")), "uuid"), input, null, sqlExecutionContext);
                     Assert.fail("BOOLEAN to UUID cast must be rejected");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "no matching function");
@@ -107,6 +108,19 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 }
             }
             Assert.assertEquals(memoryBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+        });
+    }
+
+    @Test
+    public void testSameTypeCastOfUnconstructedCallFeedsConstructedParent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, d DOUBLE)");
+            execute("INSERT INTO t VALUES (2, 5.0), (3, 5.0)");
+            assertQuery("SELECT d >= (l * l)::LONG ge, (l * l)::LONG + 0 > 4 gt FROM t").expectSize().returns("""
+                    ge	gt
+                    true	false
+                    false	true
+                    """);
         });
     }
 
@@ -125,7 +139,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                          RecordCursorFactory narrowed = select(isDynamic
                                  ? "SELECT s FROM fb_cast_symbol UNION ALL SELECT s FROM fb_cast_symbol"
                                  : "SELECT s FROM fb_cast_symbol");
-                         FunctionBinder binder = new FunctionBinder(parser)) {
+                         FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                         final OutputSchema full = schema(original.getMetadata(), 100);
                         final OutputSchema pruned = schema(narrowed.getMetadata(), 101);
                         final FunctionExpression expression = (FunctionExpression) binder.bind(
@@ -133,11 +147,9 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                         TestUtils.assertEquals("cast(Ki)", expression.getSignature());
                         try (Function owner = binder.instantiate(expression, pruned, narrowed.getMetadata(), sqlExecutionContext);
                              Function worker = binder.instantiate(expression, full, original.getMetadata(), sqlExecutionContext)) {
-                            Assert.assertEquals(isDynamic ? 3 : 2, constructed.size());
+                            Assert.assertEquals(2, constructed.size());
                             Assert.assertNotSame(owner, worker);
-                            if (!isDynamic) {
-                                Assert.assertSame(constructed.getQuick(0), owner);
-                            }
+                            Assert.assertSame(constructed.getQuick(0), owner);
                             binder.clear();
                             parser.clear();
                             for (int pass = 0; pass < 2; pass++) {
@@ -170,7 +182,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTextCastsAdoptOnceAndRebuildPrivateBuffersAfterPruning() throws Exception {
+    public void testTextCastsBindUnconstructedAndBuildPrivateBuffersAfterPruning() throws Exception {
         assertMemoryLeak(() -> {
             for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR}) {
                 final ObjList<Function> constructed = new ObjList<>();
@@ -179,12 +191,12 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.LONG, true);
                 final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                         .add(70, "value", ColumnType.LONG, true);
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final ExpressionNode source = cast(literal("value"), type == ColumnType.STRING ? "string" : "varchar");
                     final FunctionExpression expression = (FunctionExpression) binder.bind(source, original, null, sqlExecutionContext);
                     Assert.assertEquals(type, expression.getDataType());
                     TestUtils.assertEquals(type == ColumnType.STRING ? "cast(Ls)" : "cast(Lø)", expression.getSignature());
-                    Assert.assertEquals(1, constructed.size());
+                    Assert.assertEquals(0, constructed.size());
                     source.clear();
                     try (Function owner = binder.instantiate(expression, firstLayout, sqlExecutionContext);
                          Function worker = binder.instantiate(expression, secondLayout, sqlExecutionContext)) {
@@ -230,7 +242,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
             final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.VARCHAR, true);
             final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                     .add(70, "value", ColumnType.VARCHAR, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         cast(literal("value"), "char"), original, null, sqlExecutionContext);
                 TestUtils.assertEquals("cast(Øa)", expression.getSignature());
@@ -277,6 +289,10 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
 
     private static ExpressionNode literal(String value) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, value, 0, 0);
+    }
+
+    private static ExpressionNode parameter(String token) {
+        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, token, 0, 0);
     }
 
     private static Record longRecord(int expectedIndex, long value) {

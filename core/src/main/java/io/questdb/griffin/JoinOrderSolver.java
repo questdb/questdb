@@ -24,11 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -44,7 +44,7 @@ import io.questdb.std.ObjectPool;
  * runtime resources are retained.
  */
 final class JoinOrderSolver implements Mutable {
-    private final IntList bestJoinTypes;
+    private final ObjList<JoinKind> bestJoinTypes = new ObjList<>();
     private final IntList bestOrder;
     private final IntList candidateOrder;
     private final ObjectPool<Context> contextPool = new ObjectPool<>(Context::new, 8);
@@ -52,7 +52,7 @@ final class JoinOrderSolver implements Mutable {
     private final ObjList<IntHashSet> dependencies = new ObjList<>();
     private final ObjectPool<IntHashSet> dependencyPool = new ObjectPool<>(IntHashSet::new, 4);
     private final ObjectPool<Equality> equalityPool = new ObjectPool<>(Equality::new, 8);
-    private final IntList joinTypes = new IntList();
+    private final ObjList<JoinKind> joinTypes = new ObjList<>();
     private final IntList lateInputs = new IntList();
     private final IntHashSet markedIndexes;
     private final IntList orderingConstraints = new IntList();
@@ -65,14 +65,15 @@ final class JoinOrderSolver implements Mutable {
     private boolean isOrdered;
     private JoinPlan join;
 
-    /** Borrows two caller lists as {@link #order()} scratch; the caller stops reading them once order() starts. */
+    /**
+     * Borrows two caller lists as {@link #order()} scratch; the caller stops reading them once order() starts.
+     */
     JoinOrderSolver(
             IntList candidateOrder,
             IntList pendingSources,
             IntHashSet markedIndexes,
             IntList stagedIndexes,
             IntList bestOrder,
-            IntList bestJoinTypes,
             IntList roots
     ) {
         this.candidateOrder = candidateOrder;
@@ -80,7 +81,6 @@ final class JoinOrderSolver implements Mutable {
         this.markedIndexes = markedIndexes;
         this.stagedIndexes = stagedIndexes;
         this.bestOrder = bestOrder;
-        this.bestJoinTypes = bestJoinTypes;
         this.roots = roots;
     }
 
@@ -107,177 +107,6 @@ final class JoinOrderSolver implements Mutable {
         stagedContexts.clear();
         isOrdered = false;
         join = null;
-    }
-
-    static boolean isBarrier(int joinType) {
-        return joinType != QueryModel.JOIN_INNER && joinType != QueryModel.JOIN_CROSS;
-    }
-
-    /**
-     * The child reads columns of the parent without an equality between them, as a dependent join step
-     * reads the columns of the inputs before it.
-     */
-    void addDependency(int parent, int child) {
-        requireCollecting();
-        addParent(parent, child);
-    }
-
-    /** Holds the input while nothing depends on it until no other input is ready, so a context-free outer join goes last. */
-    void addLateInput(int source) {
-        requireCollecting();
-        lateInputs.add(source);
-    }
-
-    void addOrderingConstraint(int parent, int child) {
-        requireCollecting();
-        if (parent != child) {
-            orderingConstraints.add(parent);
-            orderingConstraints.add(child);
-        }
-    }
-
-    /** The caller visits WHERE before ON occurrences. */
-    void addEquality(
-            int leftSource,
-            int leftColumnId,
-            CharSequence leftName,
-            int leftPosition,
-            int rightSource,
-            int rightColumnId,
-            CharSequence rightName,
-            int rightPosition,
-            int originalOnSource
-    ) {
-        requireCollecting();
-        if (originalOnSource < -1 || originalOnSource >= contexts.size()) {
-            throw new IllegalArgumentException("invalid join predicate origin");
-        }
-        validateColumn(leftSource, leftColumnId);
-        validateColumn(rightSource, rightColumnId);
-        final Equality equality = equalityPool.next();
-        equality.of(leftSource, leftColumnId, leftName, leftPosition,
-                rightSource, rightColumnId, rightName, rightPosition);
-        equality.originalOwners.add(originalOnSource);
-        if (leftSource == rightSource) {
-            // An original x=x remains a scalar predicate; only a tautology
-            // derived from two already retained equalities can disappear.
-            sourceFilters.add(equality);
-            return;
-        }
-        // Canonicalize the first endpoint to the lower source.
-        if (leftSource > rightSource) {
-            equality.reverse();
-        }
-        final Context context = contextPool.next();
-        context.slave = equality.rightSource;
-        context.keys.add(equality);
-        context.parents.add(equality.leftSource);
-        addContext(context);
-        link(equality.leftSource, equality.rightSource);
-    }
-
-    ObjList<Equality> getSourceFilters() {
-        return sourceFilters;
-    }
-
-    boolean hasJoinDependency(int source) {
-        final Context context = contexts.getQuick(source);
-        if (context != null && context.parents.size() > 0 || dependencies.getQuick(source).size() > 0) {
-            return true;
-        }
-        for (int i = 0, n = orderingConstraints.size(); i < n; i++) {
-            if (orderingConstraints.getQuick(i) == source) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    void of(JoinPlan join) {
-        clear();
-        if (join.getOrderedInputs().size() != 0) {
-            throw new IllegalStateException("join order has already been selected");
-        }
-        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
-            final JoinInput input = join.getInputs().getQuick(i);
-            final int type = input.getJoinType();
-            if (input.getMasterKeyColumnIds().size() != 0 || input.getSlaveKeyColumnIds().size() != 0) {
-                throw new IllegalStateException("join keys have already been published");
-            }
-            contexts.add(null);
-            dependencies.add(dependencyPool.next());
-            joinTypes.add(type);
-        }
-        this.join = join;
-    }
-
-    /** Selects once and publishes only key values and input identities; false when dependencies are cyclic. */
-    boolean order() {
-        requireCollecting();
-        // Merging an emitted context can emit another equality at a lower
-        // source ordinal. Drain the queue: a captured size silently loses those
-        // equalities. The decreasing owner ordinal bounds this local revisit.
-        for (int i = 0; i < stagedContexts.size(); i++) {
-            addContext(stagedContexts.getQuick(i));
-        }
-        // A newly emitted context may not have passed through addEquality.
-        // Derive every dependency from the surviving contexts before ordering.
-        for (int i = 0, n = dependencies.size(); i < n; i++) {
-            dependencies.getQuick(i).clear();
-        }
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            final Context context = contexts.getQuick(i);
-            if (context != null) {
-                for (int k = 0, count = context.parents.size(); k < count; k++) {
-                    link(context.parents.get(k), i);
-                }
-            }
-        }
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            final Context context = contexts.getQuick(i);
-            final int type = joinTypes.getQuick(i);
-            if (!isBarrier(type)) {
-                joinTypes.setQuick(i, context != null && context.parents.size() > 0
-                        ? QueryModel.JOIN_INNER : QueryModel.JOIN_CROSS);
-            } else if (type == QueryModel.JOIN_ASOF || type == QueryModel.JOIN_LT || type == QueryModel.JOIN_SPLICE) {
-                addParent(0, i);
-            } else if (type == QueryModel.JOIN_UNNEST) {
-                if (i == 0) {
-                    throw new IllegalStateException("UNNEST requires a master input");
-                }
-                addParent(0, i);
-                final ObjList<BoundExpression> expressions = join.getInputs().getQuick(i).getUnnest().getExpressions();
-                for (int k = 0, count = expressions.size(); k < count; k++) {
-                    addUnnestDependencies(expressions.getQuick(k), i);
-                }
-            }
-        }
-        reorder();
-        if (bestOrder.size() != contexts.size()) {
-            return false;
-        }
-        validateOrder();
-        final ObjList<JoinInput> inputs = join.getInputs();
-        for (int i = 0, n = bestOrder.size(); i < n; i++) {
-            final int source = bestOrder.getQuick(i);
-            final JoinInput input = inputs.getQuick(source);
-            input.setJoinType(joinTypes.getQuick(source));
-            final Context context = contexts.getQuick(source);
-            if (context != null) {
-                for (int k = 0, count = context.keys.size(); k < count; k++) {
-                    final Equality key = context.keys.getQuick(k);
-                    final boolean isLeftSlave = key.leftSource == source;
-                    input.getMasterKeyColumnIds().add(isLeftSlave ? key.rightColumnId : key.leftColumnId);
-                    input.getSlaveKeyColumnIds().add(isLeftSlave ? key.leftColumnId : key.rightColumnId);
-                    input.getMasterKeyNames().add(isLeftSlave ? key.rightName : key.leftName);
-                    input.getSlaveKeyNames().add(isLeftSlave ? key.leftName : key.rightName);
-                    input.getKeyPositions().add(isLeftSlave ? key.leftPosition : key.rightPosition);
-                }
-            }
-            join.getOrderedInputs().add(input);
-        }
-        isOrdered = true;
-        return true;
     }
 
     private void addContext(Context context) {
@@ -350,6 +179,15 @@ final class JoinOrderSolver implements Mutable {
             context.keys.add(equality);
             stagedContexts.add(context);
         }
+    }
+
+    private boolean hasOrderingConstraint(int parent, int child) {
+        for (int i = 0, n = orderingConstraints.size(); i < n; i += 2) {
+            if (orderingConstraints.getQuick(i) == parent && orderingConstraints.getQuick(i + 1) == child) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasOtherDependencyPath(Context source, int target) {
@@ -525,15 +363,6 @@ final class JoinOrderSolver implements Mutable {
         joinTypes.addAll(bestJoinTypes);
     }
 
-    private boolean hasOrderingConstraint(int parent, int child) {
-        for (int i = 0, n = orderingConstraints.size(); i < n; i += 2) {
-            if (orderingConstraints.getQuick(i) == parent && orderingConstraints.getQuick(i + 1) == child) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private void requireCollecting() {
         if (join == null || isOrdered) {
             throw new IllegalStateException("join analysis is not collecting predicates");
@@ -565,8 +394,8 @@ final class JoinOrderSolver implements Mutable {
             }
             targetContext.slave = target;
             contexts.setQuick(source, moveClauses(from, targetContext));
-            if (joinTypes.getQuick(target) == QueryModel.JOIN_CROSS) {
-                joinTypes.setQuick(target, QueryModel.JOIN_INNER);
+            if (joinTypes.getQuick(target) == JoinKind.CROSS) {
+                joinTypes.setQuick(target, JoinKind.INNER);
             }
         }
     }
@@ -604,7 +433,7 @@ final class JoinOrderSolver implements Mutable {
                 break;
             }
             candidateOrder.add(source);
-            cost += joinTypes.getQuick(source) == QueryModel.JOIN_CROSS ? 10 : 5;
+            cost += joinTypes.getQuick(source) == JoinKind.CROSS ? 10 : 5;
             final IntHashSet children = dependencies.getQuick(source);
             for (int i = 0, n = children.size(); i < n; i++) {
                 final int child = children.get(i);
@@ -648,6 +477,197 @@ final class JoinOrderSolver implements Mutable {
                     }
                 }
             }
+        }
+    }
+
+    static boolean isBarrier(JoinKind joinType) {
+        return joinType != JoinKind.INNER && joinType != JoinKind.CROSS;
+    }
+
+    /**
+     * The child reads columns of the parent without an equality between them, as a dependent join step
+     * reads the columns of the inputs before it.
+     */
+    void addDependency(int parent, int child) {
+        requireCollecting();
+        addParent(parent, child);
+    }
+
+    /**
+     * The caller visits WHERE before ON occurrences.
+     */
+    void addEquality(
+            int leftSource,
+            int leftColumnId,
+            CharSequence leftName,
+            int leftPosition,
+            int rightSource,
+            int rightColumnId,
+            CharSequence rightName,
+            int rightPosition,
+            int originalOnSource
+    ) {
+        requireCollecting();
+        if (originalOnSource < -1 || originalOnSource >= contexts.size()) {
+            throw new IllegalArgumentException("invalid join predicate origin");
+        }
+        validateColumn(leftSource, leftColumnId);
+        validateColumn(rightSource, rightColumnId);
+        final Equality equality = equalityPool.next();
+        equality.of(leftSource, leftColumnId, leftName, leftPosition,
+                rightSource, rightColumnId, rightName, rightPosition);
+        equality.originalOwners.add(originalOnSource);
+        if (leftSource == rightSource) {
+            // An original x=x remains a scalar predicate; only a tautology
+            // derived from two already retained equalities can disappear.
+            sourceFilters.add(equality);
+            return;
+        }
+        // Canonicalize the first endpoint to the lower source.
+        if (leftSource > rightSource) {
+            equality.reverse();
+        }
+        final Context context = contextPool.next();
+        context.slave = equality.rightSource;
+        context.keys.add(equality);
+        context.parents.add(equality.leftSource);
+        addContext(context);
+        link(equality.leftSource, equality.rightSource);
+    }
+
+    /**
+     * Holds the input while nothing depends on it until no other input is ready, so a context-free outer join goes last.
+     */
+    void addLateInput(int source) {
+        requireCollecting();
+        lateInputs.add(source);
+    }
+
+    void addOrderingConstraint(int parent, int child) {
+        requireCollecting();
+        if (parent != child) {
+            orderingConstraints.add(parent);
+            orderingConstraints.add(child);
+        }
+    }
+
+    ObjList<Equality> getSourceFilters() {
+        return sourceFilters;
+    }
+
+    boolean hasJoinDependency(int source) {
+        final Context context = contexts.getQuick(source);
+        if (context != null && context.parents.size() > 0 || dependencies.getQuick(source).size() > 0) {
+            return true;
+        }
+        for (int i = 0, n = orderingConstraints.size(); i < n; i++) {
+            if (orderingConstraints.getQuick(i) == source) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void of(JoinPlan join) {
+        clear();
+        if (join.getOrderedInputs().size() != 0) {
+            throw new IllegalStateException("join order has already been selected");
+        }
+        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+            final JoinInput input = join.getInputs().getQuick(i);
+            final JoinKind type = input.getJoinType();
+            if (input.getMasterKeyColumnIds().size() != 0 || input.getSlaveKeyColumnIds().size() != 0) {
+                throw new IllegalStateException("join keys have already been published");
+            }
+            contexts.add(null);
+            dependencies.add(dependencyPool.next());
+            joinTypes.add(type);
+        }
+        this.join = join;
+    }
+
+    /**
+     * Selects once and publishes only key values and input identities; false when dependencies are cyclic.
+     */
+    boolean order() {
+        requireCollecting();
+        // Merging an emitted context can emit another equality at a lower
+        // source ordinal. Drain the queue: a captured size silently loses those
+        // equalities. The decreasing owner ordinal bounds this local revisit.
+        for (int i = 0; i < stagedContexts.size(); i++) {
+            addContext(stagedContexts.getQuick(i));
+        }
+        // A newly emitted context may not have passed through addEquality.
+        // Derive every dependency from the surviving contexts before ordering.
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            dependencies.getQuick(i).clear();
+        }
+        for (int i = 0, n = contexts.size(); i < n; i++) {
+            final Context context = contexts.getQuick(i);
+            if (context != null) {
+                for (int k = 0, count = context.parents.size(); k < count; k++) {
+                    link(context.parents.get(k), i);
+                }
+            }
+        }
+        for (int i = 0, n = contexts.size(); i < n; i++) {
+            final Context context = contexts.getQuick(i);
+            final JoinKind type = joinTypes.getQuick(i);
+            if (!isBarrier(type)) {
+                joinTypes.setQuick(i, context != null && context.parents.size() > 0 ? JoinKind.INNER : JoinKind.CROSS);
+            } else if (type.isTemporal()) {
+                addParent(0, i);
+            } else if (type == JoinKind.UNNEST) {
+                if (i == 0) {
+                    throw new IllegalStateException("UNNEST requires a master input");
+                }
+                addParent(0, i);
+                final ObjList<BoundExpression> expressions = join.getInputs().getQuick(i).getUnnest().getExpressions();
+                for (int k = 0, count = expressions.size(); k < count; k++) {
+                    addUnnestDependencies(expressions.getQuick(k), i);
+                }
+            }
+        }
+        reorder();
+        if (bestOrder.size() != contexts.size()) {
+            return false;
+        }
+        validateOrder();
+        final ObjList<JoinInput> inputs = join.getInputs();
+        for (int i = 0, n = bestOrder.size(); i < n; i++) {
+            final int source = bestOrder.getQuick(i);
+            final JoinInput input = inputs.getQuick(source);
+            input.setJoinType(joinTypes.getQuick(source));
+            final Context context = contexts.getQuick(source);
+            if (context != null) {
+                for (int k = 0, count = context.keys.size(); k < count; k++) {
+                    final Equality key = context.keys.getQuick(k);
+                    final boolean isLeftSlave = key.leftSource == source;
+                    input.getMasterKeyColumnIds().add(isLeftSlave ? key.rightColumnId : key.leftColumnId);
+                    input.getSlaveKeyColumnIds().add(isLeftSlave ? key.leftColumnId : key.rightColumnId);
+                    input.getMasterKeyNames().add(isLeftSlave ? key.rightName : key.leftName);
+                    input.getSlaveKeyNames().add(isLeftSlave ? key.leftName : key.rightName);
+                    input.getKeyPositions().add(isLeftSlave ? key.leftPosition : key.rightPosition);
+                }
+            }
+            join.getOrderedInputs().add(input);
+        }
+        isOrdered = true;
+        return true;
+    }
+
+    private static final class Context implements Mutable {
+        private final ObjList<Equality> keys = new ObjList<>();
+        private final IntHashSet parents = new IntHashSet(4);
+        private int inCount;
+        private int slave = -1;
+
+        @Override
+        public void clear() {
+            keys.clear();
+            parents.clear();
+            inCount = 0;
+            slave = -1;
         }
     }
 
@@ -705,21 +725,6 @@ final class JoinOrderSolver implements Mutable {
             rightColumnId = id;
             rightName = name;
             rightPosition = position;
-        }
-    }
-
-    private static final class Context implements Mutable {
-        private final ObjList<Equality> keys = new ObjList<>();
-        private final IntHashSet parents = new IntHashSet(4);
-        private int inCount;
-        private int slave = -1;
-
-        @Override
-        public void clear() {
-            keys.clear();
-            parents.clear();
-            inCount = 0;
-            slave = -1;
         }
     }
 }

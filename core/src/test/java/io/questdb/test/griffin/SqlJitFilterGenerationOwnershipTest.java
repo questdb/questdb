@@ -27,14 +27,20 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class SqlJitFilterGenerationOwnershipTest extends AbstractCairoTest {
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        configurationFactory = AsyncFilterConstructionFault.CONFIGURATION_FACTORY;
+        AbstractCairoTest.setUpStatic();
+    }
+
     @Test
     public void testBoundLimitDeclineAndSuccessfulAdoption() throws Exception {
         assertJitFilter((fixture, compiler) -> {
@@ -73,9 +79,7 @@ public class SqlJitFilterGenerationOwnershipTest extends AbstractCairoTest {
             final RuntimeException primary = new RuntimeException("bound JIT construction");
             final RuntimeException cleanup = new RuntimeException("bound limit close");
             fixture.failLongClose(cleanup);
-            AsyncFilteredRecordCursorFactory.setConstructorFailureHookForTesting(() -> {
-                throw primary;
-            });
+            AsyncFilterConstructionFault.arm(primary);
             try {
                 final RuntimeException actual = Assert.assertThrows(RuntimeException.class, () -> compiler.compile(
                         "SELECT * FROM jf_owner WHERE id > $1 LIMIT owned_long($2)", sqlExecutionContext
@@ -85,7 +89,7 @@ public class SqlJitFilterGenerationOwnershipTest extends AbstractCairoTest {
                 Assert.assertTrue(fixture.longCount() > 0);
                 fixture.assertAllClosedOnce();
             } finally {
-                AsyncFilteredRecordCursorFactory.setConstructorFailureHookForTesting(null);
+                AsyncFilterConstructionFault.disarm();
             }
         });
     }

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.IntList;
@@ -38,6 +39,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.castTarget(argTypes);
+    }
+
     @Override
     public String getSignature() {
         // GeoHashes are of different lengths

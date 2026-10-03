@@ -42,8 +42,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -54,10 +56,47 @@ import io.questdb.std.str.Utf8Sequence;
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
+    private static final int LIST_CONSTANT = 0;
+    private static final int LIST_INTERVAL = 1;
+    private static final int LIST_RUNTIME_CONSTANT = 2;
+    private static final int LIST_VARIABLE = 3;
+    private static final FiberLocal<StringSink> VETTED_SINK = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<LongList> VETTED_VALUES = new FiberLocal<>(LongList::new);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
         return "in(NV)";
+    }
+
+    /**
+     * Keeps a tick expression with date variables built: vetting it would compile it once more.
+     */
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final int listKind = listKind(args, argPositions);
+        if (listKind != LIST_CONSTANT) {
+            return listKind != LIST_INTERVAL;
+        }
+        final int timestampType = ColumnType.getTimestampType(args.getQuick(0).getType());
+        final LongList values = VETTED_VALUES.get();
+        values.clear();
+        if (!isIntervalSearch(args)) {
+            parseDiscreteTimestampValues(timestampType, args, argPositions, values);
+            return true;
+        }
+        final CharSequence right = args.getQuick(1).getStrA(null);
+        if (right != null && containsDateVariable(right)) {
+            return false;
+        }
+        final StringSink sink = VETTED_SINK.get();
+        sink.clear();
+        IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(timestampType), configuration, right, values, argPositions.getQuick(1), sink, true);
+        return true;
     }
 
     @Override
@@ -67,42 +106,18 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext) throws SqlException {
-        boolean allConst = true;
-        boolean allRuntimeConst = true;
-        for (int i = 1, n = args.size(); i < n && (allConst || allRuntimeConst); i++) {
-            Function func = args.getQuick(i);
-            switch (ColumnType.tagOf(func.getType())) {
-                case ColumnType.NULL:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.LONG:
-                case ColumnType.INT:
-                case ColumnType.STRING:
-                case ColumnType.SYMBOL:
-                case ColumnType.VARCHAR:
-                case ColumnType.UNDEFINED:
-                    break;
-                case ColumnType.INTERVAL:
-                    return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
-                default:
-                    throw SqlException.position(argPositions.getQuick(i))
-                            .put("cannot compare TIMESTAMP with type ")
-                            .put(ColumnType.nameOf(func.getType()));
+        final int listKind = listKind(args, argPositions);
+        if (listKind == LIST_INTERVAL) {
+            for (int i = 2, n = args.size(); i < n; i++) {
+                args.setQuick(i, Misc.free(args.getQuick(i)));
             }
-            if (!func.isConstant()) {
-                allConst = false;
-
-                // allRuntimeConst can mean a mix of constants and runtime constants
-                if (!func.isRuntimeConstant()) {
-                    allRuntimeConst = false;
-                }
-            }
+            return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
         }
 
         boolean intervalSearch = isIntervalSearch(args);
         int timestampType = ColumnType.getTimestampType(args.getQuick(0).getType());
         assert ColumnType.isTimestamp(timestampType);
-        if (allConst) {
+        if (listKind == LIST_CONSTANT) {
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
@@ -114,10 +129,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 }
                 return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1), configuration);
             }
-            return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(timestampType, args, argPositions));
+            final LongList values = new LongList(args.size() - 1);
+            parseDiscreteTimestampValues(timestampType, args, argPositions, values);
+            return new InTimestampConstFunction(args.getQuick(0), values);
         }
 
-        if (allRuntimeConst) {
+        if (listKind == LIST_RUNTIME_CONSTANT) {
             if (intervalSearch) {
                 return new InTimestampRuntimeConstIntervalFunction(
                         args.getQuick(0),
@@ -183,7 +200,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return switch (ColumnType.tagOf(func.getType())) {
             case ColumnType.DATE -> driver.fromDate(func.getDate(rec));
             case ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec);
-            case ColumnType.STRING, ColumnType.SYMBOL -> ColumnType.getTimestampDriver(type).parseFloorLiteral(func.getStrA(rec));
+            case ColumnType.STRING, ColumnType.SYMBOL ->
+                    ColumnType.getTimestampDriver(type).parseFloorLiteral(func.getStrA(rec));
             case ColumnType.VARCHAR -> ColumnType.getTimestampDriver(type).parseFloorLiteral(func.getVarcharA(rec));
             default -> Numbers.LONG_NULL;
         };
@@ -197,10 +215,49 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return ColumnType.isVarcharOrString(rightFn.getType());
     }
 
-    private static LongList parseDiscreteTimestampValues(int timestampType, ObjList<Function> args, IntList argPositions)
+    /**
+     * The kind of IN list the call builds over: an INTERVAL element, constants, constants mixed with runtime
+     * constants, or anything else. Raises the error for an element that does not compare with TIMESTAMP, up to the
+     * first element that decides the kind.
+     */
+    private static int listKind(ObjList<Function> args, IntList argPositions) throws SqlException {
+        boolean allConst = true;
+        boolean allRuntimeConst = true;
+        for (int i = 1, n = args.size(); i < n && (allConst || allRuntimeConst); i++) {
+            Function func = args.getQuick(i);
+            switch (ColumnType.tagOf(func.getType())) {
+                case ColumnType.NULL:
+                case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.LONG:
+                case ColumnType.INT:
+                case ColumnType.STRING:
+                case ColumnType.SYMBOL:
+                case ColumnType.VARCHAR:
+                case ColumnType.UNDEFINED:
+                    break;
+                case ColumnType.INTERVAL:
+                    return LIST_INTERVAL;
+                default:
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("cannot compare TIMESTAMP with type ")
+                            .put(ColumnType.nameOf(func.getType()));
+            }
+            if (!func.isConstant()) {
+                allConst = false;
+
+                // allRuntimeConst can mean a mix of constants and runtime constants
+                if (!func.isRuntimeConstant()) {
+                    allRuntimeConst = false;
+                }
+            }
+        }
+        return allConst ? LIST_CONSTANT : allRuntimeConst ? LIST_RUNTIME_CONSTANT : LIST_VARIABLE;
+    }
+
+    private static void parseDiscreteTimestampValues(int timestampType, ObjList<Function> args, IntList argPositions, LongList res)
             throws SqlException {
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-        final LongList res = new LongList(args.size() - 1);
         for (int i = 1, n = args.size(); i < n; i++) {
             final Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -218,7 +275,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
         }
         res.sort();
-        return res;
     }
 
     private static class EqTimestampCompiledTickExprFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -305,8 +361,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final LongList intervals = new LongList();
         private final Function left;
         private final Function right;
-        private final TimestampDriver timestampDriver;
         private final StringSink sink = new StringSink();
+        private final TimestampDriver timestampDriver;
 
         public EqTimestampStrFunction(Function left, Function right, int timestampType, CairoConfiguration configuration) {
             this.left = left;

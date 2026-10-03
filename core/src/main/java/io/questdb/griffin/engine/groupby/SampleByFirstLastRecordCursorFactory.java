@@ -94,7 +94,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private Function sampleToFunc;
     private Function timezoneNameFunc;
 
-    /** Consumes the base and temporal functions; copies the borrowed column layout. */
+    /**
+     * Consumes the base and temporal functions; copies the borrowed column layout.
+     */
     public SampleByFirstLastRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             RecordCursorFactory base,

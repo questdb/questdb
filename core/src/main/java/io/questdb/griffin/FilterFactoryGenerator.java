@@ -26,10 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -45,8 +42,6 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
@@ -60,120 +55,49 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 
 final class FilterFactoryGenerator {
     private static final Log LOG = LogFactory.getLog(FilterFactoryGenerator.class);
-    private final CharacterStore characterStore;
     private final CairoConfiguration configuration;
     private final boolean enableJitDebug;
-    private final ObjectPool<ExpressionNode> expressionNodePool;
     private final MemoryCARW jitIRMem;
-    private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
-    private final StringSink jitText;
+    private final CompiledFilterIRSerializer jitIRSerializer;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
     private boolean enableJitNullChecks = true;
 
     FilterFactoryGenerator(
             CairoConfiguration configuration,
-            ObjectPool<ExpressionNode> expressionNodePool,
             CharacterStore characterStore,
             MemoryCARW jitIRMem,
             PageFrameReduceTaskFactory reduceTaskFactory,
-            StringSink jitText
+            StringSink scratchSink,
+            IntList indexScratch,
+            IntList valueScratch,
+            IntList masterKeyScratch,
+            IntList slaveKeyScratch,
+            LongList longScratch
     ) {
         this.configuration = configuration;
-        this.expressionNodePool = expressionNodePool;
-        this.characterStore = characterStore;
         this.jitIRMem = jitIRMem;
         this.reduceTaskFactory = reduceTaskFactory;
-        this.jitText = jitText;
+        this.jitIRSerializer = new CompiledFilterIRSerializer(characterStore, scratchSink, indexScratch, valueScratch, masterKeyScratch, slaveKeyScratch, longScratch);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
     }
 
-    void setEnableJitNullChecks(boolean value) {
-        enableJitNullChecks = value;
-    }
-
-    static boolean isParallelFilter(RecordCursorFactory factory) {
-        return !factory.implementsLimit() && (factory instanceof AsyncFilteredRecordCursorFactory
-                || factory instanceof AsyncJitFilteredRecordCursorFactory
-                || factory instanceof AdaptiveSymbolPatternRecordCursorFactory adaptive && adaptive.isSelfFiltering());
-    }
-
-    /**
-     * Returns the filter a parallel operator steals from a filter factory. Every stealable factory,
-     * a {@link #isParallelFilter parallel filter} or a {@link FilteredRecordCursorFactory}, carries one.
-     */
-    static @NotNull Function stolenFilter(RecordCursorFactory factory) {
-        final Function filter = factory.getFilter();
-        assert filter != null;
-        return filter;
-    }
-
-    /** Returns the residual predicate a parallel filter of this frame compiled, or null. */
-    static BoundExpression getParallelPredicate(GenerationFrame frame, RecordCursorFactory factory) {
-        for (int i = 0, n = frame.parallelFilterFactories.size(); i < n; i++) {
-            if (frame.parallelFilterFactories.getQuick(i) == factory) {
-                return frame.parallelFilterPredicates.getQuick(i);
-            }
-        }
-        return null;
-    }
-
-    /** Consumes both executable roots on entry, including on failure. */
-    RecordCursorFactory generate(
-            GenerationFrame frame,
-            BoundExpression predicate,
-            OutputSchema input,
-            RecordCursorFactory base,
-            Function filter,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext,
-            boolean isUpdate
-    ) throws SqlException {
-        return generate(frame, predicate, input, base, filter, binder, executionContext, isUpdate, null, false);
-    }
-
-    /** Like a join-level filter, keeps a constant folded from functions as a filter; only a literal constant folds. */
-    RecordCursorFactory generatePostJoin(
-            GenerationFrame frame,
-            BoundExpression predicate,
-            OutputSchema input,
-            RecordCursorFactory base,
-            Function filter,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        return generate(frame, predicate, input, base, filter, binder, executionContext, false, null, false,
-                predicate instanceof ConstantExpression constant && constant.isLiteral());
-    }
-
-    RecordCursorFactory generate(
-            GenerationFrame frame,
-            BoundExpression predicate,
-            OutputSchema input,
-            RecordCursorFactory base,
-            Function filter,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext,
-            boolean isUpdate,
-            LimitPlan limitAdvice,
-            boolean enablePreTouch
-    ) throws SqlException {
-        return generate(frame, predicate, input, base, filter, binder, executionContext, isUpdate, limitAdvice, enablePreTouch, true);
+    private static RecordCursorFactory addParallel(GenerationFrame frame, RecordCursorFactory factory, BoundExpression predicate) {
+        frame.parallelFilterFactories.add(factory);
+        frame.parallelFilterPredicates.add(predicate);
+        return factory;
     }
 
     private RecordCursorFactory generate(
@@ -182,7 +106,7 @@ final class FilterFactoryGenerator {
             OutputSchema input,
             RecordCursorFactory base,
             Function filter,
-            FunctionBinder binder,
+            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext,
             boolean isUpdate,
             LimitPlan limitAdvice,
@@ -210,16 +134,16 @@ final class FilterFactoryGenerator {
             collectColumnIndexes(predicate, input, columns);
             final RecordCursorFactory jitFactory = tryGenerateJitFilter(
                     base, filter, columns, executionContext,
-                    predicate, input, binder, isUpdate, enablePreTouch, limitAdvice
+                    predicate, input, instantiator, isUpdate, enablePreTouch, limitAdvice
             );
             if (jitFactory != null) {
                 isAdopted = true;
                 return addParallel(frame, jitFactory, predicate);
             }
             if (limitAdvice != null && limitAdvice.getHi() == null) {
-                limit = binder.instantiate(limitAdvice.getLo(), input, executionContext);
+                limit = instantiator.instantiate(limitAdvice.getLo(), input, executionContext);
             }
-            workerFilters = compileWorkers(predicate, input, base.getMetadata(), filter, binder, executionContext);
+            workerFilters = compileWorkers(predicate, input, base.getMetadata(), filter, instantiator, executionContext);
             isAdopted = true;
             return addParallel(frame, generateJavaFilter(base, filter, true, columns, workerFilters, limit,
                     limitAdvice == null ? 0 : limitAdvice.getLo().getPosition(), enablePreTouch, executionContext), predicate);
@@ -232,6 +156,10 @@ final class FilterFactoryGenerator {
             }
             throw th;
         }
+    }
+
+    static boolean canUseParallelFilter(RecordCursorFactory base, SqlExecutionContext executionContext) {
+        return executionContext.isParallelFilterEnabled() && base.supportsPageFrameCursor();
     }
 
     static void collectColumnIndexes(BoundExpression expression, OutputSchema input, IntHashSet columns) {
@@ -248,55 +176,12 @@ final class FilterFactoryGenerator {
         }
     }
 
-    /** Consumes the covering factory and filter, including on failure. */
-    RecordCursorFactory generateCovering(
-            BoundExpression predicate, OutputSchema input, CoveringIndexRecordCursorFactory base, Function filter,
-            FunctionBinder binder, SqlExecutionContext executionContext, LimitPlan limitAdvice, boolean enablePreTouch
-    ) throws SqlException {
-        Function limit = null;
-        ObjList<Function> workers = null;
-        boolean isAdopted = false;
-        try {
-            boolean isParallel = canUseParallelFilter(base, executionContext);
-            IntHashSet columns = null;
-            if (isParallel) {
-                if (limitAdvice != null && limitAdvice.getHi() == null) {
-                    limit = binder.instantiate(limitAdvice.getLo(), input, executionContext);
-                }
-                isParallel = canUseParallelCoveringFilter(base, limit, executionContext);
-                if (isParallel) {
-                    columns = new IntHashSet();
-                    collectColumnIndexes(predicate, input, columns);
-                    workers = compileWorkers(predicate, input, base.getMetadata(), filter, binder, executionContext);
-                }
-            }
-            final int limitPosition = limitAdvice == null ? 0 : limitAdvice.getLo().getPosition();
-            isAdopted = true;
-            return generateJavaFilter(base, filter, isParallel, columns, workers,
-                    limit, limitPosition, enablePreTouch, executionContext);
-        } catch (Throwable th) {
-            if (!isAdopted) {
-                Misc.freeObjList(workers, th);
-                Misc.free(limit, th);
-                Misc.free(filter, th);
-                Misc.free(base, th);
-            }
-            throw th;
-        }
-    }
-
-    private static RecordCursorFactory addParallel(GenerationFrame frame, RecordCursorFactory factory, BoundExpression predicate) {
-        frame.parallelFilterFactories.add(factory);
-        frame.parallelFilterPredicates.add(predicate);
-        return factory;
-    }
-
     static ObjList<Function> compileWorkers(
             BoundExpression predicate,
             OutputSchema input,
             RecordMetadata metadata,
             Function filter,
-            FunctionBinder binder,
+            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (filter.isThreadSafe()) {
@@ -304,22 +189,18 @@ final class FilterFactoryGenerator {
         }
         final int count = executionContext.getSharedQueryWorkerCount();
         final ObjList<Function> workers = new ObjList<>(count);
-        binder.beginWorkerClones();
+        instantiator.beginWorkerClones();
         try {
             for (int i = 0; i < count; i++) {
-                workers.add(binder.instantiate(predicate, input, metadata, executionContext));
+                workers.add(instantiator.instantiate(predicate, input, metadata, executionContext));
             }
             return workers;
         } catch (Throwable th) {
             Misc.freeObjList(workers, th);
             throw th;
         } finally {
-            binder.endWorkerClones();
+            instantiator.endWorkerClones();
         }
-    }
-
-    static boolean canUseParallelFilter(RecordCursorFactory base, SqlExecutionContext executionContext) {
-        return executionContext.isParallelFilterEnabled() && base.supportsPageFrameCursor();
     }
 
     /**
@@ -349,160 +230,31 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * A timestamp constant is serialized at the precision of the operand it meets; text the binder
-     * could not convert to that operand's type stays with the Java comparison.
+     * Returns the residual predicate a parallel filter of this frame compiled, or null.
      */
-    private static boolean hasJitCompatibleTimestampConstants(FunctionExpression call) {
-        int timestampType = ColumnType.UNDEFINED;
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            final BoundExpression argument = call.argumentAt(i);
-            if (!(argument instanceof ConstantExpression) && ColumnType.isTimestamp(argument.getDataType())) {
-                timestampType = argument.getDataType();
-                break;
+    static BoundExpression getParallelPredicate(GenerationFrame frame, RecordCursorFactory factory) {
+        for (int i = 0, n = frame.parallelFilterFactories.size(); i < n; i++) {
+            if (frame.parallelFilterFactories.getQuick(i) == factory) {
+                return frame.parallelFilterPredicates.getQuick(i);
             }
         }
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            if (call.argumentAt(i) instanceof ConstantExpression constant) {
-                if (timestampType == ColumnType.UNDEFINED) {
-                    if (ColumnType.isTimestamp(constant.getDataType())) {
-                        return false;
-                    }
-                    continue;
-                }
-                final int type = constant.getDataType();
-                if (ColumnType.isVarcharOrString(type) && (!"in".equals(call.getName()) || call.getArgumentCount() == 1
-                        || call.getArgumentCount() > 2 && !isJitTimestampText(constant, timestampType))) {
-                    return false;
-                }
-                if (ColumnType.isTimestamp(type) && type != timestampType && (constant.getTimestampText() == null
-                        || FunctionParser.getAdaptiveTimestampType(constant.getTimestampText(), timestampType) != timestampType
-                        || !isTimestampConvertible(constant.getLongValue(), type, timestampType))) {
-                    return false;
-                }
-            }
-        }
-        return true;
+        return null;
     }
 
-    private static boolean isJitOperator(String name) {
-        return switch (name) {
-            case "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "and", "or" -> true;
-            default -> false;
-        };
+    static boolean isParallelFilter(RecordCursorFactory factory) {
+        return !factory.implementsLimit() && (factory instanceof AsyncFilteredRecordCursorFactory
+                || factory instanceof AsyncJitFilteredRecordCursorFactory
+                || factory instanceof AdaptiveSymbolPatternRecordCursorFactory adaptive && adaptive.isSelfFiltering());
     }
 
-    private static boolean isJitTimestampText(ConstantExpression constant, int timestampType) {
-        final CharSequence text = constant.getDataType() == ColumnType.VARCHAR
-                ? constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence()
-                : constant.getStrValue();
-        if (text == null || FunctionParser.getAdaptiveTimestampType(text, timestampType) != timestampType) {
-            return false;
-        }
-        try {
-            ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(text);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
-    }
-
-    private static boolean isTimestampConvertible(long value, int fromType, int toType) {
-        try {
-            ColumnType.getTimestampDriver(toType).from(value, fromType);
-            return true;
-        } catch (ImplicitCastException e) {
-            return false;
-        }
-    }
-
-    private @Nullable CharSequence jitConstantToken(ConstantExpression constant) {
-        final int type = constant.getDataType();
-        final long longValue = constant.getLongValue();
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.NULL -> "null";
-            case ColumnType.BOOLEAN -> Boolean.toString(longValue != 0);
-            case ColumnType.INT -> longValue == Numbers.INT_NULL ? "null" : numberToken((int) longValue, (char) 0);
-            case ColumnType.LONG -> longValue == Numbers.LONG_NULL ? "null" : numberToken(longValue, 'L');
-            case ColumnType.DOUBLE -> {
-                final double value = constant.getDoubleValue();
-                if (!Double.isFinite(value)) {
-                    yield null;
-                }
-                final CharacterStoreEntry token = characterStore.newEntry();
-                token.put(value);
-                yield token.toImmutable();
-            }
-            case ColumnType.FLOAT -> {
-                final float value = constant.getFloatValue();
-                if (!Float.isFinite(value)) {
-                    yield null;
-                }
-                final CharacterStoreEntry token = characterStore.newEntry();
-                token.put(value).put('f');
-                yield token.toImmutable();
-            }
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> {
-                if (longValue == GeoHashes.NULL) {
-                    yield "null";
-                }
-                final CharacterStoreEntry token = characterStore.newEntry();
-                token.put("##");
-                for (int i = ColumnType.getGeoHashBits(type) - 1; i >= 0; i--) {
-                    token.put((longValue >>> i & 1) == 0 ? '0' : '1');
-                }
-                yield token.toImmutable();
-            }
-            case ColumnType.CHAR -> {
-                if (longValue == 0) {
-                    yield null;
-                }
-                jitText.clear();
-                jitText.put((char) longValue);
-                yield quoted(jitText);
-            }
-            case ColumnType.STRING -> constant.getStrValue() == null ? "null" : quoted(constant.getStrValue());
-            case ColumnType.VARCHAR -> constant.getVarcharValue() == null ? "null" : quoted(utf16(constant.getVarcharValue()));
-            case ColumnType.DATE -> {
-                if (longValue == Numbers.LONG_NULL) {
-                    yield "null";
-                }
-                jitText.clear();
-                DateFormatUtils.appendDateTime(jitText, longValue);
-                yield quoted(jitText);
-            }
-            case ColumnType.TIMESTAMP -> constant.getTimestampText() != null ? quoted(constant.getTimestampText())
-                    : longValue == Numbers.LONG_NULL ? "null" : numberToken(longValue, 'L');
-            default -> null;
-        };
-    }
-
-    private CharSequence numberToken(long value, char suffix) {
-        final CharacterStoreEntry token = characterStore.newEntry();
-        token.put(value);
-        if (suffix != 0) {
-            token.put(suffix);
-        }
-        return token.toImmutable();
-    }
-
-    private CharSequence quoted(CharSequence value) {
-        final CharacterStoreEntry token = characterStore.newEntry();
-        token.put('\'');
-        for (int i = 0, n = value.length(); i < n; i++) {
-            final char c = value.charAt(i);
-            if (c == '\'') {
-                token.put('\'');
-            }
-            token.put(c);
-        }
-        token.put('\'');
-        return token.toImmutable();
-    }
-
-    private CharSequence utf16(Utf8Sequence value) {
-        jitText.clear();
-        Utf8s.utf8ToUtf16(value, jitText);
-        return jitText;
+    /**
+     * Returns the filter a parallel operator steals from a filter factory. Every stealable factory,
+     * a {@link #isParallelFilter parallel filter} or a {@link FilteredRecordCursorFactory}, carries one.
+     */
+    static @NotNull Function stolenFilter(RecordCursorFactory factory) {
+        final Function filter = factory.getFilter();
+        assert filter != null;
+        return filter;
     }
 
     boolean canUseParallelCoveringFilter(
@@ -513,6 +265,76 @@ final class FilterFactoryGenerator {
         // Multi-key covering scans cannot serve the backward frames required by a negative limit.
         return canUseParallelFilter(base, executionContext)
                 && (limit == null || base.supportsNegativeLimitPageFrame() || !mayBeNegativeLimit(limit, executionContext));
+    }
+
+    RecordCursorFactory generate(
+            GenerationFrame frame,
+            BoundExpression predicate,
+            OutputSchema input,
+            RecordCursorFactory base,
+            Function filter,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext,
+            boolean isUpdate,
+            LimitPlan limitAdvice,
+            boolean enablePreTouch
+    ) throws SqlException {
+        return generate(frame, predicate, input, base, filter, instantiator, executionContext, isUpdate, limitAdvice, enablePreTouch, true);
+    }
+
+    /**
+     * Consumes both executable roots on entry, including on failure.
+     */
+    RecordCursorFactory generate(
+            GenerationFrame frame,
+            BoundExpression predicate,
+            OutputSchema input,
+            RecordCursorFactory base,
+            Function filter,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext,
+            boolean isUpdate
+    ) throws SqlException {
+        return generate(frame, predicate, input, base, filter, instantiator, executionContext, isUpdate, null, false);
+    }
+
+    /**
+     * Consumes the covering factory and filter, including on failure.
+     */
+    RecordCursorFactory generateCovering(
+            BoundExpression predicate, OutputSchema input, CoveringIndexRecordCursorFactory base, Function filter,
+            FunctionInstantiator instantiator, SqlExecutionContext executionContext, LimitPlan limitAdvice, boolean enablePreTouch
+    ) throws SqlException {
+        Function limit = null;
+        ObjList<Function> workers = null;
+        boolean isAdopted = false;
+        try {
+            boolean isParallel = canUseParallelFilter(base, executionContext);
+            IntHashSet columns = null;
+            if (isParallel) {
+                if (limitAdvice != null && limitAdvice.getHi() == null) {
+                    limit = instantiator.instantiate(limitAdvice.getLo(), input, executionContext);
+                }
+                isParallel = canUseParallelCoveringFilter(base, limit, executionContext);
+                if (isParallel) {
+                    columns = new IntHashSet();
+                    collectColumnIndexes(predicate, input, columns);
+                    workers = compileWorkers(predicate, input, base.getMetadata(), filter, instantiator, executionContext);
+                }
+            }
+            final int limitPosition = limitAdvice == null ? 0 : limitAdvice.getLo().getPosition();
+            isAdopted = true;
+            return generateJavaFilter(base, filter, isParallel, columns, workers,
+                    limit, limitPosition, enablePreTouch, executionContext);
+        } catch (Throwable th) {
+            if (!isAdopted) {
+                Misc.freeObjList(workers, th);
+                Misc.free(limit, th);
+                Misc.free(filter, th);
+                Misc.free(base, th);
+            }
+            throw th;
+        }
     }
 
     /**
@@ -554,6 +376,22 @@ final class FilterFactoryGenerator {
     }
 
     /**
+     * Like a join-level filter, keeps a constant folded from functions as a filter; only a literal constant folds.
+     */
+    RecordCursorFactory generatePostJoin(
+            GenerationFrame frame,
+            BoundExpression predicate,
+            OutputSchema input,
+            RecordCursorFactory base,
+            Function filter,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return generate(frame, predicate, input, base, filter, instantiator, executionContext, false, null, false,
+                predicate instanceof ConstantExpression constant && constant.isLiteral());
+    }
+
+    /**
      * Whether the limit lo function might evaluate to a negative value. A
      * non-constant (e.g. bind-variable) limit has an unknown sign at compile
      * time, so we conservatively treat it as possibly negative.
@@ -567,6 +405,10 @@ final class FilterFactoryGenerator {
         return limit != Numbers.LONG_NULL && limit < 0;
     }
 
+    void setEnableJitNullChecks(boolean value) {
+        enableJitNullChecks = value;
+    }
+
     /**
      * Adopts base and filter on success; leaves them with the caller on decline or failure.
      * Limit advice is borrowed; an instantiated limit belongs here until factory adoption.
@@ -578,7 +420,7 @@ final class FilterFactoryGenerator {
             SqlExecutionContext executionContext,
             BoundExpression predicate,
             OutputSchema input,
-            FunctionBinder binder,
+            FunctionInstantiator instantiator,
             boolean isUpdate,
             boolean enablePreTouch,
             @Nullable LimitPlan limitAdvice
@@ -600,12 +442,8 @@ final class FilterFactoryGenerator {
             try {
                 try (PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ANY)) {
                     final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                    jitIRSerializer.of(jitIRMem, executionContext, base.getMetadata(), cursor, bindVarFunctions);
-                    final ExpressionNode expression = jitExpression(predicate, input, base.getMetadata());
-                    if (expression == null) {
-                        return null;
-                    }
-                    jitOptions = jitIRSerializer.serialize(expression, forceScalar, enableJitDebug, enableJitNullChecks);
+                    jitIRSerializer.of(jitIRMem, executionContext, base.getMetadata(), input, cursor, bindVarFunctions);
+                    jitOptions = jitIRSerializer.serialize(predicate, forceScalar, enableJitDebug, enableJitNullChecks);
                 }
                 compiledFilter = new CompiledFilter();
                 compiledFilter.compile(jitIRMem, jitOptions);
@@ -629,13 +467,13 @@ final class FilterFactoryGenerator {
 
             final int limitPosition;
             if (limitAdvice != null && limitAdvice.getHi() == null) {
-                limit = binder.instantiate(limitAdvice.getLo(), input, executionContext);
+                limit = instantiator.instantiate(limitAdvice.getLo(), input, executionContext);
                 limitPosition = limitAdvice.getLo().getPosition();
             } else {
                 limitPosition = 0;
             }
             LOG.debug().$("JIT enabled for (sub)query [fd=").$(executionContext.getRequestFd()).I$();
-            workers = FilterFactoryGenerator.compileWorkers(predicate, input, base.getMetadata(), filter, binder, executionContext);
+            workers = FilterFactoryGenerator.compileWorkers(predicate, input, base.getMetadata(), filter, instantiator, executionContext);
             return new AsyncJitFilteredRecordCursorFactory(
                     executionContext.getCairoEngine(), configuration, executionContext.getMessageBus(),
                     base, bindVarFunctions, compiledFilter, compiledCountOnlyFilter, filter, columns,
@@ -665,83 +503,5 @@ final class FilterFactoryGenerator {
             Misc.freeObjList(bindVarFunctions, th);
             throw th;
         }
-    }
-
-    /**
-     * Spells a bound predicate as the parser would have, so the JIT serializer applies one set of
-     * width and NULL rules to both planners. Returns null for shapes no plain SQL literal expresses.
-     */
-    private @Nullable ExpressionNode jitExpression(BoundExpression expression, OutputSchema input, RecordMetadata metadata) {
-        if (expression instanceof ColumnExpression column) {
-            final int index = input.getColumnIndexById(column.getColumnId());
-            if (!column.isDirectReference() || index < 0 || metadata.getColumnIndexQuiet(metadata.getColumnName(index)) != index) {
-                return null;
-            }
-            return expressionNodePool.next().of(ExpressionNode.LITERAL, metadata.getColumnName(index), 0, column.getPosition());
-        }
-        if (expression instanceof ConstantExpression constant) {
-            if (constant.getSource() != null) {
-                return jitExpression(constant.getSource(), input, metadata);
-            }
-            final CharSequence token = constant.isLiteral() ? jitConstantToken(constant) : null;
-            return token == null ? null : expressionNodePool.next().of(ExpressionNode.CONSTANT, token, 0, constant.getPosition());
-        }
-        if (expression instanceof BindVariableExpression parameter) {
-            return !parameter.isDirectReference() ? null
-                    : expressionNodePool.next().of(ExpressionNode.BIND_VARIABLE, parameter.getName(), 0, parameter.getPosition());
-        }
-        if (!(expression instanceof FunctionExpression call)) {
-            return null;
-        }
-        final String name = call.getName();
-        final int count = call.getArgumentCount();
-        if (count == 2 && SqlKeywords.isInKeyword(name) && !(call.argumentAt(0) instanceof ConstantExpression)
-                && ColumnType.isTimestamp(call.argumentAt(0).getDataType())
-                && call.argumentAt(1) instanceof ConstantExpression interval && interval.isLiteral()
-                && ColumnType.isVarcharOrString(interval.getDataType())) {
-            final CharSequence text = ColumnType.isVarchar(interval.getDataType())
-                    ? (interval.getVarcharValue() == null ? null : utf16(interval.getVarcharValue())) : interval.getStrValue();
-            final CharSequence token = text == null ? null : quoted(text);
-            final ExpressionNode in = expressionNodePool.next().of(ExpressionNode.SET_OPERATION, "in", 0, call.getPosition());
-            in.paramCount = 2;
-            in.lhs = jitExpression(call.argumentAt(0), input, metadata);
-            in.rhs = token == null ? null : expressionNodePool.next().of(ExpressionNode.CONSTANT, token, 0, interval.getPosition());
-            return in.lhs == null || in.rhs == null ? null : in;
-        }
-        if (count >= 2 && !hasJitCompatibleTimestampConstants(call)) {
-            return null;
-        }
-        if (SqlKeywords.isInKeyword(name) && count >= 2) {
-            final ExpressionNode in = expressionNodePool.next().of(call.isSetOperation() ? ExpressionNode.SET_OPERATION : ExpressionNode.FUNCTION,
-                    "in", 0, call.getPosition());
-            in.paramCount = count;
-            if (count == 2) {
-                in.lhs = jitExpression(call.argumentAt(0), input, metadata);
-                in.rhs = jitExpression(call.argumentAt(1), input, metadata);
-                return in.lhs == null || in.rhs == null ? null : in;
-            }
-            for (int i = count - 1; i >= 0; i--) {
-                final ExpressionNode argument = jitExpression(call.argumentAt(i == 0 ? 0 : count - i), input, metadata);
-                if (argument == null) {
-                    return null;
-                }
-                in.args.add(argument);
-            }
-            return in;
-        }
-        final boolean isUnary = count == 1 && ("-".equals(name) || SqlKeywords.isNotKeyword(name));
-        if (!isUnary && (count != 2 || !isJitOperator(name))) {
-            return null;
-        }
-        final ExpressionNode node = expressionNodePool.next().of(ExpressionNode.OPERATION,
-                "<>".equals(name) ? "!=" : name, 0, call.getPosition());
-        node.paramCount = count;
-        if (isUnary) {
-            node.rhs = jitExpression(call.argumentAt(0), input, metadata);
-            return node.rhs == null ? null : node;
-        }
-        node.lhs = jitExpression(call.argumentAt(0), input, metadata);
-        node.rhs = jitExpression(call.argumentAt(1), input, metadata);
-        return node.lhs == null || node.rhs == null ? null : node;
     }
 }

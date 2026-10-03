@@ -24,12 +24,12 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
@@ -48,19 +48,24 @@ import static io.questdb.griffin.DecorrelationContext.pairIndex;
  * prefix and shared with the master where the generator can re-read it.
  */
 final class DecorrelationDomains implements Mutable {
-    final ObjList<JoinInput> decorrelatedSteps = new ObjList<>();
+    final ObjList<JoinInput> decorrelatedSteps;
     final IntList domainEqualities = new IntList();
     final IntList domainOuterIds = new IntList();
+    private final OptimiserContext context;
     private final DecorrelationContext ctx;
     int domainSequence;
 
-    DecorrelationDomains(DecorrelationContext ctx) {
+    /**
+     * {@code decorrelatedSteps} is the optimiser's step scratch, which the owner empties before decorrelation starts.
+     */
+    DecorrelationDomains(OptimiserContext context, DecorrelationContext ctx, ObjList<JoinInput> decorrelatedSteps) {
+        this.context = context;
         this.ctx = ctx;
+        this.decorrelatedSteps = decorrelatedSteps;
     }
 
     @Override
     public void clear() {
-        decorrelatedSteps.clear();
         domainEqualities.clear();
         domainOuterIds.clear();
         domainSequence = 0;
@@ -128,9 +133,7 @@ final class DecorrelationDomains implements Mutable {
         final JoinInput last = ctx.master.getInputs().getQuick(lastInput);
         final boolean isPrefix = firstInput != lastInput || last.getInput() == null || decorrelatedSteps.indexOf(last) > -1;
         final LogicalPlan original = isPrefix ? prefix(lastInput + 1, position) : last.getInput();
-        ctx.copier.of(ctx.functionBinder, ctx.functionSources, ctx.nextColumnId);
         final LogicalPlan source = ctx.copier.copy(original);
-        ctx.nextColumnId = ctx.copier.getNextColumnId();
         final AggregatePlan domain = ctx.planNodes.aggregates.next().of(source, position);
         domain.setExplicitGrouping(true);
         for (int i = 0, n = domainOuterIds.size(); i < n; i++) {
@@ -139,8 +142,9 @@ final class DecorrelationDomains implements Mutable {
             final int sourceId = source.getOutput().getColumnId(index);
             final int type = source.getOutput().getColumnType(index);
             domain.getGroupingExpressions().add(ctx.planNodes.columns.next().of(sourceId, type, position));
-            domain.getOutput().add(ctx.nextColumnId, ctx.outerRefName(outerId), type, false);
-            ctx.addMapping(outerId, ctx.nextColumnId++);
+            final int columnId = context.newColumnId();
+            domain.getOutput().add(columnId, ctx.outerRefName(outerId), type, false);
+            ctx.addMapping(outerId, columnId);
         }
         if (!isPrefix) {
             shareMasterSource(domain, last);
@@ -177,8 +181,8 @@ final class DecorrelationDomains implements Mutable {
 
     JoinPlan crossDomain(LogicalPlan source, AggregatePlan domain, int position) {
         final JoinPlan join = ctx.planNodes.joins.next().of(position);
-        join.getInputs().add(ctx.planNodes.joinInputs.next().of(source, QueryModel.JOIN_CROSS, null, position));
-        join.getInputs().add(ctx.planNodes.joinInputs.next().of(domain, QueryModel.JOIN_CROSS, domainAlias(), position));
+        join.getInputs().add(ctx.planNodes.joinInputs.next().of(source, JoinKind.CROSS, null, position));
+        join.getInputs().add(ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position));
         join.getOrderedInputs().addAll(join.getInputs());
         join.getOutput().copyFrom(source.getOutput());
         appendMissingColumns(join.getOutput(), domain.getOutput());
@@ -227,7 +231,7 @@ final class DecorrelationDomains implements Mutable {
             if (right == null) {
                 return left;
             }
-            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : ctx.functionBinder.replaceConjunction(call, left, right);
+            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : context.getRewriter().replaceConjunction(call, left, right);
         }
         final int columnBase = ctx.scratch.size();
         LogicalPlans.collectOuterColumnIds(predicate, ctx.scratch);
@@ -240,7 +244,7 @@ final class DecorrelationDomains implements Mutable {
             return predicate;
         }
         final BoundExpression moved = domainStep.getPostJoinFilter();
-        domainStep.setPostJoinFilter(moved == null ? predicate : ctx.functionBinder.combineConjunction(moved, predicate, predicate.getPosition()));
+        domainStep.setPostJoinFilter(moved == null ? predicate : context.getRewriter().combineConjunction(moved, predicate, predicate.getPosition()));
         return null;
     }
 }

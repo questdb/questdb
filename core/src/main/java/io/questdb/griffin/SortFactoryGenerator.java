@@ -52,17 +52,20 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
@@ -71,7 +74,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.ColumnType.*;
+import static io.questdb.cairo.ColumnType.isTimestamp;
 
 final class SortFactoryGenerator {
     private final BytecodeAssembler asm;
@@ -103,17 +106,67 @@ final class SortFactoryGenerator {
         this.recordComparatorCompiler = recordComparatorCompiler;
     }
 
+    private static FilterPlan findFilterPlan(SortPlan sort) {
+        LogicalPlan input = sort.getInput();
+        while (true) {
+            if (input instanceof ProjectPlan project) {
+                input = project.getInput();
+            } else if (input instanceof FilterPlan filter) {
+                if (!(filter.getPredicate() instanceof ConstantExpression constant) || constant.getLongValue() == 0) {
+                    return filter;
+                }
+                input = filter.getInput();
+            } else {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * True when order advice reaches a native filter, directly, through a window, or as the master
+     * of a join that preserves master order.
+     */
+    static boolean hasAdvisedInput(LogicalPlan plan) {
+        plan = LogicalPlans.skipProjects(plan);
+        if (plan instanceof WindowPlan) {
+            return hasNativeFilterInput(plan.inputAt(0));
+        }
+        return hasNativeFilterInput(plan) || hasOrderedJoinMasterInput(plan);
+    }
+
+    static boolean hasNativeFilterInput(LogicalPlan plan) {
+        plan = LogicalPlans.skipProjects(plan);
+        return plan instanceof FilterPlan filter && filter.getInput() instanceof ScanPlan;
+    }
+
+    static boolean hasOrderedJoinMasterInput(LogicalPlan plan) {
+        plan = LogicalPlans.skipProjects(plan);
+        return plan instanceof JoinPlan join && isMasterOrderPreserved(join)
+                && hasNativeFilterInput(join.getOrderedInputs().getQuick(0).getInput());
+    }
+
+    static boolean isMasterOrderPreserved(JoinPlan join) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        for (int i = 1, n = ordered.size(); i < n; i++) {
+            final JoinKind joinType = ordered.getQuick(i).getJoinType();
+            if (joinType != JoinKind.INNER && joinType != JoinKind.CROSS && joinType != JoinKind.LEFT_OUTER) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Consumes the input and optional limit functions on entry, including failure.
     RecordCursorFactory generate(
             SortPlan sort, RecordCursorFactory base, Function lo, Function hi,
-            int limitPosition, SqlExecutionContext executionContext, FunctionBinder functionBinder
+            int limitPosition, SqlExecutionContext executionContext, FunctionInstantiator instantiator
     ) throws SqlException {
         try {
             final OutputSchema input = sort.getInput().getOutput();
             keys.clear();
             for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
                 final int index = input.getColumnIndexById(sort.getColumnIds().getQuick(i));
-                keys.add(sort.getDirections().getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING ? -index - 1 : index + 1);
+                keys.add(sort.getDirections().getQuick(i) == SortDirection.DESCENDING ? -index - 1 : index + 1);
             }
             final int firstKey = keys.getQuick(0);
             final int firstIndex = Math.abs(firstKey) - 1;
@@ -136,7 +189,7 @@ final class SortFactoryGenerator {
                             final RecordCursorFactory ownedBase = base;
                             base = null;
                             base = tryGenerateTopK(metadata, ownedBase, keys, count, executionContext,
-                                    findFilterPlan(sort), functionBinder);
+                                    findFilterPlan(sort), instantiator);
                             if (base != ownedBase) {
                                 final Function unused = lo;
                                 lo = null;
@@ -168,122 +221,6 @@ final class SortFactoryGenerator {
             Misc.free(lo, th);
             Misc.free(hi, th);
             throw th;
-        }
-    }
-
-    int generateSortInput(GenerationFrame frame, SortPlan sort, SqlExecutionContext executionContext, int requiredOrderColumnId,
-                          int requiredScanDirection, LimitPlan limitAdvice) throws SqlException {
-        executionContext.pushTimestampRequiredFlag(false);
-        try {
-            if (frame.isJoinSlaveInput && requiredScanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD && !sort.isReversal()) {
-                return codeGenerator.generate(frame, sort.getInput(), executionContext, -1, RecordCursorFactory.SCAN_DIRECTION_OTHER, null, null, OrderByMnemonic.ORDER_BY_INVARIANT);
-            }
-            return codeGenerator.generate(frame, sort.getInput(), executionContext, requiredOrderColumnId, requiredScanDirection, sort, limitAdvice, OrderByMnemonic.ORDER_BY_INVARIANT);
-        } finally {
-            executionContext.popTimestampRequiredFlag();
-        }
-    }
-
-    int generateSortedLimit(GenerationFrame frame, LogicalPlan plan, LimitPlan limit, SqlExecutionContext executionContext) throws SqlException {
-        if (plan instanceof ProjectPlan project) {
-            final int inputSlot = generateSortedLimit(frame, project.getInput(), limit, executionContext);
-            return projectionGenerator.generateProjection(frame, project, inputSlot, frame.resources.reserve(), project.getOutput().getTimestampIndex(), executionContext);
-        }
-        if (!(plan instanceof SortPlan sort)) {
-            throw new IllegalStateException("sorted limit requires a sort under stable projections");
-        }
-        final int requiredOrderId = sort.getColumnIds().size() == 1 || limit.getHi() == null
-                && !(limit.getLo() instanceof ConstantExpression lo && lo.getLongValue() < 0) ? sort.getColumnIds().getQuick(0) : -1;
-        final int direction = sort.getDirections().getQuick(0) == QueryModel.ORDER_DIRECTION_DESCENDING
-                ? RecordCursorFactory.SCAN_DIRECTION_BACKWARD : RecordCursorFactory.SCAN_DIRECTION_FORWARD;
-        final int inputSlot = generateSortInput(frame, sort, executionContext, requiredOrderId, direction, limit);
-        final int slot = frame.resources.reserve();
-        if (((RecordCursorFactory) frame.resources.resources.getQuick(inputSlot)).implementsLimit()
-                && hasNativeFilterInput(sort.getInput())) {
-            final RecordCursorFactory base = (RecordCursorFactory) frame.resources.detach(inputSlot);
-            frame.resources.own(slot, generate(sort, base, null, null, limit.getPosition(), executionContext, frame.functionBinder));
-            return slot;
-        }
-        final int loSlot = frame.resources.reserve();
-        final int hiSlot = frame.resources.reserve();
-        final Function lo = frame.functionBinder.instantiate(limit.getLo(), emptySchema, executionContext);
-        frame.resources.own(loSlot, lo);
-        final Function hi = limit.getHi() == null ? null : frame.functionBinder.instantiate(limit.getHi(), emptySchema, executionContext);
-        if (hi != null) {
-            frame.resources.own(hiSlot, hi);
-        }
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.detach(inputSlot);
-        frame.resources.detach(loSlot);
-        if (hi != null) {
-            frame.resources.detach(hiSlot);
-        }
-        frame.resources.own(slot, generate(sort, base, lo, hi, limit.getPosition(), executionContext, frame.functionBinder));
-        return slot;
-    }
-
-    SortPlan remapOrderAdvice(GenerationFrame frame, ProjectPlan project, SortPlan advice) {
-        if (advice == null || advice.hasAliasedKey()) {
-            return null;
-        }
-        final SortPlan mapped = frame.sorts.next().of(project.getInput(), advice.getPosition());
-        for (int i = 0, n = advice.getColumnIds().size(); i < n; i++) {
-            final int index = project.getOutput().getColumnIndexById(advice.getColumnIds().getQuick(i));
-            if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
-                return null;
-            }
-            mapped.getColumnIds().add(column.getColumnId());
-            mapped.getDirections().add(advice.getDirections().getQuick(i));
-        }
-        return mapped;
-    }
-
-    /**
-     * True when order advice reaches a native filter, directly, through a window, or as the master
-     * of a join that preserves master order.
-     */
-    static boolean hasAdvisedInput(LogicalPlan plan) {
-        plan = LogicalPlans.skipProjects(plan);
-        if (plan.getType() == LogicalPlan.Type.WINDOW) {
-            return hasNativeFilterInput(plan.inputAt(0));
-        }
-        return hasNativeFilterInput(plan) || hasOrderedJoinMasterInput(plan);
-    }
-
-    static boolean hasOrderedJoinMasterInput(LogicalPlan plan) {
-        plan = LogicalPlans.skipProjects(plan);
-        return plan instanceof JoinPlan join && isMasterOrderPreserved(join)
-                && hasNativeFilterInput(join.getOrderedInputs().getQuick(0).getInput());
-    }
-
-    static boolean isMasterOrderPreserved(JoinPlan join) {
-        final ObjList<JoinInput> ordered = join.getOrderedInputs();
-        for (int i = 1, n = ordered.size(); i < n; i++) {
-            final int joinType = ordered.getQuick(i).getJoinType();
-            if (joinType != QueryModel.JOIN_INNER && joinType != QueryModel.JOIN_CROSS && joinType != QueryModel.JOIN_LEFT_OUTER) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    static boolean hasNativeFilterInput(LogicalPlan plan) {
-        plan = LogicalPlans.skipProjects(plan);
-        return plan.getType() == LogicalPlan.Type.FILTER && plan.inputAt(0).getType() == LogicalPlan.Type.SCAN;
-    }
-
-    private static FilterPlan findFilterPlan(SortPlan sort) {
-        LogicalPlan input = sort.getInput();
-        while (true) {
-            if (input instanceof ProjectPlan project) {
-                input = project.getInput();
-            } else if (input instanceof FilterPlan filter) {
-                if (!(filter.getPredicate() instanceof ConstantExpression constant) || constant.getLongValue() == 0) {
-                    return filter;
-                }
-                input = filter.getInput();
-            } else {
-                return null;
-            }
         }
     }
 
@@ -366,6 +303,72 @@ final class SortFactoryGenerator {
         }
     }
 
+    int generateSortInput(GenerationFrame frame, SortPlan sort, SqlExecutionContext executionContext, int requiredOrderColumnId,
+                          int requiredScanDirection, LimitPlan limitAdvice) throws SqlException {
+        executionContext.pushTimestampRequiredFlag(false);
+        try {
+            if (frame.isJoinSlaveInput && requiredScanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD && !sort.isReversal()) {
+                return codeGenerator.generate(frame, sort.getInput(), executionContext, -1, RecordCursorFactory.SCAN_DIRECTION_OTHER, null, null, OrderByMnemonic.ORDER_BY_INVARIANT);
+            }
+            return codeGenerator.generate(frame, sort.getInput(), executionContext, requiredOrderColumnId, requiredScanDirection, sort, limitAdvice, OrderByMnemonic.ORDER_BY_INVARIANT);
+        } finally {
+            executionContext.popTimestampRequiredFlag();
+        }
+    }
+
+    int generateSortedLimit(GenerationFrame frame, LogicalPlan plan, LimitPlan limit, SqlExecutionContext executionContext) throws SqlException {
+        if (plan instanceof ProjectPlan project) {
+            final int inputSlot = generateSortedLimit(frame, project.getInput(), limit, executionContext);
+            return projectionGenerator.generateProjection(frame, project, inputSlot, frame.resources.reserve(), project.getOutput().getTimestampIndex(), executionContext);
+        }
+        if (!(plan instanceof SortPlan sort)) {
+            throw new IllegalStateException("sorted limit requires a sort under stable projections");
+        }
+        final int requiredOrderId = sort.getColumnIds().size() == 1 || limit.getHi() == null
+                && !(limit.getLo() instanceof ConstantExpression lo && lo.getLongValue() < 0) ? sort.getColumnIds().getQuick(0) : -1;
+        final int direction = sort.getDirections().getQuick(0) == SortDirection.DESCENDING
+                ? RecordCursorFactory.SCAN_DIRECTION_BACKWARD : RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+        final int inputSlot = generateSortInput(frame, sort, executionContext, requiredOrderId, direction, limit);
+        final int slot = frame.resources.reserve();
+        if (frame.resources.factory(inputSlot).implementsLimit()
+                && hasNativeFilterInput(sort.getInput())) {
+            final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
+            frame.resources.own(slot, generate(sort, base, null, null, limit.getPosition(), executionContext, frame.functionInstantiator));
+            return slot;
+        }
+        final int loSlot = frame.resources.reserve();
+        final int hiSlot = frame.resources.reserve();
+        final Function lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
+        frame.resources.own(loSlot, lo);
+        final Function hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
+        if (hi != null) {
+            frame.resources.own(hiSlot, hi);
+        }
+        final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
+        frame.resources.detach(loSlot);
+        if (hi != null) {
+            frame.resources.detach(hiSlot);
+        }
+        frame.resources.own(slot, generate(sort, base, lo, hi, limit.getPosition(), executionContext, frame.functionInstantiator));
+        return slot;
+    }
+
+    SortPlan remapOrderAdvice(GenerationFrame frame, ProjectPlan project, SortPlan advice) {
+        if (advice == null || advice.hasAliasedKey()) {
+            return null;
+        }
+        final SortPlan mapped = frame.sorts.next().of(project.getInput(), advice.getPosition());
+        for (int i = 0, n = advice.getColumnIds().size(); i < n; i++) {
+            final int index = project.getOutput().getColumnIndexById(advice.getColumnIds().getQuick(i));
+            if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
+                return null;
+            }
+            mapped.getColumnIds().add(column.getColumnId());
+            mapped.getDirections().add(advice.getDirections().getQuick(i));
+        }
+        return mapped;
+    }
+
     /**
      * Returns base unchanged on fallback; consumes it on replacement or failure.
      */
@@ -376,7 +379,7 @@ final class SortFactoryGenerator {
             long count,
             SqlExecutionContext executionContext,
             @Nullable FilterPlan filterPlan,
-            FunctionBinder functionBinder
+            FunctionInstantiator instantiator
     ) throws SqlException {
         assert count > 0 && count <= Integer.MAX_VALUE;
         ObjList<Function> workerFilters = null;
@@ -407,7 +410,7 @@ final class SortFactoryGenerator {
             }
             final boolean isFilterStealable = !filterFactory.supportsPageFrameCursor() && !filterFactory.implementsLimit()
                     && filterPlan != null && (FilterFactoryGenerator.isParallelFilter(filterFactory)
-                                              || filterFactory instanceof FilteredRecordCursorFactory && filterPlan.getInput().getType() == LogicalPlan.Type.SCAN);
+                    || filterFactory instanceof FilteredRecordCursorFactory && filterPlan.getInput() instanceof ScanPlan);
             final RecordCursorFactory leaf = isFilterStealable ? filterFactory.getBaseFactory() : filterFactory;
             if (leaf == null || !leaf.supportsPageFrameCursor()) {
                 return base;
@@ -440,7 +443,7 @@ final class SortFactoryGenerator {
                 if (!filter.isThreadSafe()) {
                     workerFilters = new ObjList<>(workerCount);
                     for (int i = 0; i < workerCount; i++) {
-                        workerFilters.add(functionBinder.instantiate(filterPlan.getPredicate(), filterInput, leafMetadata, executionContext));
+                        workerFilters.add(instantiator.instantiate(filterPlan.getPredicate(), filterInput, leafMetadata, executionContext));
                     }
                 }
                 filterFactory.halfClose();

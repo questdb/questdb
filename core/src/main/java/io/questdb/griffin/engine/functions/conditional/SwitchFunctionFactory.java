@@ -59,6 +59,22 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        int n = argTypes.size();
+        int returnType = -1;
+        if (n % 2 == 0) {
+            returnType = argTypes.getQuick(--n);
+        }
+        for (int i = 2; i < n; i += 2) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i));
+            if (returnType == ColumnType.UNDEFINED) {
+                return ColumnType.UNDEFINED;
+            }
+        }
+        return CaseCommon.getCaseFunctionType(returnType);
+    }
+
+    @Override
     public String getSignature() {
         return "switch(V)";
     }

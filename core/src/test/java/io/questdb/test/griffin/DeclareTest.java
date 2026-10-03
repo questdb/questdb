@@ -1151,18 +1151,18 @@ public class DeclareTest extends AbstractSqlParserTest {
             drainWalQueue();
             // Test declared variable in PARTITION BY clause
             assertQuery("""
-                            DECLARE
-                                @partition_col := bid_px_00,
-                                @order_col := timestamp
-                            SELECT
-                                @order_col,
-                                @partition_col,
-                                ROW_NUMBER() OVER (
-                                    PARTITION BY @partition_col
-                                    ORDER BY @order_col
-                                ) AS row_num
-                            FROM AAPL_orderbook
-                            LIMIT 5;""")
+                    DECLARE
+                        @partition_col := bid_px_00,
+                        @order_col := timestamp
+                    SELECT
+                        @order_col,
+                        @partition_col,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY @partition_col
+                            ORDER BY @order_col
+                        ) AS row_num
+                    FROM AAPL_orderbook
+                    LIMIT 5;""")
                     .noLeakCheck()
                     .assertsLogicalPlan("""
                             Limit

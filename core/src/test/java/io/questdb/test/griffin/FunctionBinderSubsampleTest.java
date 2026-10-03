@@ -30,7 +30,6 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -52,7 +51,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     public void testConstantValidationPrecedesOverloadSelection() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 configure();
                 try {
                     assertError(binder, window("uniform", constant("1.5", 17)), 17, "integer expected for target point count");
@@ -78,7 +77,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     public void testNativeArgumentValidationFailureReleasesChildren() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 configure();
                 try {
                     for (int i = 0; i < 5; i++) {
@@ -99,7 +98,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     public void testOrdinaryWindowDiagnosticsRemainUnchanged() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 configure();
                 try {
                     final ExpressionNode ordinary = window("uniform", constant("1.5", 17));
@@ -126,7 +125,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final OutputSchema input = schema();
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 configure();
                 try {
                     final ExpressionNode target = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, "$1", 0, 17);
@@ -172,7 +171,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
             sum.lhs = constant("2", 17);
             sum.rhs = constant("1", 21);
             final OutputSchema input = schema();
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 configure();
                 try {
                     final FunctionExpression expression = binder.bindWindow(window("uniform", sum), input, null, sqlExecutionContext);
@@ -191,7 +190,7 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
         });
     }
 
-    private void assertError(FunctionBinder binder, ExpressionNode expression, int position, String message) throws Exception {
+    private void assertError(FunctionBindingHarness binder, ExpressionNode expression, int position, String message) throws Exception {
         final SqlException error = Assert.assertThrows(SqlException.class,
                 () -> binder.bindWindow(expression, schema(), null, sqlExecutionContext));
         Assert.assertEquals(position, error.getPosition());

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.geo;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -90,6 +91,11 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
         }
 
         return new GeoWithinBoxFunction(xFunc, yFunc, minXFunc, minYFunc, maxXFunc, maxYFunc);
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override

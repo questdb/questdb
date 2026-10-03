@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -62,7 +61,7 @@ public class FunctionBinderTextPredicateTest extends AbstractCairoTest {
             final OutputSchema original = new OutputSchema().add(5, "unused", ColumnType.LONG, true)
                     .add(70, "v", ColumnType.VARCHAR, true);
             final OutputSchema pruned = new OutputSchema().add(70, "v", ColumnType.VARCHAR, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(binary("like", unary("trim", literal("v")), parameter("$1")), original, null, sqlExecutionContext);
                 Assert.assertEquals(2, constructed.size());
                 try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
@@ -101,7 +100,7 @@ public class FunctionBinderTextPredicateTest extends AbstractCairoTest {
             final OutputSchema original = new OutputSchema().add(5, "unused", ColumnType.LONG, true)
                     .add(70, "v", ColumnType.VARCHAR, true);
             final OutputSchema pruned = new OutputSchema().add(70, "v", ColumnType.VARCHAR, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(binary("!=", parameter("$1"), literal("v")), original, null, sqlExecutionContext);
                 try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
                      Function worker = binder.instantiate(expression, original, sqlExecutionContext)) {

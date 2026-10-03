@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -59,7 +58,7 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
     public void testContextAndWindowRootAreRequired() throws Exception {
         assertMemoryLeak(() -> {
             final OutputSchema input = schema(false);
-            try (FunctionBinder binder = new FunctionBinder(parser(new ObjList<>()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser(new ObjList<>()))) {
                 try {
                     binder.bindWindow(call("row_number"), input, null, sqlExecutionContext);
                     Assert.fail("missing window context accepted");
@@ -95,7 +94,7 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
             final FunctionParser parser = parser(constructions);
             final OutputSchema full = schema(true);
             final OutputSchema pruned = schema(false);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 configure(null, false, WindowExpression.FRAMING_ROWS, Long.MIN_VALUE, 0);
                 try {
                     final ExpressionNode ast = call("sum", literal("v"));
@@ -159,7 +158,7 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
             final GenericRecordMetadata metadata = metadata(false);
             metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP_MICRO));
             metadata.setTimestampIndex(1);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 for (int i = 0; i < calls.size(); i++) {
                     sqlExecutionContext.configureWindowContext(null, null, new ArrayColumnTypes(), true,
                             RecordCursorFactory.SCAN_DIRECTION_FORWARD, 0, true, WindowExpression.FRAMING_RANGE,
@@ -193,13 +192,13 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
             final ObjList<String> names = new ObjList<>("first_value", "last_value", "nth_value", "sum", "ksum", "avg", "min", "max",
                     "count", "stddev_pop", "var_samp", "corr", "covar_pop");
             final FunctionParser parser = parser(new ObjList<>());
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 for (int i = 0; i < names.size(); i++) {
                     final String name = names.getQuick(i);
                     final ExpressionNode window = name.equals("nth_value")
                             ? call(name, literal("v"), constant("1"))
                             : name.equals("corr") || name.equals("covar_pop")
-                            ? call(name, literal("v"), literal("v")) : call(name, literal("v"));
+                              ? call(name, literal("v"), literal("v")) : call(name, literal("v"));
                     for (boolean ignoreNulls : new boolean[]{false, true}) {
                         if (ignoreNulls && !name.equals("first_value") && !name.equals("last_value") && !name.equals("nth_value")) {
                             continue;

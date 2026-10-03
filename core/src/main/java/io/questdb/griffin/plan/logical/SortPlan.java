@@ -26,12 +26,13 @@ package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 public final class SortPlan extends UnaryPlan {
     public static final ObjectFactory<SortPlan> FACTORY = SortPlan::new;
     private final IntList columnIds = new IntList();
-    private final IntList directions = new IntList();
+    private final ObjList<SortDirection> directions = new ObjList<>();
     private boolean hasAliasedKey;
     private boolean isLimited = true;
     private boolean isMarkoutHorizon;
@@ -63,13 +64,8 @@ public final class SortPlan extends UnaryPlan {
         return columnIds;
     }
 
-    public IntList getDirections() {
+    public ObjList<SortDirection> getDirections() {
         return directions;
-    }
-
-    @Override
-    public Type getType() {
-        return Type.SORT;
     }
 
     /**

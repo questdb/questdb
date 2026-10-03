@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -79,7 +78,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
             final OutputSchema reordered = new OutputSchema().add(11, "c", ColumnType.LONG, true)
                     .add(10, "s", ColumnType.LONG, true);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
                 final BoundExpression expression = bindViaApi(binder, compiler.parseExpression("s + c * 3"), input);
                 try (Function function = binder.instantiate(expression, reordered, sqlExecutionContext)) {
@@ -100,7 +99,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     public void testDecimalCastUsesFloatLiteralSpelling() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
                 final ExpressionNode node = compiler.parseExpression("0.1::decimal(5,2)");
                 final BoundExpression expected = binder.bind(node, input, null, sqlExecutionContext);
@@ -118,7 +117,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     public void testErrorsMatchSqlText() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
                 final String[] texts = {"bo * 3", "sum(bo)", "nosuch(i)", "s + count(i)"};
                 final String[] messages = {
@@ -143,6 +142,40 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterComparisonErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        aboolean BOOLEAN, along LONG, anint INT, ageolong GEOHASH(12c), auuid UUID, ts TIMESTAMP, ts_ns TIMESTAMP_NS
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            assertException(
+                    "SELECT * FROM t WHERE aboolean = 0",
+                    31,
+                    "there is no matching operator `=` with the argument types: BOOLEAN = INT"
+            );
+            assertException(
+                    "SELECT * FROM t WHERE along = true",
+                    28,
+                    "there is no matching operator `=` with the argument types: LONG = BOOLEAN"
+            );
+            assertException(
+                    "SELECT * FROM t WHERE ageolong = 0",
+                    31,
+                    "there is no matching operator `=` with the argument types: GEOHASH(12c) = INT"
+            );
+            assertException(
+                    "SELECT * FROM t WHERE auuid = anint",
+                    28,
+                    "there is no matching operator `=` with the argument types: UUID = INT"
+            );
+            assertException("SELECT * FROM t WHERE along = 0x123", 30, "invalid constant: 0x123");
+            assertException("SELECT * FROM t WHERE ts = ''", 27, "invalid timestamp");
+            assertException("SELECT * FROM t WHERE ts_ns = ''", 30, "Invalid date [str=]");
+        });
+    }
+
+    @Test
     public void testNullComparisonsMatchSqlText() throws Exception {
         assertEquivalent(
                 "l != null",
@@ -158,7 +191,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     private static void assertEquivalent(String... texts) throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+                 FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final OutputSchema input = input();
                 for (String text : texts) {
                     final ExpressionNode node = compiler.parseExpression(text);
@@ -219,7 +252,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
     /**
      * Rebuilds the bound tree bottom-up through bindCall(), binding only leaves from SQL text.
      */
-    private static BoundExpression bindViaApi(FunctionBinder binder, ExpressionNode node, OutputSchema input) throws SqlException {
+    private static BoundExpression bindViaApi(FunctionBindingHarness binder, ExpressionNode node, OutputSchema input) throws SqlException {
         if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION
                 && node.type != ExpressionNode.SET_OPERATION) {
             return binder.bind(node, input, null, sqlExecutionContext);
@@ -240,7 +273,7 @@ public class FunctionBinderCallTest extends AbstractCairoTest {
         return binder.bindCall(node.token, node.position, args, input, sqlExecutionContext);
     }
 
-    private static SqlException bindingError(FunctionBinder binder, ExpressionNode node, OutputSchema input, boolean isViaApi) {
+    private static SqlException bindingError(FunctionBindingHarness binder, ExpressionNode node, OutputSchema input, boolean isViaApi) {
         try {
             if (isViaApi) {
                 bindViaApi(binder, node, input);

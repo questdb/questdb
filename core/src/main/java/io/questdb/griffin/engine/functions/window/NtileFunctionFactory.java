@@ -69,6 +69,11 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = NAME + "(L)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -78,7 +77,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     final FunctionParser parser = parser(constructions);
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
-                    try (FunctionBinder binder = new FunctionBinder(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
                         Assert.assertTrue(expression.getOverload().isOrderSensitiveAggregate());
                         Assert.assertEquals(type, expression.getDataType());
@@ -134,7 +133,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
                     final int[] lookups = {0, 0};
-                    try (FunctionBinder binder = new FunctionBinder(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
                         Assert.assertEquals(type, expression.getDataType());
                         Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
@@ -196,7 +195,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                     final FunctionParser parser = parser(new ObjList<>());
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
-                    try (FunctionBinder binder = new FunctionBinder(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                         final FunctionExpression expression = binder.bindAggregate(call(name), full, null, sqlExecutionContext);
                         Assert.assertFalse(expression.getOverload().isOrderSensitiveAggregate());
                         try (Function owner = binder.instantiateAggregate(expression, pruned, metadata(type, false), sqlExecutionContext);
@@ -247,7 +246,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                              RecordCursorFactory narrowed = select(isDynamic
                                      ? "SELECT v FROM fb_ordered_symbol UNION ALL SELECT v FROM fb_ordered_symbol"
                                      : "SELECT v FROM fb_ordered_symbol");
-                             FunctionBinder binder = new FunctionBinder(parser)) {
+                             FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                             final OutputSchema full = schema(ColumnType.SYMBOL, true);
                             final OutputSchema pruned = schema(ColumnType.SYMBOL, false);
                             full.setSymbolTableStatic(1, true);
@@ -283,7 +282,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
     public void testScalarAndNestedAggregatesRemainRejected() throws Exception {
         assertMemoryLeak(() -> {
             final OutputSchema input = schema(ColumnType.INT, false);
-            try (FunctionBinder binder = new FunctionBinder(parser(new ObjList<>()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser(new ObjList<>()))) {
                 try {
                     binder.bind(call("first"), input, null, sqlExecutionContext);
                     Assert.fail("aggregate accepted as scalar");
@@ -318,14 +317,17 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
             case ColumnType.BYTE -> Assert.assertEquals(isNull ? 0 : (byte) value, function.getByte(record));
             case ColumnType.SHORT -> Assert.assertEquals(isNull ? 0 : (short) value, function.getShort(record));
             case ColumnType.CHAR -> Assert.assertEquals(isNull ? 0 : (char) value, function.getChar(record));
-            case ColumnType.INT -> Assert.assertEquals(isNull ? Numbers.INT_NULL : (int) value, function.getInt(record));
-            case ColumnType.IPv4 -> Assert.assertEquals(isNull ? Numbers.IPv4_NULL : (int) value, function.getIPv4(record));
+            case ColumnType.INT ->
+                    Assert.assertEquals(isNull ? Numbers.INT_NULL : (int) value, function.getInt(record));
+            case ColumnType.IPv4 ->
+                    Assert.assertEquals(isNull ? Numbers.IPv4_NULL : (int) value, function.getIPv4(record));
             case ColumnType.LONG -> Assert.assertEquals(value, function.getLong(record));
             case ColumnType.DATE -> Assert.assertEquals(value, function.getDate(record));
             case ColumnType.TIMESTAMP -> Assert.assertEquals(value, function.getTimestamp(record));
             case ColumnType.FLOAT -> Assert.assertEquals(isNull ? Float.NaN : value, function.getFloat(record), 0);
             case ColumnType.DOUBLE -> Assert.assertEquals(isNull ? Double.NaN : value, function.getDouble(record), 0);
-            case ColumnType.STRING -> TestUtils.assertEquals(isNull ? null : "value-" + value, function.getStrA(record));
+            case ColumnType.STRING ->
+                    TestUtils.assertEquals(isNull ? null : "value-" + value, function.getStrA(record));
             case ColumnType.VARCHAR -> {
                 final Utf8Sequence actual = function.getVarcharA(record);
                 TestUtils.assertEquals(isNull ? null : "value-" + value,

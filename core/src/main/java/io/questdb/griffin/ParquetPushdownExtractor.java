@@ -43,72 +43,22 @@ import io.questdb.std.ObjList;
  * Derives Parquet row-group pushdown conditions from a bound residual predicate.
  */
 final class ParquetPushdownExtractor {
-    private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
     private final ObjList<BoundExpression> conditionValues = new ObjList<>();
+    private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
     private final IntList valueCounts = new IntList();
-
-    /**
-     * Returns the conditions the caller owns, or null when none survive compilation.
-     *
-     * @param sourceIndexes maps input positions to {@code source} positions; null when they coincide
-     */
-    ObjList<PushdownFilterCondition> extract(
-            BoundExpression predicate,
-            OutputSchema input,
-            RecordMetadata metadata,
-            IntList sourceIndexes,
-            RecordMetadata source,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        conditions.clear();
-        conditionValues.clear();
-        valueCounts.clear();
-        ObjList<PushdownFilterCondition> result = null;
-        try {
-            collect(predicate, input, sourceIndexes, source);
-            for (int i = 0, v = 0, n = conditions.size(); i < n; i++) {
-                final PushdownFilterCondition condition = conditions.getQuick(i);
-                final int count = valueCounts.getQuick(i);
-                boolean isConstant = true;
-                for (int k = 0; k < count && isConstant; k++) {
-                    isConstant = addValue(condition, conditionValues.getQuick(v + k), input, metadata, binder, executionContext);
-                }
-                v += count;
-                conditions.setQuick(i, null);
-                if (isConstant) {
-                    if (result == null) {
-                        result = new ObjList<>();
-                    }
-                    result.add(condition);
-                } else {
-                    Misc.free(condition);
-                }
-            }
-            return result;
-        } catch (Throwable th) {
-            Misc.freeObjList(conditions, th);
-            Misc.freeObjList(result, th);
-            throw th;
-        } finally {
-            conditions.clear();
-            conditionValues.clear();
-            valueCounts.clear();
-        }
-    }
 
     private static boolean addValue(
             PushdownFilterCondition condition,
             BoundExpression value,
             OutputSchema input,
             RecordMetadata metadata,
-            FunctionBinder binder,
+            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (hasCursor(value)) {
             return false;
         }
-        Function function = binder.instantiate(value, input, metadata, executionContext);
+        Function function = instantiator.instantiate(value, input, metadata, executionContext);
         if (!function.isConstantOrRuntimeConstant()) {
             condition.addValueFunction(function);
             return false;
@@ -119,7 +69,7 @@ final class ParquetPushdownExtractor {
             final boolean isSameStorage = ColumnType.tagOf(columnType) == ColumnType.tagOf(type)
                     && ColumnType.getDecimalScale(columnType) == ColumnType.getDecimalScale(type);
             final Function rescaled = isSameStorage ? function : function.isConstant()
-                    ? PushdownFilterExtractor.rescaleDecimalForPushdown(function, columnType, executionContext) : null;
+                                                                 ? PushdownFilterExtractor.rescaleDecimalForPushdown(function, columnType, executionContext) : null;
             if (rescaled == null) {
                 condition.addValueFunction(function);
                 return false;
@@ -288,5 +238,55 @@ final class ParquetPushdownExtractor {
         }
         conditionValues.add(value);
         return column;
+    }
+
+    /**
+     * Returns the conditions the caller owns, or null when none survive compilation.
+     *
+     * @param sourceIndexes maps input positions to {@code source} positions; null when they coincide
+     */
+    ObjList<PushdownFilterCondition> extract(
+            BoundExpression predicate,
+            OutputSchema input,
+            RecordMetadata metadata,
+            IntList sourceIndexes,
+            RecordMetadata source,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        conditions.clear();
+        conditionValues.clear();
+        valueCounts.clear();
+        ObjList<PushdownFilterCondition> result = null;
+        try {
+            collect(predicate, input, sourceIndexes, source);
+            for (int i = 0, v = 0, n = conditions.size(); i < n; i++) {
+                final PushdownFilterCondition condition = conditions.getQuick(i);
+                final int count = valueCounts.getQuick(i);
+                boolean isConstant = true;
+                for (int k = 0; k < count && isConstant; k++) {
+                    isConstant = addValue(condition, conditionValues.getQuick(v + k), input, metadata, instantiator, executionContext);
+                }
+                v += count;
+                conditions.setQuick(i, null);
+                if (isConstant) {
+                    if (result == null) {
+                        result = new ObjList<>();
+                    }
+                    result.add(condition);
+                } else {
+                    Misc.free(condition);
+                }
+            }
+            return result;
+        } catch (Throwable th) {
+            Misc.freeObjList(conditions, th);
+            Misc.freeObjList(result, th);
+            throw th;
+        } finally {
+            conditions.clear();
+            conditionValues.clear();
+            valueCounts.clear();
+        }
     }
 }

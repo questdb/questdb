@@ -24,18 +24,20 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
@@ -65,12 +67,11 @@ final class SortEliminationPass {
 
     private static boolean isSingleRow(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
-        return plan instanceof AggregatePlan aggregate && plan.getType() == LogicalPlan.Type.AGGREGATE
-                && aggregate.getGroupingExpressions().size() == 0;
+        return plan instanceof AggregatePlan aggregate && aggregate.getGroupingExpressions().size() == 0;
     }
 
     private static void markMarkoutHorizon(SortPlan sort) {
-        if (sort.getColumnIds().size() != 1 || sort.getDirections().getQuick(0) != QueryModel.ORDER_DIRECTION_ASCENDING) {
+        if (sort.getColumnIds().size() != 1 || sort.getDirections().getQuick(0) != SortDirection.ASCENDING) {
             return;
         }
         int columnId = sort.getColumnIds().getQuick(0);
@@ -117,7 +118,7 @@ final class SortEliminationPass {
             return;
         }
         final JoinInput slave = inputs.getQuick(1);
-        if (slave.getJoinType() != QueryModel.JOIN_CROSS || (slave.getHints() & JoinInput.HINT_MARKOUT_HORIZON) == 0
+        if (slave.getJoinType() != JoinKind.CROSS || (slave.getHints() & JoinInput.HINT_MARKOUT_HORIZON) == 0
                 || inputs.getQuick(0).getInput() == null || slave.getInput() == null) {
             return;
         }
@@ -173,11 +174,11 @@ final class SortEliminationPass {
             case SortPlan sort -> {
                 final LogicalPlan source = LogicalPlans.skipProjects(sort.getInput());
                 final LogicalPlan input = removeReorderedSorts(sort.getInput(), true, false);
-                if (source.getType() == LogicalPlan.Type.WINDOW) {
+                if (source instanceof WindowPlan) {
                     sort.replaceInput(0, input);
                     return sort;
                 }
-                if (isReordered && !sort.isMarkoutHorizon() && (isSetBranchReordered && source.getType() != LogicalPlan.Type.FILL || sort.getOutput().getTimestampIndex() < 0
+                if (isReordered && !sort.isMarkoutHorizon() && (isSetBranchReordered && !(source instanceof FillPlan) || sort.getOutput().getTimestampIndex() < 0
                         || sort.getOutput().getTimestampIndex() == input.getOutput().getTimestampIndex())) {
                     return input;
                 }
@@ -188,7 +189,7 @@ final class SortEliminationPass {
                 return sort;
             }
             case ProjectPlan project -> {
-                final boolean isSorted = project.getInput().getType() == LogicalPlan.Type.SORT;
+                final boolean isSorted = project.getInput() instanceof SortPlan;
                 replaceReorderedInput(project, isReordered && !project.hasTimestampDeclaration(), isSetBranchReordered);
                 if (isSorted && project.getInput() instanceof ProjectPlan inner && isHiddenSortKeyPrefix(project, inner)) {
                     inner.getExpressions().setPos(project.getExpressions().size());
@@ -210,7 +211,7 @@ final class SortEliminationPass {
                 boolean isMasterReordered = isReordered;
                 for (int i = 1, n = ordered.size(); i < n; i++) {
                     switch (ordered.getQuick(i).getJoinType()) {
-                        case QueryModel.JOIN_INNER, QueryModel.JOIN_CROSS, QueryModel.JOIN_LEFT_OUTER -> {
+                        case INNER, CROSS, LEFT_OUTER -> {
                         }
                         default -> isMasterReordered = false;
                     }

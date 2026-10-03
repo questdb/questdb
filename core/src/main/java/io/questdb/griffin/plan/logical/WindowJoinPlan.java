@@ -55,11 +55,6 @@ public final class WindowJoinPlan extends LogicalPlan {
         return steps;
     }
 
-    @Override
-    public Type getType() {
-        return Type.WINDOW_JOIN;
-    }
-
     public boolean isEmpty() {
         return isEmpty;
     }

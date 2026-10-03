@@ -116,6 +116,16 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+            if (!cursorFactories.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
     public boolean isUsingIndex() {
         return true;
     }

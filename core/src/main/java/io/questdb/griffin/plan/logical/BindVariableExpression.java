@@ -51,7 +51,9 @@ public final class BindVariableExpression extends BoundExpression {
         return isDirectReference;
     }
 
-    /** The caller defined the variable before compilation rather than binding inferring it. */
+    /**
+     * The caller defined the variable before compilation rather than binding inferring it.
+     */
     public boolean isPredefined() {
         return isPredefined;
     }

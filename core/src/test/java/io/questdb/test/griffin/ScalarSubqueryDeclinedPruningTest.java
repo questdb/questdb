@@ -221,14 +221,13 @@ public class ScalarSubqueryDeclinedPruningTest extends AbstractCairoTest {
         });
     }
 
-    // The residual sub-query must still resolve its symbol key through the index rather than
-    // degrading to a full scan of the bound table.
+    // The indexed top-1 sub-query breaks ties on row id, so its bound is stable and prunes the outer scan.
     @Test
     public void testDeclinedStabilityGuardResidualPlanKeepsSubQueryFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery(STABILITY_GUARD_QUERY)
-                    .assertsPlanContaining("DeferredSingleSymbolFilterPageFrame", "Index forward scan on: sym");
+                    .assertsPlanContaining("filter: dateadd('h',1,ts)>=scalar_subquery_bound", "Interval forward scan on: t");
         });
     }
 

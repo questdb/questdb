@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -47,8 +48,18 @@ import org.jetbrains.annotations.Nullable;
 public class RightVarcharFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
+
+    @Override
     public String getSignature() {
         return "right(ØI)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return !isNullCount(args.getQuick(1));
     }
 
     @Override
@@ -61,20 +72,25 @@ public class RightVarcharFunctionFactory implements FunctionFactory {
     ) {
         final Function varcharFunc = args.getQuick(0);
         final Function countFunc = args.getQuick(1);
+        if (isNullCount(countFunc)) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
+            return VarcharConstant.NULL;
+        }
         if (countFunc.isConstant()) {
-            int count = countFunc.getInt(null);
-            if (count != Numbers.INT_NULL) {
-                return new ConstCountFunc(varcharFunc, count);
-            } else {
-                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
-                return VarcharConstant.NULL;
-            }
+            return new ConstCountFunc(varcharFunc, countFunc.getInt(null));
         }
         return new Func(varcharFunc, countFunc);
     }
 
     private static int getCharPos(int len, int count) {
         return count > -1 ? Math.min(len, Math.max(0, len - count)) : Math.min(len, -count);
+    }
+
+    /**
+     * Whether the count is a constant NULL, which makes the call a NULL constant.
+     */
+    private static boolean isNullCount(Function countFunc) {
+        return countFunc.isConstant() && countFunc.getInt(null) == Numbers.INT_NULL;
     }
 
     private static class ConstCountFunc extends VarcharFunction implements UnaryFunction {

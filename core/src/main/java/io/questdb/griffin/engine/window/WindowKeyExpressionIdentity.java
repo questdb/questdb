@@ -125,7 +125,9 @@ public final class WindowKeyExpressionIdentity {
         return renderNode(term, metadata, sink, 0);
     }
 
-    /** Renders the bound description against the final input layout, without parser state. */
+    /**
+     * Renders the bound description against the final input layout, without parser state.
+     */
     public static boolean render(BoundExpression term, Function compiled, OutputSchema input, CharSink<?> sink) {
         return compiled != null && !compiled.isNonDeterministic() && !compiled.isRandom()
                 && renderNode(term, input, sink, 0);
@@ -238,6 +240,7 @@ public final class WindowKeyExpressionIdentity {
             default -> false;
         };
     }
+
     private static boolean renderNode(BoundExpression node, OutputSchema input, CharSink<?> sink, int depth) {
         if (depth > MAX_DEPTH) {
             return false;
@@ -251,6 +254,9 @@ public final class WindowKeyExpressionIdentity {
             return true;
         }
         if (node instanceof ConstantExpression constant) {
+            if (constant.isUnparsedTimestamp()) {
+                return false;
+            }
             sink.putAscii('=').put(constant.getDataType()).putAscii(':');
             switch (ColumnType.tagOf(constant.getDataType())) {
                 case ColumnType.STRING, ColumnType.SYMBOL -> {
@@ -266,7 +272,8 @@ public final class WindowKeyExpressionIdentity {
                         }
                     }
                 }
-                case ColumnType.UUID -> sink.put(constant.getLong128Lo()).putAscii(',').put(constant.getLong128Hi());
+                case ColumnType.UUID, ColumnType.LONG128 ->
+                        sink.put(constant.getLong128Lo()).putAscii(',').put(constant.getLong128Hi());
                 case ColumnType.LONG256 -> {
                     final Long256 value = constant.getLong256Value();
                     sink.put(value.getLong0()).putAscii(',').put(value.getLong1()).putAscii(',')
@@ -275,7 +282,8 @@ public final class WindowKeyExpressionIdentity {
                 case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> sink.put(constant.getDecimalHh()).putAscii(',')
                         .put(constant.getDecimalHl()).putAscii(',').put(constant.getDecimalLh()).putAscii(',')
                         .put(constant.getLongValue());
-                case ColumnType.INTERVAL -> sink.put(constant.getLongValue()).putAscii(',').put(constant.getIntervalHi());
+                case ColumnType.INTERVAL ->
+                        sink.put(constant.getLongValue()).putAscii(',').put(constant.getIntervalHi());
                 default -> sink.put(constant.getLongValue());
             }
             return true;

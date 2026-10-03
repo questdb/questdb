@@ -35,6 +35,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
     private final OutputSchema recordSchema = new OutputSchema();
     private final IntList sourceColumnIndexes = new IntList();
     private boolean isProjectable;
+    private boolean isSequenceStable;
     private CharSequence recordName;
 
     @Override
@@ -43,6 +44,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
         recordSchema.clear();
         sourceColumnIndexes.clear();
         isProjectable = false;
+        isSequenceStable = false;
         recordName = null;
     }
 
@@ -62,11 +64,6 @@ public final class FunctionSourcePlan extends LogicalPlan {
     }
 
     @Override
-    public Type getType() {
-        return Type.FUNCTION_SOURCE;
-    }
-
-    @Override
     public LogicalPlan inputAt(int index) {
         throw new IndexOutOfBoundsException("function source has no input: " + index);
     }
@@ -83,6 +80,14 @@ public final class FunctionSourcePlan extends LogicalPlan {
         return isProjectable;
     }
 
+    /**
+     * True when every evaluation within one execution yields the same rows in the same order, as the
+     * table function declares.
+     */
+    public boolean isSequenceStable() {
+        return isSequenceStable;
+    }
+
     public FunctionSourcePlan of(int position) {
         setPosition(position);
         return this;
@@ -95,6 +100,10 @@ public final class FunctionSourcePlan extends LogicalPlan {
 
     public void setProjectable(boolean isProjectable) {
         this.isProjectable = isProjectable;
+    }
+
+    public void setSequenceStable(boolean isSequenceStable) {
+        this.isSequenceStable = isSequenceStable;
     }
 
     public void setRecordName(CharSequence recordName) {

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -39,48 +40,51 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
-import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
 
-import static io.questdb.griffin.BindContext.findGroupingColumn;
 import static io.questdb.griffin.BindContext.isWildcard;
-import static io.questdb.griffin.BindContext.orderNotSelected;
+import static io.questdb.griffin.BindContext.isWildcardColumn;
 import static io.questdb.griffin.BindContext.sourceAlias;
 
 final class SampleByBinder implements Mutable {
-    private final AggregateBinder aggregateBinder;
     private final SqlBinder binder;
+    private final CairoConfiguration configuration;
     private final BindContext ctx;
+    private final OutputSchema emptySchema;
     private final ObjList<BoundExpression> fillBindings = new ObjList<>();
+    private final FunctionParser functionParser;
     private final JoinBinder joinBinder;
-    private final OrderBinder orderBinder;
     private final WindowBinder windowBinder;
 
     SampleByBinder(
             BindContext ctx,
             SqlBinder binder,
+            CairoConfiguration configuration,
+            FunctionParser functionParser,
+            OutputSchema emptySchema,
             WindowBinder windowBinder,
-            OrderBinder orderBinder,
-            AggregateBinder aggregateBinder,
             JoinBinder joinBinder
     ) {
         this.ctx = ctx;
         this.binder = binder;
+        this.configuration = configuration;
+        this.functionParser = functionParser;
+        this.emptySchema = emptySchema;
         this.windowBinder = windowBinder;
-        this.orderBinder = orderBinder;
-        this.aggregateBinder = aggregateBinder;
         this.joinBinder = joinBinder;
     }
 
@@ -145,7 +149,7 @@ final class SampleByBinder implements Mutable {
         if (expression.type == ExpressionNode.LITERAL || ctx.isAggregate(expression)) {
             throw GroupByUtils.invalidSampleByFillValue(expression.token, expression.position);
         }
-        return ctx.functionBinder.bind(expression, ctx.emptySchema, null, executionContext);
+        return ctx.functionBinder.bind(expression, emptySchema, null, executionContext);
     }
 
     private BoundExpression bindSampleByParameter(ExpressionNode expression, int type, SqlExecutionContext executionContext) throws SqlException {
@@ -155,7 +159,7 @@ final class SampleByBinder implements Mutable {
         if (ctx.isAggregate(expression)) {
             throw SqlException.$(expression.position, "Aggregate function cannot be passed as an argument");
         }
-        return ctx.functionBinder.bind(expression, ctx.emptySchema, null, type, executionContext);
+        return ctx.functionBinder.bind(expression, emptySchema, null, type, executionContext);
     }
 
     /**
@@ -175,7 +179,7 @@ final class SampleByBinder implements Mutable {
         try {
             final BoundExpression comparison = ctx.functionBinder.bind(sampleByComparison(input.getOutput(), operator, bound),
                     ctx.scratchScope, sourceAlias(source), ctx.substitutionNodes, ctx.substitutionColumns, executionContext);
-            return ctx.functionBinder.substituteColumn(comparison, placeholderId, value);
+            return ctx.expressionRewriter.moveToColumn(comparison, placeholderId, value);
         } finally {
             ctx.substitutionNodes.clear();
             ctx.substitutionColumns.clear();
@@ -198,7 +202,7 @@ final class SampleByBinder implements Mutable {
     /**
      * The SAMPLE BY period as a stride literal; a constant period expression contributes its value.
      */
-    private CharSequence sampleByPeriod(QueryModel source, AggregatePlan aggregate) {
+    private CharSequence sampleByPeriod(QueryModel source, GroupingPlan aggregate) {
         if (aggregate instanceof SampleByPlan sampleBy && sampleBy.getPeriod() instanceof ConstantExpression period) {
             final CharacterStoreEntry entry = ctx.characterStore.newEntry();
             entry.put(period.getLongValue()).put(sampleBy.getPeriodUnit());
@@ -220,18 +224,6 @@ final class SampleByBinder implements Mutable {
         cast.lhs = utc;
         cast.rhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, ColumnType.nameOf(timestampType), 0, bound.position);
         return cast;
-    }
-
-    private ExpressionNode sampleByTimestamp(OutputSchema input, int position) {
-        final int index = input.getTimestampIndex();
-        final CharSequence qualifier = input.getColumnQualifier(index);
-        CharSequence name = input.getColumnName(index);
-        if (qualifier != null) {
-            final CharacterStoreEntry token = ctx.characterStore.newEntry();
-            token.put('"').put(qualifier).put("\".").put(name);
-            name = token.toImmutable();
-        }
-        return ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, name, 0, position);
     }
 
     private ExpressionNode sampleByTimezone(QueryModel source) {
@@ -263,7 +255,7 @@ final class SampleByBinder implements Mutable {
                 }
                 return -1;
             }
-            case AggregatePlan aggregate when plan.getType() == LogicalPlan.Type.AGGREGATE -> {
+            case AggregatePlan aggregate -> {
                 final int inputId = subsampleTimestamp(aggregate.getInput());
                 for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
                     if (aggregate.getGroupingExpressions().getQuick(i) instanceof ColumnExpression column
@@ -302,6 +294,7 @@ final class SampleByBinder implements Mutable {
             index = output.getColumnIndexQuiet(SqlUtil.protectColumnAlias(ctx.characterStore, value.token));
         }
         if (index >= 0) {
+            ctx.raiseDeferredColumn(output.getColumnId(index));
             return index;
         }
         if (Chars.indexOfLastUnquoted(value.token, '.') >= 0) {
@@ -359,7 +352,7 @@ final class SampleByBinder implements Mutable {
     private void validateSdtCompdev(ExpressionNode compdev, SqlExecutionContext executionContext) throws SqlException {
         Function function = null;
         try {
-            function = ctx.functionParser.parseFunction(ExpressionNode.deepClone(ctx.bindingExpressions, compdev), EmptyRecordMetadata.INSTANCE, executionContext);
+            function = functionParser.parseFunction(ExpressionNode.deepClone(ctx.bindingExpressions, compdev), EmptyRecordMetadata.INSTANCE, executionContext);
             SubsampleValidator.validateSdtCompdev(function, compdev.position);
         } catch (SqlException e) {
             if (SubsampleValidator.hasUnresolvableSdtCompdevReference(compdev, executionContext)) {
@@ -390,12 +383,15 @@ final class SampleByBinder implements Mutable {
                 || fill.size() > 1 || fill.size() == 1 && !SqlKeywords.isNoneKeyword(fill.getQuick(0).token));
     }
 
+    /**
+     * The FILL values follow the grouping's aggregates by position.
+     */
     FillPlan bindFill(
-            QueryModel source, AggregatePlan aggregate, int timestampIndex, SqlExecutionContext executionContext
+            QueryModel source, GroupingPlan aggregate, ObjList<ExpressionNode> aggregateNodes, ObjList<ExpressionNode> fill,
+            int timestampIndex, SqlExecutionContext executionContext
     ) throws SqlException {
-        final ObjList<ExpressionNode> fill = source.getSampleByFill();
         final int fillCount = fill.size();
-        if (ctx.configuration.isValidateSampleByFillType()) {
+        if (configuration.isValidateSampleByFillType()) {
             if (fillCount > 1 && fillCount < aggregate.getAggregates().size()) {
                 boolean hasNone = false;
                 for (int i = 0; i < fillCount; i++) {
@@ -408,7 +404,7 @@ final class SampleByBinder implements Mutable {
             for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
                 final ExpressionNode fillValue = fill.getQuick(Math.min(i, fillCount - 1));
                 ctx.functionBinder.validateSampleByFill(aggregate.getAggregates().getQuick(i), fillValue.token,
-                        fillValue.position, ctx.aggregateNodes.getQuick(i));
+                        fillValue.position, aggregateNodes.getQuick(i));
             }
         }
         if (fillCount > 1) {
@@ -531,7 +527,7 @@ final class SampleByBinder implements Mutable {
             plan.setPeriod(sampleBy.token, null, sampleBy.position,
                     sampleBy.token.isEmpty() ? (char) 0 : sampleBy.token.charAt(sampleBy.token.length() - 1), sampleBy.position);
         } else {
-            final BoundExpression period = ctx.functionBinder.bind(sampleBy, ctx.emptySchema, null, executionContext);
+            final BoundExpression period = ctx.functionBinder.bind(sampleBy, emptySchema, null, executionContext);
             if (!(period instanceof ConstantExpression)
                     || period.getDataType() != ColumnType.INT && period.getDataType() != ColumnType.LONG) {
                 throw SqlException.$(sampleBy.position, "sample by period must be a constant expression of INT or LONG type");
@@ -548,7 +544,7 @@ final class SampleByBinder implements Mutable {
         validateSampleByQuery(model, source, input, true);
         final ExpressionNode from = source.getSampleByFrom();
         final ExpressionNode timezone = sampleByTimezone(source);
-        SqlUtil.validateSampleByTimezone(timezone, ctx.functionParser, executionContext);
+        SqlUtil.validateSampleByTimezone(timezone, functionParser, executionContext);
         final boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
         final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, 0);
         floor.paramCount = 5;
@@ -605,10 +601,10 @@ final class SampleByBinder implements Mutable {
                     sampleByRangeBound(from, timezone, timestampType), executionContext);
             final BoundExpression hi = bindSampleByRangeComparison(input, source, "<",
                     sampleByRangeBound(to, timezone, timestampType), executionContext);
-            predicate = ctx.functionBinder.combineConjunction(lo, hi, hi.getPosition());
+            predicate = ctx.expressionRewriter.combineConjunction(lo, hi, hi.getPosition());
         }
         final FilterPlan filter = ctx.filters.next().of(input, predicate, predicate.getPosition());
-        filter.getOutput().copyFrom(input.getOutput());
+        filter.deriveOutput();
         return filter;
     }
 
@@ -649,9 +645,9 @@ final class SampleByBinder implements Mutable {
                 validateSdtCompdev(target, executionContext);
             }
         } else if (!hasQuery(target)) {
-            SubsampleValidator.validatePositionTargetOrThrow(ExpressionNode.deepClone(ctx.bindingExpressions, target), isCadence, ctx.functionParser, executionContext);
+            SubsampleValidator.validatePositionTargetOrThrow(ExpressionNode.deepClone(ctx.bindingExpressions, target), isCadence, functionParser, executionContext);
             if (isCadence && subsample.paramCount == 2 && !hasQuery(subsample.args.getQuick(1))) {
-                SubsampleValidator.validateCadenceSeedOrThrow(ExpressionNode.deepClone(ctx.bindingExpressions, subsample.args.getQuick(1)), ctx.functionParser, executionContext);
+                SubsampleValidator.validateCadenceSeedOrThrow(ExpressionNode.deepClone(ctx.bindingExpressions, subsample.args.getQuick(1)), functionParser, executionContext);
             }
         }
         final ExpressionNode call = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION,
@@ -678,13 +674,13 @@ final class SampleByBinder implements Mutable {
         syntax.addOrderBy(ctx.bindingExpressions.next().of(ExpressionNode.LITERAL,
                 SqlUtil.protectColumnAlias(ctx.characterStore, output.getColumnName(timestampIndex)), 0, subsample.position), QueryModel.ORDER_DIRECTION_ASCENDING);
         call.windowExpression = syntax;
-        SqlUtil.normalizeWindowFrame(syntax, ctx.functionParser, executionContext);
+        SqlUtil.normalizeWindowFrame(syntax, functionParser, executionContext);
         final WindowSpec spec = ctx.windowSpecs.next().of(syntax);
         if (executionContext.isLiveViewCompile()) {
             spec.setLiveViewDescription(LiveViewWindowDescription.of(syntax));
         }
         spec.getOrderByColumnIds().add(timestampId);
-        spec.getOrderByDirections().add(QueryModel.ORDER_DIRECTION_ASCENDING);
+        spec.getOrderByDirections().add(SortDirection.ASCENDING);
         spec.getOrderByNames().add(output.getColumnName(timestampIndex));
         spec.getOrderByPositions().add(subsample.position);
         final FunctionExpression function;
@@ -709,7 +705,7 @@ final class SampleByBinder implements Mutable {
         }
         window.getOutput().add(keepId, ctx.createOutputName("__keep_subsample"), ColumnType.BOOLEAN, false);
         final FilterPlan filter = ctx.filters.next().of(window, ctx.columns.next().of(keepId, ColumnType.BOOLEAN, subsample.position), subsample.position);
-        filter.getOutput().copyFrom(window.getOutput());
+        filter.deriveOutput();
         final ProjectPlan project = ctx.projects.next().of(filter, subsample.position);
         project.getOutput().copyFrom(output);
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -717,127 +713,6 @@ final class SampleByBinder implements Mutable {
         }
         ctx.stopTimestampIntrinsics(project.getOutput());
         return project;
-    }
-
-    LogicalPlan bindSubsampleOutput(
-            QueryModel model, QueryModel source, LogicalPlan sourcePlan, LogicalPlan input,
-            boolean isOrderEnabled, SqlExecutionContext executionContext
-    ) throws SqlException {
-        final LogicalPlan result;
-        if (isOrderEnabled && source.getOrderBy().size() > 0) {
-            for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
-                final ExpressionNode order = source.getOrderBy().getQuick(i);
-                if (order.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(order, input.getOutput(), sourceAlias(source)) == -1) {
-                    final int dot = Chars.indexOfLastUnquoted(order.token, '.');
-                    if (dot > -1 && FunctionBinder.isUnknownQualifier(GenericLexer.unquote(order.token.subSequence(0, dot)), input.getOutput(), sourceAlias(source))) {
-                        throw SqlException.$(order.position, "Invalid table name or alias");
-                    }
-                    throw orderNotSelected(order);
-                }
-            }
-            final ProjectPlan projection = ctx.projects.next().of(input, source.getSubsamplePosition());
-            projection.getOutput().copyFrom(input.getOutput());
-            for (int i = 0, n = input.getOutput().getColumnCount(); i < n; i++) {
-                projection.getExpressions().add(ctx.columns.next().of(input.getOutput().getColumnId(i), input.getOutput().getColumnType(i), model.getModelPosition()));
-            }
-            result = bindSubsample(orderBinder.bindOutputOrder(model, input, projection, source, sourceAlias(source), null, false, executionContext),
-                    sourcePlan, source, executionContext);
-        } else {
-            result = bindSubsample(input, sourcePlan, source, executionContext);
-        }
-        return isOrderEnabled ? orderBinder.bindLimit(result, model, executionContext) : result;
-    }
-
-    void collectSampleByCursorGrouping(
-            QueryModel model, QueryModel source, SampleByPlan sampleBy, SqlExecutionContext context
-    ) throws SqlException {
-        final OutputSchema input = sampleBy.getInput().getOutput();
-        boolean hasTimestampOutput = isFillPlanned(source);
-        for (int i = 0, n = ctx.aggregateSelectExpressions.size(); i < n && !hasTimestampOutput; i++) {
-            hasTimestampOutput = referencesSampleByTimestamp(ctx.aggregateSelectExpressions.getQuick(i), input, source);
-        }
-        for (int i = 0, n = source.getOrderBy().size(); i < n && !hasTimestampOutput; i++) {
-            final ExpressionNode order = source.getOrderBy().getQuick(i);
-            if (order.type != ExpressionNode.LITERAL || model.getAliasToColumnMap().excludes(order.token)) {
-                hasTimestampOutput = referencesSampleByTimestamp(order, input, source);
-            }
-        }
-        if (hasTimestampOutput) {
-            final ColumnExpression timestamp = ctx.columns.next().of(sampleBy.getTimestampColumnId(),
-                    input.getColumnType(input.getTimestampIndex()), source.getSampleBy().position);
-            collectSampleByGrouping(model, source, sampleBy, timestamp, context);
-            sampleBy.getOutput().setTimestampIndex(findGroupingColumn(sampleBy, sampleBy.getTimestampColumnId()));
-        } else {
-            for (int i = 0, n = ctx.aggregateSelectExpressions.size(); i < n; i++) {
-                aggregateBinder.collectGroupingExpressions(ctx.aggregateSelectExpressions.getQuick(i), model, source, sampleBy, context);
-            }
-        }
-    }
-
-    void collectSampleByDependencies(
-            ExpressionNode expression, QueryModel model, QueryModel source, AggregatePlan aggregate, SqlExecutionContext context
-    ) throws SqlException {
-        if (expression == null || ctx.isAggregate(expression)) {
-            return;
-        }
-        if (expression.type == ExpressionNode.LITERAL) {
-            if (!referencesSampleByTimestamp(expression, aggregate.getInput().getOutput(), source)) {
-                aggregateBinder.addGroupingExpression(expression, model, source, aggregate, context);
-            }
-        } else if (expression.paramCount < 3) {
-            collectSampleByDependencies(expression.lhs, model, source, aggregate, context);
-            collectSampleByDependencies(expression.rhs, model, source, aggregate, context);
-        } else {
-            for (int i = 0, n = expression.args.size(); i < n; i++) {
-                collectSampleByDependencies(expression.args.getQuick(i), model, source, aggregate, context);
-            }
-        }
-    }
-
-    void collectSampleByGrouping(
-            QueryModel model, QueryModel source, AggregatePlan aggregate, BoundExpression bucket, SqlExecutionContext context
-    ) throws SqlException {
-        final OutputSchema input = aggregate.getInput().getOutput();
-        int firstTimestampIndex = -1;
-        int timestampIndex = -1;
-        for (int i = 0, n = ctx.aggregateSelectExpressions.size(); i < n; i++) {
-            final ExpressionNode expression = ctx.aggregateSelectExpressions.getQuick(i);
-            if (referencesSampleByTimestamp(expression, input, source)) {
-                if (firstTimestampIndex < 0) {
-                    firstTimestampIndex = i;
-                }
-                if (expression.type == ExpressionNode.LITERAL) {
-                    timestampIndex = i;
-                }
-            }
-        }
-        // The bucket stays at the first timestamp position, named after the last alias.
-        for (int i = 0, n = ctx.aggregateSelectExpressions.size(); i <= n; i++) {
-            if (i == firstTimestampIndex || i == n && firstTimestampIndex < 0) {
-                final ExpressionNode timestamp = timestampIndex < 0 ? sampleByTimestamp(input, source.getSampleBy().position)
-                        : ctx.aggregateSelectExpressions.getQuick(timestampIndex);
-                final CharSequence name = timestampIndex < 0
-                        ? SqlUtil.createColumnAlias(ctx.characterStore, input.getColumnName(input.getTimestampIndex()), -1,
-                        model.getAliasToColumnMap(), ctx.aliasSequences, false)
-                        : model.getBottomUpColumns().getQuick(timestampIndex).getName();
-                ctx.groupingNodes.add(timestamp);
-                aggregate.getGroupingExpressions().add(bucket);
-                aggregate.getOutput().add(ctx.nextColumnId++, ctx.createOutputName(name), bucket.getDataType(), false);
-            } else if (i < n) {
-                final ExpressionNode expression = ctx.aggregateSelectExpressions.getQuick(i);
-                if (!referencesSampleByTimestamp(expression, input, source)) {
-                    aggregateBinder.collectGroupingExpressions(expression, model, source, aggregate, context);
-                }
-            }
-        }
-        // Timestamp-dependent SELECT computations run on the bucket. Their
-        // other column dependencies remain ordinary grouping keys.
-        for (int i = 0, n = ctx.aggregateSelectExpressions.size(); i < n; i++) {
-            final ExpressionNode expression = ctx.aggregateSelectExpressions.getQuick(i);
-            if (referencesSampleByTimestamp(expression, input, source)) {
-                collectSampleByDependencies(expression, model, source, aggregate, context);
-            }
-        }
     }
 
     boolean hasSubsampleTimestampProjection(QueryModel model, QueryModel source, LogicalPlan sourcePlan) {
@@ -850,7 +725,7 @@ final class SampleByBinder implements Mutable {
                 continue;
             }
             if (isWildcard(expression)) {
-                if (timestampIndex < 0 || ctx.isWildcardColumn(expression, output, timestampIndex, sourceAlias(source))) {
+                if (timestampIndex < 0 || isWildcardColumn(expression, output, timestampIndex, sourceAlias(source))) {
                     return true;
                 }
             } else if (timestampIndex >= 0 && FunctionBinder.findColumn(expression, output, sourceAlias(source)) == timestampIndex) {
@@ -858,48 +733,6 @@ final class SampleByBinder implements Mutable {
             }
         }
         return false;
-    }
-
-    void projectSampleByKeys(SampleByPlan sampleBy, QueryModel model, boolean isJoin) {
-        boolean hasComputedKey = isJoin;
-        for (int i = 0, n = sampleBy.getGroupingExpressions().size(); i < n; i++) {
-            final BoundExpression key = sampleBy.getGroupingExpressions().getQuick(i);
-            if (!(key instanceof ColumnExpression column) || !column.isDirectReference()) {
-                hasComputedKey = true;
-                break;
-            }
-        }
-        if (!hasComputedKey) {
-            return;
-        }
-        final ProjectPlan project = ctx.projects.next().of(sampleBy.getInput(), sampleBy.getPosition());
-        ctx.aliases.clear();
-        ctx.aliasSequences.clear();
-        ctx.columnSpellings.clear();
-        if (isJoin) {
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                aggregateBinder.collectColumnSpellings(model.getBottomUpColumns().getQuick(i).getAst(), sampleBy.getInput().getOutput());
-            }
-        }
-        for (int i = 0, n = sampleBy.getGroupingExpressions().size(); i < n; i++) {
-            final BoundExpression key = sampleBy.getGroupingExpressions().getQuick(i);
-            if (!(key instanceof ColumnExpression column) || !column.isDirectReference()) {
-                ctx.addProjection(project, key, null, sampleBy.getOutput().getColumnName(i), false);
-                final int index = project.getExpressions().size() - 1;
-                sampleBy.getGroupingExpressions().setQuick(i, ctx.columns.next().of(project.getOutput().getColumnId(index),
-                        key.getDataType(), key.getPosition(), false));
-            } else {
-                aggregateBinder.addAggregateInputColumns(key, project);
-            }
-        }
-        for (int i = 0, n = sampleBy.getAggregates().size(); i < n; i++) {
-            aggregateBinder.addAggregateInputColumns(sampleBy.getAggregates().getQuick(i), project);
-        }
-        final OutputSchema input = sampleBy.getInput().getOutput();
-        aggregateBinder.addAggregateInputColumns(ctx.columns.next().of(sampleBy.getTimestampColumnId(),
-                input.getColumnType(input.getColumnIndexById(sampleBy.getTimestampColumnId())), sampleBy.getPosition()), project);
-        ctx.columnSpellings.clear();
-        sampleBy.replaceInput(0, project);
     }
 
     boolean referencesSampleByTimestamp(ExpressionNode expression, OutputSchema input, QueryModel source) throws SqlException {
@@ -920,25 +753,16 @@ final class SampleByBinder implements Mutable {
         return false;
     }
 
-    /**
-     * SAMPLE BY designates a selected expression aliased as the timestamp column when the bucket itself
-     * is not selected, and orders by that expression.
-     */
-    int sampleByTimestampAliasIndex(QueryModel source, AggregatePlan aggregate, ProjectPlan project, int visibleCount) throws SqlException {
-        final OutputSchema input = aggregate.getInput().getOutput();
-        final int inputTimestampIndex = input.getTimestampIndex();
-        if (inputTimestampIndex < 0) {
-            return -1;
+    ExpressionNode sampleByTimestamp(OutputSchema input, int position) {
+        final int index = input.getTimestampIndex();
+        final CharSequence qualifier = input.getColumnQualifier(index);
+        CharSequence name = input.getColumnName(index);
+        if (qualifier != null) {
+            final CharacterStoreEntry token = ctx.characterStore.newEntry();
+            token.put('"').put(qualifier).put("\".").put(name);
+            name = token.toImmutable();
         }
-        final CharSequence timestampName = input.getColumnName(inputTimestampIndex);
-        final OutputSchema output = project.getOutput();
-        for (int i = 0, n = Math.min(visibleCount, ctx.aggregateSelectExpressions.size()); i < n; i++) {
-            if (ColumnType.isTimestamp(output.getColumnType(i)) && Chars.equalsIgnoreCase(output.getColumnName(i), timestampName)
-                    && referencesSampleByTimestamp(ctx.aggregateSelectExpressions.getQuick(i), input, source)) {
-                return i;
-            }
-        }
-        return -1;
+        return ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, name, 0, position);
     }
 
     SqlException subsampleTimestampMissing(QueryModel source, LogicalPlan sourcePlan) {
@@ -988,6 +812,6 @@ final class SampleByBinder implements Mutable {
                 }
             }
         }
-        subsampleValueIndex(value, ctx.emptySchema);
+        subsampleValueIndex(value, emptySchema);
     }
 }

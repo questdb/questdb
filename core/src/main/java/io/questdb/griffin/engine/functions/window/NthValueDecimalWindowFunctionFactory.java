@@ -95,6 +95,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     private static final String SIGNATURE = NAME + "(ΞL)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

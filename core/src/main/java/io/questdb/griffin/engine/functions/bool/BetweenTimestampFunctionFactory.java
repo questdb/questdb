@@ -44,8 +44,21 @@ import io.questdb.std.ObjList;
 
 public class BetweenTimestampFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "between(NNN)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        final Function fromFn = args.getQuick(1);
+        final Function toFn = args.getQuick(2);
+        return !fromFn.isConstant() || !toFn.isConstant()
+                || fromFn.getTimestamp(null) != Numbers.LONG_NULL && toFn.getTimestamp(null) != Numbers.LONG_NULL;
     }
 
     @Override

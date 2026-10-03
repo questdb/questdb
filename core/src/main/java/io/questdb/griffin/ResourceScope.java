@@ -25,6 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -39,7 +42,7 @@ import java.util.Objects;
  * callers must discard preparation entries and other slot borrows before reset.
  */
 public final class ResourceScope implements Closeable, Mutable {
-    final ObjList<Closeable> resources = new ObjList<>();
+    private final ObjList<Closeable> resources = new ObjList<>();
 
     @Override
     public void clear() {
@@ -96,6 +99,50 @@ public final class ResourceScope implements Closeable, Mutable {
         }
         resources.setQuick(slot, null);
         return resource;
+    }
+
+    public @NotNull RecordCursorFactory detachFactory(int slot) {
+        return (RecordCursorFactory) detach(slot);
+    }
+
+    public @NotNull PartitionFrameCursorFactory detachFrames(int slot) {
+        return (PartitionFrameCursorFactory) detach(slot);
+    }
+
+    public @NotNull Function detachFunction(int slot) {
+        return (Function) detach(slot);
+    }
+
+    /**
+     * Borrows the factory a slot owns; ownership stays with the scope.
+     */
+    public RecordCursorFactory factory(int slot) {
+        return (RecordCursorFactory) resources.getQuick(slot);
+    }
+
+    /**
+     * Borrows the partition frames a slot owns; ownership stays with the scope.
+     */
+    public PartitionFrameCursorFactory frames(int slot) {
+        return (PartitionFrameCursorFactory) resources.getQuick(slot);
+    }
+
+    /**
+     * Borrows the function a slot owns; ownership stays with the scope.
+     */
+    public Function function(int slot) {
+        return (Function) resources.getQuick(slot);
+    }
+
+    public boolean isOwned(int slot) {
+        return resources.getQuick(slot) != null;
+    }
+
+    /**
+     * The slot the next {@link #reserve()} returns.
+     */
+    public int nextSlot() {
+        return resources.size();
     }
 
     /**

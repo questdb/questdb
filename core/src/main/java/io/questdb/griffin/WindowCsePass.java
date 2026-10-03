@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -42,7 +43,6 @@ import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
@@ -51,21 +51,17 @@ import io.questdb.std.ObjectPool;
  * window beneath it whose result reaches it, when both read the same values under the same
  * specification and neither evaluates a volatile function; its consumers then read the earlier result.
  */
-final class WindowCsePass implements Mutable {
+final class WindowCsePass {
     private final ObjList<LogicalPlan> ancestors;
     private final ObjectPool<ColumnExpression> columns;
+    private final OptimiserContext context;
     private final ObjectPool<ProjectPlan> projects;
-    private FunctionBinder functionBinder;
 
-    WindowCsePass(ObjectPool<ColumnExpression> columns, ObjectPool<ProjectPlan> projects, ObjList<LogicalPlan> ancestors) {
+    WindowCsePass(OptimiserContext context, ObjectPool<ColumnExpression> columns, ObjectPool<ProjectPlan> projects, ObjList<LogicalPlan> ancestors) {
+        this.context = context;
         this.columns = columns;
         this.projects = projects;
         this.ancestors = ancestors;
-    }
-
-    @Override
-    public void clear() {
-        functionBinder = null;
     }
 
     /**
@@ -90,61 +86,6 @@ final class WindowCsePass implements Mutable {
         }
     }
 
-    private static boolean isIdentity(ProjectPlan project) {
-        final OutputSchema input = project.getInput().getOutput();
-        final ObjList<BoundExpression> expressions = project.getExpressions();
-        if (expressions.size() != input.getColumnCount()) {
-            return false;
-        }
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            if (!(expressions.getQuick(i) instanceof ColumnExpression column) || column.isCast()
-                    || column.getColumnId() != input.getColumnId(i) || project.getOutput().getColumnId(i) != input.getColumnId(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /** The node computes something from the column, rather than passing it through. */
-    private static boolean isReadBy(LogicalPlan plan, int columnId) {
-        switch (plan) {
-            case ProjectPlan project -> {
-                for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                    if (readsColumn(project.getExpressions().getQuick(i), columnId) && project.getOutput().getColumnId(i) != columnId) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            case WindowPlan window -> {
-                for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
-                    final WindowSpec spec = window.getSpecs().getQuick(i);
-                    if (readsColumn(window.getFunctions().getQuick(i), columnId) || spec.getOrderByColumnIds().contains(columnId)) {
-                        return true;
-                    }
-                    for (int k = 0, count = spec.getPartitionBy().size(); k < count; k++) {
-                        if (readsColumn(spec.getPartitionBy().getQuick(k), columnId)) {
-                            return true;
-                        }
-                    }
-                }
-                return false;
-            }
-            case FilterPlan filter -> {
-                return readsColumn(filter.getPredicate(), columnId);
-            }
-            case SortPlan sort -> {
-                return sort.getColumnIds().contains(columnId);
-            }
-            case LimitPlan _ -> {
-                return false;
-            }
-            default -> {
-                return true;
-            }
-        }
-    }
-
     private static boolean isSameCall(FunctionExpression call, FunctionExpression other) {
         if (call.getOverload() != other.getOverload() || call.getFunctionFlags() != other.getFunctionFlags()
                 || call.isProjectedOffset() != other.isProjectedOffset() || call.isSetOperation() != other.isSetOperation()
@@ -159,6 +100,10 @@ final class WindowCsePass implements Mutable {
         return true;
     }
 
+    /**
+     * Two ordering columns are the same when equal deterministic expressions compute them, as select aliases
+     * of one expression do.
+     */
     private static boolean isSameColumn(int columnId, int otherId, LogicalPlan scope) {
         if (columnId == otherId) {
             return true;
@@ -176,7 +121,8 @@ final class WindowCsePass implements Mutable {
             case ColumnExpression column -> column.getColumnId() == ((ColumnExpression) other).getColumnId()
                     && column.isCast() == ((ColumnExpression) other).isCast();
             case ConstantExpression constant -> constant.isSameValue((ConstantExpression) other);
-            case BindVariableExpression variable -> Chars.equals(variable.getName(), ((BindVariableExpression) other).getName());
+            case BindVariableExpression variable ->
+                    Chars.equals(variable.getName(), ((BindVariableExpression) other).getName());
             case TypeExpression _ -> true;
             case FunctionExpression call -> isSameCall(call, (FunctionExpression) other);
             default -> false;
@@ -185,10 +131,10 @@ final class WindowCsePass implements Mutable {
 
     private static boolean isSameLiveViewDescription(LiveViewWindowDescription description, LiveViewWindowDescription other) {
         return description == null ? other == null : other != null
-                && description.getCanonicalWindowName().equals(other.getCanonicalWindowName())
-                && description.getOrderSignature().equals(other.getOrderSignature())
-                && description.getPartitionSignature().equals(other.getPartitionSignature())
-                && description.isAnchored() == other.isAnchored();
+                                                     && description.getCanonicalWindowName().equals(other.getCanonicalWindowName())
+                                                     && description.getOrderSignature().equals(other.getOrderSignature())
+                                                     && description.getPartitionSignature().equals(other.getPartitionSignature())
+                                                     && description.isAnchored() == other.isAnchored();
     }
 
     private static boolean isSameSpec(WindowSpec spec, WindowSpec other, LogicalPlan scope) {
@@ -253,7 +199,7 @@ final class WindowCsePass implements Mutable {
     private int consumerCount(int columnId) {
         for (int i = ancestors.size() - 1; i >= 0; i--) {
             final LogicalPlan consumer = ancestors.getQuick(i);
-            if (consumer instanceof ProjectPlan || consumer instanceof AggregatePlan && consumer.getType() == LogicalPlan.Type.AGGREGATE) {
+            if (consumer instanceof ProjectPlan || consumer instanceof AggregatePlan) {
                 return ancestors.size() - i;
             }
             final int index = consumer.getOutput().getColumnIndexById(columnId);
@@ -302,14 +248,10 @@ final class WindowCsePass implements Mutable {
             for (int k = ancestors.size() - consumerCount, n = ancestors.size(); k < n; k++) {
                 redirectReads(ancestors.getQuick(k), columnId, equalId);
             }
-            final WindowSpec spec = window.getSpecs().getQuick(i);
             window.getFunctions().remove(i);
             window.getSpecs().remove(i);
             window.getFunctionColumnIds().removeIndex(i);
             removeColumn(window.getOutput(), columnId);
-            for (int k = 0, n = spec.getOrderByColumnIds().size(); k < n; k++) {
-                removeUnreadDefinition(window, spec.getOrderByColumnIds().getQuick(k));
-            }
             i--;
         }
         if (window.getFunctions().size() == 0 && ancestors.size() > 0) {
@@ -341,7 +283,7 @@ final class WindowCsePass implements Mutable {
                     expressions.setQuick(i, redirectReads(expressions.getQuick(i), project, columnId, replacementId));
                 }
             }
-            case AggregatePlan aggregate -> {
+            case GroupingPlan aggregate -> {
                 final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     keys.setQuick(i, redirectReads(keys.getQuick(i), aggregate, columnId, replacementId));
@@ -350,7 +292,9 @@ final class WindowCsePass implements Mutable {
                 for (int i = 0, n = calls.size(); i < n; i++) {
                     calls.setQuick(i, (FunctionExpression) redirectReads(calls.getQuick(i), aggregate, columnId, replacementId));
                 }
-                replaceColumn(aggregate.getSharedInputIds(), columnId, replacementId);
+                if (aggregate instanceof AggregatePlan shared) {
+                    replaceColumn(shared.getSharedInputIds(), columnId, replacementId);
+                }
             }
             case WindowPlan window -> {
                 for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
@@ -386,60 +330,7 @@ final class WindowCsePass implements Mutable {
             final int id = input.getColumnId(i);
             renaming.getExpressions().add(columns.next().of(id == columnId ? replacementId : id, input.getColumnType(i), consumer.getPosition()));
         }
-        return functionBinder.remapColumns(expression, renaming);
-    }
-
-    /**
-     * Drops a column a merged call's specification computed for itself, when nothing else reads it,
-     * together with the projection that only added it.
-     */
-    private void removeUnreadDefinition(WindowPlan window, int columnId) {
-        final int consumerCount = consumerCount(columnId);
-        if (consumerCount < 0 || ancestors.getQuick(ancestors.size() - consumerCount).getOutput().getColumnIndexById(columnId) >= 0) {
-            return;
-        }
-        for (int k = ancestors.size() - consumerCount, n = ancestors.size(); k < n; k++) {
-            if (isReadBy(ancestors.getQuick(k), columnId)) {
-                return;
-            }
-        }
-        LogicalPlan parent = window;
-        LogicalPlan plan = window;
-        while (!(plan instanceof ProjectPlan project) || project.getInput().getOutput().getColumnIndexById(columnId) >= 0) {
-            if (!(plan instanceof ProjectPlan || plan instanceof WindowPlan) || isReadBy(plan, columnId)) {
-                return;
-            }
-            parent = plan;
-            plan = plan.inputAt(0);
-        }
-        final int index = project.getOutput().getColumnIndexById(columnId);
-        if (index < 0) {
-            return;
-        }
-        project.getExpressions().remove(index);
-        project.getOutput().remove(index);
-        for (int k = ancestors.size() - consumerCount + 1, n = ancestors.size(); k < n; k++) {
-            removeColumn(ancestors.getQuick(k).getOutput(), columnId);
-        }
-        for (LogicalPlan pass = window; pass != project; pass = pass.inputAt(0)) {
-            if (pass instanceof ProjectPlan passing) {
-                final int passIndex = passing.getOutput().getColumnIndexById(columnId);
-                if (passIndex >= 0) {
-                    passing.getExpressions().remove(passIndex);
-                    passing.getOutput().remove(passIndex);
-                }
-            } else {
-                removeColumn(pass.getOutput(), columnId);
-            }
-        }
-        if (isIdentity(project)) {
-            parent.replaceInput(0, project.getInput());
-        }
-    }
-
-    WindowCsePass of(FunctionBinder functionBinder) {
-        this.functionBinder = functionBinder;
-        return this;
+        return context.getRewriter().remapColumns(expression, renaming);
     }
 
     void mergeWindowCalls(LogicalPlan root) {

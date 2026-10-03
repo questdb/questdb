@@ -106,6 +106,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     protected abstract String name();
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,

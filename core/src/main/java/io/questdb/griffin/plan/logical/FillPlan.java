@@ -140,11 +140,6 @@ public final class FillPlan extends UnaryPlan {
         return values;
     }
 
-    @Override
-    public Type getType() {
-        return Type.FILL;
-    }
-
     public FillPlan of(LogicalPlan input, int position) {
         configure(input, position);
         getOutput().copyFrom(input.getOutput());

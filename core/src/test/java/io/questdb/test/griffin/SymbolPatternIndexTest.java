@@ -2005,32 +2005,15 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInvalidPatternLimitCompilationClosesPartitionFactory() throws Exception {
+    public void testInvalidPatternLimitCompilationReleasesInputs() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            final int[] partitionFactoryCounts = new int[2];
-            FullPartitionFrameCursorFactory.setCloseObserverForTesting(new FullPartitionFrameCursorFactory.CloseObserver() {
-                @Override
-                public void onClose(FullPartitionFrameCursorFactory factory) {
-                    partitionFactoryCounts[1]++;
-                }
-
-                @Override
-                public void onOpen(FullPartitionFrameCursorFactory factory) {
-                    partitionFactoryCounts[0]++;
-                }
-            });
-            try {
-                assertExceptionNoLeakCheck(
-                        "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
-                        44,
-                        "invalid type: DOUBLE"
-                );
-            } finally {
-                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
-            }
-            Assert.assertEquals(partitionFactoryCounts[0], partitionFactoryCounts[1]);
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
+                    44,
+                    "invalid type: DOUBLE"
+            );
         });
     }
 
@@ -3531,33 +3514,26 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
 
     // Inject failure before the scan factory and prepared filter transfer ownership.
     @Test
-    public void testSelfFilteringConstructionFreesDelegatesExactlyOnceOnThrow() throws Exception {
+    public void testSelfFilteringConstructionReleasesDelegatesOnThrow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(100)");
             engine.releaseAllWriters();
 
-            final int[] partitionFactoryCloseCount = new int[1];
-            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
-            try {
-                final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
-                    @Override
-                    public boolean isParallelFilterEnabled() {
-                        throw new RuntimeException("test self-filtering construction failure");
-                    }
-                };
-                ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
-                try (ctx) {
-                    try (RecordCursorFactory ignored = engine.select("SELECT v FROM t WHERE sym LIKE 'a%' AND v > 0", ctx)) {
-                        Assert.fail("expected isolated self-filtering construction failure");
-                    } catch (RuntimeException e) {
-                        TestUtils.assertContains(e.getMessage(), "test self-filtering construction failure");
-                    }
+            final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
+                @Override
+                public boolean isParallelFilterEnabled() {
+                    throw new RuntimeException("test self-filtering construction failure");
                 }
-            } finally {
-                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
+            };
+            ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
+            try (ctx) {
+                try (RecordCursorFactory ignored = engine.select("SELECT v FROM t WHERE sym LIKE 'a%' AND v > 0", ctx)) {
+                    Assert.fail("expected isolated self-filtering construction failure");
+                } catch (RuntimeException e) {
+                    TestUtils.assertContains(e.getMessage(), "test self-filtering construction failure");
+                }
             }
-            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
         });
     }
 

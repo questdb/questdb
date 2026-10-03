@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -155,6 +156,11 @@ public class TestFaultFunctionFactory implements FunctionFactory {
     // Counts donations from functions whose init succeeded under the current init-failure arm.
     public static int offersFromInitProbe() {
         return OFFER_COUNT.get();
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override

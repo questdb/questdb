@@ -86,6 +86,11 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
      * @return the signature string ("max(N)")
      */
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

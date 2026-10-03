@@ -24,15 +24,16 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.DeferredErrorExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
@@ -44,6 +45,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.UnaryPlan;
@@ -66,6 +68,7 @@ import io.questdb.std.ObjectPool;
 final class ColumnPruningPass implements Mutable {
     private final AggregateInputOrderPass aggregateInputOrder;
     private final ObjList<LogicalPlan> alignedPath = new ObjList<>();
+    private final OptimiserContext context;
     private final ObjList<BoundExpression> expressionScratch;
     private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ObjectPool<ProjectPlan> narrowingProjects;
@@ -75,10 +78,10 @@ final class ColumnPruningPass implements Mutable {
     private final OutputSchema schemaScratch;
     private final ObjList<LogicalPlan> sharedSetOperations = new ObjList<>();
     private final IntList updateTypesScratch;
-    private FunctionBinder functionBinder;
     private LogicalPlan joinInputPlan;
 
     ColumnPruningPass(
+            OptimiserContext context,
             AggregateInputOrderPass aggregateInputOrder,
             ObjList<BoundExpression> expressionScratch,
             ObjectPool<ColumnExpression> narrowingColumns,
@@ -89,6 +92,7 @@ final class ColumnPruningPass implements Mutable {
             ObjList<LogicalPlan> pruneAncestors,
             OutputSchema schemaScratch
     ) {
+        this.context = context;
         this.aggregateInputOrder = aggregateInputOrder;
         this.expressionScratch = expressionScratch;
         this.narrowingColumns = narrowingColumns;
@@ -102,7 +106,6 @@ final class ColumnPruningPass implements Mutable {
 
     @Override
     public void clear() {
-        functionBinder = null;
         joinInputPlan = null;
         alignedPath.clear();
         sharedSetOperations.clear();
@@ -141,11 +144,16 @@ final class ColumnPruningPass implements Mutable {
         }
     }
 
+    private static boolean isFailedAggregate(BoundExpression key) {
+        return key instanceof DeferredErrorExpression deferred && deferred.isAggregate();
+    }
+
+
     private static boolean isUnionAllChain(LogicalPlan plan) {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             final LogicalPlan input = plan.inputAt(i);
             if (input instanceof SetOperationPlan operation
-                    && (operation.getOperation() != QueryModel.SET_OPERATION_UNION_ALL || !isUnionAllChain(operation))) {
+                    && (operation.getOperation() != SetOperationKind.UNION_ALL || !isUnionAllChain(operation))) {
                 return false;
             }
         }
@@ -157,10 +165,9 @@ final class ColumnPruningPass implements Mutable {
         final LogicalPlan top = windowJoin != null ? windowJoin.getMaster() : project.getInput();
         LogicalPlan input = top;
         boolean hasWindow = false;
-        while (input.getType() == LogicalPlan.Type.FILTER || input.getType() == LogicalPlan.Type.SORT
-                || input.getType() == LogicalPlan.Type.LIMIT || input.getType() == LogicalPlan.Type.LATEST_BY
-                || input.getType() == LogicalPlan.Type.WINDOW) {
-            hasWindow |= input.getType() == LogicalPlan.Type.WINDOW;
+        while (input instanceof FilterPlan || input instanceof SortPlan || input instanceof LimitPlan
+                || input instanceof LatestByPlan || input instanceof WindowPlan) {
+            hasWindow |= input instanceof WindowPlan;
             input = input.inputAt(0);
         }
         final IntList sourceIndexes;
@@ -226,7 +233,7 @@ final class ColumnPruningPass implements Mutable {
             final LogicalPlan node = alignedPath.getQuick(k);
             final OutputSchema nodeOutput = node.getOutput();
             final int timestampId = nodeOutput.getTimestampColumnId();
-            if (node.getType() == LogicalPlan.Type.WINDOW) {
+            if (node instanceof WindowPlan) {
                 // Window outputs follow its input columns, then its function columns.
                 schemaScratch.copyFrom(nodeOutput);
                 nodeOutput.clear();
@@ -288,8 +295,8 @@ final class ColumnPruningPass implements Mutable {
     private boolean isJoinSource() {
         for (int i = pruneAncestors.size() - 2; i >= 0; i--) {
             final LogicalPlan ancestor = pruneAncestors.getQuick(i);
-            if (ancestor.getType() != LogicalPlan.Type.FILTER) {
-                return ancestor.getType() == LogicalPlan.Type.JOIN;
+            if (!(ancestor instanceof FilterPlan)) {
+                return ancestor instanceof JoinPlan;
             }
         }
         return false;
@@ -301,7 +308,7 @@ final class ColumnPruningPass implements Mutable {
             return false;
         }
         final int depth = pruneAncestors.size();
-        return source == joinInputPlan || depth > 1 && pruneAncestors.getQuick(depth - 2).getType() == LogicalPlan.Type.FILTER;
+        return source == joinInputPlan || depth > 1 && pruneAncestors.getQuick(depth - 2) instanceof FilterPlan;
     }
 
     private void permuteProjection(ProjectPlan project) {
@@ -349,31 +356,29 @@ final class ColumnPruningPass implements Mutable {
                 }
                 return;
             }
+            case SampleByPlan sample -> {
+                requiredColumnIds.add(sample.getTimestampColumnId());
+                pruneGroupingInput(sample);
+                return;
+            }
             case AggregatePlan aggregate -> {
                 if (aggregate.getSharedSource() != null) {
                     LogicalPlan input = aggregate.getInput();
                     while (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
                         input = input.inputAt(0);
                     }
-                    if (input.getType() == LogicalPlan.Type.SET_OPERATION) {
+                    if (input instanceof SetOperationPlan) {
                         sharedSetOperations.add(input);
                     }
                 }
-                if (aggregate instanceof SampleByPlan sample) {
-                    requiredColumnIds.add(sample.getTimestampColumnId());
-                } else {
-                    for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
-                        requiredColumnIds.add(aggregate.getOutput().getColumnId(i));
-                    }
-                    final int previousCount = aggregate.getAggregates().size();
-                    pruneOutput(aggregate);
-                    if (aggregate.getAggregates().size() < previousCount) {
-                        aggregateInputOrder.removeInputOrder(aggregate);
-                    }
-                    removeOrderedAggregateInputProjection(aggregate);
+                requireGroupingKeys(aggregate);
+                final int previousCount = aggregate.getAggregates().size();
+                pruneOutput(aggregate);
+                if (aggregate.getAggregates().size() < previousCount) {
+                    aggregateInputOrder.removeInputOrder(aggregate);
                 }
-                if (plan.getType() == LogicalPlan.Type.AGGREGATE
-                        && aggregate.getGroupingExpressions().size() == 0 && aggregate.getAggregates().size() == 1) {
+                removeOrderedAggregateInputProjection(aggregate);
+                if (aggregate.getGroupingExpressions().size() == 0 && aggregate.getAggregates().size() == 1) {
                     final FunctionExpression call = aggregate.getAggregates().getQuick(0);
                     if (call.getArgumentCount() == 0 && SqlKeywords.isCountKeyword(call.getName())) {
                         if (isCountInputMaterialized(aggregate.getInput())) {
@@ -386,15 +391,7 @@ final class ColumnPruningPass implements Mutable {
                         }
                     }
                 }
-                for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
-                    collectRequiredColumns(aggregate.getGroupingExpressions().getQuick(i));
-                }
-                for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
-                    collectRequiredColumns(aggregate.getAggregates().getQuick(i));
-                }
-                // Hidden keys still define groups; a keyless aggregate still returns
-                // one row when every aggregate value has been pruned.
-                pruneColumns(aggregate.getInput());
+                pruneGroupingInput(aggregate);
                 return;
             }
             case WindowPlan window -> {
@@ -422,8 +419,7 @@ final class ColumnPruningPass implements Mutable {
                 final ObjList<JoinInput> ordered = join.getOrderedInputs();
                 for (int i = 0, n = ordered.size(); i < n; i++) {
                     final JoinInput step = ordered.getQuick(i);
-                    if (step.getJoinType() == QueryModel.JOIN_ASOF || step.getJoinType() == QueryModel.JOIN_LT
-                            || step.getJoinType() == QueryModel.JOIN_SPLICE) {
+                    if (step.getJoinType().isTemporal()) {
                         requiredColumnIds.add(ordered.getQuick(0).getInput().getOutput().getTimestampColumnId());
                         requiredColumnIds.add(step.getInput().getOutput().getTimestampColumnId());
                     }
@@ -456,7 +452,7 @@ final class ColumnPruningPass implements Mutable {
                     }
                     if (i == 0) {
                         joinTimestampId = input.getTimestampColumnId();
-                    } else if (LogicalPlans.isMasterNullingJoin(step.getJoinType()) && !join.hasExplicitTimestamp()) {
+                    } else if (step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp()) {
                         joinTimestampId = -1;
                     }
                     final OutputSchema prefix = step.getOutput();
@@ -503,7 +499,7 @@ final class ColumnPruningPass implements Mutable {
                 return;
             }
             case SetOperationPlan operation -> {
-                if (operation.getOperation() == QueryModel.SET_OPERATION_UNION_ALL && sharedSetOperations.indexOf(operation) < 0
+                if (operation.getOperation() == SetOperationKind.UNION_ALL && sharedSetOperations.indexOf(operation) < 0
                         && isUnionAllChain(operation)) {
                     pruneUnionAll(operation);
                 }
@@ -561,8 +557,8 @@ final class ColumnPruningPass implements Mutable {
             case FilterPlan filter -> collectRequiredColumns(filter.getPredicate());
             case LatestByPlan latest -> {
                 final LogicalPlan input = latest.getInput();
-                final boolean isNativeScan = input.getType() == LogicalPlan.Type.SCAN
-                        || input.getType() == LogicalPlan.Type.FILTER && input.inputAt(0).getType() == LogicalPlan.Type.SCAN;
+                final boolean isNativeScan = input instanceof ScanPlan
+                        || input instanceof FilterPlan filter && filter.getInput() instanceof ScanPlan;
                 if (latest.getTimestampColumnId() >= 0 && !isNativeScan) {
                     requiredColumnIds.add(latest.getTimestampColumnId());
                 }
@@ -584,8 +580,7 @@ final class ColumnPruningPass implements Mutable {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     requiredColumnIds.add(keys.getQuick(i));
                 }
-                if (plan.inputAt(0).getType() == LogicalPlan.Type.LATEST_BY
-                        || plan.inputAt(0).getType() == LogicalPlan.Type.FILTER) {
+                if (plan.inputAt(0) instanceof LatestByPlan || plan.inputAt(0) instanceof FilterPlan) {
                     final LogicalPlan input = plan.inputAt(0);
                     final OutputSchema output = input.getOutput();
                     final ProjectPlan projection = narrowingProjects.next().of(input, plan.getPosition());
@@ -660,6 +655,18 @@ final class ColumnPruningPass implements Mutable {
         }
     }
 
+    private void pruneGroupingInput(GroupingPlan grouping) {
+        for (int i = 0, n = grouping.getGroupingExpressions().size(); i < n; i++) {
+            collectRequiredColumns(grouping.getGroupingExpressions().getQuick(i));
+        }
+        for (int i = 0, n = grouping.getAggregates().size(); i < n; i++) {
+            collectRequiredColumns(grouping.getAggregates().getQuick(i));
+        }
+        // Hidden keys still define groups; a keyless aggregate still returns
+        // one row when every aggregate value has been pruned.
+        pruneColumns(grouping.getInput());
+    }
+
     private void pruneOutput(LogicalPlan plan) {
         final OutputSchema output = plan.getOutput();
         schemaScratch.copyFrom(output);
@@ -677,9 +684,10 @@ final class ColumnPruningPass implements Mutable {
             updateTypesScratch.addAll(updateTypes);
             updateTypes.clear();
         }
-        final AggregatePlan aggregate = plan instanceof AggregatePlan aggregatePlan && plan.getType() == LogicalPlan.Type.AGGREGATE
-                ? aggregatePlan : null;
-        final int keyCount = aggregate == null ? 0 : aggregate.getGroupingExpressions().size();
+        final AggregatePlan aggregate = plan instanceof AggregatePlan aggregatePlan ? aggregatePlan : null;
+        final ObjList<BoundExpression> keys = aggregate == null ? null : aggregate.getGroupingExpressions();
+        final int keyCount = keys == null ? 0 : keys.size();
+        int keptKeyCount = 0;
         final ObjList<FunctionExpression> aggregates = aggregate == null ? null : aggregate.getAggregates();
         for (int i = 0, n = schemaScratch.getColumnCount(); i < n; i++) {
             if (requiredColumnIds.contains(schemaScratch.getColumnId(i))) {
@@ -693,8 +701,11 @@ final class ColumnPruningPass implements Mutable {
                 if (updateTypes != null) {
                     updateTypes.add(updateTypesScratch.getQuick(i));
                 }
+                if (keys != null && i < keyCount) {
+                    keys.setQuick(keptKeyCount++, keys.getQuick(i));
+                }
                 if (aggregates != null && i >= keyCount) {
-                    aggregates.setQuick(index - keyCount, aggregates.getQuick(i - keyCount));
+                    aggregates.setQuick(index - keptKeyCount, aggregates.getQuick(i - keyCount));
                 }
                 output.add(schemaScratch.getColumnId(i), schemaScratch.getColumnName(i), schemaScratch.getColumnType(i),
                         schemaScratch.getMetadata(i), schemaScratch.isVisible(i), schemaScratch.getColumnQualifier(i));
@@ -713,8 +724,11 @@ final class ColumnPruningPass implements Mutable {
             }
             expressions.setPos(output.getColumnCount());
         }
+        if (keys != null) {
+            keys.setPos(keptKeyCount);
+        }
         if (aggregates != null) {
-            while (aggregates.size() > output.getColumnCount() - keyCount) {
+            while (aggregates.size() > output.getColumnCount() - keptKeyCount) {
                 aggregates.popLast();
             }
         }
@@ -817,7 +831,7 @@ final class ColumnPruningPass implements Mutable {
         while (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
             input = input.inputAt(0);
         }
-        if (input.getType() == LogicalPlan.Type.LIMIT) {
+        if (input instanceof LimitPlan) {
             final LogicalPlan child = removeCountInputProjections(input.inputAt(0));
             input.replaceInput(0, child);
             input.getOutput().copyFrom(child.getOutput());
@@ -839,7 +853,7 @@ final class ColumnPruningPass implements Mutable {
             final LogicalPlan input = project.getInput();
             if (project.hasTimestampDeclaration() || !LogicalPlans.isColumnProjection(project)
                     || project.getExpressions().size() != input.getOutput().getColumnCount()
-                    || input.getType() != LogicalPlan.Type.SORT && input.getType() != LogicalPlan.Type.LIMIT) {
+                    || !(input instanceof SortPlan) && !(input instanceof LimitPlan)) {
                 return;
             }
             for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
@@ -851,18 +865,18 @@ final class ColumnPruningPass implements Mutable {
             }
             for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
                 aggregate.getGroupingExpressions().setQuick(i,
-                        functionBinder.remapColumns(aggregate.getGroupingExpressions().getQuick(i), project));
+                        context.getRewriter().remapColumns(aggregate.getGroupingExpressions().getQuick(i), project));
             }
             for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
                 aggregate.getAggregates().setQuick(i,
-                        (FunctionExpression) functionBinder.remapColumns(aggregate.getAggregates().getQuick(i), project));
+                        (FunctionExpression) context.getRewriter().remapColumns(aggregate.getAggregates().getQuick(i), project));
             }
             if (boundary == null) {
                 aggregate.replaceInput(0, input);
             } else {
                 boundary.replaceInput(0, input);
                 candidate = aggregate.getInput();
-                while (candidate.getType() == LogicalPlan.Type.LIMIT) {
+                while (candidate instanceof LimitPlan) {
                     candidate.getOutput().copyFrom(input.getOutput());
                     candidate = candidate.inputAt(0);
                 }
@@ -870,7 +884,9 @@ final class ColumnPruningPass implements Mutable {
         }
     }
 
-    /** Keeps out the nested window column a top-level window function has replaced in the window's output. */
+    /**
+     * Keeps out the nested window column a top-level window function has replaced in the window's output.
+     */
     private void removeReplacedWindowColumn(OutputSchema output, CharSequence name) {
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             if (Chars.equalsIgnoreCase(output.getColumnName(i), name) && schemaScratch.getColumnIndexById(output.getColumnId(i)) < 0) {
@@ -881,18 +897,36 @@ final class ColumnPruningPass implements Mutable {
     }
 
     /**
+     * Keys define the groups, so they stay. The column of an aggregate that failed to bind goes like any unread
+     * aggregate, except in a grouping none of whose columns is read, which keeps every column, so that code
+     * generation raises the error.
+     */
+    private void requireGroupingKeys(AggregatePlan aggregate) {
+        final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
+        final OutputSchema output = aggregate.getOutput();
+        boolean isRead = false;
+        for (int i = 0, n = output.getColumnCount(); i < n && !isRead; i++) {
+            isRead = requiredColumnIds.contains(output.getColumnId(i));
+        }
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (!isFailedAggregate(keys.getQuick(i)) || !isRead) {
+                requiredColumnIds.add(output.getColumnId(i));
+            }
+        }
+    }
+
+    /**
      * A grouping key stays in the aggregate output anyway; dropping its selection only adds a remapping.
      */
     private void retainGroupingKeys(ProjectPlan project) {
         final LogicalPlan input = LogicalPlans.skipFilters(project.getInput());
-        if (project != joinInputPlan || !(input instanceof AggregatePlan aggregate) || input.getType() != LogicalPlan.Type.AGGREGATE
-                || !LogicalPlans.isColumnProjection(project)) {
+        if (project != joinInputPlan || !(input instanceof AggregatePlan aggregate) || !LogicalPlans.isColumnProjection(project)) {
             return;
         }
         final int keyCount = aggregate.getGroupingExpressions().size();
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             final int index = aggregate.getOutput().getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
-            if (index >= 0 && index < keyCount) {
+            if (index >= 0 && index < keyCount && !isFailedAggregate(aggregate.getGroupingExpressions().getQuick(index))) {
                 requiredColumnIds.add(project.getOutput().getColumnId(i));
             }
         }
@@ -938,11 +972,6 @@ final class ColumnPruningPass implements Mutable {
             }
         }
         return isChanged;
-    }
-
-    ColumnPruningPass of(FunctionBinder functionBinder) {
-        this.functionBinder = functionBinder;
-        return this;
     }
 
     void prune(LogicalPlan root) {

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -55,8 +54,8 @@ public final class JoinInput implements Mutable {
     private LogicalPlan input;
     private boolean isDependent;
     private boolean isSubquery;
+    private JoinKind joinType;
     private BoundExpression keyFilter;
-    private int joinType = -1;
     private int markoutSequenceColumnId = -1;
     private int markoutTimestampColumnId = -1;
     private BoundExpression onResidual;
@@ -82,7 +81,7 @@ public final class JoinInput implements Mutable {
         isDependent = false;
         isSubquery = false;
         keyFilter = null;
-        joinType = -1;
+        joinType = null;
         markoutSequenceColumnId = -1;
         markoutTimestampColumnId = -1;
         onResidual = null;
@@ -107,25 +106,19 @@ public final class JoinInput implements Mutable {
         return input;
     }
 
-    public int getJoinType() {
+    public JoinKind getJoinType() {
         return joinType;
     }
 
-    /** Slave-only equality derived when two join keys share a master column. */
+    /**
+     * Slave-only equality derived when two join keys share a master column.
+     */
     public BoundExpression getKeyFilter() {
         return keyFilter;
     }
 
     public IntList getKeyPositions() {
         return keyPositions;
-    }
-
-    public IntList getMasterKeyColumnIds() {
-        return masterKeyColumnIds;
-    }
-
-    public ObjList<CharSequence> getMasterKeyNames() {
-        return masterKeyNames;
     }
 
     /**
@@ -137,6 +130,14 @@ public final class JoinInput implements Mutable {
 
     public int getMarkoutTimestampColumnId() {
         return markoutTimestampColumnId;
+    }
+
+    public IntList getMasterKeyColumnIds() {
+        return masterKeyColumnIds;
+    }
+
+    public ObjList<CharSequence> getMasterKeyNames() {
+        return masterKeyNames;
     }
 
     public BoundExpression getOnResidual() {
@@ -199,10 +200,10 @@ public final class JoinInput implements Mutable {
         return isSubquery;
     }
 
-    public JoinInput of(LogicalPlan input, int joinType, CharSequence bindingAlias, int position) {
+    public JoinInput of(LogicalPlan input, JoinKind joinType, CharSequence bindingAlias, int position) {
         this.input = Objects.requireNonNull(input);
         this.isSubquery = false;
-        this.joinType = joinType;
+        this.joinType = Objects.requireNonNull(joinType);
         this.bindingAlias = bindingAlias;
         this.position = position;
         this.unnest = null;
@@ -212,7 +213,7 @@ public final class JoinInput implements Mutable {
     public JoinInput ofUnnest(UnnestSpec unnest, CharSequence bindingAlias, int position) {
         this.input = null;
         this.isSubquery = false;
-        this.joinType = QueryModel.JOIN_UNNEST;
+        this.joinType = JoinKind.UNNEST;
         this.bindingAlias = bindingAlias;
         this.position = position;
         this.unnest = Objects.requireNonNull(unnest);
@@ -231,8 +232,8 @@ public final class JoinInput implements Mutable {
         this.input = Objects.requireNonNull(input);
     }
 
-    public void setJoinType(int joinType) {
-        this.joinType = joinType;
+    public void setJoinType(JoinKind joinType) {
+        this.joinType = Objects.requireNonNull(joinType);
     }
 
     public void setKeyFilter(BoundExpression keyFilter) {

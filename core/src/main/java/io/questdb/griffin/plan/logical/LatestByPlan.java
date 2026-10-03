@@ -49,11 +49,6 @@ public final class LatestByPlan extends UnaryPlan {
         return timestampColumnId;
     }
 
-    @Override
-    public Type getType() {
-        return Type.LATEST_BY;
-    }
-
     public boolean isTimestampOrderInherited() {
         return isTimestampOrderInherited;
     }

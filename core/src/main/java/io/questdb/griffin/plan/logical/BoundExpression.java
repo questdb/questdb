@@ -31,11 +31,17 @@ import io.questdb.std.Mutable;
  * A compilation-owned expression description. Populate before publication and do
  * not change it until pool reset; rewrites acquire a replacement expression.
  */
-public abstract class BoundExpression implements Mutable {
+public abstract sealed class BoundExpression implements Mutable
+        permits BindVariableExpression, ColumnExpression, ConstantExpression, CursorExpression, DeferredErrorExpression, FunctionExpression, OuterColumnExpression, TypeExpression {
     public static final int CONSTANT = 1;
     public static final int NON_DETERMINISTIC = 4;
     public static final int RUNTIME_CONSTANT = 2;
     public static final int STABLE_WITHIN_EXECUTION = 8;
+    /**
+     * A call without {@link #STABLE_WITHIN_EXECUTION} whose value is stable within an execution whenever every
+     * sub-query it reads is; {@code LogicalPlans.isStableWithinExecution} resolves it.
+     */
+    public static final int STABLE_WITH_SUBQUERIES = 16;
     private int dataType = ColumnType.UNDEFINED;
     private int functionFlags;
     private int position = -1;

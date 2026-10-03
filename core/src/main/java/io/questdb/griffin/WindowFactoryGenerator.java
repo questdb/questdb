@@ -57,12 +57,13 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapSpec;
 import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
@@ -76,55 +77,39 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
-
 /**
  * Builds window-function factories: the cached and streaming window operators, their
  * input ordering and the fusion of a keep-flag filter into a cached window.
  */
 final class WindowFactoryGenerator {
+    // Read-only: WindowMapSpec.of copies directions, and only an ordered window mutates or borrows its own list.
+    private static final IntList NO_DIRECTIONS = new IntList(0);
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
+    private final FunctionFactoryCache functionFactoryCache;
     private final RecordComparatorCompiler recordComparatorCompiler;
 
     WindowFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
+            FunctionFactoryCache functionFactoryCache,
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
             RecordComparatorCompiler recordComparatorCompiler
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
+        this.functionFactoryCache = functionFactoryCache;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
         this.recordComparatorCompiler = recordComparatorCompiler;
     }
 
-    // Borrows the factory. Callers must pass a bare column predicate. The internal marker guarantees
-    // the outer projection drops the keep flag: fusion skips its boolean write, so a user-visible
-    // row-selecting boolean must retain the ordinary window and filter path.
-    static boolean tryFuseKeepFlagFilter(RecordCursorFactory factory, int columnIndex) {
-        if (!(factory instanceof CachedWindowLightRecordCursorFactory windowFactory)) {
-            return false;
-        }
-        final WindowFunction fn = windowFactory.getSingleRowSelectingFunction();
-        if (fn == null) {
-            return false;
-        }
-        final RecordMetadata metadata = windowFactory.getMetadata();
-        if (columnIndex < 0 || columnIndex != fn.getColumnIndex() || metadata.getColumnType(columnIndex) != ColumnType.BOOLEAN) {
-            return false;
-        }
-        windowFactory.enableRowSelecting(fn);
-        return true;
-    }
-
     private static boolean hasNestedUnionAll(LogicalPlan plan) {
         return LogicalPlans.skipProjectsAndFilters(plan) instanceof SetOperationPlan operation
-                && operation.getOperation() == QueryModel.SET_OPERATION_UNION_ALL;
+                && operation.getOperation() == SetOperationKind.UNION_ALL;
     }
 
     private static boolean isModelOrderPrefix(WindowSpec spec, @Nullable SortPlan modelOrder) {
@@ -139,34 +124,6 @@ final class WindowFactoryGenerator {
             }
         }
         return true;
-    }
-
-    /**
-     * A projection the window factory can emit directly: plain column references that select every
-     * window output once, at unchanged types.
-     */
-    static boolean isWindowOutputProjection(ProjectPlan project, WindowPlan window) {
-        if (project.hasTimestampDeclaration()) {
-            return false;
-        }
-        final OutputSchema input = window.getOutput();
-        int windowCount = 0;
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column)) {
-                return false;
-            }
-            final int index = input.getColumnIndexById(column.getColumnId());
-            if (index < 0 || column.isCast() || !column.isDirectReference() || input.getColumnType(index) != project.getOutput().getColumnType(i)) {
-                return false;
-            }
-            if (window.getFunctionColumnIds().indexOf(column.getColumnId(), 0, window.getFunctionColumnIds().size()) >= 0) {
-                if (SqlCodeGenerator.isColumnSelectedBefore(project, i, column.getColumnId())) {
-                    return false;
-                }
-                windowCount++;
-            }
-        }
-        return windowCount == window.getFunctionColumnIds().size();
     }
 
     /**
@@ -212,46 +169,60 @@ final class WindowFactoryGenerator {
         }
     }
 
-    int generateWindow(GenerationFrame frame, WindowPlan window, ProjectPlan projection, int requiredOrderColumnId, int requiredScanDirection,
-                               SortPlan orderAdvice, boolean isModelOrder, int orderByMnemonic,
-                               SqlExecutionContext executionContext) throws SqlException {
-        int orderId = -1;
-        int direction = RecordCursorFactory.SCAN_DIRECTION_OTHER;
-        // Order advice, or else a uniform window order, lets a nested UNION ALL merge its branches in that order.
-        if (requiredOrderColumnId >= 0) {
-            if (window.getInput().getOutput().getColumnIndexById(requiredOrderColumnId) >= 0) {
-                orderId = requiredOrderColumnId;
-                direction = requiredScanDirection;
-            }
-        } else if (hasNestedUnionAll(window.getInput())) {
-            final ObjList<WindowSpec> specs = window.getSpecs();
-            for (int i = 0, n = specs.size(); i < n; i++) {
-                final WindowSpec spec = specs.getQuick(i);
-                if (spec.getOrderByColumnIds().size() != 1) {
-                    orderId = -1;
-                    break;
-                }
-                final int id = spec.getOrderByColumnIds().getQuick(0);
-                final int specDirection = spec.getOrderByDirections().getQuick(0) == QueryModel.ORDER_DIRECTION_DESCENDING
-                        ? RecordCursorFactory.SCAN_DIRECTION_BACKWARD : RecordCursorFactory.SCAN_DIRECTION_FORWARD;
-                if (i > 0 && (id != orderId || specDirection != direction)) {
-                    orderId = -1;
-                    break;
-                }
-                orderId = id;
-                direction = specDirection;
+    private boolean hasGroupByWindowFunction(GenerationFrame frame, WindowPlan window) {
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            if (functionFactoryCache.isGroupBy(window.getFunctions().getQuick(i).getName())) {
+                return true;
             }
         }
-        final int inputMnemonic = isModelOrder || orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT || hasGroupByWindowFunction(frame, window)
-                ? OrderByMnemonic.ORDER_BY_INVARIANT : OrderByMnemonic.ORDER_BY_REQUIRED;
-        final int inputSlot = codeGenerator.generate(frame, window.getInput(), executionContext, orderId,
-                orderId < 0 ? RecordCursorFactory.SCAN_DIRECTION_OTHER : direction,
-                SqlCodeGenerator.hasColumns(window.getInput().getOutput(), orderAdvice) && !orderAdvice.hasAliasedKey() ? orderAdvice : null, null, inputMnemonic);
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.detach(inputSlot);
-        frame.resources.own(slot, generateWindow(frame, window, projection, base, isModelOrder ? orderAdvice : null,
-                executionContext));
-        return slot;
+        return false;
+    }
+
+    /**
+     * A projection the window factory can emit directly: plain column references that select every
+     * window output once, at unchanged types.
+     */
+    static boolean isWindowOutputProjection(ProjectPlan project, WindowPlan window) {
+        if (project.hasTimestampDeclaration()) {
+            return false;
+        }
+        final OutputSchema input = window.getOutput();
+        int windowCount = 0;
+        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column)) {
+                return false;
+            }
+            final int index = input.getColumnIndexById(column.getColumnId());
+            if (index < 0 || column.isCast() || !column.isDirectReference() || input.getColumnType(index) != project.getOutput().getColumnType(i)) {
+                return false;
+            }
+            if (window.getFunctionColumnIds().indexOf(column.getColumnId(), 0, window.getFunctionColumnIds().size()) >= 0) {
+                if (SqlCodeGenerator.isColumnSelectedBefore(project, i, column.getColumnId())) {
+                    return false;
+                }
+                windowCount++;
+            }
+        }
+        return windowCount == window.getFunctionColumnIds().size();
+    }
+
+    // Borrows the factory. Callers must pass a bare column predicate. The internal marker guarantees
+    // the outer projection drops the keep flag: fusion skips its boolean write, so a user-visible
+    // row-selecting boolean must retain the ordinary window and filter path.
+    static boolean tryFuseKeepFlagFilter(RecordCursorFactory factory, int columnIndex) {
+        if (!(factory instanceof CachedWindowLightRecordCursorFactory windowFactory)) {
+            return false;
+        }
+        final WindowFunction fn = windowFactory.getSingleRowSelectingFunction();
+        if (fn == null) {
+            return false;
+        }
+        final RecordMetadata metadata = windowFactory.getMetadata();
+        if (columnIndex < 0 || columnIndex != fn.getColumnIndex() || metadata.getColumnType(columnIndex) != ColumnType.BOOLEAN) {
+            return false;
+        }
+        windowFactory.enableRowSelecting(fn);
+        return true;
     }
 
     /**
@@ -429,13 +400,55 @@ final class WindowFactoryGenerator {
         }
     }
 
+    int generateWindow(GenerationFrame frame, WindowPlan window, ProjectPlan projection, int requiredOrderColumnId, int requiredScanDirection,
+                       SortPlan orderAdvice, boolean isModelOrder, int orderByMnemonic,
+                       SqlExecutionContext executionContext) throws SqlException {
+        int orderId = -1;
+        int direction = RecordCursorFactory.SCAN_DIRECTION_OTHER;
+        // Order advice, or else a uniform window order, lets a nested UNION ALL merge its branches in that order.
+        if (requiredOrderColumnId >= 0) {
+            if (window.getInput().getOutput().getColumnIndexById(requiredOrderColumnId) >= 0) {
+                orderId = requiredOrderColumnId;
+                direction = requiredScanDirection;
+            }
+        } else if (hasNestedUnionAll(window.getInput())) {
+            final ObjList<WindowSpec> specs = window.getSpecs();
+            for (int i = 0, n = specs.size(); i < n; i++) {
+                final WindowSpec spec = specs.getQuick(i);
+                if (spec.getOrderByColumnIds().size() != 1) {
+                    orderId = -1;
+                    break;
+                }
+                final int id = spec.getOrderByColumnIds().getQuick(0);
+                final int specDirection = spec.getOrderByDirections().getQuick(0) == SortDirection.DESCENDING
+                        ? RecordCursorFactory.SCAN_DIRECTION_BACKWARD : RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+                if (i > 0 && (id != orderId || specDirection != direction)) {
+                    orderId = -1;
+                    break;
+                }
+                orderId = id;
+                direction = specDirection;
+            }
+        }
+        final int inputMnemonic = isModelOrder || orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT || hasGroupByWindowFunction(frame, window)
+                ? OrderByMnemonic.ORDER_BY_INVARIANT : OrderByMnemonic.ORDER_BY_REQUIRED;
+        final int inputSlot = codeGenerator.generate(frame, window.getInput(), executionContext, orderId,
+                orderId < 0 ? RecordCursorFactory.SCAN_DIRECTION_OTHER : direction,
+                SqlCodeGenerator.hasColumns(window.getInput().getOutput(), orderAdvice) && !orderAdvice.hasAliasedKey() ? orderAdvice : null, null, inputMnemonic);
+        final int slot = frame.resources.reserve();
+        final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
+        frame.resources.own(slot, generateWindow(frame, window, projection, base, isModelOrder ? orderAdvice : null,
+                executionContext));
+        return slot;
+    }
+
     /**
      * Consumes the input and builds window functions against its final record layout. A column-only
      * projection, when given, orders the output; the cached chain keeps unselected inputs after it.
      */
     RecordCursorFactory generateWindow(GenerationFrame frame, WindowPlan plan, @Nullable ProjectPlan projection, RecordCursorFactory base,
                                        @Nullable SortPlan modelOrder, SqlExecutionContext executionContext) throws SqlException {
-        final FunctionBinder binder = frame.functionBinder;
+        final FunctionInstantiator instantiator = frame.functionInstantiator;
         final OutputSchema input = plan.getInput().getOutput();
         if (projection != null && executionContext.isLiveViewCompile()) {
             base = renameWindowInput(base, input, projection);
@@ -547,13 +560,16 @@ final class WindowFactoryGenerator {
                 for (int i = 0, n = plan.getFunctions().size(); i < n; i++) {
                     final WindowSpec spec = plan.getSpecs().getQuick(i);
                     final IntList order = new IntList(spec.getOrderByColumnIds().size());
+                    final IntList directions = spec.getOrderByColumnIds().size() == 0 ? NO_DIRECTIONS : new IntList(spec.getOrderByColumnIds().size());
                     final ObjList<CharSequence> orderNames = new ObjList<>(spec.getOrderByNames().size());
                     for (int k = 0; k < spec.getOrderByColumnIds().size(); k++) {
                         final int index = bindSchema.getColumnIndexById(spec.getOrderByColumnIds().getQuick(k));
                         if (index < 0) {
                             throw new IllegalStateException("bound window order input has changed");
                         }
-                        order.add(spec.getOrderByDirections().getQuick(k) == ORDER_ASC ? index + 1 : -index - 1);
+                        final SortDirection direction = spec.getOrderByDirections().getQuick(k);
+                        order.add(direction == SortDirection.ASCENDING ? index + 1 : -index - 1);
+                        directions.add(SqlCodeGenerator.queryModelDirection(direction));
                         orderNames.add(Chars.toString(spec.getOrderByNames().getQuick(k)));
                     }
                     final boolean isOrderDismissed = base.followedOrderByAdvice() && isModelOrderPrefix(spec, modelOrder)
@@ -566,7 +582,7 @@ final class WindowFactoryGenerator {
                     if (spec.getPartitionBy().size() > 0) {
                         partitionFunctions = new ObjList<>(spec.getPartitionBy().size());
                         for (int k = 0; k < spec.getPartitionBy().size(); k++) {
-                            final Function function = binder.instantiate(spec.getPartitionBy().getQuick(k), bindSchema, bindMetadata, executionContext);
+                            final Function function = instantiator.instantiate(spec.getPartitionBy().getQuick(k), bindSchema, bindMetadata, executionContext);
                             partitionFunctions.add(function);
                             // A live-view refresh reads WAL-segment-local symbol keys, so it partitions by the resolved string.
                             if (isLiveView && ColumnType.isSymbol(function.getType())) {
@@ -598,10 +614,10 @@ final class WindowFactoryGenerator {
                                 spec.getRowsHi(), spec.getRowsHiExprTimeUnit(), spec.getRowsHiExprPos(), spec.getRowsHiKindPos(),
                                 spec.getExclusionKind(), spec.getExclusionKindPos(), bindMetadata.getTimestampIndex(),
                                 inputMetadata.getTimestampType(), spec.isIgnoreNulls(), spec.getNullsDescPos());
-                        pendingWindow = binder.instantiateWindow(plan.getFunctions().getQuick(i), bindSchema, bindMetadata, executionContext);
+                        pendingWindow = instantiator.instantiateWindow(plan.getFunctions().getQuick(i), bindSchema, bindMetadata, executionContext);
                         partitionFunctions = null;
                         mapSpec = WindowMapSpec.of(executionContext.getWindowContext(), spec.getPartitionBy(), order,
-                                spec.getOrderByDirections(), isOrderDismissed, pendingWindow, bindSchema, bindMetadata);
+                                directions, isOrderDismissed, pendingWindow, bindSchema, bindMetadata);
                     } finally {
                         executionContext.clearWindowContext();
                     }
@@ -642,7 +658,6 @@ final class WindowFactoryGenerator {
                         pendingWindow = null;
                     }
                     if (order.size() > 0) {
-                        final IntList directions = new IntList(spec.getOrderByDirections());
                         if (!isStreaming && !isOrderDismissed
                                 && function.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.BACKWARD) {
                             for (int k = 0; k < directions.size(); k++) {
@@ -713,7 +728,7 @@ final class WindowFactoryGenerator {
                     }
                     try {
                         rowsPlan = LiveViewCheckpointFunctionCompiler.rowsPlan(functions, descriptions, inputMetadata, configuration, asm,
-                                frame.windowPartitionKeys.of(binder, plan, sources, input, inputMetadata, executionContext));
+                                frame.windowPartitionKeys.of(instantiator, plan, sources, input, inputMetadata, executionContext));
                     } finally {
                         frame.windowPartitionKeys.clear();
                     }
@@ -765,26 +780,17 @@ final class WindowFactoryGenerator {
         }
     }
 
-    private boolean hasGroupByWindowFunction(GenerationFrame frame, WindowPlan window) {
-        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
-            if (frame.functionBinder.isGroupBy(window.getFunctions().getQuick(i).getName())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     static final class WindowPartitionKeys implements LiveViewCheckpointFunctionCompiler.PartitionKeyCompiler, Mutable {
-        private FunctionBinder binder;
         private SqlExecutionContext executionContext;
         private OutputSchema input;
         private RecordMetadata inputMetadata;
+        private FunctionInstantiator instantiator;
         private WindowPlan plan;
         private IntList sources;
 
         @Override
         public void clear() {
-            binder = null;
+            instantiator = null;
             executionContext = null;
             input = null;
             inputMetadata = null;
@@ -794,13 +800,13 @@ final class WindowFactoryGenerator {
 
         @Override
         public Function compile(int functionIndex, int keyIndex) throws SqlException {
-            return binder.instantiate(plan.getSpecs().getQuick(-sources.getQuick(functionIndex) - 1).getPartitionBy().getQuick(keyIndex),
+            return instantiator.instantiate(plan.getSpecs().getQuick(-sources.getQuick(functionIndex) - 1).getPartitionBy().getQuick(keyIndex),
                     input, inputMetadata, executionContext);
         }
 
-        WindowPartitionKeys of(FunctionBinder binder, WindowPlan plan, IntList sources, OutputSchema input,
+        WindowPartitionKeys of(FunctionInstantiator instantiator, WindowPlan plan, IntList sources, OutputSchema input,
                                RecordMetadata inputMetadata, SqlExecutionContext executionContext) {
-            this.binder = binder;
+            this.instantiator = instantiator;
             this.plan = plan;
             this.sources = sources;
             this.input = input;

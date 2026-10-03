@@ -40,8 +40,18 @@ import io.questdb.std.ObjList;
 
 public class AddLongToTimestampFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.getTimestampType(argTypes.getQuick(0));
+    }
+
+    @Override
     public String getSignature() {
         return "+(NL)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return true;
     }
 
     @Override

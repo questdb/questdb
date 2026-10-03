@@ -3788,11 +3788,11 @@ public class SqlParser {
         }
     }
 
-    @NotNull
     /**
      * A trailing ORDER BY with an aggregate orders the whole set result by groups of its
      * rows, so the set operation becomes the source of SELECT * ... ORDER BY ... LIMIT.
      */
+    @NotNull
     private QueryModel wrapAggregateSetOrder(QueryModel model, QueryModel last) throws SqlException {
         final QueryModel ordering = last.getNestedModel();
         if (ordering == null || !hasAggregateOrder(ordering)) {

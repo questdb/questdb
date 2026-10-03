@@ -80,6 +80,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.AsyncFilterConstructionFault;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -107,6 +108,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, QUEUE_CAPACITY);
 
+        configurationFactory = AsyncFilterConstructionFault.CONFIGURATION_FACTORY;
         AbstractCairoTest.setUpStatic();
     }
 
@@ -873,9 +875,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             TestThrowingFilterFunctionFactory.reset(-1);
             final RuntimeException sentinel = new RuntimeException("async filter constructor");
             try {
-                AsyncFilteredRecordCursorFactory.setConstructorFailureHookForTesting(() -> {
-                    throw sentinel;
-                });
+                AsyncFilterConstructionFault.arm(sentinel);
                 try (
                         SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, 4);
                         RecordCursorFactory ignored = engine.select(
@@ -896,7 +896,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(5, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
                 Assert.assertEquals(5, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
             } finally {
-                AsyncFilteredRecordCursorFactory.setConstructorFailureHookForTesting(null);
+                AsyncFilterConstructionFault.disarm();
                 TestThrowingFilterFunctionFactory.reset(-1);
             }
         });

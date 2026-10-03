@@ -26,7 +26,8 @@ package io.questdb.griffin.plan.logical;
 
 import java.util.Objects;
 
-public abstract class UnaryPlan extends LogicalPlan {
+public abstract sealed class UnaryPlan extends LogicalPlan
+        permits GroupingPlan, DistinctPlan, FillPlan, FilterPlan, LatestByPlan, LimitPlan, ProjectPlan, SortPlan, WindowPlan {
     private LogicalPlan input;
 
     @Override

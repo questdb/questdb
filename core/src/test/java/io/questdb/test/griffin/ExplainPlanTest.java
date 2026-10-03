@@ -2233,6 +2233,28 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterFoldingAggregateOperandPushedIntoGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-03-10', '2024-01-01'),
+                    ('2024-03-12', '2024-01-02'),
+                    (null, '2024-01-03'),
+                    ('2024-03-10', '2024-01-04')
+                    """);
+            assertQuery("SELECT * FROM (SELECT k, count() cnt FROM t) WHERE cnt::BYTE IS NULL OR k < '2024-03-11'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: k<2024-03-11T00:00:00.000000Z")
+                    .returns("""
+                            k	cnt
+                            2024-03-10T00:00:00.000000Z	2
+                            """);
+        });
+    }
+
+    @Test
     public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("drop table if exists trips");

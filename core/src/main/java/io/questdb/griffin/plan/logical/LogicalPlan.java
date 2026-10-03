@@ -30,7 +30,8 @@ import io.questdb.std.Mutable;
  * A pooled logical operation, borrowed until its compiler is reset.
  * Clearing a node releases its own references, never its inputs or expressions.
  */
-public abstract class LogicalPlan implements Mutable {
+public abstract sealed class LogicalPlan implements Mutable
+        permits UnaryPlan, FunctionSourcePlan, HorizonJoinPlan, JoinPlan, ScanPlan, SetOperationPlan, WindowJoinPlan {
     private final OutputSchema output = new OutputSchema();
     private int position = -1;
 
@@ -48,8 +49,6 @@ public abstract class LogicalPlan implements Mutable {
         return position;
     }
 
-    public abstract Type getType();
-
     public abstract LogicalPlan inputAt(int index);
 
     public abstract int inputCount();
@@ -58,24 +57,5 @@ public abstract class LogicalPlan implements Mutable {
 
     public void setPosition(int position) {
         this.position = position;
-    }
-
-    public enum Type {
-        SCAN,
-        FUNCTION_SOURCE,
-        DISTINCT,
-        AGGREGATE,
-        SAMPLE_BY,
-        FILL,
-        WINDOW,
-        JOIN,
-        WINDOW_JOIN,
-        HORIZON_JOIN,
-        LATEST_BY,
-        SET_OPERATION,
-        FILTER,
-        PROJECT,
-        SORT,
-        LIMIT
     }
 }

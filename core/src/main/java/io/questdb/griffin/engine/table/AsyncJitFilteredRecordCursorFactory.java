@@ -101,7 +101,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             boolean enablePreTouch
     ) {
         super(base.getMetadata());
-        AsyncFilteredRecordCursorFactory.runConstructorFailureHook();
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;

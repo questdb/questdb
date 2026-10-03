@@ -48,6 +48,7 @@ import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
@@ -118,6 +119,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     // accumulator: [LONG acc, BOOLEAN wasNullState] plus a trailing BYTE
     // tombstone slot. Shared by both narrow widths.
     private static final ArrayColumnTypes SUM_DECIMAL_NARROW_TYPES_LV;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        final int argType = argTypes.getQuick(0);
+        return ColumnType.tagOf(argType) == ColumnType.DECIMAL256 ? ColumnType.UNDEFINED : ResultTypes.decimalSum(argType);
+    }
 
     @Override
     public String getSignature() {

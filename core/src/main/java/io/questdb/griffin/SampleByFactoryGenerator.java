@@ -347,360 +347,6 @@ final class SampleByFactoryGenerator {
         }
     }
 
-    int generateSampleBy(GenerationFrame frame, SampleByPlan sample, SqlExecutionContext executionContext) throws SqlException {
-        final LogicalPlan sampled = sample.getInput();
-        final int inputSlot = codeGenerator.generateJoinInput(frame, !sample.isTimestampRequired() && SqlCodeGenerator.isTimestampDeclarationOnly(sampled) ? sampled.inputAt(0) : sampled, executionContext,
-                sample.isTimestampRequired(), OrderByMnemonic.ORDER_BY_REQUIRED);
-        final int slot = frame.resources.reserve();
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.detach(inputSlot);
-        frame.resources.own(slot, generateSampleBy(sample, base, frame.functionBinder, executionContext));
-        return slot;
-    }
-
-    /**
-     * Consumes the aggregate input on entry, including on failure.
-     */
-    RecordCursorFactory generateFill(
-            FillPlan plan,
-            OutputSchema input,
-            RecordCursorFactory groupByFactory,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        ObjList<Function> values = null;
-        ObjList<Function> constants = null;
-        Function from = null;
-        Function to = null;
-        Function timezone = null;
-        Function offset = null;
-        boolean isTransferred = false;
-        try {
-            final RecordMetadata metadata = groupByFactory.getMetadata();
-            final int entryCount = plan.getTargetColumnIds().size();
-            values = new ObjList<>(entryCount);
-            values.setPos(entryCount);
-            for (int i = 0; i < entryCount; i++) {
-                if (plan.getModes().getQuick(i) == FillPlan.FILL_VALUE) {
-                    values.setQuick(i, binder.instantiate(plan.getValues().getQuick(i), input, metadata, executionContext));
-                }
-            }
-            final int timestampIndex = input.getColumnIndexById(plan.getTimestampColumnId());
-            final int timestampType = metadata.getColumnType(timestampIndex);
-            final TimestampDriver driver = getTimestampDriver(timestampType);
-            from = plan.getFrom() == null ? driver.getTimestampConstantNull()
-                    : binder.instantiate(plan.getFrom(), input, metadata, executionContext);
-            coerceRuntimeConstantType(from, timestampType, executionContext,
-                    "from lower bound must be a constant expression convertible to a TIMESTAMP", plan.getFromPosition());
-            to = plan.getTo() == null ? driver.getTimestampConstantNull()
-                    : binder.instantiate(plan.getTo(), input, metadata, executionContext);
-            coerceRuntimeConstantType(to, timestampType, executionContext,
-                    "to upper bound must be a constant expression convertible to a TIMESTAMP", plan.getToPosition());
-            final int intervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(plan.getPeriodToken(), plan.getPeriodPosition(), "sample");
-            final long interval = TimestampSamplerFactory.parsePositiveInterval(plan.getPeriodToken(), intervalEnd,
-                    plan.getPeriodPosition(), "sample", Numbers.INT_NULL, ' ');
-            final char unit = plan.getPeriodToken().charAt(intervalEnd);
-            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, interval, unit, plan.getPeriodPosition());
-            if (plan.getTimezone() != null) {
-                timezone = binder.instantiate(plan.getTimezone(), input, metadata, executionContext);
-                coerceRuntimeConstantType(timezone, STRING, executionContext,
-                        "TIME ZONE must be a constant expression of STRING or CHAR type", plan.getTimezonePosition());
-            }
-            offset = plan.getOffset() == null ? StrConstant.NULL
-                    : binder.instantiate(plan.getOffset(), input, metadata, executionContext);
-            coerceRuntimeConstantType(offset, STRING, executionContext,
-                    "offset must be a constant expression of STRING or CHAR type", plan.getOffsetPosition());
-
-            final int columnCount = metadata.getColumnCount();
-            final IntList columnToEntry = intListPool.next();
-            columnToEntry.setAll(columnCount, -1);
-            for (int i = 0; i < entryCount; i++) {
-                columnToEntry.setQuick(input.getColumnIndexById(plan.getTargetColumnIds().getQuick(i)), i);
-            }
-            final IntList modes = new IntList(columnCount);
-            final IntList positions = intListPool.next();
-            positions.setAll(columnCount, 0);
-            constants = new ObjList<>(columnCount);
-            for (int col = 0; col < columnCount; col++) {
-                final int entry = columnToEntry.getQuick(col);
-                if (col == timestampIndex) {
-                    modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                    constants.add(NullConstant.NULL);
-                } else if (entry < 0) {
-                    modes.add(SampleByFillRecordCursorFactory.FILL_KEY);
-                    constants.add(NullConstant.NULL);
-                } else {
-                    final int position = plan.getPositions().getQuick(entry);
-                    positions.setQuick(col, position);
-                    switch (plan.getModes().getQuick(entry)) {
-                        case FillPlan.FILL_NULL -> {
-                            validateFillNull(metadata.getColumnType(col), position);
-                            modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                            constants.add(NullConstant.NULL);
-                        }
-                        case FillPlan.FILL_PREV -> {
-                            modes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
-                            constants.add(NullConstant.NULL);
-                        }
-                        case FillPlan.FILL_PREV_COLUMN -> {
-                            final int sourceIndex = input.getColumnIndexById(plan.getSourceColumnIds().getQuick(entry));
-                            modes.add(resolveFillPrevMode(metadata, timestampIndex, col, sourceIndex,
-                                    plan.getTokens().getQuick(entry), plan.getSourcePositions().getQuick(entry)));
-                            constants.add(NullConstant.NULL);
-                        }
-                        case FillPlan.FILL_VALUE -> {
-                            prepareFillValue(values, entry, metadata.getColumnType(col), plan.getTokens().getQuick(entry), position);
-                            modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                            constants.add(values.getQuick(entry));
-                            values.setQuick(entry, null);
-                        }
-                        default -> throw new IllegalArgumentException("invalid fill mode");
-                    }
-                }
-            }
-            validateFillPrevChains(modes, positions);
-            isTransferred = true;
-            return generateFillFactory(groupByFactory, timestampIndex, timestampType, interval, unit, sampler,
-                    modes, constants, values, from, to, plan.getToPosition(), offset, plan.getOffsetPosition(),
-                    timezone, plan.getTimezonePosition());
-        } catch (Throwable th) {
-            if (!isTransferred) {
-                Misc.freeObjList(values, th);
-                Misc.freeObjList(constants, th);
-                Misc.free(from, th);
-                if (to != from) {
-                    Misc.free(to, th);
-                }
-                if (offset != from && offset != to) {
-                    Misc.free(offset, th);
-                }
-                if (timezone != from && timezone != to && timezone != offset) {
-                    Misc.free(timezone, th);
-                }
-                Misc.free(groupByFactory, th);
-            }
-            throw th;
-        }
-    }
-
-    /** Consumes the input factory on entry, including on failure. */
-    @NotNull
-    RecordCursorFactory generateSampleBy(
-            SampleByPlan plan,
-            RecordCursorFactory base,
-            FunctionBinder binder,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        Function timezone = null;
-        Function offset = null;
-        Function from = null;
-        Function to = null;
-        ObjList<Function> records = null;
-        ObjList<Function> fillConstants = null;
-        boolean isTransferred = false;
-        try {
-            final OutputSchema input = plan.getInput().getOutput();
-            final RecordMetadata baseMetadata = base.getMetadata();
-            timezone = plan.getTimezone() == null ? StrConstant.NULL
-                    : binder.instantiate(plan.getTimezone(), input, baseMetadata, executionContext);
-            coerceRuntimeConstantType(timezone, STRING, executionContext,
-                    "timezone must be a constant expression of STRING or CHAR type", plan.getTimezonePosition());
-            offset = plan.getOffset() == null ? StrConstant.NULL
-                    : binder.instantiate(plan.getOffset(), input, baseMetadata, executionContext);
-            coerceRuntimeConstantType(offset, STRING, executionContext,
-                    "offset must be a constant expression of STRING or CHAR type", plan.getOffsetPosition());
-            final int timestampIndex = plan.isTimestampRequired()
-                    ? baseMetadata.getTimestampIndex() : input.getColumnIndexById(plan.getTimestampColumnId());
-            if (timestampIndex < 0) {
-                throw SqlException.$(plan.getPosition(), "base query does not provide designated TIMESTAMP column");
-            }
-            if (base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                throw SqlException.$(plan.getPosition(), plan.isJoinInput()
-                        ? "ASC order over TIMESTAMP column is required but not provided"
-                        : "base query does not provide ASC order over designated TIMESTAMP column");
-            }
-            final int timestampType = baseMetadata.getColumnType(timestampIndex);
-            final TimestampDriver driver = getTimestampDriver(timestampType);
-            from = plan.getFrom() == null ? driver.getTimestampConstantNull()
-                    : binder.instantiate(plan.getFrom(), input, baseMetadata, executionContext);
-            coerceRuntimeConstantType(from, timestampType, executionContext,
-                    "from lower bound must be a constant expression convertible to a TIMESTAMP", plan.getFromPosition());
-            to = plan.getTo() == null ? driver.getTimestampConstantNull()
-                    : binder.instantiate(plan.getTo(), input, baseMetadata, executionContext);
-            coerceRuntimeConstantType(to, timestampType, executionContext,
-                    "to upper bound must be a constant expression convertible to a TIMESTAMP", plan.getToPosition());
-            if (plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
-                final CharSequence zone = timezone.getStrA(null);
-                if (zone != null) {
-                    try {
-                        final TimeZoneRules rules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
-                        final Function oldFrom = from;
-                        from = toSampleByUtc(from, driver, rules, timestampType);
-                        if (from != oldFrom) {
-                            Misc.free(oldFrom);
-                        }
-                        final Function oldTo = to;
-                        to = toSampleByUtc(to, driver, rules, timestampType);
-                        if (to != oldTo) {
-                            Misc.free(oldTo);
-                        }
-                    } catch (NumericException ex) {
-                        throw SqlException.$(plan.getTimezonePosition(), "invalid timezone: ").put(zone);
-                    }
-                }
-            }
-            final TimestampSampler sampler;
-            if (plan.getPeriod() == null) {
-                sampler = TimestampSamplerFactory.getInstance(driver, plan.getPeriodToken(), plan.getPeriodPosition());
-            } else {
-                try (Function period = binder.instantiate(plan.getPeriod(), input, baseMetadata, executionContext)) {
-                    if (!period.isConstant() || period.getType() != LONG && period.getType() != INT) {
-                        throw SqlException.$(plan.getPeriodPosition(), "sample by period must be a constant expression of INT or LONG type");
-                    }
-                    sampler = TimestampSamplerFactory.getInstance(driver, period.getLong(null), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
-                }
-            }
-
-            keyTypes.clear();
-            valueTypes.clear();
-            listColumnFilterA.clear();
-            groupByFunctionPositions.clear();
-            recordFunctionPositions.clear();
-            valueTypes.add(plan.getFillMode() == SampleByPlan.FILL_LINEAR ? BYTE : timestampType);
-            final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-            final ObjList<FunctionExpression> calls = plan.getAggregates();
-            final ObjList<GroupByFunction> aggregates = new ObjList<>(calls.size());
-            final OutputSchema output = plan.getOutput();
-            records = new ObjList<>(output.getColumnCount());
-            records.setPos(output.getColumnCount());
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                recordFunctionPositions.add(keys.getQuick(i).getPosition());
-            }
-            for (int i = 0, n = calls.size(); i < n; i++) {
-                final FunctionExpression call = calls.getQuick(i);
-                final GroupByFunction function = (GroupByFunction) binder.instantiateAggregate(call, input, baseMetadata, executionContext);
-                records.setQuick(keys.size() + i, function);
-                aggregates.add(function);
-                recordFunctionPositions.add(call.getPosition());
-                groupByFunctionPositions.add(call.getPosition());
-            }
-            final int fillCount = plan.getFillTokens().size();
-            if (validateSampleByFillType && fillCount > 1 && fillCount < aggregates.size()) {
-                boolean hasNone = false;
-                for (int i = 0; i < fillCount; i++) {
-                    hasNone |= isNoneKeyword(plan.getFillTokens().getQuick(i));
-                }
-                if (!hasNone) {
-                    throw SqlException.$(plan.getFillPositions().getQuick(0), "not enough fill values");
-                }
-            }
-            for (int i = 0, n = aggregates.size(); i < n; i++) {
-                final GroupByFunction function = aggregates.getQuick(i);
-                final int position = groupByFunctionPositions.getQuick(i);
-                GroupByUtils.validateTimestampOrder(function, timestampIndex, SqlCodeGenerator.isBaseTimestampAscending(base, timestampIndex), position);
-                if (validateSampleByFillType && fillCount > 0) {
-                    final int fillIndex = Math.min(i, fillCount - 1);
-                    final CharSequence unsupportedFill = GroupByUtils.getUnsupportedSampleByFill(function, plan.getFillTokens().getQuick(fillIndex));
-                    if (unsupportedFill != null) {
-                        throw SqlException.$(plan.getFillPositions().getQuick(fillIndex), "support for ").put(unsupportedFill)
-                                .put(" fill is not yet implemented [function=").put(plan.getAggregateSql().getQuick(i))
-                                .put(", class=").put(function.getClass().getName()).put(']');
-                    }
-                }
-                function.initValueTypes(valueTypes);
-            }
-            fillConstants = new ObjList<>(fillCount);
-            fillConstants.setPos(fillCount);
-            for (int k = 0, n = Math.min(fillCount, aggregates.size()); k < n; k++) {
-                final CharSequence fillToken = plan.getFillTokens().getQuick(k);
-                final int fillPosition = plan.getFillPositions().getQuick(k);
-                final BoundExpression value = plan.getFillValues().getQuick(k);
-                if (value != null) {
-                    fillConstants.setQuick(k, binder.instantiate(value, input, baseMetadata, executionContext));
-                    prepareFillValue(fillConstants, k, aggregates.getQuick(k).getType(), fillToken, fillPosition);
-                } else if (isNullKeyword(fillToken)) {
-                    for (int i = fillCount == 1 ? 0 : k, m = fillCount == 1 ? aggregates.size() : k + 1; i < m; i++) {
-                        validateFillNull(aggregates.getQuick(i).getType(), fillPosition);
-                    }
-                }
-            }
-            final GenericRecordMetadata metadata = new GenericRecordMetadata();
-            int lastKeyIndex = -1;
-            int symbolKeyIndex = -1;
-            boolean isFirstLast = plan.getFillMode() == SampleByPlan.FILL_NONE;
-            final IntList firstLastIndexes = intListPool.next();
-            final IntList firstLastKinds = intListPool.next();
-            final IntList firstLastPositions = intListPool.next();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                final ColumnExpression column = (ColumnExpression) keys.getQuick(i);
-                final int index = input.getColumnIndexById(column.getColumnId());
-                final int type = baseMetadata.getColumnType(index);
-                if (column.getColumnId() == plan.getTimestampColumnId()) {
-                    metadata.setTimestampIndex(i);
-                } else {
-                    if (lastKeyIndex != index) {
-                        listColumnFilterA.add(index + 1);
-                        keyTypes.add(type);
-                        lastKeyIndex = index;
-                    }
-                    records.setQuick(i, GroupByUtils.createColumnFunction(baseMetadata,
-                            valueTypes.getColumnCount() + keyTypes.getColumnCount(), type, index));
-                }
-                final String name = Chars.toString(output.getColumnName(i));
-                metadata.add(new TableColumnMetadata(name, type, baseMetadata.getColumnIndexType(index),
-                        baseMetadata.getIndexValueBlockCapacity(index), baseMetadata.isSymbolTableStatic(index), baseMetadata.getMetadata(index)));
-                firstLastIndexes.add(index);
-                firstLastKinds.add(SampleByFirstLastRecordCursorFactory.KEY);
-                firstLastPositions.add(column.getPosition());
-                if (index == timestampIndex && index == baseMetadata.getTimestampIndex()) {
-                    continue;
-                }
-                if (type != SYMBOL || symbolKeyIndex != -1 && symbolKeyIndex != index || !column.isDirectReference()) {
-                    isFirstLast = false;
-                }
-                symbolKeyIndex = index;
-            }
-            for (int i = 0, n = calls.size(); i < n; i++) {
-                final FunctionExpression call = calls.getQuick(i);
-                final Function function = aggregates.getQuick(i);
-                metadata.add(new TableColumnMetadata(Chars.toString(output.getColumnName(keys.size() + i)), function.getType(),
-                        IndexType.NONE, 0, function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), function.getMetadata()));
-                if (call.getArgumentCount() != 1 || !(call.argumentAt(0) instanceof ColumnExpression column)
-                        || !column.isDirectReference() || ColumnType.isArray(column.getDataType())
-                        || !isFirstKeyword(call.getName()) && !isLastKeyword(call.getName())) {
-                    isFirstLast = false;
-                    continue;
-                }
-                firstLastIndexes.add(input.getColumnIndexById(column.getColumnId()));
-                firstLastKinds.add(isFirstKeyword(call.getName())
-                        ? SampleByFirstLastRecordCursorFactory.FIRST : SampleByFirstLastRecordCursorFactory.LAST);
-                firstLastPositions.add(call.getPosition());
-            }
-            isTransferred = true;
-            return generateSampleByFactory(base, metadata, sampler, aggregates, records,
-                    timestampIndex, timestampType, plan.getFillTokens(), plan.getFillPositions(), fillConstants,
-                    isFirstLast ? firstLastIndexes : null, firstLastKinds, firstLastPositions, symbolKeyIndex,
-                    timezone, plan.getTimezonePosition(), offset, plan.getOffsetPosition(),
-                    from, plan.getFromPosition(), to, plan.getToPosition(), executionContext);
-        } catch (Throwable th) {
-            if (!isTransferred) {
-                Misc.freeObjList(records, th);
-                Misc.freeObjList(fillConstants, th);
-                Misc.free(base, th);
-                Misc.free(timezone, th);
-                if (offset != timezone) {
-                    Misc.free(offset, th);
-                }
-                if (from != timezone && from != offset) {
-                    Misc.free(from, th);
-                }
-                if (to != timezone && to != offset && to != from) {
-                    Misc.free(to, th);
-                }
-            }
-            throw th;
-        }
-    }
-
     /**
      * Consumes the input and all function lists/parameters, including on failure.
      */
@@ -1238,13 +884,370 @@ final class SampleByFactoryGenerator {
     private void validateUuidFill(Function fill, CharSequence fillToken, int fillPosition) throws SqlException {
         try {
             switch (ColumnType.tagOf(fill.getType())) {
-                case ColumnType.STRING, ColumnType.SYMBOL -> SqlUtil.implicitCastStrAsUuid(fill.getStrA(null), fillUuid);
+                case ColumnType.STRING, ColumnType.SYMBOL ->
+                        SqlUtil.implicitCastStrAsUuid(fill.getStrA(null), fillUuid);
                 case ColumnType.VARCHAR -> SqlUtil.implicitCastStrAsUuid(fill.getVarcharA(null), fillUuid);
                 default -> {
                 }
             }
         } catch (ImplicitCastException e) {
             throw GroupByUtils.invalidSampleByFillValue(fillToken, fillPosition);
+        }
+    }
+
+    /**
+     * Consumes the aggregate input on entry, including on failure.
+     */
+    RecordCursorFactory generateFill(
+            FillPlan plan,
+            OutputSchema input,
+            RecordCursorFactory groupByFactory,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        ObjList<Function> values = null;
+        ObjList<Function> constants = null;
+        Function from = null;
+        Function to = null;
+        Function timezone = null;
+        Function offset = null;
+        boolean isTransferred = false;
+        try {
+            final RecordMetadata metadata = groupByFactory.getMetadata();
+            final int entryCount = plan.getTargetColumnIds().size();
+            values = new ObjList<>(entryCount);
+            values.setPos(entryCount);
+            for (int i = 0; i < entryCount; i++) {
+                if (plan.getModes().getQuick(i) == FillPlan.FILL_VALUE) {
+                    values.setQuick(i, instantiator.instantiate(plan.getValues().getQuick(i), input, metadata, executionContext));
+                }
+            }
+            final int timestampIndex = input.getColumnIndexById(plan.getTimestampColumnId());
+            final int timestampType = metadata.getColumnType(timestampIndex);
+            final TimestampDriver driver = getTimestampDriver(timestampType);
+            from = plan.getFrom() == null ? driver.getTimestampConstantNull()
+                    : instantiator.instantiate(plan.getFrom(), input, metadata, executionContext);
+            coerceRuntimeConstantType(from, timestampType, executionContext,
+                    "from lower bound must be a constant expression convertible to a TIMESTAMP", plan.getFromPosition());
+            to = plan.getTo() == null ? driver.getTimestampConstantNull()
+                    : instantiator.instantiate(plan.getTo(), input, metadata, executionContext);
+            coerceRuntimeConstantType(to, timestampType, executionContext,
+                    "to upper bound must be a constant expression convertible to a TIMESTAMP", plan.getToPosition());
+            final int intervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(plan.getPeriodToken(), plan.getPeriodPosition(), "sample");
+            final long interval = TimestampSamplerFactory.parsePositiveInterval(plan.getPeriodToken(), intervalEnd,
+                    plan.getPeriodPosition(), "sample", Numbers.INT_NULL, ' ');
+            final char unit = plan.getPeriodToken().charAt(intervalEnd);
+            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, interval, unit, plan.getPeriodPosition());
+            if (plan.getTimezone() != null) {
+                timezone = instantiator.instantiate(plan.getTimezone(), input, metadata, executionContext);
+                coerceRuntimeConstantType(timezone, STRING, executionContext,
+                        "TIME ZONE must be a constant expression of STRING or CHAR type", plan.getTimezonePosition());
+            }
+            offset = plan.getOffset() == null ? StrConstant.NULL
+                    : instantiator.instantiate(plan.getOffset(), input, metadata, executionContext);
+            coerceRuntimeConstantType(offset, STRING, executionContext,
+                    "offset must be a constant expression of STRING or CHAR type", plan.getOffsetPosition());
+
+            final int columnCount = metadata.getColumnCount();
+            final IntList columnToEntry = intListPool.next();
+            columnToEntry.setAll(columnCount, -1);
+            for (int i = 0; i < entryCount; i++) {
+                columnToEntry.setQuick(input.getColumnIndexById(plan.getTargetColumnIds().getQuick(i)), i);
+            }
+            final IntList modes = new IntList(columnCount);
+            final IntList positions = intListPool.next();
+            positions.setAll(columnCount, 0);
+            constants = new ObjList<>(columnCount);
+            for (int col = 0; col < columnCount; col++) {
+                final int entry = columnToEntry.getQuick(col);
+                if (col == timestampIndex) {
+                    modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                    constants.add(NullConstant.NULL);
+                } else if (entry < 0) {
+                    modes.add(SampleByFillRecordCursorFactory.FILL_KEY);
+                    constants.add(NullConstant.NULL);
+                } else {
+                    final int position = plan.getPositions().getQuick(entry);
+                    positions.setQuick(col, position);
+                    switch (plan.getModes().getQuick(entry)) {
+                        case FillPlan.FILL_NULL -> {
+                            validateFillNull(metadata.getColumnType(col), position);
+                            modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                            constants.add(NullConstant.NULL);
+                        }
+                        case FillPlan.FILL_PREV -> {
+                            modes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
+                            constants.add(NullConstant.NULL);
+                        }
+                        case FillPlan.FILL_PREV_COLUMN -> {
+                            final int sourceIndex = input.getColumnIndexById(plan.getSourceColumnIds().getQuick(entry));
+                            modes.add(resolveFillPrevMode(metadata, timestampIndex, col, sourceIndex,
+                                    plan.getTokens().getQuick(entry), plan.getSourcePositions().getQuick(entry)));
+                            constants.add(NullConstant.NULL);
+                        }
+                        case FillPlan.FILL_VALUE -> {
+                            prepareFillValue(values, entry, metadata.getColumnType(col), plan.getTokens().getQuick(entry), position);
+                            modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                            constants.add(values.getQuick(entry));
+                            values.setQuick(entry, null);
+                        }
+                        default -> throw new IllegalArgumentException("invalid fill mode");
+                    }
+                }
+            }
+            validateFillPrevChains(modes, positions);
+            isTransferred = true;
+            return generateFillFactory(groupByFactory, timestampIndex, timestampType, interval, unit, sampler,
+                    modes, constants, values, from, to, plan.getToPosition(), offset, plan.getOffsetPosition(),
+                    timezone, plan.getTimezonePosition());
+        } catch (Throwable th) {
+            if (!isTransferred) {
+                Misc.freeObjList(values, th);
+                Misc.freeObjList(constants, th);
+                Misc.free(from, th);
+                if (to != from) {
+                    Misc.free(to, th);
+                }
+                if (offset != from && offset != to) {
+                    Misc.free(offset, th);
+                }
+                if (timezone != from && timezone != to && timezone != offset) {
+                    Misc.free(timezone, th);
+                }
+                Misc.free(groupByFactory, th);
+            }
+            throw th;
+        }
+    }
+
+    int generateSampleBy(GenerationFrame frame, SampleByPlan sample, SqlExecutionContext executionContext) throws SqlException {
+        final LogicalPlan sampled = sample.getInput();
+        final int inputSlot = codeGenerator.generateJoinInput(frame, !sample.isTimestampRequired() && SqlCodeGenerator.isTimestampDeclarationOnly(sampled) ? sampled.inputAt(0) : sampled, executionContext,
+                sample.isTimestampRequired(), OrderByMnemonic.ORDER_BY_REQUIRED);
+        final int slot = frame.resources.reserve();
+        final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
+        frame.resources.own(slot, generateSampleBy(sample, base, frame.functionInstantiator, executionContext));
+        return slot;
+    }
+
+    /**
+     * Consumes the input factory on entry, including on failure.
+     */
+    @NotNull
+    RecordCursorFactory generateSampleBy(
+            SampleByPlan plan,
+            RecordCursorFactory base,
+            FunctionInstantiator instantiator,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        Function timezone = null;
+        Function offset = null;
+        Function from = null;
+        Function to = null;
+        ObjList<Function> records = null;
+        ObjList<Function> fillConstants = null;
+        boolean isTransferred = false;
+        try {
+            final OutputSchema input = plan.getInput().getOutput();
+            final RecordMetadata baseMetadata = base.getMetadata();
+            timezone = plan.getTimezone() == null ? StrConstant.NULL
+                    : instantiator.instantiate(plan.getTimezone(), input, baseMetadata, executionContext);
+            coerceRuntimeConstantType(timezone, STRING, executionContext,
+                    "timezone must be a constant expression of STRING or CHAR type", plan.getTimezonePosition());
+            offset = plan.getOffset() == null ? StrConstant.NULL
+                    : instantiator.instantiate(plan.getOffset(), input, baseMetadata, executionContext);
+            coerceRuntimeConstantType(offset, STRING, executionContext,
+                    "offset must be a constant expression of STRING or CHAR type", plan.getOffsetPosition());
+            final int timestampIndex = plan.isTimestampRequired()
+                    ? baseMetadata.getTimestampIndex() : input.getColumnIndexById(plan.getTimestampColumnId());
+            if (timestampIndex < 0) {
+                throw SqlException.$(plan.getPosition(), "base query does not provide designated TIMESTAMP column");
+            }
+            if (base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                throw SqlException.$(plan.getPosition(), plan.isJoinInput()
+                        ? "ASC order over TIMESTAMP column is required but not provided"
+                        : "base query does not provide ASC order over designated TIMESTAMP column");
+            }
+            final int timestampType = baseMetadata.getColumnType(timestampIndex);
+            final TimestampDriver driver = getTimestampDriver(timestampType);
+            from = plan.getFrom() == null ? driver.getTimestampConstantNull()
+                    : instantiator.instantiate(plan.getFrom(), input, baseMetadata, executionContext);
+            coerceRuntimeConstantType(from, timestampType, executionContext,
+                    "from lower bound must be a constant expression convertible to a TIMESTAMP", plan.getFromPosition());
+            to = plan.getTo() == null ? driver.getTimestampConstantNull()
+                    : instantiator.instantiate(plan.getTo(), input, baseMetadata, executionContext);
+            coerceRuntimeConstantType(to, timestampType, executionContext,
+                    "to upper bound must be a constant expression convertible to a TIMESTAMP", plan.getToPosition());
+            if (plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
+                final CharSequence zone = timezone.getStrA(null);
+                if (zone != null) {
+                    try {
+                        final TimeZoneRules rules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
+                        final Function oldFrom = from;
+                        from = toSampleByUtc(from, driver, rules, timestampType);
+                        if (from != oldFrom) {
+                            Misc.free(oldFrom);
+                        }
+                        final Function oldTo = to;
+                        to = toSampleByUtc(to, driver, rules, timestampType);
+                        if (to != oldTo) {
+                            Misc.free(oldTo);
+                        }
+                    } catch (NumericException ex) {
+                        throw SqlException.$(plan.getTimezonePosition(), "invalid timezone: ").put(zone);
+                    }
+                }
+            }
+            final TimestampSampler sampler;
+            if (plan.getPeriod() == null) {
+                sampler = TimestampSamplerFactory.getInstance(driver, plan.getPeriodToken(), plan.getPeriodPosition());
+            } else {
+                try (Function period = instantiator.instantiate(plan.getPeriod(), input, baseMetadata, executionContext)) {
+                    if (!period.isConstant() || period.getType() != LONG && period.getType() != INT) {
+                        throw SqlException.$(plan.getPeriodPosition(), "sample by period must be a constant expression of INT or LONG type");
+                    }
+                    sampler = TimestampSamplerFactory.getInstance(driver, period.getLong(null), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
+                }
+            }
+
+            keyTypes.clear();
+            valueTypes.clear();
+            listColumnFilterA.clear();
+            groupByFunctionPositions.clear();
+            recordFunctionPositions.clear();
+            valueTypes.add(plan.getFillMode() == SampleByPlan.FILL_LINEAR ? BYTE : timestampType);
+            final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
+            final ObjList<FunctionExpression> calls = plan.getAggregates();
+            final ObjList<GroupByFunction> aggregates = new ObjList<>(calls.size());
+            final OutputSchema output = plan.getOutput();
+            records = new ObjList<>(output.getColumnCount());
+            records.setPos(output.getColumnCount());
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                recordFunctionPositions.add(keys.getQuick(i).getPosition());
+            }
+            for (int i = 0, n = calls.size(); i < n; i++) {
+                final FunctionExpression call = calls.getQuick(i);
+                final GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(call, input, baseMetadata, executionContext);
+                records.setQuick(keys.size() + i, function);
+                aggregates.add(function);
+                recordFunctionPositions.add(call.getPosition());
+                groupByFunctionPositions.add(call.getPosition());
+            }
+            final int fillCount = plan.getFillTokens().size();
+            if (validateSampleByFillType && fillCount > 1 && fillCount < aggregates.size()) {
+                boolean hasNone = false;
+                for (int i = 0; i < fillCount; i++) {
+                    hasNone |= isNoneKeyword(plan.getFillTokens().getQuick(i));
+                }
+                if (!hasNone) {
+                    throw SqlException.$(plan.getFillPositions().getQuick(0), "not enough fill values");
+                }
+            }
+            for (int i = 0, n = aggregates.size(); i < n; i++) {
+                final GroupByFunction function = aggregates.getQuick(i);
+                final int position = groupByFunctionPositions.getQuick(i);
+                GroupByUtils.validateTimestampOrder(function, timestampIndex, SqlCodeGenerator.isBaseTimestampAscending(base, timestampIndex), position);
+                if (validateSampleByFillType && fillCount > 0) {
+                    final int fillIndex = Math.min(i, fillCount - 1);
+                    final CharSequence unsupportedFill = GroupByUtils.getUnsupportedSampleByFill(function, plan.getFillTokens().getQuick(fillIndex));
+                    if (unsupportedFill != null) {
+                        throw SqlException.$(plan.getFillPositions().getQuick(fillIndex), "support for ").put(unsupportedFill)
+                                .put(" fill is not yet implemented [function=").put(plan.getAggregateSql().getQuick(i))
+                                .put(", class=").put(function.getClass().getName()).put(']');
+                    }
+                }
+                function.initValueTypes(valueTypes);
+            }
+            fillConstants = new ObjList<>(fillCount);
+            fillConstants.setPos(fillCount);
+            for (int k = 0, n = Math.min(fillCount, aggregates.size()); k < n; k++) {
+                final CharSequence fillToken = plan.getFillTokens().getQuick(k);
+                final int fillPosition = plan.getFillPositions().getQuick(k);
+                final BoundExpression value = plan.getFillValues().getQuick(k);
+                if (value != null) {
+                    fillConstants.setQuick(k, instantiator.instantiate(value, input, baseMetadata, executionContext));
+                    prepareFillValue(fillConstants, k, aggregates.getQuick(k).getType(), fillToken, fillPosition);
+                } else if (isNullKeyword(fillToken)) {
+                    for (int i = fillCount == 1 ? 0 : k, m = fillCount == 1 ? aggregates.size() : k + 1; i < m; i++) {
+                        validateFillNull(aggregates.getQuick(i).getType(), fillPosition);
+                    }
+                }
+            }
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            int lastKeyIndex = -1;
+            int symbolKeyIndex = -1;
+            boolean isFirstLast = plan.getFillMode() == SampleByPlan.FILL_NONE;
+            final IntList firstLastIndexes = intListPool.next();
+            final IntList firstLastKinds = intListPool.next();
+            final IntList firstLastPositions = intListPool.next();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                final ColumnExpression column = (ColumnExpression) keys.getQuick(i);
+                final int index = input.getColumnIndexById(column.getColumnId());
+                final int type = baseMetadata.getColumnType(index);
+                if (column.getColumnId() == plan.getTimestampColumnId()) {
+                    metadata.setTimestampIndex(i);
+                } else {
+                    if (lastKeyIndex != index) {
+                        listColumnFilterA.add(index + 1);
+                        keyTypes.add(type);
+                        lastKeyIndex = index;
+                    }
+                    records.setQuick(i, GroupByUtils.createColumnFunction(baseMetadata,
+                            valueTypes.getColumnCount() + keyTypes.getColumnCount(), type, index));
+                }
+                final String name = Chars.toString(output.getColumnName(i));
+                metadata.add(new TableColumnMetadata(name, type, baseMetadata.getColumnIndexType(index),
+                        baseMetadata.getIndexValueBlockCapacity(index), baseMetadata.isSymbolTableStatic(index), baseMetadata.getMetadata(index)));
+                firstLastIndexes.add(index);
+                firstLastKinds.add(SampleByFirstLastRecordCursorFactory.KEY);
+                firstLastPositions.add(column.getPosition());
+                if (index == timestampIndex && index == baseMetadata.getTimestampIndex()) {
+                    continue;
+                }
+                if (type != SYMBOL || symbolKeyIndex != -1 && symbolKeyIndex != index || !column.isDirectReference()) {
+                    isFirstLast = false;
+                }
+                symbolKeyIndex = index;
+            }
+            for (int i = 0, n = calls.size(); i < n; i++) {
+                final FunctionExpression call = calls.getQuick(i);
+                final Function function = aggregates.getQuick(i);
+                metadata.add(new TableColumnMetadata(Chars.toString(output.getColumnName(keys.size() + i)), function.getType(),
+                        IndexType.NONE, 0, function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), function.getMetadata()));
+                if (call.getArgumentCount() != 1 || !(call.argumentAt(0) instanceof ColumnExpression column)
+                        || !column.isDirectReference() || ColumnType.isArray(column.getDataType())
+                        || !isFirstKeyword(call.getName()) && !isLastKeyword(call.getName())) {
+                    isFirstLast = false;
+                    continue;
+                }
+                firstLastIndexes.add(input.getColumnIndexById(column.getColumnId()));
+                firstLastKinds.add(isFirstKeyword(call.getName())
+                        ? SampleByFirstLastRecordCursorFactory.FIRST : SampleByFirstLastRecordCursorFactory.LAST);
+                firstLastPositions.add(call.getPosition());
+            }
+            isTransferred = true;
+            return generateSampleByFactory(base, metadata, sampler, aggregates, records,
+                    timestampIndex, timestampType, plan.getFillTokens(), plan.getFillPositions(), fillConstants,
+                    isFirstLast ? firstLastIndexes : null, firstLastKinds, firstLastPositions, symbolKeyIndex,
+                    timezone, plan.getTimezonePosition(), offset, plan.getOffsetPosition(),
+                    from, plan.getFromPosition(), to, plan.getToPosition(), executionContext);
+        } catch (Throwable th) {
+            if (!isTransferred) {
+                Misc.freeObjList(records, th);
+                Misc.freeObjList(fillConstants, th);
+                Misc.free(base, th);
+                Misc.free(timezone, th);
+                if (offset != timezone) {
+                    Misc.free(offset, th);
+                }
+                if (from != timezone && from != offset) {
+                    Misc.free(from, th);
+                }
+                if (to != timezone && to != offset && to != from) {
+                    Misc.free(to, th);
+                }
+            }
+            throw th;
         }
     }
 }

@@ -44,7 +44,9 @@ public interface CreateViewOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    /** Uses complete output names and corresponding SQL positions without retaining either input. */
+    /**
+     * Uses complete output names and corresponding SQL positions without retaining either input.
+     */
     void validateAndUpdateMetadataFromColumns(@Transient OutputSchema metadata, @Transient IntList positions) throws SqlException;
 
     void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException;

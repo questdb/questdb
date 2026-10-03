@@ -71,11 +71,6 @@ public final class JoinPlan extends LogicalPlan {
         return orderedInputs;
     }
 
-    @Override
-    public Type getType() {
-        return Type.JOIN;
-    }
-
     public boolean hasExplicitTimestamp() {
         return hasExplicitTimestamp;
     }

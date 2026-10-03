@@ -25,7 +25,6 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -93,7 +92,8 @@ public final class LogicalPlanPrinter {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.NULL -> sink.put("null");
             case ColumnType.BOOLEAN -> sink.put(constant.getLongValue() != 0);
-            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE -> sink.put(constant.getLongValue());
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE ->
+                    sink.put(constant.getLongValue());
             case ColumnType.CHAR -> sink.put('\'').put((char) constant.getLongValue()).put('\'');
             case ColumnType.FLOAT -> sink.put(constant.getFloatValue());
             case ColumnType.DOUBLE -> sink.put(constant.getDoubleValue());
@@ -127,7 +127,8 @@ public final class LogicalPlanPrinter {
                 column(outer.getColumnId());
                 sink.put(')');
             }
-            default -> sink.put(ColumnType.nameOf(expression.getDataType()));
+            case TypeExpression type -> sink.put(ColumnType.nameOf(type.getDataType()));
+            case DeferredErrorExpression _ -> sink.put("error");
         }
     }
 
@@ -211,24 +212,17 @@ public final class LogicalPlanPrinter {
         }
     }
 
-    private void joinTypeName(int joinType) {
-        switch (joinType) {
-            case QueryModel.JOIN_INNER -> sink.put("INNER");
-            case QueryModel.JOIN_LEFT_OUTER -> sink.put("LEFT");
-            case QueryModel.JOIN_RIGHT_OUTER -> sink.put("RIGHT");
-            case QueryModel.JOIN_FULL_OUTER -> sink.put("FULL");
-            case QueryModel.JOIN_CROSS -> sink.put("CROSS");
-            case QueryModel.JOIN_ASOF -> sink.put("ASOF");
-            case QueryModel.JOIN_LT -> sink.put("LT");
-            case QueryModel.JOIN_SPLICE -> sink.put("SPLICE");
-            case QueryModel.JOIN_UNNEST -> sink.put("UNNEST");
-            case QueryModel.JOIN_LATERAL_INNER -> sink.put("LATERAL INNER");
-            case QueryModel.JOIN_LATERAL_LEFT -> sink.put("LATERAL LEFT");
-            case QueryModel.JOIN_LATERAL_CROSS -> sink.put("LATERAL CROSS");
-            case QueryModel.JOIN_CROSS_LEFT -> sink.put("CROSS LEFT");
-            case QueryModel.JOIN_CROSS_RIGHT -> sink.put("CROSS RIGHT");
-            case QueryModel.JOIN_CROSS_FULL -> sink.put("CROSS FULL");
-            default -> sink.put("JOIN(").put(joinType).put(')');
+    private void joinKindName(JoinKind kind) {
+        switch (kind) {
+            case INNER -> sink.put("INNER");
+            case LEFT_OUTER -> sink.put("LEFT");
+            case RIGHT_OUTER -> sink.put("RIGHT");
+            case FULL_OUTER -> sink.put("FULL");
+            case CROSS -> sink.put("CROSS");
+            case ASOF -> sink.put("ASOF");
+            case LT -> sink.put("LT");
+            case SPLICE -> sink.put("SPLICE");
+            case UNNEST -> sink.put("UNNEST");
         }
     }
 
@@ -316,7 +310,16 @@ public final class LogicalPlanPrinter {
                 }
                 sink.put("]\n");
             }
-            case AggregatePlan aggregate -> printAggregate(aggregate, depth);
+            case AggregatePlan aggregate -> {
+                sink.put("Aggregate\n");
+                printGrouping(aggregate, depth);
+            }
+            case SampleByPlan sample -> {
+                sink.put("SampleBy\n");
+                attribute(depth, "period");
+                sink.put(sample.getPeriodToken()).put('\n');
+                printGrouping(sample, depth);
+            }
             case DistinctPlan _ -> sink.put("Distinct\n");
             case FillPlan fill -> printFill(fill, depth);
             case WindowPlan window -> printWindow(window, depth);
@@ -354,7 +357,7 @@ public final class LogicalPlanPrinter {
                         sink.put(", ");
                     }
                     column(sort.getColumnIds().getQuick(i));
-                    if (sort.getDirections().getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                    if (sort.getDirections().getQuick(i) == SortDirection.DESCENDING) {
                         sink.put(" desc");
                     }
                 }
@@ -371,22 +374,30 @@ public final class LogicalPlanPrinter {
                     sink.put('\n');
                 }
             }
-            default -> {
-            }
         }
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             print(plan.inputAt(i), depth + 1);
         }
     }
 
-    private void printAggregate(AggregatePlan aggregate, int depth) {
-        if (aggregate instanceof SampleByPlan sample) {
-            sink.put("SampleBy\n");
-            attribute(depth, "period");
-            sink.put(sample.getPeriodToken()).put('\n');
-        } else {
-            sink.put("Aggregate\n");
+    private void printFill(FillPlan fill, int depth) {
+        sink.put("Fill\n");
+        attribute(depth, "values");
+        names(fill.getTokens());
+        sink.put('\n');
+        if (fill.getFrom() != null) {
+            attribute(depth, "from");
+            expression(fill.getFrom());
+            sink.put('\n');
         }
+        if (fill.getTo() != null) {
+            attribute(depth, "to");
+            expression(fill.getTo());
+            sink.put('\n');
+        }
+    }
+
+    private void printGrouping(GroupingPlan aggregate, int depth) {
         final OutputSchema output = aggregate.getOutput();
         final int keyCount = aggregate.getGroupingExpressions().size();
         attribute(depth, "keys");
@@ -407,23 +418,6 @@ public final class LogicalPlanPrinter {
             named(aggregate.getAggregates().getQuick(i), output, keyCount + i);
         }
         sink.put("]\n");
-    }
-
-    private void printFill(FillPlan fill, int depth) {
-        sink.put("Fill\n");
-        attribute(depth, "values");
-        names(fill.getTokens());
-        sink.put('\n');
-        if (fill.getFrom() != null) {
-            attribute(depth, "from");
-            expression(fill.getFrom());
-            sink.put('\n');
-        }
-        if (fill.getTo() != null) {
-            attribute(depth, "to");
-            expression(fill.getTo());
-            sink.put('\n');
-        }
     }
 
     private void printHorizonJoin(HorizonJoinPlan horizon, int depth) {
@@ -453,7 +447,7 @@ public final class LogicalPlanPrinter {
                 if (input.isDependent()) {
                     sink.put("DEPENDENT ");
                 }
-                joinTypeName(input.getJoinType());
+                joinKindName(input.getJoinType());
             }
             if (input.getBindingAlias() != null) {
                 sink.put(' ').put(input.getBindingAlias());
@@ -522,7 +516,7 @@ public final class LogicalPlanPrinter {
                     sink.put(", ");
                 }
                 column(spec.getOrderByColumnIds().getQuick(k));
-                if (spec.getOrderByDirections().getQuick(k) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                if (spec.getOrderByDirections().getQuick(k) == SortDirection.DESCENDING) {
                     sink.put(" desc");
                 }
             }
@@ -598,15 +592,14 @@ public final class LogicalPlanPrinter {
         }
     }
 
-    private void setOperationName(int operation) {
+    private void setOperationName(SetOperationKind operation) {
         switch (operation) {
-            case QueryModel.SET_OPERATION_UNION -> sink.put("Union");
-            case QueryModel.SET_OPERATION_UNION_ALL -> sink.put("Union All");
-            case QueryModel.SET_OPERATION_EXCEPT -> sink.put("Except");
-            case QueryModel.SET_OPERATION_EXCEPT_ALL -> sink.put("Except All");
-            case QueryModel.SET_OPERATION_INTERSECT -> sink.put("Intersect");
-            case QueryModel.SET_OPERATION_INTERSECT_ALL -> sink.put("Intersect All");
-            default -> sink.put("SetOperation(").put(operation).put(')');
+            case UNION -> sink.put("Union");
+            case UNION_ALL -> sink.put("Union All");
+            case EXCEPT -> sink.put("Except");
+            case EXCEPT_ALL -> sink.put("Except All");
+            case INTERSECT -> sink.put("Intersect");
+            case INTERSECT_ALL -> sink.put("Intersect All");
         }
     }
 }

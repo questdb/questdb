@@ -193,6 +193,12 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return head.isStableWithinExecution() && (loBound == null || loBound.isStableWithinExecution())
+                && (hiBound == null || hiBound.isStableWithinExecution());
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("monotonic_ts_interval");
     }

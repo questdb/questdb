@@ -24,161 +24,79 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MillisTimestampDriver;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.DateFunction;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
-import io.questdb.griffin.engine.functions.RuntimeConstFunction;
-import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
-import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.griffin.engine.functions.SubqueryCursorFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
-import io.questdb.griffin.engine.functions.columns.RecordColumn;
-import io.questdb.griffin.engine.functions.columns.SymbolColumn;
-import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.griffin.engine.functions.constants.ByteConstant;
-import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
-import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
-import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
-import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
-import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
-import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
-import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
-import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
-import io.questdb.griffin.engine.functions.constants.DecimalTypeConstant;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
-import io.questdb.griffin.engine.functions.constants.FloatConstant;
-import io.questdb.griffin.engine.functions.constants.GeoHashTypeConstant;
-import io.questdb.griffin.engine.functions.constants.IPv4Constant;
-import io.questdb.griffin.engine.functions.constants.IntConstant;
-import io.questdb.griffin.engine.functions.constants.IntervalConstant;
-import io.questdb.griffin.engine.functions.constants.Long256Constant;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.griffin.engine.functions.constants.NullBinConstant;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.griffin.engine.functions.constants.ShortConstant;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
-import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
-import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sequence;
-
-import java.io.Closeable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
- * Captures the existing parser's selected calls while it constructs them.
- * Descriptions belong to compilation; prepared roots belong to this scope until
- * instantiate() transfers them. An adopted function never retains the binder.
+ * Binds SQL expressions by capturing the overloads {@link FunctionParser} selects while it builds them, producing
+ * {@link BoundExpression} descriptions and handing each built root to {@link PreparedFunctions}.
  */
-public final class FunctionBinder implements Closeable, Mutable {
-    private static final String NULL_PROBE_COLUMN = "null_probe";
+public final class FunctionBinder implements Mutable {
+    private final IntList argumentLeafMarks = new IntList();
     private final IntList argumentPositions = new IntList();
+    private final IntList argumentTypes = new IntList();
     private final ObjList<BoundExpression> arguments = new ObjList<>();
     private final ObjList<ExpressionNode> callArguments = new ObjList<>();
-    private final ObjectPool<ColumnExpression> columns;
-    private final ObjectPool<ConstantExpression> constants;
-    private final ObjList<BoundExpression> conversionArguments = new ObjList<>(2);
-    private final IntList conversionPositions = new IntList(2);
+    private final BindContext ctx;
     private final ObjectPool<CursorExpression> cursors = new ObjectPool<>(CursorExpression.FACTORY, 4);
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
     private final ObjectPool<ExpressionNode> expressionNodes = new ObjectPool<>(ExpressionNode.FACTORY, 32);
+    private final IntList expressionLeafMarks = new IntList();
     private final ObjList<BoundExpression> expressionStack = new ObjList<>();
-    private final ObjectPool<FunctionExpression> functions = new ObjectPool<>(FunctionExpression.FACTORY, 16);
-    private final ObjectPool<InstantiationArguments> instantiations = new ObjectPool<>(InstantiationArguments::new, 8);
     private final IntHashSet keySubqueryColumnIds = new IntHashSet();
-    private final ObjList<Function> nullProbeConstants = new ObjList<>(1);
-    private final GenericRecordMetadata nullProbeMetadata = new GenericRecordMetadata();
-    private final VirtualRecord nullProbeRecord;
-    private final OutputSchema nullProbeSchema;
     private final IntList outerColumnIds = new IntList();
-    private final ObjectPool<OuterColumnExpression> outerColumns = new ObjectPool<>(OuterColumnExpression.FACTORY, 4);
     private final ObjList<OutputSchema> outerScopes = new ObjList<>();
-    private final ObjectPool<BindVariableExpression> parameters = new ObjectPool<>(BindVariableExpression.FACTORY, 8);
-    private final ObjList<CursorExpression> parkedCursors = new ObjList<>();
-    private final ObjList<Function> parkedSubqueries = new ObjList<>();
     private final FunctionParser parser;
     private final ObjList<ExpressionNode> predicateConjuncts = new ObjList<>();
-    private final ObjectPool<PreparationEntry> preparations = new ObjectPool<>(PreparationEntry::new, 4);
-    private final ObjList<PreparationEntry> prepared = new ObjList<>();
-    private final ResourceScope resources = new ResourceScope();
-    private final ObjectPool<ObjList<BoundExpression>> rewriteArguments = new ObjectPool<>(ObjList::new, 8);
-    private final ObjList<CursorExpression> sharedBoundCursors = new ObjList<>();
-    private final ObjList<ScalarTimestampBoundHolder> sharedBoundHolders = new ObjList<>();
-    private final ObjectPool<TypeExpression> types = new ObjectPool<>(TypeExpression.FACTORY, 8);
+    private final ObjectPool<StaticTypeFunction> staticTypes = new ObjectPool<>(StaticTypeFunction::new, 8);
+    private final ObjList<BoundExpression> unconstructed = new ObjList<>();
     private ExpressionNode aggregateRoot;
     private ExpressionNode bindingRoot;
     private int compiledLowerBoundIndex;
     private ExpressionNode compiledLowerBoundNode;
-    private PreparationEntry currentPreparation;
+    private PreparedFunctions.Entry currentPreparation;
     private OutputSchema input;
     private CharSequence inputAlias;
     private boolean isBindingGroupByExpression;
@@ -187,29 +105,25 @@ public final class FunctionBinder implements Closeable, Mutable {
     private int nestedWindowPosition;
     private ObjList<? extends BoundExpression> replacementExpressions;
     private ObjList<ExpressionNode> replacementNodes;
-    private SqlBinder subqueryBinder;
+    private final SqlBinder subqueryBinder;
     private ExpressionNode windowRoot;
-    private int workerCloneDepth;
 
-    public FunctionBinder(FunctionParser parser) {
-        this(parser, new ObjectPool<>(ColumnExpression.FACTORY, 16), new ObjectPool<>(ConstantExpression.FACTORY, 16), new OutputSchema());
+    /**
+     * Allocates descriptions from the context's pools and hands built roots to its prepared functions; the
+     * sub-query binder is null where no sub-query can occur.
+     */
+    FunctionBinder(BindContext ctx, FunctionParser parser, SqlBinder subqueryBinder) {
+        this.ctx = ctx;
+        this.parser = parser;
+        this.subqueryBinder = subqueryBinder;
     }
 
     /**
-     * Allocates bound columns and constants from the given pools and empties them in {@link #clear()}.
+     * A binder over its own stand-alone context, with no sub-query support.
      */
-    FunctionBinder(
-            FunctionParser parser,
-            ObjectPool<ColumnExpression> columns,
-            ObjectPool<ConstantExpression> constants,
-            OutputSchema nullProbeSchema
-    ) {
-        this.parser = parser;
-        this.columns = columns;
-        this.constants = constants;
-        this.nullProbeSchema = nullProbeSchema;
-        nullProbeConstants.add(null);
-        this.nullProbeRecord = new VirtualRecord(nullProbeConstants);
+    @TestOnly
+    public static FunctionBinder newStandalone(FunctionParser parser) {
+        return new BindContext(parser, new ObjectPool<>(ExpressionNode.FACTORY, 32), null).functionBinder;
     }
 
     /**
@@ -433,9 +347,9 @@ public final class FunctionBinder implements Closeable, Mutable {
     }
 
     /**
-     * Binds under the caller's configured WindowContext. On success the prepared
-     * window owns the context's partition functions; the caller closes them on
-     * failure and clears the context after this call.
+     * Binds under the caller's configured WindowContext, which may carry partition key
+     * types without a usable partition record or sink: the prepared window only types
+     * and validates the call and is never adopted. The caller clears the context.
      */
     public FunctionExpression bindWindow(
             ExpressionNode node,
@@ -459,179 +373,35 @@ public final class FunctionBinder implements Closeable, Mutable {
 
     @Override
     public void clear() {
-        try {
-            resources.clear();
-        } finally {
-            Misc.freeObjListAndClear(parkedSubqueries);
-            parkedCursors.clear();
-            prepared.clear();
-            preparations.clear();
-            expressionStack.clear();
-            arguments.clear();
-            argumentPositions.clear();
-            columns.clear();
-            constants.clear();
-            cursors.clear();
-            functions.clear();
-            instantiations.clear();
-            outerColumnIds.clear();
-            outerColumns.clear();
-            outerScopes.clear();
-            keySubqueryColumnIds.clear();
-            parameters.clear();
-            rewriteArguments.clear();
-            sharedBoundCursors.clear();
-            sharedBoundHolders.clear();
-            types.clear();
-            currentPreparation = null;
-            input = null;
-            inputAlias = null;
-        }
+        expressionStack.clear();
+        expressionLeafMarks.clear();
+        arguments.clear();
+        argumentLeafMarks.clear();
+        argumentPositions.clear();
+        cursors.clear();
+        outerColumnIds.clear();
+        outerScopes.clear();
+        keySubqueryColumnIds.clear();
+        staticTypes.clear();
+        unconstructed.clear();
+        currentPreparation = null;
+        input = null;
+        inputAlias = null;
     }
 
-    @Override
-    public void close() {
-        clear();
+    @TestOnly
+    public void clearExpressions() {
+        ctx.clearExpressions();
     }
 
-    public FunctionExpression commuteEquality(FunctionExpression original) {
-        final FunctionFactoryDescriptor overload = original.getOverload().getCommutedEquality();
-        if (original.getArgumentCount() != 2 || overload == null) {
-            throw new IllegalArgumentException("registered binary equality required");
-        }
-        conversionArguments.clear();
-        conversionPositions.clear();
-        try {
-            conversionArguments.add(original.argumentAt(1));
-            conversionArguments.add(original.argumentAt(0));
-            conversionPositions.add(original.getArgumentPosition(1));
-            conversionPositions.add(original.getArgumentPosition(0));
-            return functions.next().of(overload, conversionArguments, conversionPositions,
-                    original.getDataType(), original.getFunctionFlags(), original.getPosition());
-        } finally {
-            conversionArguments.clear();
-            conversionPositions.clear();
-        }
+    @TestOnly
+    public BoundExpressionRewriter getExpressionRewriter() {
+        return ctx.expressionRewriter;
     }
 
-    /**
-     * Copies an expression through a projection of plain columns, leaving its preparation with the original.
-     */
-    public BoundExpression copyRemappedColumns(BoundExpression expression, ProjectPlan projection) {
-        rewriteArguments.clear();
-        try {
-            return remapColumns0(expression, projection, false);
-        } finally {
-            rewriteArguments.clear();
-        }
-    }
-
-    /**
-     * Transfers the unchanged prepared closure once, after assigning its final
-     * input positions. The caller owns the returned function, including on later
-     * cursor-construction failure. This overload requires an owned preparation;
-     * the context-taking overload can reconstruct additional consumers.
-     */
-    public Function instantiate(BoundExpression expression, OutputSchema input) {
-        if (hasArrayColumnLayoutDependency(expression)) {
-            throw new IllegalStateException("array column function requires final-layout reconstruction");
-        }
-        for (int i = 0, n = prepared.size(); i < n; i++) {
-            final PreparationEntry entry = prepared.getQuick(i);
-            if (entry.expression == expression && entry.updateTargetType < 0 && entry.slot >= 0 && resources.resources.getQuick(entry.slot) != null) {
-                if (entry.isRebuildRequired || entry.leaves.size() > 0 && requiresReconstruction(expression)) {
-                    throw new IllegalStateException("bound function requires final-layout reconstruction");
-                }
-                return adoptPreparation(entry, input, null);
-            }
-        }
-        throw new IllegalStateException("bound function is not owned");
-    }
-
-    /**
-     * Adopts the original prepared root when it is available, otherwise builds an
-     * independent closure from selected overloads. Used for rewritten expressions
-     * and additional execution consumers; the returned root belongs to the caller.
-     */
-    public Function instantiate(BoundExpression expression, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
-        return instantiate(expression, input, null, executionContext);
-    }
-
-    /**
-     * Final metadata determines dictionary capabilities of the selected physical input.
-     */
-    public Function instantiate(
-            BoundExpression expression,
-            OutputSchema input,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (metadata != null && metadata.getColumnCount() != input.getColumnCount()) {
-            throw new IllegalStateException("bound function input metadata has changed");
-        }
-        instantiations.clear();
-        try {
-            return instantiateNew(expression, input, metadata, executionContext, true);
-        } finally {
-            instantiations.clear();
-        }
-    }
-
-    /**
-     * Builds reviewed aggregates with native column accessors after the physical
-     * layout is final, preserving direct-input and static-symbol optimizations.
-     * The unused preparation is closed; reconstruction uses selected registrations.
-     * COUNT() can adopt its preparation unchanged. The caller
-     * owns the returned root; metadata is borrowed only during construction.
-     */
-    public Function instantiateAggregate(
-            FunctionExpression expression,
-            OutputSchema input,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        final FunctionFactoryDescriptor overload = expression.getOverload();
-        assert expression.isAggregate();
-        if (overload.isRowCount()) {
-            return instantiate(expression, input, executionContext);
-        }
-        if (metadata == null || metadata.getColumnCount() != input.getColumnCount()) {
-            throw new IllegalStateException("bound aggregate input metadata has changed");
-        }
-        closePreparation(expression);
-        instantiations.clear();
-        try {
-            return instantiateNew(expression, input, metadata, executionContext, false);
-        } finally {
-            instantiations.clear();
-        }
-    }
-
-    /**
-     * Reconstructs a window under the caller's final WindowContext and physical
-     * input layout. The returned window owns its arguments and partition functions.
-     * On failure the caller still closes the context's partition function list.
-     */
-    public WindowFunction instantiateWindow(
-            FunctionExpression expression,
-            OutputSchema input,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        assert expression.isWindow();
-        if (executionContext.getWindowContext().isEmpty()) {
-            throw SqlException.emptyWindowContext(expression.getPosition());
-        }
-        if (metadata == null || metadata.getColumnCount() != input.getColumnCount()) {
-            throw new IllegalStateException("bound window input metadata has changed");
-        }
-        closePreparation(expression);
-        instantiations.clear();
-        try {
-            return (WindowFunction) instantiateNew(expression, input, metadata, executionContext, false);
-        } finally {
-            instantiations.clear();
-        }
+    @TestOnly
+    public FunctionInstantiator getFunctionInstantiator() {
+        return ctx.functionInstantiator;
     }
 
     public boolean isGroupBy(CharSequence name) {
@@ -639,81 +409,42 @@ public final class FunctionBinder implements Closeable, Mutable {
     }
 
     /**
-     * Moves an expression through a projection of plain columns. Descriptions are
-     * copied; an unadopted preparation follows the replacement and only its private
-     * leaves change IDs. Call only when replacing the old expression occurrence.
+     * The flags of a call built while binding. Sub-query placeholders report stability, so a call stable only
+     * through an argument stable with its sub-queries is itself stable with them.
      */
-    public BoundExpression remapColumns(BoundExpression expression, ProjectPlan projection) {
-        rewriteArguments.clear();
-        try {
-            return remapColumns0(expression, projection, true);
-        } finally {
-            rewriteArguments.clear();
+    private static int callFlags(Function function, int argumentStability) {
+        final int flags = functionFlags(function);
+        if ((flags & BoundExpression.STABLE_WITHIN_EXECUTION) == 0 || argumentStability != BoundExpression.STABLE_WITH_SUBQUERIES) {
+            return flags;
         }
+        return flags & ~BoundExpression.STABLE_WITHIN_EXECUTION | BoundExpression.STABLE_WITH_SUBQUERIES;
     }
 
-    private static int conjunctionFlags(int leftFlags, int rightFlags) {
-        int flags = leftFlags & rightFlags & (BoundExpression.CONSTANT | BoundExpression.STABLE_WITHIN_EXECUTION);
-        flags |= (leftFlags | rightFlags) & BoundExpression.NON_DETERMINISTIC;
-        if ((leftFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
-                && (rightFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
-                && ((leftFlags | rightFlags) & BoundExpression.RUNTIME_CONSTANT) != 0) {
-            flags |= BoundExpression.RUNTIME_CONSTANT;
+    private static int callFlags(Function function, FunctionExpression call) {
+        int stability = BoundExpression.STABLE_WITHIN_EXECUTION;
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            stability = conditionalStability(stability, call.argumentAt(i));
         }
-        return flags;
+        return callFlags(function, stability);
     }
 
-    private static Function createColumnFunction(int position, int index, int type, OutputSchema input) throws SqlException {
-        if (ColumnType.tagOf(type) != ColumnType.RECORD) {
-            return FunctionParser.createColumn(position, index, type, input.isSymbolTableStatic(index));
+    private static int callFlags(Function function, ObjList<BoundExpression> arguments) {
+        int stability = BoundExpression.STABLE_WITHIN_EXECUTION;
+        for (int i = 0, n = arguments.size(); i < n; i++) {
+            stability = conditionalStability(stability, arguments.getQuick(i));
         }
-        final OutputSchema record = input.getMetadata(index);
-        if (record == null) {
-            throw new IllegalStateException("record column has no metadata");
-        }
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = record.getColumnCount(); i < n; i++) {
-            metadata.add(new TableColumnMetadata(Chars.toString(record.getColumnName(i)), record.getColumnType(i)));
-        }
-        return new RecordColumn(index, metadata);
+        return callFlags(function, stability);
     }
 
-    private static int functionFlags(Function function) {
-        return (function.isConstant() ? BoundExpression.CONSTANT : 0)
-                | (function.isRuntimeConstant() ? BoundExpression.RUNTIME_CONSTANT : 0)
-                | (function.isNonDeterministic() ? BoundExpression.NON_DETERMINISTIC : 0)
-                | (function.isStableWithinExecution() ? BoundExpression.STABLE_WITHIN_EXECUTION : 0);
+    private static int conditionalStability(int stability, BoundExpression argument) {
+        return LogicalPlans.stabilityFlags(argument) == BoundExpression.STABLE_WITH_SUBQUERIES
+                ? BoundExpression.STABLE_WITH_SUBQUERIES : stability;
     }
 
     private static int getColumnIndexQuiet(OutputSchema input, CharSequence qualifier, CharSequence name, int lo, int hi) {
         final int index = input.getColumnIndexQuiet(qualifier, name, lo, hi);
         return index != -1 || !SqlUtil.isQuoteProtectedAlias(name, lo, hi)
                 ? index : input.getColumnIndexQuiet(qualifier, name, lo + 1, hi - 1);
-    }
-
-    private static boolean hasArrayColumnLayoutDependency(BoundExpression expression) {
-        if (expression instanceof FunctionExpression call) {
-            if (call.getOverload().isArrayColumnLayoutSensitive()) {
-                return true;
-            }
-            for (int i = 0; i < call.getArgumentCount(); i++) {
-                if (hasArrayColumnLayoutDependency(call.argumentAt(i))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private static boolean isBindableType(int type) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.ARRAY, ColumnType.TIMESTAMP, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR,
-                 ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.DATE, ColumnType.IPv4, ColumnType.INT,
-                 ColumnType.BOOLEAN, ColumnType.LONG, ColumnType.LONG256, ColumnType.UUID, ColumnType.GEOBYTE,
-                 ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.FLOAT, ColumnType.DOUBLE ->
-                    true;
-            default -> false;
-        };
     }
 
     private static boolean isCaseText(int type) {
@@ -744,7 +475,7 @@ public final class FunctionBinder implements Closeable, Mutable {
                 || type == ColumnType.LONG || type == ColumnType.FLOAT || type == ColumnType.DOUBLE;
     }
 
-    private static boolean isTemporalComparisonOperator(CharSequence operator) {
+    static boolean isTemporalComparisonOperator(CharSequence operator) {
         return Chars.equals(operator, '=') || Chars.equals(operator, '<') || Chars.equals(operator, '>')
                 || Chars.equals(operator, "<=") || Chars.equals(operator, ">=") || isNotEqualsOperator(operator);
     }
@@ -758,13 +489,23 @@ public final class FunctionBinder implements Closeable, Mutable {
                 && (ColumnType.tagOf(function.getType()) == ColumnType.TIMESTAMP || function.getType() == ColumnType.DATE);
     }
 
+    private static boolean isTimestampText(TimestampDriver driver, CharSequence text) {
+        try {
+            ColumnType.getTimestampDriver(IntervalUtils.literalTimestampType(driver, text)).parseFloorLiteral(text);
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
     private static CharSequence literalText(BoundExpression expression) {
         if (!(expression instanceof ConstantExpression constant)) {
             return null;
         }
         return switch (ColumnType.tagOf(constant.getDataType())) {
             case ColumnType.STRING, ColumnType.SYMBOL -> constant.getStrValue();
-            case ColumnType.VARCHAR -> constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence();
+            case ColumnType.VARCHAR ->
+                    constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence();
             default -> null;
         };
     }
@@ -783,39 +524,6 @@ public final class FunctionBinder implements Closeable, Mutable {
             return folded.withSource(call);
         }
         return folded;
-    }
-    private static BindableColumn newColumn(int columnId, int type, boolean isSymbolTableStatic) {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.ARRAY -> new BindableArrayColumn(columnId, type);
-            case ColumnType.TIMESTAMP -> new BindableTimestampColumn(columnId, type);
-            case ColumnType.STRING -> new BindableStrColumn(columnId);
-            case ColumnType.SYMBOL -> new BindableSymbolColumn(columnId, isSymbolTableStatic);
-            case ColumnType.VARCHAR -> new BindableVarcharColumn(columnId);
-            case ColumnType.BYTE -> new BindableByteColumn(columnId);
-            case ColumnType.SHORT -> new BindableShortColumn(columnId);
-            case ColumnType.CHAR -> new BindableCharColumn(columnId);
-            case ColumnType.DATE -> new BindableDateColumn(columnId);
-            case ColumnType.IPv4 -> new BindableIPv4Column(columnId);
-            case ColumnType.INT -> new BindableIntColumn(columnId);
-            case ColumnType.BOOLEAN -> new BindableBooleanColumn(columnId);
-            case ColumnType.LONG -> new BindableLongColumn(columnId);
-            case ColumnType.LONG256 -> new BindableLong256Column(columnId);
-            case ColumnType.UUID -> new BindableUuidColumn(columnId);
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                    new BindableGeoHashColumn(columnId, type);
-            case ColumnType.FLOAT -> new BindableFloatColumn(columnId);
-            case ColumnType.DOUBLE -> new BindableDoubleColumn(columnId);
-            default -> throw new IllegalStateException("column type is not bindable");
-        };
-    }
-
-    private static ColumnExpression projectionColumn(ProjectPlan projection, int columnId, int type) {
-        final int index = projection.getOutput().getColumnIndexById(columnId);
-        if (index < 0 || !(projection.getExpressions().getQuick(index) instanceof ColumnExpression column)
-                || column.getDataType() != type) {
-            throw new IllegalArgumentException("column-only projection with unchanged types required");
-        }
-        return column;
     }
 
     private static boolean requiresConditionalRebuild(FunctionFactoryDescriptor overload, ObjList<Function> args) {
@@ -854,21 +562,6 @@ public final class FunctionBinder implements Closeable, Mutable {
         return false;
     }
 
-    private static boolean requiresReconstruction(BoundExpression expression) {
-        if (expression instanceof FunctionExpression call) {
-            final FunctionFactoryDescriptor overload = call.getOverload();
-            if (!overload.isRelocatableScalar() && !overload.isArrayColumnLayoutSensitive()) {
-                return true;
-            }
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (requiresReconstruction(call.argumentAt(i))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     private static TimestampDriver temporalDriver(int type) {
         return type == ColumnType.DATE ? MillisTimestampDriver.INSTANCE : ColumnType.getTimestampDriver(type);
     }
@@ -880,38 +573,6 @@ public final class FunctionBinder implements Closeable, Mutable {
         return node.paramCount == 1 && SqlKeywords.isNotKeyword(node.token) ? node.rhs : node;
     }
 
-    private Function adoptPreparation(PreparationEntry entry, OutputSchema input, RecordMetadata metadata) {
-        if (((Function) resources.resources.getQuick(entry.slot)).isConstant()) {
-            final Function function = (Function) resources.detach(entry.slot);
-            entry.slot = -1;
-            return function;
-        }
-        for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-            final BindableColumn leaf = entry.leaves.getQuick(k);
-            // Audited NULL folds close discarded operands. These are borrows,
-            // never separately owned leaves; a dead leaf needs no input slot.
-            // A fold that drops an operand without closing it leaves a leaf the
-            // bound description no longer reads.
-            if (leaf.isOpen() && references(entry.expression, leaf.getColumnId())) {
-                final int index = input.getColumnIndexById(leaf.getColumnId());
-                if (index < 0 || input.getColumnType(index) != leaf.getType()
-                        || metadata != null && metadata.getColumnType(index) != leaf.getType()
-                        || leaf instanceof SymbolFunction symbol && symbol.isSymbolTableStatic() != (metadata == null ? input.isSymbolTableStatic(index) : metadata.isSymbolTableStatic(index))) {
-                    throw new IllegalStateException("bound function input has changed");
-                }
-            }
-        }
-        for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-            final BindableColumn leaf = entry.leaves.getQuick(k);
-            if (leaf.isOpen() && references(entry.expression, leaf.getColumnId())) {
-                leaf.setColumnIndex(input.getColumnIndexById(leaf.getColumnId()));
-            }
-        }
-        final Function function = (Function) resources.detach(entry.slot);
-        entry.slot = -1;
-        return function;
-    }
-
     private BoundExpression bind(
             ExpressionNode node,
             OutputSchema input,
@@ -921,13 +582,12 @@ public final class FunctionBinder implements Closeable, Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         assert currentPreparation == null;
-        final PreparationEntry entry = preparations.next();
-        entry.slot = resources.reserve();
-        prepared.add(entry);
+        final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
         currentPreparation = entry;
         this.input = input;
         this.inputAlias = inputAlias;
         expressionStack.clear();
+        expressionLeafMarks.clear();
         final ExpressionNode originalAggregateRoot = aggregateRoot;
         final ExpressionNode originalWindowRoot = windowRoot;
         try {
@@ -950,8 +610,16 @@ public final class FunctionBinder implements Closeable, Mutable {
                 compileTimestampBetweenLowerBound(executionContext);
             }
             bindingRoot = node;
-            final Function function = parser.parseFunction(node, executionContext, this);
-            resources.own(entry.slot, function);
+            Function function = parser.parseFunction(node, executionContext, this);
+            if (function instanceof StaticTypeFunction) {
+                // UPDATE converts the owned root while binding; every other root is built by its generator.
+                if (isUpdateAssignment) {
+                    function = ctx.functionInstantiator.realize(expressionStack.getQuick(0), input, entry, executionContext);
+                    ctx.preparedFunctions.own(entry, function);
+                }
+            } else {
+                ctx.preparedFunctions.own(entry, function);
+            }
             if (preferredType != ColumnType.UNDEFINED
                     && (isUpdateAssignment ? ColumnType.isUndefined(function.getType()) : function.isUndefined())) {
                 function.assignType(preferredType, executionContext.getBindVariableService());
@@ -959,10 +627,11 @@ public final class FunctionBinder implements Closeable, Mutable {
             }
             assert expressionStack.size() == 1;
             entry.expression = expressionStack.getQuick(0);
+            assert PreparedFunctions.hasOnlyReadLeaves(entry) : "bound leaf is not read by its description";
             return entry.expression;
         } catch (Throwable th) {
             // The parser owns partial roots; only completed roots enter this scope.
-            resources.closeOwned(th);
+            ctx.preparedFunctions.closeOnFailure(th);
             throw th;
         } finally {
             aggregateRoot = originalAggregateRoot;
@@ -977,8 +646,12 @@ public final class FunctionBinder implements Closeable, Mutable {
             this.input = null;
             this.inputAlias = null;
             arguments.clear();
+            argumentLeafMarks.clear();
             argumentPositions.clear();
             expressionStack.clear();
+            expressionLeafMarks.clear();
+            unconstructed.clear();
+            staticTypes.clear();
         }
     }
 
@@ -997,84 +670,12 @@ public final class FunctionBinder implements Closeable, Mutable {
         }
     }
 
-    private void closePreparation(BoundExpression expression) {
-        for (int i = 0, n = prepared.size(); i < n; i++) {
-            final PreparationEntry entry = prepared.getQuick(i);
-            if (entry.expression == expression && entry.slot >= 0 && resources.resources.getQuick(entry.slot) != null) {
-                final Closeable preparation = resources.detach(entry.slot);
-                entry.slot = -1;
-                Misc.free(preparation);
-                break;
-            }
-        }
-    }
-
-    private void collectPredicateConjuncts(ExpressionNode node) {
-        if (node != null && node.token != null && SqlKeywords.isAndKeyword(node.token)) {
-            collectPredicateConjuncts(node.lhs);
-            collectPredicateConjuncts(node.rhs);
-        } else {
-            predicateConjuncts.add(node);
-        }
-    }
-
     /**
-     * Timestamp interval analysis compiles a sub-query BETWEEN bound pair low bound first.
+     * The leaf mark of the call whose arguments are being bound: its leaves follow it in the preparation.
      */
-    private void compileTimestampBetweenLowerBound(SqlExecutionContext executionContext) throws SqlException {
-        if (subqueryBinder == null) {
-            return;
-        }
-        for (int i = 0, n = predicateConjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = unwrapNot(predicateConjuncts.getQuick(i));
-            if (conjunct.paramCount == 3 && SqlKeywords.isBetweenKeyword(conjunct.token)
-                    && conjunct.args.getQuick(0).type == ExpressionNode.QUERY
-                    && conjunct.args.getQuick(1).type == ExpressionNode.QUERY
-                    && conjunct.args.getQuick(2).type == ExpressionNode.LITERAL) {
-                final int columnIndex = findColumn(conjunct.args.getQuick(2), input, inputAlias);
-                if (columnIndex >= 0 && isNativeTimestampColumn(input.getColumnId(columnIndex))) {
-                    final ExpressionNode lo = conjunct.args.getQuick(1);
-                    compiledLowerBoundIndex = subqueryBinder.compileSubquery(lo.queryModel, lo.position, executionContext);
-                    compiledLowerBoundNode = lo;
-                    return;
-                }
-            }
-        }
-    }
-
-    private BoundExpression conjunction(FunctionFactoryDescriptor overload, BoundExpression left, BoundExpression right, int position) {
-        if (left == null) {
-            return right;
-        }
-        if (right == null) {
-            return left;
-        }
-        // Match the selected factory's constant branches without constructing a
-        // disposable function or taking ownership of a prepared child instance.
-        if (left instanceof ConstantExpression constant) {
-            // TRUE returns the unchanged right function, even raw NULL. A false
-            // argument instead makes the factory return BOOLEAN FALSE.
-            return constant.getLongValue() != 0 ? right
-                    : left.getDataType() == ColumnType.BOOLEAN ? left : constants.next().ofBoolean(false, position);
-        }
-        if (right instanceof ConstantExpression constant) {
-            return constant.getLongValue() != 0 ? left
-                    : right.getDataType() == ColumnType.BOOLEAN ? right : constants.next().ofBoolean(false, position);
-        }
-        final int flags = conjunctionFlags(left.getFunctionFlags(), right.getFunctionFlags());
-        conversionArguments.clear();
-        conversionPositions.clear();
-        try {
-            conversionArguments.add(left);
-            conversionArguments.add(right);
-            conversionPositions.add(left.getPosition());
-            conversionPositions.add(right.getPosition());
-            return functions.next().of(overload, conversionArguments, conversionPositions,
-                    ColumnType.BOOLEAN, flags, position);
-        } finally {
-            conversionArguments.clear();
-            conversionPositions.clear();
-        }
+    private int callLeafMark() {
+        final int count = argumentLeafMarks.size();
+        return count > 0 ? argumentLeafMarks.getQuick(count - 1) : leafMark();
     }
 
     private Function canonicalizeTemporalBetween(ObjList<Function> args) {
@@ -1196,6 +797,7 @@ public final class FunctionBinder implements Closeable, Mutable {
                     Misc.free(args.getQuick(i));
                     args.remove(i);
                     arguments.remove(i);
+                    argumentLeafMarks.removeIndex(i);
                     if (positions != null) {
                         positions.removeIndex(i);
                     }
@@ -1207,58 +809,127 @@ public final class FunctionBinder implements Closeable, Mutable {
         return isMatchable ? null : BooleanConstant.FALSE;
     }
 
+    /**
+     * Records each text element of a predicate's TIMESTAMP IN list that does not parse as a timestamp as an
+     * unparsed timestamp, so that whatever builds the list raises the element's parse error.
+     */
+    private void captureUnparsedInElements(FunctionFactoryDescriptor overload, ObjList<Function> args) {
+        if (!isBindingPredicate || !(overload.getFactory() instanceof InTimestampTimestampFunctionFactory) || args.size() < 3
+                || ColumnType.tagOf(args.getQuick(0).getType()) != ColumnType.TIMESTAMP) {
+            return;
+        }
+        final int operandType = args.getQuick(0).getType();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(operandType);
+        for (int i = 1, n = args.size(); i < n; i++) {
+            final Function element = args.getQuick(i);
+            final CharSequence text = element.isConstant() && isCaseText(element.getType()) ? literalText(arguments.getQuick(i)) : null;
+            if (text != null && !isTimestampText(driver, text)) {
+                args.setQuick(i, captureUnparsedTimestamp(i, text, operandType, arguments.getQuick(i).getPosition()));
+            }
+        }
+    }
+
+    private void collectPredicateConjuncts(ExpressionNode node) {
+        if (node != null && node.token != null && SqlKeywords.isAndKeyword(node.token)) {
+            collectPredicateConjuncts(node.lhs);
+            collectPredicateConjuncts(node.rhs);
+        } else {
+            predicateConjuncts.add(node);
+        }
+    }
+
+    /**
+     * Timestamp interval analysis compiles a sub-query BETWEEN bound pair low bound first.
+     */
+    private void compileTimestampBetweenLowerBound(SqlExecutionContext executionContext) throws SqlException {
+        if (subqueryBinder == null) {
+            return;
+        }
+        for (int i = 0, n = predicateConjuncts.size(); i < n; i++) {
+            final ExpressionNode conjunct = unwrapNot(predicateConjuncts.getQuick(i));
+            if (conjunct.paramCount == 3 && SqlKeywords.isBetweenKeyword(conjunct.token)
+                    && conjunct.args.getQuick(0).type == ExpressionNode.QUERY
+                    && conjunct.args.getQuick(1).type == ExpressionNode.QUERY
+                    && conjunct.args.getQuick(2).type == ExpressionNode.LITERAL) {
+                final int columnIndex = findColumn(conjunct.args.getQuick(2), input, inputAlias);
+                if (columnIndex >= 0 && isNativeTimestampColumn(input.getColumnId(columnIndex))) {
+                    final ExpressionNode lo = conjunct.args.getQuick(1);
+                    compiledLowerBoundIndex = subqueryBinder.compileSubquery(lo.queryModel, lo.position, executionContext);
+                    compiledLowerBoundNode = lo;
+                    return;
+                }
+            }
+        }
+    }
+
     private ConstantExpression constant(Function function, int position) {
         return switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.TIMESTAMP ->
-                    constants.next().ofTimestamp(function.getTimestamp(null), function.getType(), position);
-            case ColumnType.STRING -> constants.next().ofString(Chars.toString(function.getStrA(null)), position);
-            case ColumnType.SYMBOL -> constants.next().ofSymbol(Chars.toString(function.getSymbol(null)), position);
-            case ColumnType.VARCHAR -> constants.next().ofVarchar(function.getVarcharA(null), position);
-            case ColumnType.BYTE -> constants.next().ofByte(function.getByte(null), position);
-            case ColumnType.SHORT -> constants.next().ofShort(function.getShort(null), position);
-            case ColumnType.DATE -> constants.next().ofDate(function.getDate(null), position);
-            case ColumnType.IPv4 -> constants.next().ofIPv4(function.getIPv4(null), position);
-            case ColumnType.CHAR -> constants.next().ofChar(function.getChar(null), position);
-            case ColumnType.BOOLEAN -> constants.next().ofBoolean(function.getBool(null), position);
-            case ColumnType.INT -> constants.next().ofInt(function.getInt(null), position);
-            case ColumnType.LONG -> constants.next().ofLong(function.getLong(null), position);
-            case ColumnType.LONG256 -> constants.next().ofLong256(function.getLong256A(null), position);
+                    ctx.constants.next().ofTimestamp(function.getTimestamp(null), function.getType(), position);
+            case ColumnType.STRING -> ctx.constants.next().ofString(Chars.toString(function.getStrA(null)), position);
+            case ColumnType.SYMBOL -> ctx.constants.next().ofSymbol(Chars.toString(function.getSymbol(null)), position);
+            case ColumnType.VARCHAR -> ctx.constants.next().ofVarchar(function.getVarcharA(null), position);
+            case ColumnType.BYTE -> ctx.constants.next().ofByte(function.getByte(null), position);
+            case ColumnType.SHORT -> ctx.constants.next().ofShort(function.getShort(null), position);
+            case ColumnType.DATE -> ctx.constants.next().ofDate(function.getDate(null), position);
+            case ColumnType.IPv4 -> ctx.constants.next().ofIPv4(function.getIPv4(null), position);
+            case ColumnType.CHAR -> ctx.constants.next().ofChar(function.getChar(null), position);
+            case ColumnType.BOOLEAN -> ctx.constants.next().ofBoolean(function.getBool(null), position);
+            case ColumnType.INT -> ctx.constants.next().ofInt(function.getInt(null), position);
+            case ColumnType.LONG -> ctx.constants.next().ofLong(function.getLong(null), position);
+            case ColumnType.LONG256 -> ctx.constants.next().ofLong256(function.getLong256A(null), position);
             case ColumnType.UUID ->
-                    constants.next().ofUuid(function.getLong128Lo(null), function.getLong128Hi(null), position);
+                    ctx.constants.next().ofUuid(function.getLong128Lo(null), function.getLong128Hi(null), position);
+            case ColumnType.LONG128 ->
+                    ctx.constants.next().ofLong128(function.getLong128Lo(null), function.getLong128Hi(null), position);
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                    constants.next().ofGeoHash(GeoHashes.getGeoLong(function.getType(), function, null), function.getType(), position);
-            case ColumnType.FLOAT -> constants.next().ofFloat(function.getFloat(null), position);
-            case ColumnType.DOUBLE -> constants.next().ofDouble(function.getDouble(null), position);
-            case ColumnType.NULL -> constants.next().ofNull(position);
+                    ctx.constants.next().ofGeoHash(GeoHashes.getGeoLong(function.getType(), function, null), function.getType(), position);
+            case ColumnType.FLOAT -> ctx.constants.next().ofFloat(function.getFloat(null), position);
+            case ColumnType.DOUBLE -> ctx.constants.next().ofDouble(function.getDouble(null), position);
+            case ColumnType.NULL -> ctx.constants.next().ofNull(position);
             case ColumnType.DECIMAL8 ->
-                    constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal8(null), position);
+                    ctx.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal8(null), position);
             case ColumnType.DECIMAL16 ->
-                    constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal16(null), position);
+                    ctx.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal16(null), position);
             case ColumnType.DECIMAL32 ->
-                    constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal32(null), position);
+                    ctx.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal32(null), position);
             case ColumnType.DECIMAL64 ->
-                    constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal64(null), position);
+                    ctx.constants.next().ofDecimal(function.getType(), 0, 0, 0, function.getDecimal64(null), position);
             case ColumnType.DECIMAL128 -> {
                 function.getDecimal128(null, decimal128);
-                yield constants.next().ofDecimal(function.getType(), 0, 0, decimal128.getHigh(), decimal128.getLow(), position);
+                yield ctx.constants.next().ofDecimal(function.getType(), 0, 0, decimal128.getHigh(), decimal128.getLow(), position);
             }
             case ColumnType.DECIMAL256 -> {
                 function.getDecimal256(null, decimal256);
-                yield constants.next().ofDecimal(function.getType(), decimal256.getHh(), decimal256.getHl(),
+                yield ctx.constants.next().ofDecimal(function.getType(), decimal256.getHh(), decimal256.getHl(),
                         decimal256.getLh(), decimal256.getLl(), position);
             }
             case ColumnType.INTERVAL -> {
                 final Interval interval = function.getInterval(null);
-                yield constants.next().ofInterval(interval.getLo(), interval.getHi(), function.getType(), position);
+                yield ctx.constants.next().ofInterval(interval.getLo(), interval.getHi(), function.getType(), position);
             }
             case ColumnType.BINARY -> {
                 if (function.getBin(null) != null) {
                     throw new IllegalStateException("non-null BINARY constant");
                 }
-                yield constants.next().ofBinaryNull(position);
+                yield ctx.constants.next().ofBinaryNull(position);
             }
             default -> throw new IllegalStateException("unexpected constant type");
         };
+    }
+
+    /**
+     * Builds the arguments the binder typed without constructing them, for a parent that is constructed now.
+     */
+    private void constructArguments(ObjList<Function> args, int count, SqlExecutionContext executionContext) throws SqlException {
+        for (int i = 0; i < count; i++) {
+            final BoundExpression argument = arguments.getQuick(i);
+            if (unconstructed.indexOf(argument) >= 0 || args.getQuick(i) instanceof StaticTypeFunction) {
+                final Function placeholder = args.getQuick(i);
+                args.setQuick(i, ctx.functionInstantiator.realize(argument, input, currentPreparation, executionContext));
+                Misc.free(placeholder);
+            }
+        }
     }
 
     private Function createOuterColumn(ExpressionNode node) throws SqlException {
@@ -1270,250 +941,95 @@ public final class FunctionBinder implements Closeable, Mutable {
                 final int type = scope.getColumnType(index);
                 outerColumnIds.add(columnId);
                 currentPreparation.isRebuildRequired = true;
-                expressionStack.add(outerColumns.next().of(columnId, type, node.position));
-                return isBindableType(type) ? newColumn(columnId, type, scope.isSymbolTableStatic(index))
-                        : createColumnFunction(node.position, index, type, scope);
+                push(ctx.outerColumns.next().of(columnId, type, node.position), leafMark());
+                return BindableColumn.isBindableType(type) ? BindableColumn.newInstance(columnId, type, scope.isSymbolTableStatic(index))
+                        : FunctionInstantiator.createColumnFunction(node.position, index, type, scope);
             }
         }
         return null;
     }
 
-    private boolean hasSharedBound(BoundExpression expression) {
-        if (sharedBoundCursors.size() == 0) {
-            return false;
-        }
-        if (expression instanceof CursorExpression cursor) {
-            return sharedBoundCursors.indexOf(cursor) >= 0;
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (hasSharedBound(call.argumentAt(i))) {
-                    return true;
+    /**
+     * Closes the column leaves at {@code [from, to)} of the preparation: a fold evaluated the operand they belong
+     * to, so the bound description no longer reads them.
+     */
+    private void closeLeaves(int from, int to) {
+        if (from < to) {
+            final ObjList<BindableColumn> leaves = currentPreparation.leaves;
+            for (int i = from; i < to; i++) {
+                final BindableColumn leaf = leaves.getQuick(i);
+                if (leaf.isOpen()) {
+                    leaf.close();
                 }
             }
         }
-        return false;
     }
 
-    private boolean hasSharedBoundArgument(FunctionExpression call) {
-        if (sharedBoundCursors.size() > 0) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (call.argumentAt(i) instanceof CursorExpression cursor && sharedBoundCursors.indexOf(cursor) >= 0) {
-                    return true;
+    /**
+     * Closes and removes the column leaves at {@code [from, to)} of the preparation: a fold dropped the operand they
+     * belong to, so the bound description no longer reads them.
+     */
+    private void dropLeaves(int from, int to) {
+        if (from < to) {
+            final ObjList<BindableColumn> leaves = currentPreparation.leaves;
+            for (int i = from; i < to; i++) {
+                final BindableColumn leaf = leaves.getQuick(i);
+                if (leaf.isOpen()) {
+                    leaf.close();
                 }
             }
+            leaves.remove(from, to - 1);
         }
-        return false;
     }
 
-    private Function instantiateNew(
-            BoundExpression expression,
-            OutputSchema input,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext,
-            boolean isAdoptionAllowed
+    private void finish(Function function) {
+        final int index = expressionStack.size() - 1;
+        final BoundExpression normalized = normalizeArgument(expressionStack.getQuick(index), function);
+        if (normalized instanceof ConstantExpression) {
+            dropLeaves(expressionLeafMarks.getQuick(index), leafMark());
+        }
+        expressionStack.setQuick(index, normalized);
+    }
+
+    /**
+     * Whether the call holds a timestamp literal that does not parse, which only an unconstructed call can hold
+     * below it, or is a predicate comparison of a TIMESTAMP with a constant text that does not convert to one.
+     */
+    private boolean hasUnparsedTimestampText(ExpressionNode node, ObjList<Function> args) {
+        final int count = args.size();
+        for (int i = 0; i < count; i++) {
+            final BoundExpression argument = arguments.getQuick(i);
+            if ((argument instanceof ConstantExpression || unconstructed.indexOf(argument) >= 0)
+                    && LogicalPlans.hasGenerationError(argument)) {
+                return true;
+            }
+        }
+        return count == 2 && isBindingPredicate && isTemporalComparisonOperator(node.token)
+                && (LogicalPlans.isUnconvertibleSymbol(arguments.getQuick(0), args.getQuick(1).getType())
+                || LogicalPlans.isUnconvertibleSymbol(arguments.getQuick(1), args.getQuick(0).getType()));
+    }
+
+    /**
+     * A call over a text constant that does not convert to TIMESTAMP raises that conversion error whenever it is
+     * built, whatever its other constant arguments, so it needs no vetting to wait for code generation.
+     */
+    private boolean isAdmittedUnconstructed(
+            FunctionFactoryDescriptor overload,
+            ExpressionNode node,
+            ObjList<Function> args,
+            IntList positions,
+            SqlExecutionContext executionContext
     ) throws SqlException {
-        if (isAdoptionAllowed && !hasSharedBound(expression)) {
-            // Independently bound conjuncts may now belong to a new AND
-            // description. Adopt each exact owned root once; the parent's frame
-            // owns it after detachment, including if a later sibling fails.
-            for (int i = 0, n = prepared.size(); i < n; i++) {
-                final PreparationEntry entry = prepared.getQuick(i);
-                if (entry.expression == expression && entry.updateTargetType < 0 && entry.slot >= 0 && resources.resources.getQuick(entry.slot) != null) {
-                    if (isPreparationCompatible(entry, input, metadata)) {
-                        return adoptPreparation(entry, input, metadata);
-                    }
-                    final Closeable unused = resources.detach(entry.slot);
-                    entry.slot = -1;
-                    Misc.free(unused);
-                    break;
-                }
-            }
+        if (hasUnparsedTimestampText(node, args)) {
+            parser.admitUnvetted(overload, node.position, node.token, executionContext);
+            return true;
         }
-        if (expression instanceof ColumnExpression column) {
-            final int index = input.getColumnIndexById(column.getColumnId());
-            if (index < 0 || input.getColumnType(index) != column.getDataType()) {
-                throw new IllegalStateException("bound function input has changed");
-            }
-            if (metadata != null) {
-                if (metadata.getColumnType(index) != column.getDataType()) {
-                    throw new IllegalStateException("bound aggregate input type has changed");
-                }
-                return FunctionParser.createColumn(column.getPosition(), index, metadata);
-            }
-            if (ColumnType.isArray(column.getDataType()) || !isBindableType(column.getDataType())) {
-                return createColumnFunction(column.getPosition(), index, column.getDataType(), input);
-            }
-            final BindableColumn leaf = newColumn(column.getColumnId(), column.getDataType(), input.isSymbolTableStatic(index));
-            leaf.setColumnIndex(index);
-            return leaf;
-        }
-        if (expression instanceof ConstantExpression constant) {
-            return switch (ColumnType.tagOf(constant.getDataType())) {
-                case ColumnType.TIMESTAMP ->
-                        TimestampConstant.newInstance(constant.getLongValue(), constant.getDataType());
-                case ColumnType.STRING -> StrConstant.fromValue(constant.getStrValue());
-                case ColumnType.SYMBOL -> SymbolConstant.fromValue(constant.getStrValue());
-                case ColumnType.VARCHAR -> VarcharConstant.fromValue(constant.getVarcharValue());
-                case ColumnType.BYTE -> ByteConstant.newInstance((byte) constant.getLongValue());
-                case ColumnType.SHORT -> ShortConstant.newInstance((short) constant.getLongValue());
-                case ColumnType.DATE -> DateConstant.newInstance(constant.getLongValue());
-                case ColumnType.IPv4 -> IPv4Constant.newInstance((int) constant.getLongValue());
-                case ColumnType.CHAR -> CharConstant.newInstance((char) constant.getLongValue());
-                case ColumnType.BOOLEAN -> BooleanConstant.of(constant.getLongValue() != 0);
-                case ColumnType.INT -> IntConstant.newInstance((int) constant.getLongValue());
-                case ColumnType.LONG -> LongConstant.newInstance(constant.getLongValue());
-                case ColumnType.LONG256 -> new Long256Constant(constant.getLong256Value());
-                case ColumnType.UUID -> new UuidConstant(constant.getLong128Lo(), constant.getLong128Hi());
-                case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                        Constants.getGeoHashConstantWithType(constant.getLongValue(), constant.getDataType());
-                case ColumnType.FLOAT -> new FloatConstant(constant.getFloatValue());
-                case ColumnType.DOUBLE -> new DoubleConstant(constant.getDoubleValue());
-                case ColumnType.NULL -> NullConstant.NULL;
-                case ColumnType.DECIMAL8 ->
-                        new Decimal8Constant((byte) constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL16 ->
-                        new Decimal16Constant((short) constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL32 ->
-                        new Decimal32Constant((int) constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL64 -> new Decimal64Constant(constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL128 ->
-                        new Decimal128Constant(constant.getDecimalLh(), constant.getLongValue(), constant.getDataType());
-                case ColumnType.DECIMAL256 -> new Decimal256Constant(constant.getDecimalHh(), constant.getDecimalHl(),
-                        constant.getDecimalLh(), constant.getLongValue(), constant.getDataType());
-                case ColumnType.INTERVAL ->
-                        new IntervalConstant(constant.getLongValue(), constant.getIntervalHi(), constant.getDataType());
-                case ColumnType.BINARY -> NullBinConstant.INSTANCE;
-                default -> throw new IllegalStateException("unexpected constant type");
-            };
-        }
-        if (expression instanceof TypeExpression type) {
-            final int dataType = type.getDataType();
-            if (ColumnType.isGeoHash(dataType)) {
-                return GeoHashTypeConstant.getInstanceByPrecision(ColumnType.getGeoHashBits(dataType));
-            }
-            if (ColumnType.isDecimal(dataType)) {
-                return new DecimalTypeConstant(ColumnType.getDecimalPrecision(dataType), ColumnType.getDecimalScale(dataType));
-            }
-            return Constants.getTypeConstant(dataType);
-        }
-        if (expression instanceof CursorExpression cursor) {
-            final int shared = sharedBoundCursors.indexOf(cursor);
-            if (shared >= 0) {
-                return new ScalarSubQueryBoundRefFunction(sharedBoundHolders.getQuick(shared));
-            }
-            final Function function = instantiateSubquery(cursor, executionContext);
-            return cursor.isBoolean() ? BooleanSubQueryFunction.maybeWrap(function, cursor.getPosition()) : function;
-        }
-        if (expression instanceof BindVariableExpression parameter) {
-            final Function function = parser.createBindVariable(executionContext, parameter.getPosition(),
-                    parameter.getName(), ExpressionNode.BIND_VARIABLE);
-            try {
-                if (function.isUndefined()) {
-                    function.assignType(parameter.getDataType(), executionContext.getBindVariableService());
-                }
-                if (function.getType() != parameter.getDataType()) {
-                    throw SqlException.$(parameter.getPosition(), "bind variable type has changed: ").put(parameter.getName());
-                }
-                return function;
-            } catch (Throwable th) {
-                Misc.free(function, th);
-                throw th;
-            }
-        }
-        if (!(expression instanceof FunctionExpression call)) {
-            throw new IllegalStateException("unexpected bound expression");
-        }
-        final InstantiationArguments frame = instantiations.next();
-        final int count = call.getArgumentCount();
-        frame.functions.setPos(count);
-        frame.positions.setPos(count);
-        try {
-            boolean allConstOrRuntimeConst = true;
-            boolean anyRuntimeConst = false;
-            for (int i = 0; i < count; i++) {
-                // Reserve every slot before construction; each returned child is
-                // immediately owned by this frame until its factory consumes it.
-                final Function child = instantiateNew(call.argumentAt(i), input, metadata, executionContext, isAdoptionAllowed);
-                frame.functions.setQuick(i, child);
-                frame.positions.setQuick(i, call.getArgumentPosition(i));
-                final boolean runtimeConstant = child.isRuntimeConstant();
-                allConstOrRuntimeConst &= child.isConstant() || runtimeConstant;
-                anyRuntimeConst |= runtimeConstant;
-            }
-            // Match FunctionParser's runtime-constant boundary treatment. These
-            // wrappers own the original child and preserve its semantic type.
-            if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
-                for (int i = 0; i < count; i++) {
-                    final Function child = frame.functions.getQuick(i);
-                    if (RuntimeConstFunction.isFoldable(child)) {
-                        frame.functions.setQuick(i, RuntimeConstFunction.newInstance(child));
-                    }
-                }
-            }
-            FunctionFactoryDescriptor overload = call.getOverload();
-            final boolean hasSharedBound = hasSharedBoundArgument(call);
-            if (hasSharedBound) {
-                overload = sharedBoundOverload(overload);
-            }
-            Function function = parser.createFunction(overload, call.getPosition(), overload.getName(),
-                    count == 0 ? null : frame.functions, count == 0 ? null : frame.positions, executionContext);
-            if (hasSharedBound) {
-                return function;
-            }
-            if (ColumnType.isArray(function.getType()) && function.isConstant()) {
-                function = parser.functionToConstant(function);
-            }
-            try {
-                // CAST can type an empty array without retaining a cast node.
-                if (function instanceof ArrayConstant && ColumnType.isUndefined(function.getType())
-                        && ColumnType.isArray(call.getDataType()) && function.getType() != call.getDataType()) {
-                    function.assignType(call.getDataType(), executionContext.getBindVariableService());
-                }
-                // Serially generated sub-queries may prove a stability their parallel counterparts
-                // do not; the bound flags stay the conservative ones optimisations relied on.
-                final int flags = call.getFunctionFlags();
-                if (function.getType() != call.getDataType()
-                        || (functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
-                    throw new IllegalStateException("bound function semantics have changed");
-                }
-                return function;
-            } catch (Throwable th) {
-                Misc.free(function, th);
-                throw th;
-            }
-        } catch (Throwable th) {
-            Misc.freeObjList(frame.functions, th);
-            throw th;
-        } finally {
-            frame.clear();
-        }
+        return parser.admitUnconstructed(overload, node.position, node.token, args, positions, executionContext);
     }
 
     private boolean isNativeTimestampColumn(int columnId) {
         return nativeTimestampIds != null ? nativeTimestampIds.contains(columnId)
                 : input.getTimestampIndex() >= 0 && columnId == input.getColumnId(input.getTimestampIndex());
-    }
-
-    private boolean isPreparationCompatible(PreparationEntry entry, OutputSchema input, RecordMetadata metadata) {
-        if (entry.isRebuildRequired || hasArrayColumnLayoutDependency(entry.expression)
-                || entry.leaves.size() > 0 && requiresReconstruction(entry.expression)) {
-            return false;
-        }
-        for (int i = 0, n = entry.leaves.size(); i < n; i++) {
-            final BindableColumn leaf = entry.leaves.getQuick(i);
-            if (leaf.isOpen() && leaf instanceof SymbolFunction symbol && references(entry.expression, leaf.getColumnId())) {
-                final int index = input.getColumnIndexById(leaf.getColumnId());
-                if (index < 0 || input.getColumnType(index) != leaf.getType()
-                        || metadata != null && metadata.getColumnType(index) != leaf.getType()) {
-                    throw new IllegalStateException("bound function input has changed");
-                }
-                if (symbol.isSymbolTableStatic() != (metadata == null ? input.isSymbolTableStatic(index) : metadata.isSymbolTableStatic(index))) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     /**
@@ -1535,8 +1051,15 @@ public final class FunctionBinder implements Closeable, Mutable {
         return windowRoot.args.indexOf(node) >= 0;
     }
 
+    /**
+     * The number of column leaves of the preparation, where the leaves of the next bound operand start.
+     */
+    private int leafMark() {
+        return currentPreparation != null ? currentPreparation.leaves.size() : 0;
+    }
+
     private ConstantExpression markSource(ConstantExpression folded, FunctionFactoryDescriptor overload, int type, int flags, int position) {
-        return markSource(folded, functions.next().of(overload, arguments, argumentPositions, type, flags, position));
+        return markSource(folded, ctx.functions.next().of(overload, arguments, argumentPositions, type, flags, position));
     }
 
     private BoundExpression normalizeArgument(BoundExpression expression, Function function) {
@@ -1544,22 +1067,23 @@ public final class FunctionBinder implements Closeable, Mutable {
             return expression;
         }
         if (expression instanceof CursorExpression cursor && function instanceof BooleanSubQueryFunction) {
-            return cursors.next().ofBoolean(cursor, functionFlags(function));
+            return cursors.next().ofBoolean(cursor, functionFlags(function) & ~BoundExpression.STABLE_WITHIN_EXECUTION
+                    | cursor.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION);
         }
         if (ColumnType.isArray(function.getType()) && expression instanceof FunctionExpression call
-                && (call.getDataType() != function.getType() || call.getFunctionFlags() != functionFlags(function))) {
-            conversionArguments.clear();
-            conversionPositions.clear();
+                && (call.getDataType() != function.getType() || call.getFunctionFlags() != callFlags(function, call))) {
+            ctx.argumentScratch.clear();
+            ctx.positionScratch.clear();
             try {
                 for (int i = 0; i < call.getArgumentCount(); i++) {
-                    conversionArguments.add(call.argumentAt(i));
-                    conversionPositions.add(call.getArgumentPosition(i));
+                    ctx.argumentScratch.add(call.argumentAt(i));
+                    ctx.positionScratch.add(call.getArgumentPosition(i));
                 }
-                return functions.next().of(call.getOverload(), conversionArguments, conversionPositions,
-                        function.getType(), functionFlags(function), call.getPosition());
+                return ctx.functions.next().of(call.getOverload(), ctx.argumentScratch, ctx.positionScratch,
+                        function.getType(), callFlags(function, call), call.getPosition());
             } finally {
-                conversionArguments.clear();
-                conversionPositions.clear();
+                ctx.argumentScratch.clear();
+                ctx.positionScratch.clear();
             }
         }
         if (function instanceof ConstantFunction && !ColumnType.isArray(function.getType()) && (!(expression instanceof ConstantExpression)
@@ -1575,9 +1099,66 @@ public final class FunctionBinder implements Closeable, Mutable {
             return normalized;
         }
         if (expression instanceof BindVariableExpression parameter && expression.getDataType() != function.getType()) {
-            return parameters.next().of(parameter.getName(), function.getType(), functionFlags(function), parameter.getPosition(), parameter.isDirectReference());
+            return ctx.parameters.next().of(parameter.getName(), function.getType(), functionFlags(function), parameter.getPosition(), parameter.isDirectReference());
         }
         return expression;
+    }
+
+    /**
+     * Hands each constant argument and column leaf of a call left unconstructed to the prepared functions, which own
+     * it until the generator adopts it for the call's description, so generation does not build it again. The caller
+     * frees the remaining arguments; on failure this frees every argument it has not handed over.
+     */
+    private void prepareUnconstructedArguments(ObjList<Function> args) {
+        try {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                final Function arg = args.getQuick(i);
+                final BoundExpression argument = arguments.getQuick(i);
+                if (arg instanceof ConstantFunction && !(arg instanceof TypeConstant) && argument instanceof ConstantExpression constant
+                        && !constant.isUnparsedTimestamp() && constant.getDataType() == arg.getType()) {
+                    final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
+                    entry.expression = constant;
+                    ctx.preparedFunctions.own(entry, arg);
+                    args.setQuick(i, null);
+                } else if (arg instanceof BindableColumn leaf && leaf.isOpen() && argument instanceof ColumnExpression column
+                        && column.getColumnId() == leaf.getColumnId() && column.getDataType() == leaf.getType()) {
+                    final ObjList<BindableColumn> leaves = currentPreparation.leaves;
+                    int index = leaves.size() - 1;
+                    while (index >= 0 && leaves.getQuick(index) != leaf) {
+                        index--;
+                    }
+                    if (index >= 0) {
+                        final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
+                        entry.expression = column;
+                        entry.leaves.add(leaf);
+                        ctx.preparedFunctions.own(entry, leaf);
+                        leaves.remove(index);
+                        args.setQuick(i, null);
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            Misc.freeObjList(args, th);
+            throw th;
+        }
+    }
+
+    /**
+     * Pushes a bound operand with the leaf mark where its leaves start; folds drop leaves by these marks.
+     */
+    private void push(BoundExpression expression, int leafMark) {
+        expressionStack.add(expression);
+        expressionLeafMarks.add(leafMark);
+    }
+
+    private BoundExpression pushCall(ExpressionNode node, BoundExpression expression) {
+        if (node.type == ExpressionNode.SET_OPERATION && expression instanceof FunctionExpression call) {
+            call.markSetOperation();
+        }
+        final BoundExpression pushed = node.token == "dateadd" && expression instanceof FunctionExpression call
+                ? ctx.functions.next().ofProjectedOffset(call) : expression;
+        push(pushed, callLeafMark());
+        return pushed;
     }
 
     private boolean referencesColumn(ExpressionNode node, int index) {
@@ -1622,73 +1203,6 @@ public final class FunctionBinder implements Closeable, Mutable {
         }
     }
 
-    private BoundExpression remapColumns0(BoundExpression expression, ProjectPlan projection, boolean isMoving) {
-        if (expression instanceof ColumnExpression column) {
-            final ColumnExpression input = projectionColumn(projection, column.getColumnId(), column.getDataType());
-            final boolean isDirectReference = column.isDirectReference() && input.isDirectReference();
-            final boolean isCast = column.isCast() || input.isCast();
-            final BoundExpression replacement = input.getColumnId() == column.getColumnId()
-                    && isDirectReference == column.isDirectReference() && isCast == column.isCast() ? column
-                    : columns.next().of(input.getColumnId(), column.getDataType(), column.getPosition(), isDirectReference, isCast);
-            if (isMoving) {
-                retargetPreparation(expression, replacement, projection);
-            }
-            return replacement;
-        }
-        if (expression instanceof FunctionExpression call) {
-            final ObjList<BoundExpression> args = rewriteArguments.next();
-            final int count = call.getArgumentCount();
-            args.setPos(count);
-            boolean changed = false;
-            for (int i = 0; i < count; i++) {
-                final BoundExpression original = call.argumentAt(i);
-                final BoundExpression replacement = remapColumns0(original, projection, isMoving);
-                args.setQuick(i, replacement);
-                changed |= original != replacement;
-            }
-            if (changed) {
-                final FunctionExpression replacement = functions.next().of(call, args);
-                args.clear();
-                if (isMoving) {
-                    retargetPreparation(expression, replacement, projection);
-                }
-                return replacement;
-            }
-            args.clear();
-        }
-        return expression;
-    }
-
-    private void retargetPreparation(BoundExpression expression, BoundExpression replacement, ProjectPlan projection) {
-        if (replacement != expression) {
-            for (int i = 0, n = prepared.size(); i < n; i++) {
-                final PreparationEntry entry = prepared.getQuick(i);
-                if (entry.expression == expression && entry.slot >= 0 && resources.resources.getQuick(entry.slot) != null) {
-                    // Validate the entire live closure before changing any leaf.
-                    for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-                        final BindableColumn leaf = entry.leaves.getQuick(k);
-                        if (leaf.isOpen()) {
-                            final ColumnExpression column = projectionColumn(projection, leaf.getColumnId(), leaf.getType());
-                            if (leaf instanceof SymbolFunction symbol && symbol.isSymbolTableStatic()
-                                    != projection.getInput().getOutput().isSymbolTableStatic(
-                                    projection.getInput().getOutput().getColumnIndexById(column.getColumnId()))) {
-                                throw new IllegalArgumentException("bound symbol table capability has changed");
-                            }
-                        }
-                    }
-                    for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-                        final BindableColumn leaf = entry.leaves.getQuick(k);
-                        if (leaf.isOpen()) {
-                            leaf.setColumnId(projectionColumn(projection, leaf.getColumnId(), leaf.getType()).getColumnId());
-                        }
-                    }
-                    entry.expression = replacement;
-                    break;
-                }
-            }
-        }
-    }
-
     /**
      * Rewrites a well-formed and_offset(predicate, unit, offset) into the predicate over
      * dateadd(unit, -offset, timestamp), which interval extraction inverts as a projected offset.
@@ -1724,41 +1238,40 @@ public final class FunctionBinder implements Closeable, Mutable {
         node.copyFrom(predicate);
     }
 
-    // A shared bound reads a TIMESTAMP value, so select the same operator's timestamp overload.
-    private FunctionFactoryDescriptor sharedBoundOverload(FunctionFactoryDescriptor overload) {
-        final ObjList<FunctionFactoryDescriptor> candidates = parser.getFunctionFactoryCache().getOverloadList(overload.getName());
-        final int count = overload.getSigArgCount();
-        for (int i = 0, n = candidates.size(); i < n; i++) {
-            final FunctionFactoryDescriptor candidate = candidates.getQuick(i);
-            if (candidate.getSigArgCount() != count) {
-                continue;
-            }
-            boolean isMatch = true;
-            for (int j = 0; j < count && isMatch; j++) {
-                final short type = FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(j));
-                isMatch = FunctionFactoryDescriptor.toTypeTag(candidate.getArgTypeWithFlags(j))
-                        == (type == ColumnType.CURSOR ? ColumnType.TIMESTAMP : type);
-            }
-            if (isMatch) {
-                return candidate;
-            }
+    /**
+     * The result type the selected overload declares when the call may need no construction while binding: an
+     * audited scalar over columns and other such calls, with type operands and constants beside them. Construction
+     * over non-constant arguments cannot vary in type with argument values; the factory vets the arguments on
+     * admission ({@link FunctionParser#admitUnconstructed}). A call that holds timestamp text that does
+     * not parse may have any other scalar arguments: building it raises that text's error.
+     * {@link ColumnType#UNDEFINED} when the call must be constructed.
+     */
+    private int staticResultType(FunctionFactoryDescriptor overload, ExpressionNode node, ObjList<Function> args, int count) {
+        final FunctionFactory factory = overload.getFactory();
+        if (count == 0 || !overload.isRelocatableScalar() || overload.isCase() || overload.isSwitch()
+                || factory.isGroupBy() || factory.isWindow() || factory.isCursor() || node == windowRoot || node == aggregateRoot) {
+            return ColumnType.UNDEFINED;
         }
-        throw new IllegalStateException("shared scalar bound has no timestamp overload");
-    }
-
-    private TypeExpression type(Function function, int position) {
-        return switch (ColumnType.tagOf(function.getType())) {
-            case ColumnType.BOOLEAN, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE,
-                 ColumnType.TIMESTAMP, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.CHAR,
-                 ColumnType.BYTE, ColumnType.SHORT,
-                 ColumnType.DATE, ColumnType.IPv4, ColumnType.ARRAY, ColumnType.UUID, ColumnType.LONG256,
-                 ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG,
-                 ColumnType.BINARY, ColumnType.INTERVAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
-                 ColumnType.ARRAY_STRING,
-                 ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> types.next().of(function.getType(), position);
-            default -> throw new IllegalStateException("unexpected CAST target type");
-        };
+        final boolean hasUnparsedText = hasUnparsedTimestampText(node, args);
+        boolean hasVariableArgument = false;
+        argumentTypes.clear();
+        for (int i = 0; i < count; i++) {
+            final BoundExpression argument = arguments.getQuick(i);
+            final int type = argument.getDataType();
+            if (!(argument instanceof TypeExpression) && !(argument instanceof ConstantExpression)) {
+                if (ColumnType.isArray(type) || !hasUnparsedText && (argument.getFunctionFlags() != BoundExpression.STABLE_WITHIN_EXECUTION
+                        || !(argument instanceof ColumnExpression && BindableColumn.isBindableType(type) || unconstructed.indexOf(argument) >= 0))) {
+                    return ColumnType.UNDEFINED;
+                }
+                hasVariableArgument = true;
+            }
+            argumentTypes.add(type);
+        }
+        if (!hasVariableArgument) {
+            return ColumnType.UNDEFINED;
+        }
+        final int type = factory.getResultType(argumentTypes);
+        return ColumnType.isArray(type) || ColumnType.isCursor(type) ? ColumnType.UNDEFINED : type;
     }
 
     /**
@@ -1792,20 +1305,35 @@ public final class FunctionBinder implements Closeable, Mutable {
         return text != null ? IntervalUtils.literalTimestampType(driver, text) : ColumnType.UNDEFINED;
     }
 
-    private void validateKeySubquery(Function cursorFunction) throws SqlException {
+    private TypeExpression type(Function function, int position) {
+        return switch (ColumnType.tagOf(function.getType())) {
+            case ColumnType.BOOLEAN, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE,
+                 ColumnType.TIMESTAMP, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.CHAR,
+                 ColumnType.BYTE, ColumnType.SHORT,
+                 ColumnType.DATE, ColumnType.IPv4, ColumnType.ARRAY, ColumnType.UUID, ColumnType.LONG256,
+                 ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG,
+                 ColumnType.BINARY, ColumnType.INTERVAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
+                 ColumnType.ARRAY_STRING,
+                 ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> ctx.types.next().of(function.getType(), position);
+            default -> throw new IllegalStateException("unexpected CAST target type");
+        };
+    }
+
+    private void validateKeySubquery() throws SqlException {
         if (!(arguments.getQuick(0) instanceof ColumnExpression column) || !keySubqueryColumnIds.contains(column.getColumnId())
                 || !(arguments.getQuick(1) instanceof CursorExpression cursor) || cursor.isBoolean()) {
             return;
         }
-        final RecordMetadata metadata = cursorFunction.getRecordCursorFactory().getMetadata();
-        final int type = metadata.getColumnType(0);
+        final OutputSchema output = cursor.getPlan().getOutput();
+        final int type = output.getColumnType(0);
         switch (ColumnType.tagOf(type)) {
             case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR -> {
             }
             default ->
                     throw SqlException.position(subqueryBinder.getSubqueryFirstColumnPosition(cursor.getSubqueryIndex()))
                             .put("unsupported column type: ")
-                            .put(metadata.getColumnName(0))
+                            .put(output.getColumnName(0))
                             .put(": ")
                             .put(ColumnType.nameOf(type));
         }
@@ -1838,19 +1366,6 @@ public final class FunctionBinder implements Closeable, Mutable {
         }
     }
 
-    /**
-     * Consumes the input and returns its only owning root.
-     */
-    static Function convertUpdateFunction(FunctionParser parser, Function function, int targetType, int position) throws SqlException {
-        if (targetType >= 0 && function.getType() != targetType && !ColumnType.isBuiltInWideningCast(function.getType(), targetType)) {
-            final Function cast = parser.createImplicitCast(position, function, targetType);
-            if (cast != null) {
-                function = cast;
-            }
-        }
-        return targetType == ColumnType.SYMBOL && function instanceof NullConstant ? SymbolConstant.NULL : function;
-    }
-
     static int findColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
         final CharSequence name = node.token;
         final int dot = Chars.indexOfLastUnquoted(name, '.');
@@ -1865,33 +1380,18 @@ public final class FunctionBinder implements Closeable, Mutable {
         return -1;
     }
 
+    static int functionFlags(Function function) {
+        return (function.isConstant() ? BoundExpression.CONSTANT : 0)
+                | (function.isRuntimeConstant() ? BoundExpression.RUNTIME_CONSTANT : 0)
+                | (function.isNonDeterministic() ? BoundExpression.NON_DETERMINISTIC : 0)
+                | (function.isStableWithinExecution() ? BoundExpression.STABLE_WITHIN_EXECUTION : 0);
+    }
+
     static boolean isUnknownQualifier(CharSequence qualifier, OutputSchema input, CharSequence inputAlias) {
         if (input.hasColumnQualifiers()) {
             return !input.hasColumnQualifier(qualifier);
         }
         return !Chars.equalsIgnoreCaseNc(qualifier, inputAlias);
-    }
-
-    static int monotonicTimestampColumnId(Function function) {
-        while (function instanceof MonotonicTimestampFunction monotonic) {
-            function = monotonic.getTimestampArg();
-        }
-        return function instanceof BindableColumn column && ColumnType.isTimestamp(function.getType())
-                ? column.getColumnId() : -1;
-    }
-
-    static boolean references(BoundExpression expression, int columnId) {
-        if (expression instanceof ColumnExpression column) {
-            return column.getColumnId() == columnId;
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (references(call.argumentAt(i), columnId)) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     static int resolveColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) throws SqlException {
@@ -1917,15 +1417,14 @@ public final class FunctionBinder implements Closeable, Mutable {
 
     void beginArguments(int count) {
         arguments.clear();
+        argumentLeafMarks.clear();
         for (int i = 0; i < count; i++) {
             final int index = expressionStack.size() - 1;
             arguments.add(expressionStack.getQuick(index));
+            argumentLeafMarks.add(expressionLeafMarks.getQuick(index));
             expressionStack.remove(index);
+            expressionLeafMarks.removeIndex(index);
         }
-    }
-
-    void beginWorkerClones() {
-        workerCloneDepth++;
     }
 
     void captureConstant(Function function, int position) {
@@ -1935,13 +1434,13 @@ public final class FunctionBinder implements Closeable, Mutable {
     void captureConstant(Function function, int position, CharSequence token) {
         try {
             if (function instanceof TypeConstant) {
-                expressionStack.add(type(function, position));
+                push(type(function, position), leafMark());
                 return;
             }
             final ConstantExpression constant = constant(function, position).markLiteral(null);
             final int tag = ColumnType.tagOf(constant.getDataType());
-            expressionStack.add(token != null && (tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT)
-                    ? constant.withLiteralText(Chars.toString(token)) : constant);
+            push(token != null && (tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT)
+                    ? constant.withLiteralText(Chars.toString(token)) : constant, leafMark());
         } catch (Throwable th) {
             Misc.free(function, th);
             throw th;
@@ -1949,30 +1448,37 @@ public final class FunctionBinder implements Closeable, Mutable {
     }
 
     /**
-     * Records the parser's actual inserted cast; never resolves the overload again.
+     * Records the parser's actual inserted cast; never resolves the overload again. Returns the argument the call
+     * receives: a constant cast folds to the constant its bound form instantiates as.
      */
-    void captureImplicitConversion(int index, Function function, int position, Class<? extends FunctionFactory> factoryClass) {
+    Function captureImplicitConversion(int index, Function function, int position, Class<? extends FunctionFactory> factoryClass) {
         if (function.isConstant()) {
-            arguments.setQuick(index, constant(function, position));
-            return;
+            final Function folded = parser.functionToConstant(function);
+            arguments.setQuick(index, constant(folded, position));
+            return folded;
         }
         final ObjList<FunctionFactoryDescriptor> casts = parser.getFunctionFactoryCache().getOverloadList("cast");
         for (int i = 0, n = casts.size(); i < n; i++) {
             final FunctionFactoryDescriptor overload = casts.getQuick(i);
             if (overload.getFactory().getClass() == factoryClass) {
-                conversionArguments.clear();
-                conversionPositions.clear();
+                ctx.argumentScratch.clear();
+                ctx.positionScratch.clear();
                 try {
-                    conversionArguments.add(arguments.getQuick(index));
-                    conversionArguments.add(types.next().of(function.getType(), position));
-                    conversionPositions.add(position);
-                    conversionPositions.add(position);
-                    arguments.setQuick(index, functions.next().of(overload, conversionArguments,
-                            conversionPositions, function.getType(), functionFlags(function), position));
-                    return;
+                    ctx.argumentScratch.add(arguments.getQuick(index));
+                    ctx.argumentScratch.add(ctx.types.next().of(function.getType(), position));
+                    ctx.positionScratch.add(position);
+                    ctx.positionScratch.add(position);
+                    final FunctionExpression conversion = ctx.functions.next().of(overload, ctx.argumentScratch,
+                            ctx.positionScratch, function.getType(),
+                            callFlags(function, LogicalPlans.stabilityFlags(arguments.getQuick(index))), position);
+                    if (unconstructed.indexOf(arguments.getQuick(index)) >= 0) {
+                        unconstructed.add(conversion);
+                    }
+                    arguments.setQuick(index, conversion);
+                    return function;
                 } finally {
-                    conversionArguments.clear();
-                    conversionPositions.clear();
+                    ctx.argumentScratch.clear();
+                    ctx.positionScratch.clear();
                 }
             }
         }
@@ -1981,55 +1487,33 @@ public final class FunctionBinder implements Closeable, Mutable {
 
     void captureParameter(Function function, ExpressionNode node, boolean isPredefined) {
         try {
-            final BindVariableExpression parameter = parameters.next().of(node.token, function.getType(), functionFlags(function), node.position);
-            expressionStack.add(isPredefined ? parameter.markPredefined() : parameter);
+            final BindVariableExpression parameter = ctx.parameters.next().of(node.token, function.getType(), functionFlags(function), node.position);
+            push(isPredefined ? parameter.markPredefined() : parameter, leafMark());
         } catch (Throwable th) {
             Misc.free(function, th);
             throw th;
         }
     }
 
-    Throwable closePrepared(Throwable primary) {
-        return resources.closeOwned(-1, primary);
+    /**
+     * Records a text constant the call converts to TIMESTAMP that does not parse as one. Whatever builds the
+     * call raises the parse error, so the returned stand-in is never evaluated.
+     */
+    Function captureUnparsedTimestamp(int index, CharSequence text, int type, int position) {
+        arguments.setQuick(index, markSource(ctx.constants.next().ofUnparsedTimestamp(text, type, position), arguments.getQuick(index)));
+        return staticTypes.next().of(type);
     }
 
     /**
-     * Combines independently bound conjuncts without constructing executable
-     * children again. Their preparations remain separately owned until generation.
+     * Hands the consumers of a completed sub-query its optimised plan and the stability its factory proves.
      */
-    BoundExpression combineConjunction(BoundExpression left, BoundExpression right, int position) throws SqlException {
-        if (left == null) {
-            return right;
-        }
-        if (right == null) {
-            return left;
-        }
-        final int leftType = left.getDataType();
-        final int rightType = right.getDataType();
-        if (leftType != ColumnType.BOOLEAN && leftType != ColumnType.NULL
-                || rightType != ColumnType.BOOLEAN && rightType != ColumnType.NULL) {
-            // Match the single AND registration's first mismatching argument.
-            final BoundExpression invalid = leftType != ColumnType.BOOLEAN ? left : right;
-            throw SqlException.$(invalid.getPosition(), "expression type mismatch, expected: BOOLEAN, actual: ")
-                    .put(ColumnType.nameOf(invalid.getDataType()));
-        }
-        final ObjList<FunctionFactoryDescriptor> overloads = parser.getFunctionFactoryCache().getOverloadList("and");
-        if (overloads != null) {
-            for (int i = 0, n = overloads.size(); i < n; i++) {
-                final FunctionFactoryDescriptor overload = overloads.getQuick(i);
-                if (overload.getSigArgCount() == 2
-                        && overload.getArgTypeWithFlags(0) == ColumnType.BOOLEAN
-                        && overload.getArgTypeWithFlags(1) == ColumnType.BOOLEAN) {
-                    // Preserve registry priority: an override must be reviewed,
-                    // never silently skipped in favour of the built-in factory.
-                    if (!overload.isAnd()) {
-                        throw new IllegalStateException("AND is not bound to the built-in factory");
-                    }
-                    return conjunction(overload, left, right, position);
-                }
+    void completeCursors(int subqueryIndex, LogicalPlan plan, boolean isFactoryStable) {
+        for (int i = 0, n = cursors.getPos(); i < n; i++) {
+            final CursorExpression cursor = cursors.peekQuick(i);
+            if (cursor.getSubqueryIndex() == subqueryIndex) {
+                cursor.ofGenerated(plan, isFactoryStable);
             }
         }
-        throw new IllegalStateException("AND is not registered");
     }
 
     Function createColumn(ExpressionNode node) throws SqlException {
@@ -2042,16 +1526,18 @@ public final class FunctionBinder implements Closeable, Mutable {
         final int index = resolveColumn(node, input, inputAlias);
         final int type = input.getColumnType(index);
         final int columnId = input.getColumnId(index);
+        ctx.raiseDeferredColumn(columnId);
+        final int mark = leafMark();
         final Function leaf;
-        if (isBindableType(type)) {
-            final BindableColumn bindable = newColumn(columnId, type, input.isSymbolTableStatic(index));
+        if (BindableColumn.isBindableType(type)) {
+            final BindableColumn bindable = BindableColumn.newInstance(columnId, type, input.isSymbolTableStatic(index));
             currentPreparation.leaves.add(bindable);
             leaf = bindable;
         } else {
-            leaf = createColumnFunction(node.position, index, type, input);
+            leaf = FunctionInstantiator.createColumnFunction(node.position, index, type, input);
             currentPreparation.isRebuildRequired = true;
         }
-        expressionStack.add(columns.next().of(columnId, type, node.position));
+        push(ctx.columns.next().of(columnId, type, node.position), mark);
         return leaf;
     }
 
@@ -2063,9 +1549,11 @@ public final class FunctionBinder implements Closeable, Mutable {
         } else {
             index = subqueryBinder.compileSubquery(node.queryModel, node.position, executionContext);
         }
-        final CursorFunction function = new CursorFunction(subqueryBinder.claimSubquery(index));
-        expressionStack.add(cursors.next().of(subqueryBinder.getSubqueryPlan(index), index, functionFlags(function), node.position));
-        return function;
+        final LogicalPlan plan = subqueryBinder.getSubqueryPlan(index);
+        final int flags = LogicalPlans.isResultStable(plan, executionContext) ? BoundExpression.STABLE_WITHIN_EXECUTION : 0;
+        currentPreparation.isRebuildRequired = true;
+        push(cursors.next().of(plan, index, flags, node.position), leafMark());
+        return new SubqueryCursorFunction(subqueryBinder.getSubqueryMetadata(index), true);
     }
 
     Function createFunction(
@@ -2076,16 +1564,20 @@ public final class FunctionBinder implements Closeable, Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         validateFactory(overload, node, args);
+        final int staticType;
         try {
+            captureUnparsedInElements(overload, args);
             final Function folded = canonicalizeTemporalComparison(node, args, positions);
             if (folded != null) {
                 Misc.freeObjList(args);
-                expressionStack.add(constants.next().ofBoolean(folded.getBool(null), node.position).markLiteral());
+                dropLeaves(callLeafMark(), leafMark());
+                push(ctx.constants.next().ofBoolean(folded.getBool(null), node.position).markLiteral(), leafMark());
                 return folded;
             }
             final int count = args == null ? 0 : args.size();
             if (count == 0) {
                 arguments.clear();
+                argumentLeafMarks.clear();
             }
             final int signatureCount = overload.getSigArgCount();
             final boolean variadic = signatureCount > 0
@@ -2110,7 +1602,7 @@ public final class FunctionBinder implements Closeable, Mutable {
                 }
             }
             if (count == 2 && keySubqueryColumnIds.size() > 0 && SqlKeywords.isInKeyword(node.token)) {
-                validateKeySubquery(args.getQuick(1));
+                validateKeySubquery();
             }
             if (requiresConditionalRebuild(overload, args)) {
                 currentPreparation.isRebuildRequired = true;
@@ -2119,9 +1611,24 @@ public final class FunctionBinder implements Closeable, Mutable {
             if (positions != null) {
                 argumentPositions.addAll(positions);
             }
+            final int declaredType = staticResultType(overload, node, args, count);
+            staticType = declaredType != ColumnType.UNDEFINED
+                    && isAdmittedUnconstructed(overload, node, args, positions, executionContext)
+                    ? declaredType : ColumnType.UNDEFINED;
+            if (staticType == ColumnType.UNDEFINED) {
+                constructArguments(args, count, executionContext);
+            }
         } catch (Throwable th) {
             Misc.freeObjList(args, th);
             throw th;
+        }
+        if (staticType != ColumnType.UNDEFINED) {
+            prepareUnconstructedArguments(args);
+            Misc.freeObjList(args);
+            args.clear();
+            unconstructed.add(pushCall(node, ctx.functions.next().of(overload, arguments, argumentPositions,
+                    staticType, BoundExpression.STABLE_WITHIN_EXECUTION, node.position)));
+            return staticTypes.next().of(staticType);
         }
         final Function first = args != null && args.size() == 2 ? args.getQuick(0) : null;
         final Function second = first != null ? args.getQuick(1) : null;
@@ -2140,18 +1647,15 @@ public final class FunctionBinder implements Closeable, Mutable {
             final BoundExpression expression;
             if (function instanceof ConstantFunction && !ColumnType.isArray(function.getType())) {
                 expression = markSource(constant(function, node.position), overload, function.getType(), functionFlags(function), node.position);
+                dropLeaves(callLeafMark(), leafMark());
             } else if (first != null && isConnective(node.token) && (function == first || function == second)) {
                 // A connective with a constant operand returns its other operand.
                 expression = arguments.getQuick(function == first ? 0 : 1);
             } else {
-                expression = functions.next().of(overload, arguments, argumentPositions,
-                        function.getType(), functionFlags(function), node.position);
+                expression = ctx.functions.next().of(overload, arguments, argumentPositions,
+                        function.getType(), callFlags(function, arguments), node.position);
             }
-            if (node.type == ExpressionNode.SET_OPERATION && expression instanceof FunctionExpression call) {
-                call.markSetOperation();
-            }
-            expressionStack.add(node.token == "dateadd" && expression instanceof FunctionExpression call
-                    ? functions.next().ofProjectedOffset(call) : expression);
+            pushCall(node, expression);
             return function;
         } catch (Throwable th) {
             Misc.free(function, th);
@@ -2160,44 +1664,55 @@ public final class FunctionBinder implements Closeable, Mutable {
     }
 
     /**
-     * Describes the argument-free window function {@code name}, such as {@code row_number}, without preparing
-     * it; the generator builds windows under their final window context.
+     * The evaluation step for an argument: a constant call is evaluated to its constant and its transient
+     * function closed, and the argument's description becomes that constant. Owns the function on failure.
      */
-    FunctionExpression describeWindowCall(CharSequence name, int position) {
-        final ObjList<FunctionFactoryDescriptor> overloads = parser.getFunctionFactoryCache().getOverloadList(name);
-        for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
-            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
-            if (overload.getSigArgCount() == 0 && overload.getFactory().isWindow()) {
-                conversionArguments.clear();
-                conversionPositions.clear();
-                return functions.next().of(overload, conversionArguments, conversionPositions, ColumnType.LONG, 0, position);
+    Function foldArgument(int index, Function function, int position) {
+        final Function argument = function != null && function.isConstant() && function.extendedOps() == null
+                && !(function instanceof TypeConstant) ? parser.functionToConstant(function) : function;
+        try {
+            if (argument instanceof ConstantFunction && !(argument instanceof TypeConstant)) {
+                final BoundExpression expression = arguments.getQuick(index);
+                if (ColumnType.isArray(argument.getType())) {
+                    arguments.setQuick(index, normalizeArgument(expression, argument));
+                } else {
+                    arguments.setQuick(index, markSource(constant(argument, position), expression));
+                    closeLeaves(argumentLeafMarks.getQuick(index), index > 0 ? argumentLeafMarks.getQuick(index - 1) : leafMark());
+                }
             }
-        }
-        throw new IllegalStateException("window function is not registered");
-    }
-
-    void endWorkerClones() {
-        workerCloneDepth--;
-    }
-
-    void finish(Function function) {
-        final int index = expressionStack.size() - 1;
-        expressionStack.setQuick(index, normalizeArgument(expressionStack.getQuick(index), function));
-    }
-
-    void foldArgument(int index, Function function, int position) {
-        if (function instanceof ConstantFunction && !(function instanceof TypeConstant)) {
-            final BoundExpression argument = arguments.getQuick(index);
-            if (ColumnType.isArray(function.getType())) {
-                arguments.setQuick(index, normalizeArgument(argument, function));
-            } else {
-                arguments.setQuick(index, markSource(constant(function, position), argument));
-            }
+            return argument;
+        } catch (Throwable th) {
+            Misc.free(argument, th);
+            throw th;
         }
     }
 
-    RecordCursorFactory generateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
-        return subqueryBinder.generateSubquery(cursor.getSubqueryIndex(), cursor.getPosition(), executionContext);
+    /**
+     * The evaluation step for the root: a constant root is evaluated to its constant and its transient function
+     * closed, and the root's description is normalized to the result. Owns the function on failure.
+     */
+    Function foldRoot(Function function) {
+        final Function root = function != null && function.isConstant() && function.extendedOps() == null
+                ? parser.functionToConstant(function) : function;
+        try {
+            finish(root);
+            return root;
+        } catch (Throwable th) {
+            Misc.free(root, th);
+            throw th;
+        }
+    }
+
+    /**
+     * Generates, in bind order, the pending sub-queries among the arguments of a call that failed to resolve or
+     * construct: a sub-query argument is generated before its call, so its errors precede the call's.
+     */
+    void generateArgumentSubqueries(SqlExecutionContext executionContext) throws SqlException {
+        for (int i = arguments.size() - 1; i > -1; i--) {
+            if (arguments.getQuick(i) instanceof CursorExpression cursor) {
+                subqueryBinder.completeSubquery(cursor.getSubqueryIndex(), executionContext);
+            }
+        }
     }
 
     IntHashSet getKeySubqueryColumnIds() {
@@ -2212,10 +1727,6 @@ public final class FunctionBinder implements Closeable, Mutable {
         return outerColumnIds;
     }
 
-    int getScalarBoundDepth() {
-        return subqueryBinder.getScalarBoundDepth();
-    }
-
     /**
      * True while a LATERAL body binds.
      */
@@ -2223,95 +1734,11 @@ public final class FunctionBinder implements Closeable, Mutable {
         return outerScopes.size() > 0;
     }
 
-    Function instantiateSubquery(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
-        final int parked = parkedCursors.indexOf(cursor);
-        if (parked >= 0) {
-            final Function function = parkedSubqueries.getQuick(parked);
-            parkedCursors.remove(parked);
-            parkedSubqueries.remove(parked);
-            return function;
-        }
-        if (workerCloneDepth == 0) {
-            return new CursorFunction(subqueryBinder.generateSubquery(cursor.getSubqueryIndex(), cursor.getPosition(), executionContext));
-        }
-        // Worker clones receive the owner's sub-query state, so generating their copy serially keeps
-        // nested sub-queries from compiling once per worker at every nesting level.
-        final boolean isParallelFilter = executionContext.isParallelFilterEnabled();
-        final boolean isParallelGroupBy = executionContext.isParallelGroupByEnabled();
-        final boolean isParallelHorizonJoin = executionContext.isParallelHorizonJoinEnabled();
-        final boolean isParallelTopK = executionContext.isParallelTopKEnabled();
-        final boolean isParallelWindowJoin = executionContext.isParallelWindowJoinEnabled();
-        executionContext.setParallelFilterEnabled(false);
-        executionContext.setParallelGroupByEnabled(false);
-        executionContext.setParallelHorizonJoinEnabled(false);
-        executionContext.setParallelTopKEnabled(false);
-        executionContext.setParallelWindowJoinEnabled(false);
-        try {
-            return new CursorFunction(subqueryBinder.generateSubquery(cursor.getSubqueryIndex(), cursor.getPosition(), executionContext));
-        } finally {
-            executionContext.setParallelFilterEnabled(isParallelFilter);
-            executionContext.setParallelGroupByEnabled(isParallelGroupBy);
-            executionContext.setParallelHorizonJoinEnabled(isParallelHorizonJoin);
-            executionContext.setParallelTopKEnabled(isParallelTopK);
-            executionContext.setParallelWindowJoinEnabled(isParallelWindowJoin);
-        }
-    }
-
-    Function instantiateUpdateAssignment(BoundExpression expression, int targetType, OutputSchema input,
-                                         RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
-        if (metadata.getColumnCount() != input.getColumnCount()) {
-            throw new IllegalStateException("bound function input metadata has changed");
-        }
-        for (int i = 0, n = prepared.size(); i < n; i++) {
-            final PreparationEntry entry = prepared.getQuick(i);
-            if (entry.expression == expression && entry.updateTargetType == targetType
-                    && entry.slot >= 0 && resources.resources.getQuick(entry.slot) != null) {
-                if (isPreparationCompatible(entry, input, metadata)) {
-                    return adoptPreparation(entry, input, metadata);
-                }
-                final Closeable unused = resources.detach(entry.slot);
-                entry.slot = -1;
-                Misc.free(unused);
-                break;
-            }
-        }
-        return convertUpdateFunction(parser, instantiate(expression, input, metadata, executionContext),
-                targetType, expression.getPosition());
-    }
-
     /**
      * True when no replacement matches subtrees by AST identity, so binding may clone and reassociate the tree.
      */
     boolean isAstRewritable() {
         return replacementNodes == null || replacementNodes.size() == 0;
-    }
-
-    /**
-     * Evaluates a folded equality on the NULL its column takes when a join NULL-extends it.
-     */
-    boolean isNullRejecting(FunctionExpression call, int columnArgument, SqlExecutionContext executionContext) {
-        if (!"=".equals(call.getName()) || !(call.argumentAt(1 - columnArgument) instanceof ConstantExpression)) {
-            return false;
-        }
-        final ColumnExpression column = (ColumnExpression) call.argumentAt(columnArgument);
-        final int type = column.getDataType();
-        nullProbeSchema.clear();
-        nullProbeSchema.add(column.getColumnId(), NULL_PROBE_COLUMN, type, true);
-        if (nullProbeMetadata.getColumnCount() == 0 || nullProbeMetadata.getColumnType(0) != type) {
-            nullProbeMetadata.clear();
-            nullProbeMetadata.add(new TableColumnMetadata(NULL_PROBE_COLUMN, type, IndexType.NONE, 0, false, null));
-        }
-        Function function = null;
-        try {
-            nullProbeConstants.setQuick(0, Constants.getNullConstant(type));
-            function = instantiate(call, nullProbeSchema, nullProbeMetadata, executionContext);
-            return !function.getBool(nullProbeRecord);
-        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException e) {
-            return false;
-        } finally {
-            Misc.free(function);
-            Misc.freeObjList(nullProbeConstants);
-        }
     }
 
     /**
@@ -2329,26 +1756,15 @@ public final class FunctionBinder implements Closeable, Mutable {
         return false;
     }
 
+    /**
+     * Whether the call is a predicate comparison whose TIMESTAMP text operands interval extraction validates.
+     */
+    boolean isTimestampComparison(ExpressionNode node) {
+        return isBindingPredicate && (isTemporalComparisonOperator(node.token) || SqlKeywords.isBetweenKeyword(node.token));
+    }
+
     boolean isUnresolvedNoArgFunction(ExpressionNode node) {
         return findColumn(node, input, inputAlias) == -1 && parser.findNoArgFunction(node);
-    }
-
-    BoundExpression newFalseConstant(int position) {
-        return constants.next().ofBoolean(false, position);
-    }
-
-    /**
-     * The next consumer of the cursor adopts this generated sub-query.
-     */
-    void parkSubquery(CursorExpression cursor, Function subquery) {
-        final int index = parkedCursors.indexOf(cursor);
-        if (index < 0) {
-            parkedCursors.add(cursor);
-            parkedSubqueries.add(subquery);
-        } else {
-            Misc.free(parkedSubqueries.getQuick(index));
-            parkedSubqueries.setQuick(index, subquery);
-        }
     }
 
     void popOuterScope() {
@@ -2359,24 +1775,20 @@ public final class FunctionBinder implements Closeable, Mutable {
      * Returns a borrowed converted root; its prepared slot retains ownership.
      */
     Function prepareUpdateAssignment(BoundExpression expression, int targetType) throws SqlException {
-        for (int i = 0, n = prepared.size(); i < n; i++) {
-            final PreparationEntry entry = prepared.getQuick(i);
-            if (entry.expression == expression && entry.slot >= 0 && resources.resources.getQuick(entry.slot) != null) {
-                if (entry.updateTargetType >= 0) {
-                    throw new IllegalStateException("UPDATE assignment already prepared");
-                }
-                final int slot = resources.reserve();
-                final Function original = (Function) resources.detach(entry.slot);
-                entry.slot = -1;
-                // convertUpdateFunction() frees the original root when the conversion fails
-                final Function function = convertUpdateFunction(parser, original, targetType, expression.getPosition());
-                resources.own(slot, function);
-                entry.slot = slot;
-                entry.updateTargetType = targetType;
-                return function;
-            }
+        final PreparedFunctions.Entry entry = ctx.preparedFunctions.findOwned(expression);
+        if (entry == null) {
+            throw new IllegalStateException("UPDATE assignment is not owned");
         }
-        throw new IllegalStateException("UPDATE assignment is not owned");
+        if (entry.updateTargetType >= 0) {
+            throw new IllegalStateException("UPDATE assignment already prepared");
+        }
+        final int slot = ctx.preparedFunctions.reserve();
+        final Function original = ctx.preparedFunctions.detach(entry);
+        // convertUpdateFunction() frees the original root when the conversion fails
+        final Function function = FunctionInstantiator.convertUpdateFunction(parser, original, targetType, expression.getPosition());
+        ctx.preparedFunctions.own(entry, slot, function);
+        entry.updateTargetType = targetType;
+        return function;
     }
 
     /**
@@ -2386,47 +1798,6 @@ public final class FunctionBinder implements Closeable, Mutable {
         outerScopes.add(scope);
     }
 
-    /**
-     * Returns the expression with each column and outer column the map holds read under its mapped id, as a
-     * column. Unchanged sub-expressions are shared; a changed call is a fresh description without a preparation.
-     */
-    BoundExpression remapColumns(BoundExpression expression, IntIntHashMap columnIds) {
-        if (expression instanceof ColumnExpression column) {
-            final int columnId = columnIds.get(column.getColumnId());
-            return columnId < 0 ? column
-                    : columns.next().of(columnId, column.getDataType(), column.getPosition(), column.isDirectReference(), column.isCast());
-        }
-        if (expression instanceof OuterColumnExpression outer) {
-            final int columnId = columnIds.get(outer.getColumnId());
-            return columnId < 0 ? outer : columns.next().of(columnId, outer.getDataType(), outer.getPosition());
-        }
-        if (expression instanceof FunctionExpression call) {
-            return remapColumns(call, columnIds);
-        }
-        return expression;
-    }
-
-    FunctionExpression remapColumns(FunctionExpression call, IntIntHashMap columnIds) {
-        final ObjList<BoundExpression> args = rewriteArguments.next();
-        boolean isChanged = false;
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            final BoundExpression argument = call.argumentAt(i);
-            final BoundExpression remapped = remapColumns(argument, columnIds);
-            args.add(remapped);
-            isChanged |= remapped != argument;
-        }
-        return isChanged ? functions.next().of(call, args) : call;
-    }
-
-    BoundExpression replaceConjunction(FunctionExpression original, BoundExpression left, BoundExpression right) {
-        assert original.isAnd()
-                && original.getArgumentCount() == 2;
-        if (left == original.argumentAt(0) && right == original.argumentAt(1)) {
-            return original;
-        }
-        return conjunction(original.getOverload(), left, right, original.getPosition());
-    }
-
     Function replaceNode(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         if (replacementNodes != null) {
             for (int i = 0, n = replacementNodes.size(); i < n; i++) {
@@ -2434,28 +1805,30 @@ public final class FunctionBinder implements Closeable, Mutable {
                     final BoundExpression replacement = replacementExpressions.getQuick(i);
                     if (!(replacement instanceof ColumnExpression column)) {
                         // Leaves of a reconstructed subtree carry this layout's indexes.
-                        if (replacement instanceof FunctionExpression) {
+                        if (replacement instanceof FunctionExpression || replacement instanceof CursorExpression) {
                             currentPreparation.isRebuildRequired = true;
                         }
-                        final Function function = instantiateNew(replacement, input, null, executionContext, false);
-                        expressionStack.add(replacement);
+                        final Function function = ctx.functionInstantiator.rebuild(replacement, input, executionContext);
+                        push(replacement, leafMark());
                         return function;
                     }
+                    ctx.raiseDeferredColumn(column.getColumnId());
                     final int index = input.getColumnIndexById(column.getColumnId());
                     if (index < 0 || input.getColumnType(index) != column.getDataType()) {
                         throw new IllegalStateException("bound expression replacement input has changed");
                     }
+                    final int mark = leafMark();
                     final Function leaf;
-                    if (isBindableType(column.getDataType())) {
-                        final BindableColumn bindable = newColumn(column.getColumnId(), column.getDataType(), input.isSymbolTableStatic(index));
+                    if (BindableColumn.isBindableType(column.getDataType())) {
+                        final BindableColumn bindable = BindableColumn.newInstance(column.getColumnId(), column.getDataType(), input.isSymbolTableStatic(index));
                         currentPreparation.leaves.add(bindable);
                         leaf = bindable;
                     } else {
-                        leaf = createColumnFunction(node.position, index, column.getDataType(), input);
+                        leaf = FunctionInstantiator.createColumnFunction(node.position, index, column.getDataType(), input);
                         currentPreparation.isRebuildRequired = true;
                     }
-                    expressionStack.add(columns.next().of(column.getColumnId(), column.getDataType(), node.position,
-                            column.isDirectReference(), column.isCast()));
+                    push(ctx.columns.next().of(column.getColumnId(), column.getDataType(), node.position,
+                            column.isDirectReference(), column.isCast()), mark);
                     return leaf;
                 }
             }
@@ -2468,111 +1841,26 @@ public final class FunctionBinder implements Closeable, Mutable {
             final BoundExpression argument = normalizeArgument(arguments.getQuick(0), function);
             // No runtime cast is needed, but diagnostics must retain the CAST's
             // source position without mutating the already captured argument.
-            expressionStack.add(switch (argument) {
+            final BoundExpression repositioned = switch (argument) {
                 case ColumnExpression column ->
-                        columns.next().of(column.getColumnId(), column.getDataType(), position, false, true);
-                case OuterColumnExpression outer -> outerColumns.next().of(outer.getColumnId(), outer.getDataType(), position);
+                        ctx.columns.next().of(column.getColumnId(), column.getDataType(), position, false, true);
+                case OuterColumnExpression outer ->
+                        ctx.outerColumns.next().of(outer.getColumnId(), outer.getDataType(), position);
                 case BindVariableExpression parameter ->
-                        parameters.next().of(parameter.getName(), parameter.getDataType(), parameter.getFunctionFlags(), position, false);
-                case FunctionExpression call -> functions.next().of(call, position);
+                        ctx.parameters.next().of(parameter.getName(), parameter.getDataType(), parameter.getFunctionFlags(), position, false);
+                case FunctionExpression call -> ctx.functions.next().of(call, position);
                 default -> constant(function, position);
-            });
+            };
+            if (unconstructed.indexOf(argument) >= 0) {
+                unconstructed.add(repositioned);
+            }
+            push(repositioned, callLeafMark());
             args.clear();
             return function;
         } catch (Throwable th) {
             Misc.freeObjList(args, th);
             throw th;
         }
-    }
-
-    void setSubqueryBinder(SqlBinder subqueryBinder) {
-        this.subqueryBinder = subqueryBinder;
-    }
-
-    /**
-     * Later consumers of the cursor read the value its pruning bound publishes once per execution.
-     */
-    void shareScalarBound(CursorExpression cursor, ScalarTimestampBoundHolder holder) {
-        final int index = sharedBoundCursors.indexOf(cursor);
-        if (index < 0) {
-            sharedBoundCursors.add(cursor);
-            sharedBoundHolders.add(holder);
-        } else {
-            sharedBoundHolders.setQuick(index, holder);
-        }
-    }
-
-    /**
-     * Copies the expression with every reference to the column replaced; preparations stay with the original.
-     */
-    BoundExpression substituteColumn(BoundExpression expression, int columnId, BoundExpression replacement) {
-        if (expression instanceof ColumnExpression column) {
-            return column.getColumnId() == columnId ? replacement : expression;
-        }
-        if (expression instanceof FunctionExpression call && references(call, columnId)) {
-            final ObjList<BoundExpression> args = rewriteArguments.next();
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                args.add(substituteColumn(call.argumentAt(i), columnId, replacement));
-            }
-            return functions.next().of(call, args);
-        }
-        return expression;
-    }
-
-    /**
-     * Replaces each column with the expression the projection computes for it: an input column or
-     * a timestamp offset. Substituted functions are fresh descriptions, so the projection keeps its
-     * own preparation.
-     */
-    BoundExpression substituteProjection(BoundExpression expression, ProjectPlan projection) {
-        if (expression instanceof ColumnExpression column) {
-            final int index = projection.getOutput().getColumnIndexById(column.getColumnId());
-            final BoundExpression projected = projection.getExpressions().getQuick(index);
-            if (projected instanceof ColumnExpression projectedColumn) {
-                return columns.next().of(projectedColumn.getColumnId(), column.getDataType(), column.getPosition(),
-                        column.isDirectReference() && projectedColumn.isDirectReference(), column.isCast() || projectedColumn.isCast());
-            }
-            return functions.next().ofProjectedOffset((FunctionExpression) projected);
-        }
-        if (expression instanceof FunctionExpression call) {
-            final ObjList<BoundExpression> args = rewriteArguments.next();
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                args.add(substituteProjection(call.argumentAt(i), projection));
-            }
-            return functions.next().of(call, args);
-        }
-        return expression;
-    }
-
-    /**
-     * Returns {@code key IN (values)} bound to the SYMBOL overload, or null when none is registered.
-     */
-    FunctionExpression symbolIn(BoundExpression key, ObjList<BoundExpression> values, IntList valuePositions, int functionFlags, int position) {
-        final ObjList<FunctionFactoryDescriptor> overloads = parser.getFunctionFactoryCache().getOverloadList("in");
-        if (overloads == null) {
-            return null;
-        }
-        for (int i = 0, n = overloads.size(); i < n; i++) {
-            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
-            if (overload.getSigArgCount() == 2
-                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(0)) == ColumnType.SYMBOL
-                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(1)) == ColumnType.VAR_ARG) {
-                conversionArguments.clear();
-                conversionPositions.clear();
-                try {
-                    conversionArguments.add(key);
-                    conversionArguments.addAll(values);
-                    conversionPositions.add(key.getPosition());
-                    conversionPositions.addAll(valuePositions);
-                    return functions.next().of(overload, conversionArguments, conversionPositions,
-                            ColumnType.BOOLEAN, functionFlags, position);
-                } finally {
-                    conversionArguments.clear();
-                    conversionPositions.clear();
-                }
-            }
-        }
-        return null;
     }
 
     BoundExpression toBooleanSubquery(BoundExpression expression) {
@@ -2582,23 +1870,6 @@ public final class FunctionBinder implements Closeable, Mutable {
                     & (BoundExpression.STABLE_WITHIN_EXECUTION | BoundExpression.NON_DETERMINISTIC));
         }
         return expression;
-    }
-
-    /**
-     * Removes the innermost projected timestamp offset, the one over the timestamp column.
-     */
-    BoundExpression unwrapProjectedOffsets(BoundExpression expression) {
-        if (!(expression instanceof FunctionExpression call)) {
-            return expression;
-        }
-        if (call.isProjectedOffset() && call.argumentAt(2) instanceof ColumnExpression) {
-            return call.argumentAt(2);
-        }
-        final ObjList<BoundExpression> args = rewriteArguments.next();
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            args.add(unwrapProjectedOffsets(call.argumentAt(i)));
-        }
-        return functions.next().of(call, args);
     }
 
     void validateFactory(FunctionFactoryDescriptor overload, ExpressionNode node, ObjList<Function> args) throws SqlException {
@@ -2655,20 +1926,16 @@ public final class FunctionBinder implements Closeable, Mutable {
             int fillPosition,
             ExpressionNode aggregateNode
     ) throws SqlException {
-        for (int i = 0, n = prepared.size(); i < n; i++) {
-            final PreparationEntry entry = prepared.getQuick(i);
-            if (entry.expression == expression && entry.slot >= 0
-                    && resources.resources.getQuick(entry.slot) instanceof GroupByFunction function) {
-                final CharSequence unsupportedFill = GroupByUtils.getUnsupportedSampleByFill(function, fillToken);
-                if (unsupportedFill != null) {
-                    throw SqlException.$(fillPosition, "support for ").put(unsupportedFill)
-                            .put(" fill is not yet implemented [function=").put(aggregateNode)
-                            .put(", class=").put(function.getClass().getName()).put(']');
-                }
-                return;
-            }
+        final PreparedFunctions.Entry entry = ctx.preparedFunctions.findOwned(expression);
+        if (entry == null || !(ctx.preparedFunctions.root(entry) instanceof GroupByFunction function)) {
+            throw new IllegalStateException("aggregate preparation is not owned");
         }
-        throw new IllegalStateException("aggregate preparation is not owned");
+        final CharSequence unsupportedFill = GroupByUtils.getUnsupportedSampleByFill(function, fillToken);
+        if (unsupportedFill != null) {
+            throw SqlException.$(fillPosition, "support for ").put(unsupportedFill)
+                    .put(" fill is not yet implemented [function=").put(aggregateNode)
+                    .put(", class=").put(function.getClass().getName()).put(']');
+        }
     }
 
     void validateSubsampleArguments(ExpressionNode node, ObjList<Function> args, IntList positions) throws SqlException {
@@ -2691,1082 +1958,6 @@ public final class FunctionBinder implements Closeable, Mutable {
             }
         } else if (Chars.equalsIgnoreCase(node.token, "sdt") && args.size() == 3) {
             SubsampleValidator.validateSdtCompdev(args.getQuick(2), positions.getQuick(2));
-        }
-    }
-
-    private interface BindableColumn extends Function {
-        int getColumnId();
-
-        /**
-         * False once an audited NULL fold closes this discarded operand; a closed leaf needs no input slot.
-         */
-        boolean isOpen();
-
-        void setColumnId(int columnId);
-
-        void setColumnIndex(int columnIndex);
-    }
-
-    private static final class BindableArrayColumn extends ArrayFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableArrayColumn(int columnId, int type) {
-            this.columnId = columnId;
-            this.type = type;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public ArrayView getArray(Record record) {
-            assert columnIndex >= 0;
-            return record.getArray(columnIndex, type);
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableBooleanColumn extends BooleanFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableBooleanColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public boolean getBool(Record record) {
-            assert columnIndex >= 0;
-            return record.getBool(columnIndex);
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableByteColumn extends ByteFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableByteColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public byte getByte(Record record) {
-            assert columnIndex >= 0;
-            return record.getByte(columnIndex);
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableCharColumn extends CharFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableCharColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public char getChar(Record record) {
-            assert columnIndex >= 0;
-            return record.getChar(columnIndex);
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableDateColumn extends DateFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableDateColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public long getDate(Record record) {
-            assert columnIndex >= 0;
-            return record.getDate(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableDoubleColumn extends DoubleFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableDoubleColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public double getDouble(Record record) {
-            assert columnIndex >= 0;
-            return record.getDouble(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableFloatColumn extends FloatFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableFloatColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public float getFloat(Record record) {
-            assert columnIndex >= 0;
-            return record.getFloat(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableGeoHashColumn extends AbstractGeoHashFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableGeoHashColumn(int columnId, int type) {
-            super(type);
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public byte getGeoByte(Record record) {
-            assert columnIndex >= 0 && ColumnType.tagOf(type) == ColumnType.GEOBYTE;
-            return record.getGeoByte(columnIndex);
-        }
-
-        @Override
-        public int getGeoInt(Record record) {
-            assert columnIndex >= 0 && ColumnType.tagOf(type) == ColumnType.GEOINT;
-            return record.getGeoInt(columnIndex);
-        }
-
-        @Override
-        public long getGeoLong(Record record) {
-            assert columnIndex >= 0 && ColumnType.tagOf(type) == ColumnType.GEOLONG;
-            return record.getGeoLong(columnIndex);
-        }
-
-        @Override
-        public short getGeoShort(Record record) {
-            assert columnIndex >= 0 && ColumnType.tagOf(type) == ColumnType.GEOSHORT;
-            return record.getGeoShort(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableIPv4Column extends IPv4Function implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableIPv4Column(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public int getIPv4(Record record) {
-            assert columnIndex >= 0;
-            return record.getIPv4(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableIntColumn extends IntFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableIntColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public int getInt(Record record) {
-            assert columnIndex >= 0;
-            return record.getInt(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            // Column positions are assigned once before the graph reaches execution.
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableLong256Column extends Long256Function implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableLong256Column(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public void getLong256(Record record, CharSink<?> sink) {
-            assert columnIndex >= 0;
-            record.getLong256(columnIndex, sink);
-        }
-
-        @Override
-        public Long256 getLong256A(Record record) {
-            assert columnIndex >= 0;
-            return record.getLong256A(columnIndex);
-        }
-
-        @Override
-        public Long256 getLong256B(Record record) {
-            assert columnIndex >= 0;
-            return record.getLong256B(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableLongColumn extends LongFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableLongColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public long getLong(Record record) {
-            assert columnIndex >= 0;
-            return record.getLong(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableShortColumn extends ShortFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableShortColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public short getShort(Record record) {
-            assert columnIndex >= 0;
-            return record.getShort(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableStrColumn extends StrFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableStrColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public CharSequence getStrA(Record record) {
-            assert columnIndex >= 0;
-            return record.getStrA(columnIndex);
-        }
-
-        @Override
-        public CharSequence getStrB(Record record) {
-            assert columnIndex >= 0;
-            return record.getStrB(columnIndex);
-        }
-
-        @Override
-        public int getStrLen(Record record) {
-            assert columnIndex >= 0;
-            return record.getStrLen(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableSymbolColumn extends SymbolFunction implements BindableColumn {
-        private final boolean isSymbolTableStatic;
-        private SymbolColumn column;
-        private int columnId;
-        private boolean isOpen = true;
-
-        private BindableSymbolColumn(int columnId, boolean isSymbolTableStatic) {
-            this.columnId = columnId;
-            this.isSymbolTableStatic = isSymbolTableStatic;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-            if (column != null) {
-                column.close();
-            }
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return column.getInt(rec);
-        }
-
-        @Override
-        public StaticSymbolTable getStaticSymbolTable() {
-            return column == null ? null : column.getStaticSymbolTable();
-        }
-
-        @Override
-        public CharSequence getSymbol(Record rec) {
-            return column.getSymbol(rec);
-        }
-
-        @Override
-        public CharSequence getSymbolB(Record rec) {
-            return column.getSymbolB(rec);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            column.init(symbolTableSource, executionContext);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isSymbolTableStatic() {
-            return isSymbolTableStatic;
-        }
-
-        @Override
-        public SymbolTable newSymbolTable() {
-            return column.newSymbolTable();
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert isOpen && column == null;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            assert column == null && columnIndex >= 0;
-            column = new SymbolColumn(columnIndex, isSymbolTableStatic);
-        }
-
-        @Override
-        public boolean supportsKeyValueAccess() {
-            return column != null && column.supportsKeyValueAccess();
-        }
-
-        @Override
-        public boolean supportsParallelism() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            column.toPlan(sink);
-        }
-
-        @Override
-        public CharSequence valueBOf(int symbolKey) {
-            return column.valueBOf(symbolKey);
-        }
-
-        @Override
-        public CharSequence valueOf(int symbolKey) {
-            return column.valueOf(symbolKey);
-        }
-    }
-
-    private static final class BindableTimestampColumn extends TimestampFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableTimestampColumn(int columnId, int type) {
-            super(type);
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public long getTimestamp(Record record) {
-            assert columnIndex >= 0;
-            return record.getTimestamp(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableUuidColumn extends UuidFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableUuidColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public long getLong128Hi(Record record) {
-            assert columnIndex >= 0;
-            return record.getLong128Hi(columnIndex);
-        }
-
-        @Override
-        public long getLong128Lo(Record record) {
-            assert columnIndex >= 0;
-            return record.getLong128Lo(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class BindableVarcharColumn extends VarcharFunction implements BindableColumn {
-        private int columnId;
-        private int columnIndex = -1;
-        private boolean isOpen = true;
-
-        private BindableVarcharColumn(int columnId) {
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void close() {
-            isOpen = false;
-        }
-
-        @Override
-        public int getColumnId() {
-            return columnId;
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record record) {
-            assert columnIndex >= 0;
-            return record.getVarcharA(columnIndex);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record record) {
-            assert columnIndex >= 0;
-            return record.getVarcharB(columnIndex);
-        }
-
-        @Override
-        public int getVarcharSize(Record record) {
-            assert columnIndex >= 0;
-            return record.getVarcharSize(columnIndex);
-        }
-
-        @Override
-        public boolean isOpen() {
-            return isOpen;
-        }
-
-        @Override
-        public void setColumnId(int columnId) {
-            assert columnIndex == -1 && isOpen;
-            this.columnId = columnId;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-        }
-    }
-
-    private static final class InstantiationArguments implements Mutable {
-        private final ObjList<Function> functions = new ObjList<>();
-        private final IntList positions = new IntList();
-
-        @Override
-        public void clear() {
-            functions.clear();
-            positions.clear();
-        }
-    }
-
-    private static final class PreparationEntry implements Mutable {
-        private final ObjList<BindableColumn> leaves = new ObjList<>();
-        private BoundExpression expression;
-        private boolean isRebuildRequired;
-        private int slot = -1;
-        private int updateTargetType = -1;
-
-        @Override
-        public void clear() {
-            leaves.clear();
-            expression = null;
-            isRebuildRequired = false;
-            slot = -1;
-            updateTargetType = -1;
         }
     }
 }

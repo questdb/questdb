@@ -57,6 +57,7 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -66,6 +67,7 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -116,19 +118,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final WindowFactoryGenerator windowGenerator;
     private boolean fullFatJoins = false;
     private int generationDepth;
-    @Nullable
-    private LogicalGenerationTestHook logicalGenerationTestHook;
 
     @TestOnly
     public SqlCodeGenerator(
             CairoConfiguration configuration,
-            FunctionParser functionParser,
-            ObjectPool<ExpressionNode> expressionNodePool
+            FunctionParser functionParser
     ) {
         this(
                 configuration,
                 functionParser,
-                expressionNodePool,
                 new CharacterStore(configuration.getSqlCharacterStoreCapacity(), configuration.getSqlCharacterStoreSequencePoolCapacity()),
                 new BytecodeAssembler(),
                 new EntityColumnFilter(),
@@ -145,7 +143,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public SqlCodeGenerator(
             CairoConfiguration configuration,
             FunctionParser functionParser,
-            ObjectPool<ExpressionNode> expressionNodePool,
             CharacterStore characterStore,
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
@@ -176,7 +173,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ListColumnFilter listColumnFilterB = new ListColumnFilter();
             final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             final BitSet symbolScratch = new BitSet();
-            this.filterGenerator = new FilterFactoryGenerator(configuration, expressionNodePool, characterStore, jitIRMem, reduceTaskFactory, scratchSink);
+            this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, scratchSink,
+                    indexScratch, valueScratch, masterKeyScratch, slaveKeyScratch, longScratch);
             this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, asm, emptySchema, entityColumnFilter,
                     indexScratch, valueScratch);
             this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionParser, asm, entityColumnFilter,
@@ -191,11 +189,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     recordComparatorCompiler, listColumnFilterB);
             this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter, keyTypes, valueTypes,
                     listColumnFilterB, symbolScratch);
-            this.windowGenerator = new WindowFactoryGenerator(configuration, this, asm, entityColumnFilter, recordComparatorCompiler);
+            this.windowGenerator = new WindowFactoryGenerator(configuration, this, functionParser.getFunctionFactoryCache(), asm, entityColumnFilter, recordComparatorCompiler);
         } catch (Throwable th) {
             close();
             throw th;
         }
+    }
+
+    /**
+     * Wraps a union factory in the projection that re-symbolises the given STRING columns. Takes
+     * ownership of {@code union}, including on failure.
+     */
+    @TestOnly
+    public static RecordCursorFactory resymboliseUnion(RecordCursorFactory union, IntList symbolColumns) {
+        return SetOperationFactoryGenerator.maybeResymboliseUnion(union, symbolColumns);
     }
 
     @Override
@@ -211,12 +218,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public void close() {
         final Throwable failure = Misc.freeObjListBestEffort(null, generationFrames);
         generationFrames.clear();
-        // Bound the test hook by this generator's lifetime: clear() runs on every compile, so it
-        // cannot own the reset, but a hook must never outlive the compiler that installed it.
-        logicalGenerationTestHook = null;
-        if (setOperationGenerator != null) {
-            setOperationGenerator.setUnionSymbolProjectionTestHook(null);
-        }
         Misc.free(jitIRMem);
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -249,16 +250,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return recordComparatorCompiler;
     }
 
-    @TestOnly
-    public void setLogicalGenerationTestHook(@Nullable LogicalGenerationTestHook hook) {
-        logicalGenerationTestHook = hook;
-    }
-
-    @TestOnly
-    public void setUnionSymbolProjectionTestHook(@Nullable UnionSymbolProjectionTestHook hook) {
-        setOperationGenerator.setUnionSymbolProjectionTestHook(hook);
-    }
-
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
         final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -284,9 +275,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static boolean hasSortUnderStableProjects(LogicalPlan plan) {
         while (plan instanceof ProjectPlan project) {
             for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                final int flags = project.getExpressions().getQuick(i).getFunctionFlags();
-                if ((flags & BoundExpression.STABLE_WITHIN_EXECUTION) == 0
-                        || (flags & BoundExpression.NON_DETERMINISTIC) != 0) {
+                if (!LogicalPlans.isOrderIndependent(project.getExpressions().getQuick(i))) {
                     return false;
                 }
             }
@@ -296,19 +285,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static void rejectDerivedLatestWithoutTimestamp(LogicalPlan input) throws SqlException {
-        if (input.getType() != LogicalPlan.Type.PROJECT) {
+        if (!(input instanceof ProjectPlan)) {
             return;
         }
         do {
             input = input.inputAt(0);
-        } while (input.getType() == LogicalPlan.Type.PROJECT);
+        } while (input instanceof ProjectPlan);
         if (input instanceof LatestByPlan latest && latest.isTimestampOrderInherited()) {
             throw SqlException.$(latest.getPosition(), "TIMESTAMP column is required but not provided");
         }
     }
 
     private int declareTimestamp(GenerationFrame frame, int inputSlot, int timestampIndex) {
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.resources.getQuick(inputSlot);
+        final RecordCursorFactory base = frame.resources.factory(inputSlot);
         final RecordMetadata baseMetadata = base.getMetadata();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final IntList mapping = new IntList(baseMetadata.getColumnCount());
@@ -361,8 +350,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (SortFactoryGenerator.hasNativeFilterInput(project)) {
                     inputOrderAdvice = sortGenerator.remapOrderAdvice(frame, project, orderAdvice);
                     inputLimitAdvice = orderAdvice == null || inputOrderAdvice != null ? limitAdvice : null;
-                } else if (project.getInput().getType() == LogicalPlan.Type.AGGREGATE
-                        || project.getInput().getType() == LogicalPlan.Type.WINDOW
+                } else if (project.getInput() instanceof AggregatePlan || project.getInput() instanceof WindowPlan
                         || SortFactoryGenerator.hasOrderedJoinMasterInput(project)) {
                     inputOrderAdvice = sortGenerator.remapOrderAdvice(frame, project, orderAdvice);
                 }
@@ -374,7 +362,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // This sort defines its own order; a parent's advice cannot override it.
                 if (sort.getColumnIds().size() == 1) {
                     inputOrderId = sort.getColumnIds().getQuick(0);
-                    inputScanDirection = sort.getDirections().getQuick(0) == QueryModel.ORDER_DIRECTION_DESCENDING
+                    inputScanDirection = sort.getDirections().getQuick(0) == SortDirection.DESCENDING
                             ? RecordCursorFactory.SCAN_DIRECTION_BACKWARD : RecordCursorFactory.SCAN_DIRECTION_FORWARD;
                 } else {
                     inputScanDirection = RecordCursorFactory.SCAN_DIRECTION_OTHER;
@@ -407,7 +395,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             inputSlot = generate(frame, input, executionContext, inputOrderId, inputScanDirection, inputOrderAdvice, inputLimitAdvice, inputOrderByMnemonic);
         }
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.resources.getQuick(inputSlot);
+        final RecordCursorFactory base = frame.resources.factory(inputSlot);
         if (residual instanceof ColumnExpression column
                 && WindowFactoryGenerator.tryFuseKeepFlagFilter(base, input.getOutput().getColumnIndexById(column.getColumnId()))) {
             return inputSlot;
@@ -442,7 +430,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int index = input.getOutput().getColumnIndexById(column.getColumnId());
                     predicate = FunctionParser.createColumn(column.getPosition(), index, base.getMetadata());
                 } else {
-                    predicate = frame.functionBinder.instantiate(residual, input.getOutput(), base.getMetadata(), executionContext);
+                    predicate = frame.functionInstantiator.instantiate(residual, input.getOutput(), base.getMetadata(), executionContext);
                 }
                 frame.resources.own(predicateSlot, predicate);
                 if (input instanceof FunctionSourcePlan source) {
@@ -451,7 +439,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 frame.resources.detach(inputSlot);
                 frame.resources.detach(predicateSlot);
                 frame.resources.own(slot, filterGenerator.generate(frame, residual, input.getOutput(), base, predicate,
-                        frame.functionBinder, executionContext, frame.isUpdate && hasUpdateScan(input), null,
+                        frame.functionInstantiator, executionContext, frame.isUpdate && hasUpdateScan(input), null,
                         input instanceof ScanPlan scan && scan.hasHint(ScanPlan.HINT_PRE_TOUCH)));
                 return slot;
             }
@@ -465,7 +453,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             case SortPlan sort -> {
                 frame.resources.detach(inputSlot);
-                frame.resources.own(slot, sortGenerator.generate(sort, base, null, null, 0, executionContext, frame.functionBinder));
+                frame.resources.own(slot, sortGenerator.generate(sort, base, null, null, 0, executionContext, frame.functionInstantiator));
                 return slot;
             }
             default -> {
@@ -475,10 +463,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw new IllegalStateException("unknown logical operation");
         }
         final int loSlot = frame.resources.reserve();
-        final Function lo = frame.functionBinder.instantiate(limit.getLo(), emptySchema, executionContext);
+        final Function lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
         frame.resources.own(loSlot, lo);
         final int hiSlot = frame.resources.reserve();
-        final Function hi = limit.getHi() == null ? null : frame.functionBinder.instantiate(limit.getHi(), emptySchema, executionContext);
+        final Function hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
         if (hi != null) {
             frame.resources.own(hiSlot, hi);
         }
@@ -590,6 +578,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    static int queryModelDirection(SortDirection direction) {
+        return direction == SortDirection.DESCENDING ? QueryModel.ORDER_DIRECTION_DESCENDING : QueryModel.ORDER_DIRECTION_ASCENDING;
+    }
+
+    static int queryModelJoinType(JoinKind kind) {
+        return switch (kind) {
+            case CROSS -> QueryModel.JOIN_CROSS;
+            case INNER -> QueryModel.JOIN_INNER;
+            case LEFT_OUTER -> QueryModel.JOIN_LEFT_OUTER;
+            case RIGHT_OUTER -> QueryModel.JOIN_RIGHT_OUTER;
+            case FULL_OUTER -> QueryModel.JOIN_FULL_OUTER;
+            case ASOF -> QueryModel.JOIN_ASOF;
+            case LT -> QueryModel.JOIN_LT;
+            case SPLICE -> QueryModel.JOIN_SPLICE;
+            case UNNEST -> QueryModel.JOIN_UNNEST;
+        };
+    }
+
     static LogicalPlan unwrapColumnProjections(LogicalPlan plan) {
         while (plan instanceof ProjectPlan project && isColumnOnlyProjection(project)) {
             plan = plan.inputAt(0);
@@ -599,7 +605,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     RecordCursorFactory generate(
             LogicalPlan root,
-            FunctionBinder functionBinder,
+            FunctionInstantiator functionInstantiator,
+            BoundExpressionRewriter expressionRewriter,
             TableFunctionSources functionSources,
             boolean isUpdate,
             SqlExecutionContext executionContext
@@ -613,7 +620,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final GenerationFrame frame = generationFrames.getQuick(generationDepth++);
         try {
             frame.clear();
-            frame.functionBinder = functionBinder;
+            frame.functionInstantiator = functionInstantiator;
+            frame.expressionRewriter = expressionRewriter;
             frame.functionSources = functionSources;
             frame.isUpdate = isUpdate;
             try {
@@ -625,14 +633,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (cleanup != null) {
                     CairoException.rethrowCleanupFailure(frame.resources.closeOwned(-1, cleanup));
                 }
-                return (RecordCursorFactory) frame.resources.detach(slot);
+                return frame.resources.detachFactory(slot);
             } catch (Throwable e) {
                 frame.resources.closeOwned(e);
                 final Throwable failure = frame.closePrepared(e);
                 assert failure == e;
                 throw e;
             } finally {
-                frame.functionBinder = null;
+                frame.functionInstantiator = null;
+                frame.expressionRewriter = null;
                 frame.functionSources = null;
                 frame.isUpdate = false;
             }
@@ -651,10 +660,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     int generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext, int requiredOrderColumnId, int requiredScanDirection,
                  SortPlan orderAdvice, LimitPlan limitAdvice, int orderByMnemonic) throws SqlException {
-        final LogicalGenerationTestHook testHook = logicalGenerationTestHook;
-        if (testHook != null) {
-            testHook.onGenerate(plan);
-        }
         if (plan == frame.sharedHeadTarget) {
             frame.sharedHeadTarget = null;
             final int slot = frame.resources.reserve();
@@ -662,8 +667,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return slot;
         }
         return switch (plan) {
-            case WindowPlan window -> windowGenerator.generateWindow(frame, window, null, requiredOrderColumnId, requiredScanDirection, orderAdvice,
-                    window.isSelectOrdered() && orderAdvice != null && orderAdvice.getInput() == plan, orderByMnemonic, executionContext);
+            case WindowPlan window ->
+                    windowGenerator.generateWindow(frame, window, null, requiredOrderColumnId, requiredScanDirection, orderAdvice,
+                            window.isSelectOrdered() && orderAdvice != null && orderAdvice.getInput() == plan, orderByMnemonic, executionContext);
             case ProjectPlan project when project.inputAt(0) instanceof WindowPlan window && WindowFactoryGenerator.isWindowOutputProjection(project, window) -> {
                 final int index = project.getOutput().getColumnIndexById(requiredOrderColumnId);
                 yield windowGenerator.generateWindow(frame, window, project,
@@ -684,8 +690,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case FillPlan fill -> {
                 final int inputSlot = generate(frame, fill.getInput(), executionContext);
                 final int slot = frame.resources.reserve();
-                final RecordCursorFactory base = (RecordCursorFactory) frame.resources.detach(inputSlot);
-                frame.resources.own(slot, sampleByGenerator.generateFill(fill, fill.getInput().getOutput(), base, frame.functionBinder, executionContext));
+                final RecordCursorFactory base = frame.resources.detachFactory(inputSlot);
+                frame.resources.own(slot, sampleByGenerator.generateFill(fill, fill.getInput().getOutput(), base, frame.functionInstantiator, executionContext));
                 yield slot;
             }
             case ScanPlan scan -> {
@@ -700,13 +706,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sortGenerator.generateSortedLimit(frame, limit.getInput(), limit, executionContext);
             case AggregatePlan aggregate ->
                     aggregateGenerator.generateAggregate(frame, aggregate, orderAdvice, executionContext, requiredOrderColumnId, requiredScanDirection);
-            case JoinPlan join -> joinGenerator.generateJoin(frame, join, requiredOrderColumnId, requiredScanDirection, orderAdvice,
-                    orderByMnemonic, executionContext);
-            case WindowJoinPlan windowJoin -> joinGenerator.generateWindowJoin(frame, windowJoin, null, executionContext, orderByMnemonic);
-            case SetOperationPlan operation -> setOperationGenerator.generate(frame, operation, requiredOrderColumnId, requiredScanDirection,
-                    orderByMnemonic, executionContext);
-            default -> generateUnary(frame, plan, executionContext, requiredOrderColumnId, requiredScanDirection, orderAdvice, limitAdvice,
-                    orderByMnemonic);
+            case JoinPlan join ->
+                    joinGenerator.generateJoin(frame, join, requiredOrderColumnId, requiredScanDirection, orderAdvice,
+                            orderByMnemonic, executionContext);
+            case WindowJoinPlan windowJoin ->
+                    joinGenerator.generateWindowJoin(frame, windowJoin, null, executionContext, orderByMnemonic);
+            case SetOperationPlan operation ->
+                    setOperationGenerator.generate(frame, operation, requiredOrderColumnId, requiredScanDirection,
+                            orderByMnemonic, executionContext);
+            default ->
+                    generateUnary(frame, plan, executionContext, requiredOrderColumnId, requiredScanDirection, orderAdvice, limitAdvice,
+                            orderByMnemonic);
         };
     }
 
@@ -720,7 +730,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             final int slot = generate(frame, input, executionContext, requiredOrderColumnId, requiredScanDirection, orderAdvice, null,
                     isTimestampRequired ? OrderByMnemonic.ORDER_BY_REQUIRED : orderByMnemonic);
-            if (isTimestampRequired && ((RecordCursorFactory) frame.resources.resources.getQuick(slot)).getMetadata().getTimestampIndex() < 0) {
+            if (isTimestampRequired && frame.resources.factory(slot).getMetadata().getTimestampIndex() < 0) {
                 rejectDerivedLatestWithoutTimestamp(input);
             }
             return slot;
@@ -740,25 +750,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     void setFullFatJoins(boolean fullFatJoins) {
         this.fullFatJoins = fullFatJoins;
-    }
-
-    @TestOnly
-    @FunctionalInterface
-    public interface LogicalGenerationTestHook {
-        void onGenerate(LogicalPlan plan) throws SqlException;
-    }
-
-    @TestOnly
-    public interface UnionSymbolProjectionTestHook {
-        int BASE_COLUMN = 0;
-        int PROJECTION = 2;
-        int SYMBOL_FUNCTION = 1;
-
-        void onFunctionRegistered(int functionKind) throws SqlException;
-
-        void onProjectionConstruction() throws SqlException;
-
-        Function wrapFunction(Function function, int functionKind);
     }
 
     private static class RecordCursorFactoryStub implements RecordCursorFactory {

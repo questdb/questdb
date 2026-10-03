@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -51,8 +52,22 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
     public static final String NAME = "to_utc";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(0));
+    }
+
+    @Override
     public String getSignature() {
         return NAME + "(NS)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final Function timezoneFunc = args.getQuick(1);
+        if (timezoneFunc.isConstant()) {
+            ToTimezoneTimestampFunctionFactory.constantZoneRules(timezoneFunc.getStrA(null), argPositions.getQuick(1), ResultTypes.timestampAtLeastMicros(args.getQuick(0).getType()));
+        }
+        return true;
     }
 
     @Override
@@ -94,39 +109,25 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             int timestampType
     ) throws SqlException {
         final CharSequence tz = timezoneFunc.getStrA(null);
-        if (tz != null) {
-            final int hi = tz.length();
-            final long l = Dates.parseOffset(tz, 0, hi);
-            if (l == Long.MIN_VALUE) {
-                try {
-                    return new ConstRulesFunc(
-                            timestampFunc,
-                            tz,
-                            timestampType
-                    );
-                } catch (NumericException e) {
-                    throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
-                }
-            } else {
-                return new OffsetTimestampFunction(
-                        timestampFunc,
-                        ColumnType.getTimestampDriver(timestampType).fromMinutes(-Numbers.decodeLowInt(l)),
-                        timestampType
-                );
-            }
+        final TimeZoneRules rules = ToTimezoneTimestampFunctionFactory.constantZoneRules(tz, timezonePos, timestampType);
+        if (rules != null) {
+            return new ConstRulesFunc(timestampFunc, rules, timestampType);
         }
-        throw SqlException.$(timezonePos, "timezone must not be null");
+        return new OffsetTimestampFunction(
+                timestampFunc,
+                ColumnType.getTimestampDriver(timestampType).fromMinutes(-Numbers.decodeLowInt(Dates.parseOffset(tz, 0, tz.length()))),
+                timestampType
+        );
     }
 
     private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final Function timestampFunc;
         private final TimeZoneRules tzRules;
 
-        public ConstRulesFunc(Function timestampFunc, CharSequence tz, int timestampType) throws NumericException {
+        public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules, int timestampType) {
             super(timestampType);
             this.timestampFunc = timestampFunc;
-            this.tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())), timestampDriver.getTZRuleResolution());
+            this.tzRules = tzRules;
         }
 
         @Override

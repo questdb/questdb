@@ -57,6 +57,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
     private final Record.CharSequenceFunction func;
+    private final boolean isKeySetStable;
     private PageFrameRecordCursorWrapper cursor;
     private Function filter;
     private RecordCursorFactory recordCursorFactory;
@@ -67,6 +68,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull RecordCursorFactory recordCursorFactory,
+            boolean isKeySetStable,
             int columnIndex,
             @Nullable Function filter,
             @NotNull Record.CharSequenceFunction func,
@@ -76,6 +78,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         this.recordCursorFactory = recordCursorFactory;
+        this.isKeySetStable = isKeySetStable;
         this.filter = filter;
         this.func = func;
         cursorFactories = new ObjList<>();
@@ -95,6 +98,12 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     @Override
     public RecordCursorFactory getBaseFactory() {
         return recordCursorFactory;
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return isKeySetStable && (filter == null || filter.isStableWithinExecution())
+                && partitionFrameCursorFactory.isStableWithinExecution();
     }
 
     @Override

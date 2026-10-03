@@ -82,6 +82,11 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

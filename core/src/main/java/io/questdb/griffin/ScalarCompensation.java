@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -34,13 +33,13 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
@@ -73,13 +72,15 @@ final class ScalarCompensation implements Mutable {
     final ObjList<AggregatePlan> scalarAggregates = new ObjList<>();
     final ObjList<ProjectPlan> uncompensatedScalars = new ObjList<>();
     private final IntList carrierColumnIds = new IntList();
+    private final OptimiserContext context;
     private final DecorrelationContext ctx;
     private final DecorrelationDomains domains;
     private final ObjList<BoundExpression> hoistedConjuncts;
     AggregatePlan scalarAggregate;
     private BoundExpression pendingConjuncts;
 
-    ScalarCompensation(DecorrelationContext ctx, DecorrelationDomains domains, ObjList<BoundExpression> hoistedConjuncts) {
+    ScalarCompensation(OptimiserContext context, DecorrelationContext ctx, DecorrelationDomains domains, ObjList<BoundExpression> hoistedConjuncts) {
+        this.context = context;
         this.ctx = ctx;
         this.domains = domains;
         this.hoistedConjuncts = hoistedConjuncts;
@@ -258,7 +259,7 @@ final class ScalarCompensation implements Mutable {
                 replacement = substitute < 0 ? null : ctx.planNodes.columns.next().of(substitute, type, expression.getPosition());
             }
             if (replacement != null) {
-                value = ctx.functionBinder.substituteColumn(value, columnId, replacement);
+                value = context.getRewriter().substituteColumn(value, columnId, replacement);
             }
         }
         ctx.scratch.setPos(columnBase);
@@ -361,7 +362,7 @@ final class ScalarCompensation implements Mutable {
             if (right == null) {
                 return left;
             }
-            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : ctx.functionBinder.replaceConjunction(call, left, right);
+            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : context.getRewriter().replaceConjunction(call, left, right);
         }
         if (readsCompensated(predicate)) {
             hoistedConjuncts.add(predicate);
@@ -374,15 +375,9 @@ final class ScalarCompensation implements Mutable {
         return ctx.bindCall("coalesce", value.getPosition(), value, ctx.planNodes.constants.next().ofInt(0, value.getPosition()), input);
     }
 
-    static void forwardColumns(LogicalPlan node, LogicalPlan bottom) {
-        if (node != bottom) {
-            forwardColumns(node.inputAt(0), bottom);
-            appendMissingColumns(node.getOutput(), node.inputAt(0).getOutput());
-        }
-    }
 
     static boolean isImplicitlyKeyedByOuterColumns(AggregatePlan aggregate) {
-        if (aggregate.hasExplicitGrouping() || aggregate.hasSampleByBucket() || aggregate instanceof SampleByPlan) {
+        if (aggregate.hasExplicitGrouping() || aggregate.hasSampleByBucket()) {
             return false;
         }
         for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
@@ -451,8 +446,8 @@ final class ScalarCompensation implements Mutable {
         final int domainBase = ctx.mappedOuterIds.size();
         final AggregatePlan domain = domains.buildDomain(position);
         final JoinPlan join = ctx.planNodes.joins.next().of(position);
-        final JoinInput projectInput = ctx.planNodes.joinInputs.next().of(project, QueryModel.JOIN_LEFT_OUTER, null, position);
-        join.getInputs().add(ctx.planNodes.joinInputs.next().of(domain, QueryModel.JOIN_CROSS, domains.domainAlias(), position));
+        final JoinInput projectInput = ctx.planNodes.joinInputs.next().of(project, JoinKind.LEFT_OUTER, null, position);
+        join.getInputs().add(ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domains.domainAlias(), position));
         join.getInputs().add(projectInput);
         join.getOrderedInputs().addAll(join.getInputs());
         join.getOutput().copyFrom(domain.getOutput());
@@ -470,7 +465,7 @@ final class ScalarCompensation implements Mutable {
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             if (output.isVisible(i)) {
                 final int columnId = output.getColumnId(i);
-                renameJoinedColumn(join, output, i, ctx.nextColumnId++);
+                renameJoinedColumn(join, output, i, context.newColumnId());
                 final BoundExpression empty = emptyValue(project, i, join.getOutput());
                 final BoundExpression value = empty != null ? empty : ctx.planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), position);
                 compensated.getExpressions().add(value);
@@ -514,7 +509,7 @@ final class ScalarCompensation implements Mutable {
         for (int i = 0, n = expressions.size(); i < n; i++) {
             BoundExpression expression = expressions.getQuick(i);
             for (int k = 0, m = compensatedIds.size(); k < m; k++) {
-                expression = ctx.functionBinder.substituteColumn(expression, compensatedIds.getQuick(k), compensations.getQuick(k));
+                expression = context.getRewriter().substituteColumn(expression, compensatedIds.getQuick(k), compensations.getQuick(k));
             }
             expressions.setQuick(i, expression);
         }
@@ -525,8 +520,8 @@ final class ScalarCompensation implements Mutable {
         if (hoisted == null) {
             return project;
         }
-        final FilterPlan filter = ctx.planNodes.filters.next().of(project, ctx.functionBinder.remapColumns(hoisted, ctx.substitution), hoisted.getPosition());
-        filter.getOutput().copyFrom(project.getOutput());
+        final FilterPlan filter = ctx.planNodes.filters.next().of(project, context.getRewriter().remapColumns(hoisted, ctx.substitution), hoisted.getPosition());
+        filter.deriveOutput();
         return filter;
     }
 
@@ -538,7 +533,7 @@ final class ScalarCompensation implements Mutable {
         for (int d = drivenBase, m = drivenInputs.size(); d < m; d++) {
             final JoinInput input = drivenInputs.getQuick(d);
             final ProjectPlan scalar = drivenScalars.getQuick(d);
-            if (input.getJoinType() != QueryModel.JOIN_LEFT_OUTER) {
+            if (input.getJoinType() != JoinKind.LEFT_OUTER) {
                 continue;
             }
             ctx.substitution.clear();
@@ -558,7 +553,7 @@ final class ScalarCompensation implements Mutable {
                 if (empty != null) {
                     final ObjList<BoundExpression> expressions = consumer.getExpressions();
                     for (int k = 0, e = expressions.size(); k < e; k++) {
-                        expressions.setQuick(k, ctx.functionBinder.substituteColumn(expressions.getQuick(k), output.getColumnId(i), empty));
+                        expressions.setQuick(k, context.getRewriter().substituteColumn(expressions.getQuick(k), output.getColumnId(i), empty));
                     }
                 }
             }
@@ -594,7 +589,7 @@ final class ScalarCompensation implements Mutable {
         if (on != null) {
             BoundExpression condition = on;
             for (int i = start, n = compensatedIds.size(); i < n; i++) {
-                condition = ctx.functionBinder.substituteColumn(condition, compensatedIds.getQuick(i), compensations.getQuick(i));
+                condition = context.getRewriter().substituteColumn(condition, compensatedIds.getQuick(i), compensations.getQuick(i));
             }
             for (int i = start, n = compensations.size(); i < n; i++) {
                 compensations.setQuick(i, guarded(condition, compensations.getQuick(i), input, step.getPosition()));
@@ -620,17 +615,19 @@ final class ScalarCompensation implements Mutable {
             final BoundExpression value = compensated > -1 ? compensations.getQuick(compensated)
                     : ctx.planNodes.columns.next().of(columnId, output.getColumnType(i), join.getPosition());
             project.getExpressions().add(value);
-            project.getOutput().add(ctx.nextColumnId, output.getColumnName(i), value.getDataType(), output.getMetadata(i), output.isVisible(i),
+            final int remappedId = context.newColumnId();
+            project.getOutput().add(remappedId, output.getColumnName(i), value.getDataType(), output.getMetadata(i), output.isVisible(i),
                     output.getColumnQualifier(i));
-            consumerRemap.put(columnId, ctx.nextColumnId++);
+            consumerRemap.put(columnId, remappedId);
         }
         for (int i = 0, n = compensatedIds.size(); i < n; i++) {
             final CharSequence name = compensatedNames.getQuick(i);
             if (name != null) {
                 final BoundExpression value = compensations.getQuick(i);
                 project.getExpressions().add(value);
-                project.getOutput().add(ctx.nextColumnId, name, value.getDataType(), true);
-                consumerRemap.put(compensatedIds.getQuick(i), ctx.nextColumnId++);
+                final int remappedId = context.newColumnId();
+                project.getOutput().add(remappedId, name, value.getDataType(), true);
+                consumerRemap.put(compensatedIds.getQuick(i), remappedId);
             }
         }
         project.getOutput().setTimestampIndex(output.getTimestampIndex());
@@ -642,8 +639,8 @@ final class ScalarCompensation implements Mutable {
         if (hoisted == null) {
             return project;
         }
-        final FilterPlan filter = ctx.planNodes.filters.next().of(project, ctx.functionBinder.remapColumns(hoisted, consumerRemap), hoisted.getPosition());
-        filter.getOutput().copyFrom(project.getOutput());
+        final FilterPlan filter = ctx.planNodes.filters.next().of(project, context.getRewriter().remapColumns(hoisted, consumerRemap), hoisted.getPosition());
+        filter.deriveOutput();
         return filter;
     }
 
@@ -654,7 +651,7 @@ final class ScalarCompensation implements Mutable {
     ProjectPlan drivenScalar(JoinPlan join, JoinInput input) {
         if (!(input.getInput() instanceof ProjectPlan project) || !(project.getInput() instanceof AggregatePlan aggregate)
                 || !isImplicitlyKeyedByOuterColumns(aggregate) || input.getPostJoinFilter() != null
-                || input.getJoinType() != QueryModel.JOIN_CROSS && (input.getJoinType() != QueryModel.JOIN_INNER && input.getJoinType() != QueryModel.JOIN_LEFT_OUTER
+                || input.getJoinType() != JoinKind.CROSS && (input.getJoinType() != JoinKind.INNER && input.getJoinType() != JoinKind.LEFT_OUTER
                 || input.getMasterKeyColumnIds().size() > 0 || !isTrue(input.getOnResidual()))) {
             return null;
         }
@@ -687,7 +684,7 @@ final class ScalarCompensation implements Mutable {
      * projection and filters.
      */
     ProjectPlan drivingConsumer(int chainBase, boolean hasProject) {
-        if (!hasProject || ctx.master == null || ctx.master.getInputs().getQuick(ctx.masterLimit).getJoinType() != QueryModel.JOIN_LEFT_OUTER
+        if (!hasProject || ctx.master == null || ctx.master.getInputs().getQuick(ctx.masterLimit).getJoinType() != JoinKind.LEFT_OUTER
                 || !(ctx.chain.getQuick(chainBase) instanceof ProjectPlan consumer)) {
             return null;
         }
@@ -720,12 +717,20 @@ final class ScalarCompensation implements Mutable {
                 if (aggregateIndex >= keyCount && pairIndex(carrierColumnIds, columnId) < 0) {
                     final int type = aggregate.getOutput().getColumnType(aggregateIndex);
                     project.getExpressions().add(ctx.planNodes.columns.next().of(columnId, type, project.getPosition()));
-                    project.getOutput().add(ctx.nextColumnId, carrierName(), type, false);
+                    final int carrierId = context.newColumnId();
+                    project.getOutput().add(carrierId, carrierName(), type, false);
                     carrierColumnIds.add(columnId);
-                    carrierColumnIds.add(ctx.nextColumnId++);
+                    carrierColumnIds.add(carrierId);
                 }
             }
             ctx.scratch.setPos(columnBase);
+        }
+    }
+
+    void forwardColumns(LogicalPlan node, LogicalPlan bottom) {
+        if (node != bottom) {
+            forwardColumns(node.inputAt(0), bottom);
+            ctx.alignColumns(node.getOutput(), node.inputAt(0).getOutput());
         }
     }
 
@@ -750,7 +755,7 @@ final class ScalarCompensation implements Mutable {
             hoistedConjuncts.clear();
             input.setPostJoinFilter(takeCompensatedConjuncts(input.getPostJoinFilter()));
             for (int k = 0, m = hoistedConjuncts.size(); k < m; k++) {
-                hoisted = hoisted == null ? hoistedConjuncts.getQuick(k) : ctx.functionBinder.combineConjunction(hoisted, hoistedConjuncts.getQuick(k), hoisted.getPosition());
+                hoisted = hoisted == null ? hoistedConjuncts.getQuick(k) : context.getRewriter().combineConjunction(hoisted, hoistedConjuncts.getQuick(k), hoisted.getPosition());
             }
             hoistedConjuncts.clear();
         }
@@ -800,7 +805,7 @@ final class ScalarCompensation implements Mutable {
             return limitComparison(">=", lo, one, input, lo.getPosition());
         }
         final BoundExpression upper = limitComparison(">=", hi, one, input, hi.getPosition());
-        return ctx.functionBinder.combineConjunction(limitComparison("<", lo, one, input, lo.getPosition()), upper, lo.getPosition());
+        return context.getRewriter().combineConjunction(limitComparison("<", lo, one, input, lo.getPosition()), upper, lo.getPosition());
     }
 
     /**
@@ -812,7 +817,7 @@ final class ScalarCompensation implements Mutable {
             throw SqlException.$(outerLimit.getPosition(), OUTER_LIMIT_OVER_COUNT);
         }
         final FilterPlan filter = ctx.planNodes.filters.next().of(input, limitGuard(limit.getLo(), limit.getHi(), input.getOutput()), limit.getPosition());
-        filter.getOutput().copyFrom(input.getOutput());
+        filter.deriveOutput();
         return filter;
     }
 

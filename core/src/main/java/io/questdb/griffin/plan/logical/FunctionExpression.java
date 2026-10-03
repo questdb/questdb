@@ -109,6 +109,11 @@ public final class FunctionExpression extends BoundExpression {
         return overload.getFactory().isWindow();
     }
 
+    public FunctionExpression markProjectedOffset() {
+        isProjectedOffset = true;
+        return this;
+    }
+
     public void markSetOperation() {
         isSetOperation = true;
     }
@@ -122,8 +127,12 @@ public final class FunctionExpression extends BoundExpression {
     }
 
     public FunctionExpression of(FunctionExpression expression, ObjList<BoundExpression> arguments) {
+        return of(expression, arguments, expression.getFunctionFlags());
+    }
+
+    public FunctionExpression of(FunctionExpression expression, ObjList<BoundExpression> arguments, int functionFlags) {
         of(expression.overload, arguments, expression.argumentPositions,
-                expression.getDataType(), expression.getFunctionFlags(), expression.getPosition());
+                expression.getDataType(), functionFlags, expression.getPosition());
         isSetOperation = expression.isSetOperation;
         isProjectedOffset = expression.isProjectedOffset;
         return this;

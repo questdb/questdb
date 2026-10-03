@@ -38,7 +38,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCodeGenerator.UnionSymbolProjectionTestHook;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -119,9 +118,10 @@ import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
@@ -144,16 +144,14 @@ final class SetOperationFactoryGenerator {
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
     private final ArrayColumnTypes keyTypes;
-    private final MergeUnionAllRecordCursorFactoryBuilder.CastFunctionFactory mergeCastFactory = this::generateMergeCastFunctions;
     private final SortFactoryGenerator sortGenerator;
     private final ArrayColumnTypes valueTypes;
     // a bitset of symbol columns serialised as strings by UNION, INTERSECT and EXCEPT record sinks
     private final BitSet writeSymbolAsString;
     private SqlExecutionContext mergeCastContext;
-    @Nullable
-    private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
+    private final MergeUnionAllRecordCursorFactoryBuilder.CastFunctionFactory mergeCastFactory = this::generateMergeCastFunctions;
 
-    SetOperationFactoryGenerator(
+    @Nullable SetOperationFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
             SortFactoryGenerator sortGenerator,
@@ -255,9 +253,11 @@ final class SetOperationFactoryGenerator {
             }
             case TIMESTAMP -> castToTimestamp(castFromMetadata, i, fromTag, fromType, toType, modelPosition);
             case STRING -> castToString(castFromMetadata, i, fromTag, fromType, toType, modelPosition);
-            case SYMBOL -> new CastSymbolToStrFunctionFactory.Func(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i)));
+            case SYMBOL ->
+                    new CastSymbolToStrFunctionFactory.Func(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i)));
             case LONG256 -> Long256Column.newInstance(i);
-            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> castToGeoHash(castFromMetadata, i, fromTag, fromType, toTag, toType, modelPosition);
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG ->
+                    castToGeoHash(castFromMetadata, i, fromTag, fromType, toTag, toType, modelPosition);
             case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
                     castToDecimal(executionContext, castFromMetadata, i, fromTag, fromType, toType, modelPosition);
             case BINARY -> BinColumn.newInstance(i);
@@ -332,12 +332,18 @@ final class SetOperationFactoryGenerator {
             return CastDecimalToDecimalFunctionFactory.newInstance(0, new DecimalColumn(i, fromType), toType, executionContext);
         }
         return switch (fromTag) {
-            case INT -> CastIntToDecimalFunctionFactory.newInstance(0, IntColumn.newInstance(i), toType, executionContext);
-            case SHORT -> CastShortToDecimalFunctionFactory.newInstance(0, ShortColumn.newInstance(i), toType, executionContext);
-            case LONG -> CastLongToDecimalFunctionFactory.newInstance(0, LongColumn.newInstance(i), toType, executionContext.getDecimal256());
-            case BYTE -> CastByteToDecimalFunctionFactory.newInstance(0, ByteColumn.newInstance(i), toType, executionContext);
-            case STRING -> CastStrToDecimalFunctionFactory.newInstance(executionContext.getDecimal256(), 0, toType, new StrColumn(i));
-            case VARCHAR -> CastVarcharToDecimalFunctionFactory.newInstance(executionContext.getDecimal256(), 0, toType, new VarcharColumn(i));
+            case INT ->
+                    CastIntToDecimalFunctionFactory.newInstance(0, IntColumn.newInstance(i), toType, executionContext);
+            case SHORT ->
+                    CastShortToDecimalFunctionFactory.newInstance(0, ShortColumn.newInstance(i), toType, executionContext);
+            case LONG ->
+                    CastLongToDecimalFunctionFactory.newInstance(0, LongColumn.newInstance(i), toType, executionContext.getDecimal256());
+            case BYTE ->
+                    CastByteToDecimalFunctionFactory.newInstance(0, ByteColumn.newInstance(i), toType, executionContext);
+            case STRING ->
+                    CastStrToDecimalFunctionFactory.newInstance(executionContext.getDecimal256(), 0, toType, new StrColumn(i));
+            case VARCHAR ->
+                    CastVarcharToDecimalFunctionFactory.newInstance(executionContext.getDecimal256(), 0, toType, new VarcharColumn(i));
             default -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
         };
     }
@@ -396,12 +402,17 @@ final class SetOperationFactoryGenerator {
             // VarcharFunction has built-in cast to string
             case VARCHAR -> new VarcharColumn(i);
             case UUID -> new CastUuidToStrFunctionFactory.Func(UuidColumn.newInstance(i));
-            case SYMBOL -> new CastSymbolToStrFunctionFactory.Func(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i)));
+            case SYMBOL ->
+                    new CastSymbolToStrFunctionFactory.Func(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i)));
             case LONG256 -> new CastLong256ToStrFunctionFactory.Func(Long256Column.newInstance(i));
-            case GEOBYTE -> CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(GeoByteColumn.newInstance(i, fromType), getGeoHashBits(fromType));
-            case GEOSHORT -> CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(GeoShortColumn.newInstance(i, fromType), getGeoHashBits(fromType));
-            case GEOINT -> CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(GeoIntColumn.newInstance(i, fromType), getGeoHashBits(fromType));
-            case GEOLONG -> CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(GeoLongColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case GEOBYTE ->
+                    CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(GeoByteColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case GEOSHORT ->
+                    CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(GeoShortColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case GEOINT ->
+                    CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(GeoIntColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case GEOLONG ->
+                    CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(GeoLongColumn.newInstance(i, fromType), getGeoHashBits(fromType));
             case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64 ->
                     new CastDecimalToStrFunctionFactory.Func64(Decimal64LoaderFunctionFactory.getInstance(DecimalColumn.newInstance(i, fromType)));
             case DECIMAL128 -> new CastDecimalToStrFunctionFactory.Func128(DecimalColumn.newInstance(i, fromType));
@@ -453,7 +464,8 @@ final class SetOperationFactoryGenerator {
             case INT -> new CastIntToVarcharFunctionFactory.Func(IntColumn.newInstance(i));
             case LONG -> new CastLongToVarcharFunctionFactory.Func(LongColumn.newInstance(i));
             case DATE -> new CastDateToVarcharFunctionFactory.Func(DateColumn.newInstance(i));
-            case TIMESTAMP -> new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i, fromType), fromType);
+            case TIMESTAMP ->
+                    new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i, fromType), fromType);
             case FLOAT -> new CastFloatToVarcharFunctionFactory.Func(FloatColumn.newInstance(i));
             case DOUBLE -> new CastDoubleToVarcharFunctionFactory.Func(DoubleColumn.newInstance(i));
             // StrFunction has built-in cast to varchar
@@ -461,12 +473,17 @@ final class SetOperationFactoryGenerator {
             case VARCHAR -> new VarcharColumn(i);
             case UUID -> new CastUuidToVarcharFunctionFactory.Func(UuidColumn.newInstance(i));
             case IPv4 -> new CastIPv4ToVarcharFunctionFactory.Func(IPv4Column.newInstance(i));
-            case SYMBOL -> new CastSymbolToVarcharFunctionFactory.Func(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i)));
+            case SYMBOL ->
+                    new CastSymbolToVarcharFunctionFactory.Func(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i)));
             case LONG256 -> new CastLong256ToVarcharFunctionFactory.Func(Long256Column.newInstance(i));
-            case GEOBYTE -> CastGeoHashToGeoHashFunctionFactory.getGeoByteToVarcharCastFunction(GeoByteColumn.newInstance(i, fromType), getGeoHashBits(fromType));
-            case GEOSHORT -> CastGeoHashToGeoHashFunctionFactory.getGeoShortToVarcharCastFunction(GeoShortColumn.newInstance(i, fromType), getGeoHashBits(fromType));
-            case GEOINT -> CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(GeoIntColumn.newInstance(i, fromType), getGeoHashBits(fromType));
-            case GEOLONG -> CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(GeoLongColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case GEOBYTE ->
+                    CastGeoHashToGeoHashFunctionFactory.getGeoByteToVarcharCastFunction(GeoByteColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case GEOSHORT ->
+                    CastGeoHashToGeoHashFunctionFactory.getGeoShortToVarcharCastFunction(GeoShortColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case GEOINT ->
+                    CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(GeoIntColumn.newInstance(i, fromType), getGeoHashBits(fromType));
+            case GEOLONG ->
+                    CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(GeoLongColumn.newInstance(i, fromType), getGeoHashBits(fromType));
             case BINARY -> throw unsupportedCast(modelPosition, castFromMetadata, i, fromType, toType);
             case ARRAY -> {
                 if (decodeArrayElementType(fromType) != DOUBLE) {
@@ -529,7 +546,7 @@ final class SetOperationFactoryGenerator {
      */
     private static boolean isTimestampOrderPushable(SetOperationPlan operation, int orderIndex) {
         LogicalPlan plan = operation;
-        while (plan instanceof SetOperationPlan union && union.getOperation() == QueryModel.SET_OPERATION_UNION_ALL) {
+        while (plan instanceof SetOperationPlan union && union.getOperation() == SetOperationKind.UNION_ALL) {
             if (union.getRight().getOutput().getTimestampIndex() < 0) {
                 return false;
             }
@@ -576,7 +593,7 @@ final class SetOperationFactoryGenerator {
         try {
             final RecordMetadata leftMetadata = left.getMetadata();
             final RecordMetadata rightMetadata = right.getMetadata();
-            final boolean isMerge = plan.getOperation() == QueryModel.SET_OPERATION_UNION_ALL
+            final boolean isMerge = plan.getOperation() == SetOperationKind.UNION_ALL
                     && canMergeUnionAll(left, right, orderByIndex, scanDirection);
             final boolean castRequired = SetOperationBinder.isCastRequired(plan);
             final GenericRecordMetadata metadata;
@@ -592,7 +609,7 @@ final class SetOperationFactoryGenerator {
                 rightCasts = generateCastFunctions(executionContext, metadata, rightMetadata, plan.getRightPosition());
             } else {
                 metadata = GenericRecordMetadata.copyOfNew(leftMetadata);
-                if (SetOperationBinder.isUnion(plan.getOperation())) {
+                if (plan.getOperation().isUnion()) {
                     metadata.setTimestampIndex(-1);
                 }
             }
@@ -610,7 +627,7 @@ final class SetOperationFactoryGenerator {
                     plan.getOperation(), metadata, left, right, leftCasts, rightCasts,
                     isMerge, plan.getPosition(), plan.getRightPosition(), symbolColumns, executionContext
             );
-            if (SetOperationBinder.isUnion(plan.getOperation()) && plan.isSymbolRestorationRequired()) {
+            if (plan.getOperation().isUnion() && plan.isSymbolRestorationRequired()) {
                 // This helper consumes the completed union on success and on failure.
                 return maybeResymboliseUnion(result, plan.getSymbolColumns());
             }
@@ -632,7 +649,7 @@ final class SetOperationFactoryGenerator {
      * Consumes both factories and cast lists on entry. Metadata and symbol columns outlive the compiler.
      */
     private RecordCursorFactory generateSetOperation(
-            int operation,
+            SetOperationKind operation,
             RecordMetadata metadata,
             RecordCursorFactory factoryA,
             RecordCursorFactory factoryB,
@@ -646,7 +663,7 @@ final class SetOperationFactoryGenerator {
     ) throws SqlException {
         boolean isTransferred = false;
         try {
-            if (operation == QueryModel.SET_OPERATION_UNION_ALL) {
+            if (operation == SetOperationKind.UNION_ALL) {
                 if (isMerge) {
                     final boolean isAscending = factoryA.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
                     isTransferred = true;
@@ -665,12 +682,12 @@ final class SetOperationFactoryGenerator {
             }
 
             final SetRecordCursorFactoryConstructor constructor = switch (operation) {
-                case QueryModel.SET_OPERATION_UNION -> SET_UNION_CONSTRUCTOR;
-                case QueryModel.SET_OPERATION_EXCEPT -> SET_EXCEPT_CONSTRUCTOR;
-                case QueryModel.SET_OPERATION_EXCEPT_ALL -> SET_EXCEPT_ALL_CONSTRUCTOR;
-                case QueryModel.SET_OPERATION_INTERSECT -> SET_INTERSECT_CONSTRUCTOR;
-                case QueryModel.SET_OPERATION_INTERSECT_ALL -> SET_INTERSECT_ALL_CONSTRUCTOR;
-                default -> throw new IllegalArgumentException("set operation: " + operation);
+                case UNION -> SET_UNION_CONSTRUCTOR;
+                case EXCEPT -> SET_EXCEPT_CONSTRUCTOR;
+                case EXCEPT_ALL -> SET_EXCEPT_ALL_CONSTRUCTOR;
+                case INTERSECT -> SET_INTERSECT_CONSTRUCTOR;
+                case INTERSECT_ALL -> SET_INTERSECT_ALL_CONSTRUCTOR;
+                case UNION_ALL -> throw new IllegalArgumentException("set operation: " + operation);
             };
             keyTypes.clear();
             valueTypes.clear();
@@ -708,16 +725,34 @@ final class SetOperationFactoryGenerator {
         }
     }
 
+    /**
+     * Sorts a later UNION ALL branch that neither follows the requested timestamp order nor has its own ORDER BY.
+     */
+    private int sortUnionBranch(GenerationFrame frame, int branchSlot, LogicalPlan branch, int orderIndex, int direction) throws SqlException {
+        final RecordCursorFactory base = frame.resources.factory(branchSlot);
+        if (LogicalPlans.skipProjects(branch) instanceof SortPlan || base.getMetadata().getTimestampIndex() != orderIndex
+                || base.getScanDirection() == direction) {
+            return branchSlot;
+        }
+        branchSortKeys.clear();
+        branchSortKeys.add(direction == RecordCursorFactory.SCAN_DIRECTION_BACKWARD ? -orderIndex - 1 : orderIndex + 1);
+        final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
+        final int slot = frame.resources.reserve();
+        frame.resources.detach(branchSlot);
+        frame.resources.own(slot, sortGenerator.generateSort(metadata, base, branchSortKeys, null, null, -1));
+        return slot;
+    }
+
     // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in
     // symbolUnionColumns) and that the chain downcast to STRING (see getUnionCastType). The cast
     // sits outside the union, so it builds one dictionary over the merged stream instead of trying
     // to reconcile the per-branch dictionaries the wire cannot merge.
     // Columns that are not re-symbolised pass through unchanged; maybeResymboliseUnion returns the
     // union factory as-is when there is nothing to re-symbolise.
-    private RecordCursorFactory maybeResymboliseUnion(
+    static RecordCursorFactory maybeResymboliseUnion(
             RecordCursorFactory unionFactory,
             @Nullable IntList symbolUnionColumns
-    ) throws SqlException {
+    ) {
         if (symbolUnionColumns == null || symbolUnionColumns.size() == 0) {
             return unionFactory;
         }
@@ -728,9 +763,6 @@ final class SetOperationFactoryGenerator {
         // native OrderedMap, so the catch must free it on every failure path, not just a build-loop throw.
         ObjList<Function> functions = null;
         try {
-            if (unionSymbolProjectionTestHook != null) {
-                unionSymbolProjectionTestHook.onProjectionConstruction();
-            }
             // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
             // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
             // serial: it supports neither page frames nor time frames, so no parallel
@@ -754,34 +786,16 @@ final class SetOperationFactoryGenerator {
                     nextSymbolColumn = ++symbolColumnIndex < symbolUnionColumns.size()
                             ? symbolUnionColumns.getQuick(symbolColumnIndex)
                             : -1;
-                    // Register baseColumn before wrapping it: the hook and wrapper construction can
-                    // throw, and the catch can only free objects already owned by this list. Once the
-                    // symbol function is built it owns baseColumn, so replace the slot to avoid a
-                    // double close. Only symbol columns enter this list; all other getters delegate
-                    // directly to the union record in UnionSymbolCastRecordCursorFactory.
+                    // Register baseColumn before wrapping it: the wrapper construction can throw, and the
+                    // catch can only free objects already owned by this list. Once the symbol function is
+                    // built it owns baseColumn, so replace the slot to avoid a double close. Only symbol
+                    // columns enter this list; all other getters delegate directly to the union record in
+                    // UnionSymbolCastRecordCursorFactory.
                     final int functionIndex = functions.size();
-                    Function baseColumn = new StrColumn(i);
+                    final Function baseColumn = new StrColumn(i);
                     functions.add(baseColumn);
-                    if (unionSymbolProjectionTestHook != null) {
-                        baseColumn = unionSymbolProjectionTestHook.wrapFunction(
-                                baseColumn,
-                                UnionSymbolProjectionTestHook.BASE_COLUMN
-                        );
-                        functions.setQuick(functionIndex, baseColumn);
-                        unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.BASE_COLUMN);
-                    }
-                    Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
+                    final Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
                     functions.setQuick(functionIndex, function);
-                    if (unionSymbolProjectionTestHook != null) {
-                        function = unionSymbolProjectionTestHook.wrapFunction(
-                                function,
-                                UnionSymbolProjectionTestHook.SYMBOL_FUNCTION
-                        );
-                        functions.setQuick(functionIndex, function);
-                    }
-                    if (unionSymbolProjectionTestHook != null) {
-                        unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.SYMBOL_FUNCTION);
-                    }
                     // A cast-to-symbol builds its dictionary lazily, so its symbol table is not static.
                     virtualMetadata.add(new TableColumnMetadata(
                             columnName,
@@ -811,50 +825,28 @@ final class SetOperationFactoryGenerator {
         }
     }
 
-    /**
-     * Sorts a later UNION ALL branch that neither follows the requested timestamp order nor has its own ORDER BY.
-     */
-    private int sortUnionBranch(GenerationFrame frame, int branchSlot, LogicalPlan branch, int orderIndex, int direction) throws SqlException {
-        final RecordCursorFactory base = (RecordCursorFactory) frame.resources.resources.getQuick(branchSlot);
-        if (LogicalPlans.skipProjects(branch).getType() == LogicalPlan.Type.SORT || base.getMetadata().getTimestampIndex() != orderIndex
-                || base.getScanDirection() == direction) {
-            return branchSlot;
-        }
-        branchSortKeys.clear();
-        branchSortKeys.add(direction == RecordCursorFactory.SCAN_DIRECTION_BACKWARD ? -orderIndex - 1 : orderIndex + 1);
-        final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
-        final int slot = frame.resources.reserve();
-        frame.resources.detach(branchSlot);
-        frame.resources.own(slot, sortGenerator.generateSort(metadata, base, branchSortKeys, null, null, -1));
-        return slot;
-    }
-
     int generate(
             GenerationFrame frame, SetOperationPlan operation, int requiredOrderColumnId, int requiredScanDirection,
             int orderByMnemonic, SqlExecutionContext executionContext
     ) throws SqlException {
-        final int orderIndex = operation.getOperation() == QueryModel.SET_OPERATION_UNION_ALL
+        final int orderIndex = operation.getOperation() == SetOperationKind.UNION_ALL
                 ? operation.getOutput().getColumnIndexById(requiredOrderColumnId) : -1;
         final int leftOrderId = orderIndex < 0 ? -1 : operation.getLeft().getOutput().getColumnId(orderIndex);
         final int rightOrderId = orderIndex < 0 ? -1 : operation.getRight().getOutput().getColumnId(orderIndex);
         final int leftSlot = codeGenerator.generate(frame, operation.getLeft(), executionContext, leftOrderId, requiredScanDirection, null, null, orderByMnemonic);
         final LogicalPlan leftBranch = SqlCodeGenerator.unwrapColumnProjections(operation.getLeft());
-        final int leftHead = leftBranch.getType() == LogicalPlan.Type.SET_OPERATION ? frame.setOperationPlans.indexOf(leftBranch) : -1;
+        final int leftHead = leftBranch instanceof SetOperationPlan ? frame.setOperationPlans.indexOf(leftBranch) : -1;
         frame.setOperationPlans.add(operation);
-        frame.setOperationHeads.add(leftHead >= 0 ? frame.setOperationHeads.getQuick(leftHead) : (RecordCursorFactory) frame.resources.resources.getQuick(leftSlot));
+        frame.setOperationHeads.add(leftHead >= 0 ? frame.setOperationHeads.getQuick(leftHead) : frame.resources.factory(leftSlot));
         int rightSlot = codeGenerator.generate(frame, operation.getRight(), executionContext, rightOrderId, requiredScanDirection, null, null, orderByMnemonic);
         if (orderIndex >= 0 && requiredScanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER
                 && isTimestampOrderPushable(operation, orderIndex)) {
             rightSlot = sortUnionBranch(frame, rightSlot, operation.getRight(), orderIndex, requiredScanDirection);
         }
         final int slot = frame.resources.reserve();
-        final RecordCursorFactory left = (RecordCursorFactory) frame.resources.detach(leftSlot);
-        final RecordCursorFactory right = (RecordCursorFactory) frame.resources.detach(rightSlot);
+        final RecordCursorFactory left = frame.resources.detachFactory(leftSlot);
+        final RecordCursorFactory right = frame.resources.detachFactory(rightSlot);
         frame.resources.own(slot, generateOperation(operation, left, right, executionContext, orderIndex, requiredScanDirection));
         return slot;
-    }
-
-    void setUnionSymbolProjectionTestHook(@Nullable UnionSymbolProjectionTestHook hook) {
-        unionSymbolProjectionTestHook = hook;
     }
 }

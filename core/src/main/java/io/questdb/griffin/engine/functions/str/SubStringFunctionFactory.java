@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -44,8 +45,18 @@ import org.jetbrains.annotations.Nullable;
 
 public class SubStringFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
+
+    @Override
     public String getSignature() {
         return "substring(SII)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        return foldedConstant(args, position) == null;
     }
 
     @Override
@@ -56,13 +67,24 @@ public class SubStringFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function strFunc = args.getQuick(0);
+        final StrConstant folded = foldedConstant(args, position);
+        if (folded != null) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
+            return folded;
+        }
+        return new SubStringFunc(args.getQuick(0), args.getQuick(1), args.getQuick(2));
+    }
+
+    /**
+     * The constant the call folds to for its constant arguments, null when it builds a substring function; raises
+     * the error for a negative constant length.
+     */
+    private static StrConstant foldedConstant(ObjList<Function> args, int position) throws SqlException {
         final Function startFunc = args.getQuick(1);
         final Function lenFunc = args.getQuick(2);
-        if (strFunc.isNullConstant()
+        if (args.getQuick(0).isNullConstant()
                 || startFunc.isConstant() && startFunc.getInt(null) == Numbers.INT_NULL
                 || lenFunc.isConstant() && lenFunc.getInt(null) == Numbers.INT_NULL) {
-            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return StrConstant.NULL;
         }
         if (lenFunc.isConstant()) {
@@ -70,11 +92,10 @@ public class SubStringFunctionFactory implements FunctionFactory {
             if (len < 0) {
                 throw SqlException.$(position, "negative substring length is not allowed");
             } else if (len == 0) {
-                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return StrConstant.EMPTY;
             }
         }
-        return new SubStringFunc(strFunc, startFunc, lenFunc);
+        return null;
     }
 
     private static class SubStringFunc extends StrFunction implements TernaryFunction {

@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -67,7 +66,7 @@ public class FunctionBinderDateTest extends AbstractCairoTest {
             final OutputSchema firstLayout = new OutputSchema().add(70, "nt", ColumnType.TIMESTAMP_NANO, true);
             final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                     .add(70, "nt", ColumnType.TIMESTAMP_NANO, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         function("date_trunc", constant("'nanosecond'"), literal("nt")), original, null, sqlExecutionContext);
                 Assert.assertEquals(1, constructions[0]);
@@ -102,7 +101,7 @@ public class FunctionBinderDateTest extends AbstractCairoTest {
             final OutputSchema firstLayout = new OutputSchema().add(70, "nt", ColumnType.TIMESTAMP_NANO, true);
             final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                     .add(70, "nt", ColumnType.TIMESTAMP_NANO, true);
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
                         function("to_str", literal("nt"), constant("'yyyy-MM-dd HH:mm:ss.SSSUUUNNN'")),
                         original, null, sqlExecutionContext);

@@ -290,7 +290,9 @@ public final class WindowMapSpec {
         );
     }
 
-    /** Snapshots a logical window using resolved order indexes and immutable bound keys. */
+    /**
+     * Snapshots a logical window using resolved order indexes and immutable bound keys.
+     */
     public static @Nullable WindowMapSpec of(
             WindowContext context,
             ObjList<BoundExpression> partitionBy,
@@ -373,14 +375,6 @@ public final class WindowMapSpec {
         return orderColumnIndexes.getQuick(index);
     }
 
-    public WindowFunction.Pass1ScanDirection getPass1ScanDirection() {
-        return pass1ScanDirection;
-    }
-
-    public int getPassCount() {
-        return passCount;
-    }
-
     /**
      * The compiled PARTITION BY terms a group has to evaluate to write its key, or null when
      * the key is direct columns and the record carries it already.
@@ -414,12 +408,12 @@ public final class WindowMapSpec {
         return partitionKeyIdentity;
     }
 
-    /**
-     * Whether any PARTITION BY term is an expression rather than a direct column, which is
-     * what decides how a group writes its key - see {@link #getPartitionByFunctions()}.
-     */
-    public boolean hasExpressionPartitionKey() {
-        return partitionByFunctions != null;
+    public WindowFunction.Pass1ScanDirection getPass1ScanDirection() {
+        return pass1ScanDirection;
+    }
+
+    public int getPassCount() {
+        return passCount;
     }
 
     public long getRowsHi() {
@@ -480,6 +474,14 @@ public final class WindowMapSpec {
 
     public int getTimestampType() {
         return timestampType;
+    }
+
+    /**
+     * Whether any PARTITION BY term is an expression rather than a direct column, which is
+     * what decides how a group writes its key - see {@link #getPartitionByFunctions()}.
+     */
+    public boolean hasExpressionPartitionKey() {
+        return partitionByFunctions != null;
     }
 
     /**

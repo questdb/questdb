@@ -78,13 +78,15 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
         }
     }
 
-    public static VarcharConstant newInstance(CharSequence value) {
-        return value != null ? new VarcharConstant(value) : NULL;
-    }
-
-    /** Creates a constant from decoded bytes without SQL unquoting. */
+    /**
+     * Creates a constant from decoded bytes without SQL unquoting.
+     */
     public static VarcharConstant fromValue(Utf8Sequence value) {
         return value != null ? new VarcharConstant(value, false) : NULL;
+    }
+
+    public static VarcharConstant newInstance(CharSequence value) {
+        return value != null ? new VarcharConstant(value) : NULL;
     }
 
     public static VarcharConstant newInstance(Utf8Sequence value) {

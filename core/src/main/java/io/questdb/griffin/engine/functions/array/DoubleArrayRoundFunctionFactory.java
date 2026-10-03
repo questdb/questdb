@@ -49,6 +49,11 @@ import static io.questdb.std.Numbers.pow10max;
 public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "round(D[]I)";
     }

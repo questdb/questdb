@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjectFactory;
 
@@ -35,7 +34,7 @@ public final class SetOperationPlan extends LogicalPlan {
     private final IntList remappedSymbolColumns = new IntList();
     private final IntList symbolColumns = new IntList();
     private LogicalPlan left;
-    private int operation = -1;
+    private SetOperationKind operation;
     private boolean restoreSymbols;
     private LogicalPlan right;
     private int rightPosition = -1;
@@ -45,7 +44,7 @@ public final class SetOperationPlan extends LogicalPlan {
         super.clear();
         left = null;
         right = null;
-        operation = -1;
+        operation = null;
         restoreSymbols = false;
         rightPosition = -1;
         symbolColumns.clear();
@@ -55,7 +54,7 @@ public final class SetOperationPlan extends LogicalPlan {
         return left;
     }
 
-    public int getOperation() {
+    public SetOperationKind getOperation() {
         return operation;
     }
 
@@ -69,11 +68,6 @@ public final class SetOperationPlan extends LogicalPlan {
 
     public IntList getSymbolColumns() {
         return symbolColumns;
-    }
-
-    @Override
-    public Type getType() {
-        return Type.SET_OPERATION;
     }
 
     @Override
@@ -94,20 +88,19 @@ public final class SetOperationPlan extends LogicalPlan {
         return restoreSymbols;
     }
 
-    public SetOperationPlan of(LogicalPlan left, LogicalPlan right, int operation, int leftPosition, int rightPosition, boolean restoreSymbols) {
-        if (operation < QueryModel.SET_OPERATION_UNION_ALL || operation > QueryModel.SET_OPERATION_INTERSECT_ALL) {
-            throw new IllegalArgumentException("set operation: " + operation);
-        }
+    public SetOperationPlan of(LogicalPlan left, LogicalPlan right, SetOperationKind operation, int leftPosition, int rightPosition, boolean restoreSymbols) {
         this.left = Objects.requireNonNull(left);
         this.right = Objects.requireNonNull(right);
-        this.operation = operation;
+        this.operation = Objects.requireNonNull(operation);
         this.rightPosition = rightPosition;
         this.restoreSymbols = restoreSymbols;
         setPosition(leftPosition);
         return this;
     }
 
-    /** Reindexes symbol restoration after retaining original output ordinals in the given order. */
+    /**
+     * Reindexes symbol restoration after retaining original output ordinals in the given order.
+     */
     public void remapSymbolColumns(IntList retainedColumnIndexes) {
         remappedSymbolColumns.clear();
         for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {

@@ -102,11 +102,6 @@ public final class ScanPlan extends LogicalPlan {
         return viewPosition;
     }
 
-    @Override
-    public Type getType() {
-        return Type.SCAN;
-    }
-
     public boolean hasHint(int hint) {
         return (hints & hint) != 0;
     }

@@ -30,14 +30,17 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
+import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 /**
@@ -45,12 +48,11 @@ import io.questdb.std.ObjList;
  * their keys. On request of {@link AggregateRewritePass}, also moves a LIMIT below a projection over
  * an aggregate.
  */
-final class ProjectionMergePass implements Mutable {
-    private FunctionBinder functionBinder;
+final class ProjectionMergePass {
+    private final OptimiserContext context;
 
-    @Override
-    public void clear() {
-        functionBinder = null;
+    ProjectionMergePass(OptimiserContext context) {
+        this.context = context;
     }
 
     /**
@@ -98,7 +100,7 @@ final class ProjectionMergePass implements Mutable {
 
     private static boolean isFilteredScan(LogicalPlan plan) {
         plan = LogicalPlans.skipFilters(plan);
-        return plan.getType() == LogicalPlan.Type.SCAN;
+        return plan instanceof ScanPlan;
     }
 
     /**
@@ -108,7 +110,7 @@ final class ProjectionMergePass implements Mutable {
      */
     private static boolean isSortableBelow(ProjectPlan project, SortPlan sort) {
         final LogicalPlan input = project.getInput();
-        if (!(input instanceof AggregatePlan && input.getType() == LogicalPlan.Type.AGGREGATE || input instanceof FillPlan)
+        if (!(input instanceof AggregatePlan || input instanceof FillPlan)
                 || sort.isMarkoutHorizon() || project.hasTimestampDeclaration() || !LogicalPlans.isColumnProjection(project)
                 || LogicalPlans.hasRepeatedColumn(project)) {
             return false;
@@ -189,7 +191,7 @@ final class ProjectionMergePass implements Mutable {
             }
         }
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            project.getExpressions().setQuick(i, functionBinder.remapColumns(project.getExpressions().getQuick(i), inner));
+            project.getExpressions().setQuick(i, context.getRewriter().remapColumns(project.getExpressions().getQuick(i), inner));
         }
         project.replaceInput(0, inner.getInput());
     }
@@ -200,7 +202,7 @@ final class ProjectionMergePass implements Mutable {
     private void absorbColumnProject(AggregatePlan aggregate) {
         final ProjectPlan inner = absorbableProject(aggregate.getInput());
         // Over a table scan the projection stays: the generator's index-driven aggregate routes match that shape.
-        if (inner == null || isFilteredScan(inner.getInput()) || inner.getInput() instanceof AggregatePlan grouped
+        if (inner == null || isFilteredScan(inner.getInput()) || inner.getInput() instanceof GroupingPlan grouped
                 && grouped.hasSampleByBucket() && inner.getExpressions().size() < grouped.getOutput().getColumnCount()) {
             return;
         }
@@ -217,10 +219,10 @@ final class ProjectionMergePass implements Mutable {
             }
         }
         for (int i = 0, n = keys.size(); i < n; i++) {
-            keys.setQuick(i, functionBinder.remapColumns(keys.getQuick(i), inner));
+            keys.setQuick(i, context.getRewriter().remapColumns(keys.getQuick(i), inner));
         }
         for (int i = 0, n = calls.size(); i < n; i++) {
-            calls.setQuick(i, (FunctionExpression) functionBinder.remapColumns(calls.getQuick(i), inner));
+            calls.setQuick(i, (FunctionExpression) context.getRewriter().remapColumns(calls.getQuick(i), inner));
         }
         final IntList sharedIds = aggregate.getSharedInputIds();
         for (int i = 0, n = sharedIds.size(); i < n; i++) {
@@ -259,7 +261,7 @@ final class ProjectionMergePass implements Mutable {
                 plan.replaceInput(i, collapsed);
             }
         }
-        if (plan instanceof AggregatePlan aggregate && plan.getType() == LogicalPlan.Type.AGGREGATE) {
+        if (plan instanceof AggregatePlan aggregate) {
             absorbColumnProject(aggregate);
             return plan;
         }
@@ -270,7 +272,7 @@ final class ProjectionMergePass implements Mutable {
             absorbColumnProject(project);
             if (project.getInput() instanceof SortPlan sort
                     && !project.hasTimestampDeclaration()
-                    && sort.getInput().getType() == LogicalPlan.Type.JOIN
+                    && sort.getInput() instanceof JoinPlan
                     && !sort.isMarkoutHorizon()
                     && projectsSortKeys(project, sort)) {
                 return sortOverProject(project, sort);
@@ -283,8 +285,8 @@ final class ProjectionMergePass implements Mutable {
                 input = permutation.getInput();
             }
             if (isCompleteColumnPermutation(project) && input instanceof AggregatePlan aggregate
-                    && input.getType() == LogicalPlan.Type.AGGREGATE && aggregate.getGroupingExpressions().size() > 0
-                    || (input.getType() == LogicalPlan.Type.JOIN || sort.getInput().getType() == LogicalPlan.Type.WINDOW)
+                    && aggregate.getGroupingExpressions().size() > 0
+                    || (input instanceof JoinPlan || sort.getInput() instanceof WindowPlan)
                     && !sort.isMarkoutHorizon() && projectsSortKeys(project, sort)) {
                 return sortOverProject(project, sort);
             }
@@ -333,7 +335,7 @@ final class ProjectionMergePass implements Mutable {
                 }
             }
             for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                project.getExpressions().setQuick(i, functionBinder.remapColumns(project.getExpressions().getQuick(i), inner));
+                project.getExpressions().setQuick(i, context.getRewriter().remapColumns(project.getExpressions().getQuick(i), inner));
             }
             if (inner.hasTimestampDeclaration() && project.getOutput().getTimestampIndex() >= 0) {
                 project.markTimestampDeclaration();
@@ -346,7 +348,7 @@ final class ProjectionMergePass implements Mutable {
             } else {
                 boundary.replaceInput(0, inner.getInput());
                 input = project.getInput();
-                while (input.getType() == LogicalPlan.Type.LIMIT) {
+                while (input instanceof LimitPlan) {
                     input.getOutput().copyFrom(inner.getInput().getOutput());
                     input = input.inputAt(0);
                 }
@@ -373,7 +375,7 @@ final class ProjectionMergePass implements Mutable {
             sort.deriveOutput();
         }
         limit.replaceInput(0, below);
-        limit.getOutput().copyFrom(below.getOutput());
+        limit.deriveOutput();
         project.replaceInput(0, limit);
         return project;
     }
@@ -421,13 +423,8 @@ final class ProjectionMergePass implements Mutable {
             final BoundExpression expression = expressions.getQuick(i);
             final int index = expression instanceof ColumnExpression column ? innerOutput.getColumnIndexById(column.getColumnId()) : -1;
             expressions.setQuick(i, index >= 0 && !(innerExpressions.getQuick(index) instanceof ColumnExpression)
-                    ? innerExpressions.getQuick(index) : functionBinder.remapColumns(expression, inner));
+                    ? innerExpressions.getQuick(index) : context.getRewriter().remapColumns(expression, inner));
         }
         project.replaceInput(0, inner.getInput());
-    }
-
-    ProjectionMergePass of(FunctionBinder functionBinder) {
-        this.functionBinder = functionBinder;
-        return this;
     }
 }

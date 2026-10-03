@@ -77,11 +77,6 @@ public final class ProjectPlan extends UnaryPlan {
         this.hasPrunedComputedColumns = hasPrunedComputedColumns;
     }
 
-    @Override
-    public Type getType() {
-        return Type.PROJECT;
-    }
-
     public ProjectPlan of(LogicalPlan input, int position) {
         configure(input, position);
         return this;

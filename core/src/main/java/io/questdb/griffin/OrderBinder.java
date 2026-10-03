@@ -54,17 +54,21 @@ import static io.questdb.griffin.BindContext.sourceAlias;
 import static io.questdb.griffin.TemporalJoinBinder.designateTimestampOffset;
 
 final class OrderBinder implements Mutable {
+    final ExpressionNode normalizedCount = ExpressionNode.FACTORY.newInstance();
     final IntList orderOutputIndexes = new IntList();
-    private final SqlBinder binder;
     private final BindContext ctx;
+    private final OutputSchema emptySchema;
+    private final SampleByBinder sampleByBinder;
 
-    OrderBinder(BindContext ctx, SqlBinder binder) {
+    OrderBinder(BindContext ctx, OutputSchema emptySchema, SampleByBinder sampleByBinder) {
         this.ctx = ctx;
-        this.binder = binder;
+        this.emptySchema = emptySchema;
+        this.sampleByBinder = sampleByBinder;
     }
 
     @Override
     public void clear() {
+        normalizedCount.clear();
         orderOutputIndexes.clear();
     }
 
@@ -100,6 +104,139 @@ final class OrderBinder implements Mutable {
             }
             default -> throw SqlException.$(position, "invalid type: ").put(ColumnType.nameOf(type));
         }
+    }
+
+    private LogicalPlan bindOutputOrder(
+            QueryModel model, LogicalPlan sourcePlan, ProjectPlan project, QueryModel source, CharSequence scopeAlias,
+            ObjList<ExpressionNode> orderExpressions, ProjectPlan subsampleOrdering, SqlExecutionContext executionContext
+    ) throws SqlException {
+        final int visibleCount = project.getExpressions().size();
+        final OutputSchema sourceScope = orderExpressions == null ? sourcePlan.getOutput() : ctx.windowBindingScope(sourcePlan.getOutput());
+        ProjectPlan ordering = subsampleOrdering;
+        orderOutputIndexes.clear();
+        final SortPlan sort = ctx.sorts.next().of(project, source.getOrderByPosition());
+        for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
+            final ExpressionNode originalOrder = source.getOrderBy().getQuick(i);
+            ExpressionNode order = orderExpressions == null ? originalOrder : orderExpressions.getQuick(i);
+            int index = orderProjectionIndex(order, project.getOutput(), visibleCount);
+            if (index >= 0 && hasComputedProjection(project) && order.type == ExpressionNode.LITERAL
+                    && project.getExpressions().getQuick(index) instanceof ColumnExpression column) {
+                final OutputSchema projectInput = project.getInput().getOutput();
+                final int inputIndex = projectInput.getColumnIndexById(column.getColumnId());
+                if (inputIndex < 0 || !Chars.equalsIgnoreCase(order.token, projectInput.getColumnName(inputIndex))) {
+                    sort.markAliasedKey();
+                }
+            }
+            if (index < 0 && model != null && originalOrder.type != ExpressionNode.LITERAL) {
+                int outputIndex = 0;
+                for (int k = 0, count = model.getBottomUpColumns().size(); k < count; k++) {
+                    final ExpressionNode selected = model.getBottomUpColumns().getQuick(k).getAst();
+                    if (ExpressionNode.compareNodesExact(originalOrder, selected)) {
+                        index = outputIndex;
+                        break;
+                    }
+                    outputIndex += isWildcard(selected) ? ctx.wildcardExpansionCount(selected, sourcePlan.getOutput(), source) : 1;
+                }
+            }
+            for (int k = 0; index < 0 && k < i; k++) {
+                if (ExpressionNode.compareNodesExact(originalOrder, source.getOrderBy().getQuick(k))) {
+                    index = orderOutputIndexes.getQuick(k);
+                }
+            }
+            if (index < 0) {
+                if (ordering == null && hasOrderAliasReference(order, sourceScope, project, visibleCount)
+                        && canBindOrderAliases(sourceScope, project, source, scopeAlias, visibleCount)) {
+                    ordering = createOrderProjection(project, source.getOrderByPosition());
+                }
+                final BoundExpression expression;
+                OutputSchema nested = null;
+                final int dot = order.type == ExpressionNode.LITERAL ? Chars.indexOfLastUnquoted(order.token, '.') : -1;
+                CharSequence hiddenName = dot < 0 ? order.token : order.token.subSequence(dot + 1, order.token.length());
+                if (ordering != null) {
+                    ctx.substitutionNodes.clear();
+                    ctx.substitutionColumns.clear();
+                    collectOrderSubstitutions(order, sourceScope, scopeAlias, project, visibleCount, source.getSubsample() != null);
+                    expression = ctx.functionBinder.bind(order, project.getOutput(), null,
+                            ctx.substitutionNodes, ctx.substitutionColumns, executionContext);
+                    if (expression instanceof ColumnExpression column) {
+                        for (int k = 0, count = ordering.getExpressions().size(); k < count; k++) {
+                            if (ordering.getExpressions().getQuick(k) instanceof ColumnExpression projected && projected.getColumnId() == column.getColumnId()) {
+                                index = k;
+                                break;
+                            }
+                        }
+                    }
+                } else if (order.type == ExpressionNode.LITERAL) {
+                    final int sourceIndex = ctx.bindColumnIndex(order, sourceScope, scopeAlias);
+                    final int columnId = sourcePlan.getOutput().getColumnId(sourceIndex);
+                    for (int k = 0, count = project.getExpressions().size(); k < count; k++) {
+                        if (project.getExpressions().getQuick(k) instanceof ColumnExpression column && column.getColumnId() == columnId) {
+                            index = k;
+                            break;
+                        }
+                    }
+                    expression = index < 0 ? ctx.columns.next().of(columnId, sourcePlan.getOutput().getColumnType(sourceIndex), order.position) : null;
+                    nested = sourcePlan.getOutput().getMetadata(sourceIndex);
+                    hiddenName = sourcePlan.getOutput().getColumnName(sourceIndex);
+                } else {
+                    expression = ctx.bindDeferrable(order, sourceScope, scopeAlias, ColumnType.UNDEFINED, executionContext);
+                }
+                if (index < 0) {
+                    final ProjectPlan target = ordering == null ? project : ordering;
+                    index = target.getExpressions().size();
+                    ctx.addProjection(target, expression, nested, order.type == ExpressionNode.LITERAL ? hiddenName
+                            : SqlUtil.createColumnAlias(ctx.characterStore, order.token, Chars.indexOfLastUnquoted(order.token, '.'), ctx.aliases, ctx.aliasSequences, true), false);
+                }
+            }
+            orderOutputIndexes.add(index);
+            final OutputSchema output = (ordering == null ? project : ordering).getOutput();
+            final int type = output.getColumnType(index);
+            final int columnId = output.getColumnId(index);
+            if (!ColumnType.isComparable(type) && ctx.deferredColumns.excludes(columnId)) {
+                throw SqlException.$(order.position, ColumnType.nameOf(type)).put(" is not a supported type in ORDER BY clause");
+            }
+            if (!sort.getColumnIds().contains(columnId)) {
+                sort.getColumnIds().add(columnId);
+                sort.getDirections().add(SqlBinder.sortDirection(source.getOrderByDirection().getQuick(i)));
+            }
+        }
+        if (subsampleOrdering != null) {
+            subsampleOrdering.replaceInput(0, sampleByBinder.bindSubsample(project, sourcePlan, source, executionContext));
+        }
+        final ProjectPlan sortInput = ordering == null ? project : ordering;
+        final OutputSchema output = sortInput.getOutput();
+        final OutputSchema projectInput = project.getInput().getOutput();
+        final int timestampIndex = projectInput.getTimestampIndex();
+        if (timestampIndex >= 0) {
+            final int timestampId = projectInput.getColumnId(timestampIndex);
+            final CharSequence timestampName = projectInput.getColumnName(timestampIndex);
+            final int firstOrderId = sort.getColumnIds().getQuick(0);
+            boolean isTimestampSet = false;
+            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+                if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == timestampId
+                        && (!isTimestampSet || project.getOutput().getColumnId(i) == firstOrderId
+                        || Chars.equalsIgnoreCase(project.getOutput().getColumnName(i), timestampName))) {
+                    project.getOutput().setTimestampIndex(i);
+                    isTimestampSet = true;
+                }
+            }
+        }
+        if (ordering != null) {
+            final int projectedTimestampId = project.getOutput().getTimestampColumnId();
+            for (int i = 0, n = ordering.getExpressions().size(); i < n; i++) {
+                if (ordering.getExpressions().getQuick(i) instanceof ColumnExpression column
+                        && column.getColumnId() == projectedTimestampId) {
+                    ordering.getOutput().setTimestampIndex(i);
+                    break;
+                }
+            }
+        }
+        sort.replaceInput(0, sortInput);
+        sort.deriveOutput();
+        if (visibleCount == output.getColumnCount()) {
+            return sort;
+        }
+        return projectVisible(sort, output, project, visibleCount);
     }
 
     private boolean canBindOrderAliases(
@@ -331,7 +468,7 @@ final class OrderBinder implements Mutable {
         if (ctx.isAggregate(expression)) {
             throw SqlException.$(expression.position, "LIMIT expressions must be convertible to INT");
         }
-        final BoundExpression bound = ctx.functionBinder.bind(expression, ctx.emptySchema, null, ColumnType.LONG, executionContext);
+        final BoundExpression bound = ctx.functionBinder.bind(expression, emptySchema, null, ColumnType.LONG, executionContext);
         validateLimitType(bound.getDataType(),
                 (bound.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0 || LogicalPlans.hasOuterColumn(bound),
                 expression.position);
@@ -353,174 +490,38 @@ final class OrderBinder implements Mutable {
             validateCorrelatedLimit(model.getLimitHi(), hi);
         }
         final LimitPlan limit = ctx.limits.next().of(input, lo, hi, position);
-        limit.getOutput().copyFrom(input.getOutput());
+        limit.deriveOutput();
         ctx.stopTimestampIntrinsics(limit.getOutput());
         return limit;
     }
 
+    /**
+     * Sorts the block's output by its ORDER BY. A block with SUBSAMPLE samples its output below the sort.
+     */
     LogicalPlan bindOutputOrder(
             QueryModel model, LogicalPlan sourcePlan, ProjectPlan project, QueryModel source,
             CharSequence scopeAlias, ObjList<ExpressionNode> orderExpressions, SqlExecutionContext executionContext
     ) throws SqlException {
-        return bindOutputOrder(model, sourcePlan, project, source, scopeAlias, orderExpressions, source.getSubsample() != null, executionContext);
+        final ProjectPlan subsampleOrdering = source.getSubsample() != null ? createOrderProjection(project, source.getOrderByPosition()) : null;
+        return bindOutputOrder(model, sourcePlan, project, source, scopeAlias, orderExpressions, subsampleOrdering, executionContext);
     }
 
-    LogicalPlan bindOutputOrder(
-            QueryModel model, LogicalPlan sourcePlan, ProjectPlan project, QueryModel source,
-            CharSequence scopeAlias, ObjList<ExpressionNode> orderExpressions, boolean isSubsampleBelowSort,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        final int visibleCount = project.getExpressions().size();
-        final OutputSchema sourceScope = orderExpressions == null ? sourcePlan.getOutput() : ctx.windowBindingScope(sourcePlan.getOutput());
-        final ProjectPlan subsampleOrdering = isSubsampleBelowSort ? createOrderProjection(project, source.getOrderByPosition()) : null;
-        ProjectPlan ordering = subsampleOrdering;
-        orderOutputIndexes.clear();
-        final SortPlan sort = ctx.sorts.next().of(project, source.getOrderByPosition());
-        for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
-            final ExpressionNode originalOrder = source.getOrderBy().getQuick(i);
-            ExpressionNode order = orderExpressions == null ? originalOrder : orderExpressions.getQuick(i);
-            int index = orderProjectionIndex(order, project.getOutput(), visibleCount);
-            if (index >= 0 && hasComputedProjection(project) && order.type == ExpressionNode.LITERAL
-                    && project.getExpressions().getQuick(index) instanceof ColumnExpression column) {
-                final OutputSchema projectInput = project.getInput().getOutput();
-                final int inputIndex = projectInput.getColumnIndexById(column.getColumnId());
-                if (inputIndex < 0 || !Chars.equalsIgnoreCase(order.token, projectInput.getColumnName(inputIndex))) {
-                    sort.markAliasedKey();
-                }
-            }
-            if (index < 0 && model != null && originalOrder.type != ExpressionNode.LITERAL) {
-                int outputIndex = 0;
-                for (int k = 0, count = model.getBottomUpColumns().size(); k < count; k++) {
-                    final ExpressionNode selected = model.getBottomUpColumns().getQuick(k).getAst();
-                    if (ExpressionNode.compareNodesExact(originalOrder, selected)) {
-                        index = outputIndex;
-                        break;
-                    }
-                    outputIndex += isWildcard(selected) ? ctx.wildcardExpansionCount(selected, sourcePlan.getOutput(), source) : 1;
-                }
-            }
-            for (int k = 0; index < 0 && k < i; k++) {
-                if (ExpressionNode.compareNodesExact(originalOrder, source.getOrderBy().getQuick(k))) {
-                    index = orderOutputIndexes.getQuick(k);
-                }
-            }
-            if (index < 0) {
-                if (ordering == null && hasOrderAliasReference(order, sourceScope, project, visibleCount)
-                        && canBindOrderAliases(sourceScope, project, source, scopeAlias, visibleCount)) {
-                    ordering = createOrderProjection(project, source.getOrderByPosition());
-                }
-                final BoundExpression expression;
-                OutputSchema nested = null;
-                final int dot = order.type == ExpressionNode.LITERAL ? Chars.indexOfLastUnquoted(order.token, '.') : -1;
-                CharSequence hiddenName = dot < 0 ? order.token : order.token.subSequence(dot + 1, order.token.length());
-                if (ordering != null) {
-                    ctx.substitutionNodes.clear();
-                    ctx.substitutionColumns.clear();
-                    collectOrderSubstitutions(order, sourceScope, scopeAlias, project, visibleCount, source.getSubsample() != null);
-                    expression = ctx.functionBinder.bind(order, project.getOutput(), null,
-                            ctx.substitutionNodes, ctx.substitutionColumns, executionContext);
-                    if (expression instanceof ColumnExpression column) {
-                        for (int k = 0, count = ordering.getExpressions().size(); k < count; k++) {
-                            if (ordering.getExpressions().getQuick(k) instanceof ColumnExpression projected && projected.getColumnId() == column.getColumnId()) {
-                                index = k;
-                                break;
-                            }
-                        }
-                    }
-                } else if (order.type == ExpressionNode.LITERAL) {
-                    final int sourceIndex = ctx.bindColumnIndex(order, sourceScope, scopeAlias);
-                    final int columnId = sourcePlan.getOutput().getColumnId(sourceIndex);
-                    for (int k = 0, count = project.getExpressions().size(); k < count; k++) {
-                        if (project.getExpressions().getQuick(k) instanceof ColumnExpression column && column.getColumnId() == columnId) {
-                            index = k;
-                            break;
-                        }
-                    }
-                    expression = index < 0 ? ctx.columns.next().of(columnId, sourcePlan.getOutput().getColumnType(sourceIndex), order.position) : null;
-                    nested = sourcePlan.getOutput().getMetadata(sourceIndex);
-                    hiddenName = sourcePlan.getOutput().getColumnName(sourceIndex);
-                } else {
-                    expression = ctx.functionBinder.bind(order, sourceScope, scopeAlias, executionContext);
-                }
-                if (index < 0) {
-                    final ProjectPlan target = ordering == null ? project : ordering;
-                    index = target.getExpressions().size();
-                    ctx.addProjection(target, expression, nested, order.type == ExpressionNode.LITERAL ? hiddenName
-                            : SqlUtil.createColumnAlias(ctx.characterStore, order.token, Chars.indexOfLastUnquoted(order.token, '.'), ctx.aliases, ctx.aliasSequences, true), false);
-                }
-            }
-            orderOutputIndexes.add(index);
-            final OutputSchema output = (ordering == null ? project : ordering).getOutput();
-            final int type = output.getColumnType(index);
-            if (!ColumnType.isComparable(type)) {
-                throw SqlException.$(order.position, ColumnType.nameOf(type)).put(" is not a supported type in ORDER BY clause");
-            }
-            final int columnId = output.getColumnId(index);
-            if (!sort.getColumnIds().contains(columnId)) {
-                sort.getColumnIds().add(columnId);
-                sort.getDirections().add(source.getOrderByDirection().getQuick(i));
-            }
-        }
-        if (subsampleOrdering != null) {
-            subsampleOrdering.replaceInput(0, binder.sampleByBinder.bindSubsample(project, sourcePlan, source, executionContext));
-        }
-        final ProjectPlan sortInput = ordering == null ? project : ordering;
-        final OutputSchema output = sortInput.getOutput();
-        final OutputSchema projectInput = project.getInput().getOutput();
-        final int timestampIndex = projectInput.getTimestampIndex();
-        if (timestampIndex >= 0) {
-            final int timestampId = projectInput.getColumnId(timestampIndex);
-            final CharSequence timestampName = projectInput.getColumnName(timestampIndex);
-            final int firstOrderId = sort.getColumnIds().getQuick(0);
-            boolean isTimestampSet = false;
-            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == timestampId
-                        && (!isTimestampSet || project.getOutput().getColumnId(i) == firstOrderId
-                        || Chars.equalsIgnoreCase(project.getOutput().getColumnName(i), timestampName))) {
-                    project.getOutput().setTimestampIndex(i);
-                    isTimestampSet = true;
-                }
-            }
-        }
-        if (ordering != null) {
-            final int projectedTimestampId = project.getOutput().getTimestampColumnId();
-            for (int i = 0, n = ordering.getExpressions().size(); i < n; i++) {
-                if (ordering.getExpressions().getQuick(i) instanceof ColumnExpression column
-                        && column.getColumnId() == projectedTimestampId) {
-                    ordering.getOutput().setTimestampIndex(i);
-                    break;
-                }
-            }
-        }
-        sort.replaceInput(0, sortInput);
-        sort.deriveOutput();
-        if (visibleCount == output.getColumnCount()) {
-            return sort;
-        }
-        return projectVisible(sort, output, project, visibleCount);
-    }
-
-    LogicalPlan bindRowCount(
-            QueryModel model,
-            QueryModel source,
-            LogicalPlan input,
-            boolean isOrderAndLimitEnabled,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
+    LogicalPlan bindRowCount(QueryModel model, QueryModel source, LogicalPlan input, SqlExecutionContext executionContext) throws SqlException {
         final QueryColumn column = model.getBottomUpColumns().getQuick(0);
         final ExpressionNode expression = column.getAst();
         // Parser already normalizes COUNT(*). Match rewriteCount's non-NULL
         // literal normalization without mutating the parser's expression.
         final ExpressionNode call = expression.paramCount == 0 ? expression
-                : ctx.normalizedCount.of(ExpressionNode.FUNCTION, expression.token, expression.precedence, expression.position);
+                : normalizedCount.of(ExpressionNode.FUNCTION, expression.token, expression.precedence, expression.position);
         final FunctionExpression count = ctx.functionBinder.bindAggregate(call, input.getOutput(), sourceAlias(source), executionContext);
         final AggregatePlan aggregate = ctx.aggregates.next().of(input, expression.position);
         aggregate.getAggregates().add(count);
         // Keep SQL names for an outer scope. The existing count specialization
         // canonicalizes its own COUNT alias; a real outer projection may rename it.
         aggregate.getOutput().add(ctx.nextColumnId++, ctx.createOutputName(column.getName()), count.getDataType(), true);
+        final boolean isOrderBound = !ctx.hasDeferredOrder(source);
         LogicalPlan result = aggregate;
-        if (isOrderAndLimitEnabled && source.getOrderBy().size() > 0) {
+        if (isOrderBound && source.getOrderBy().size() > 0) {
             final SortPlan sort = ctx.sorts.next().of(aggregate, source.getOrderByPosition());
             for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
                 final ExpressionNode order = source.getOrderBy().getQuick(i);
@@ -529,13 +530,13 @@ final class OrderBinder implements Mutable {
                 }
                 if (i == 0) {
                     sort.getColumnIds().add(aggregate.getOutput().getColumnId(0));
-                    sort.getDirections().add(source.getOrderByDirection().getQuick(i));
+                    sort.getDirections().add(SqlBinder.sortDirection(source.getOrderByDirection().getQuick(i)));
                 }
             }
             sort.getOutput().copyFrom(aggregate.getOutput());
             result = sort;
         }
-        return isOrderAndLimitEnabled ? bindLimit(result, model, executionContext) : result;
+        return isOrderBound ? bindLimit(result, model, executionContext) : result;
     }
 
     /**
@@ -567,7 +568,7 @@ final class OrderBinder implements Mutable {
             final int columnId = sourcePlan.getOutput().getColumnId(index);
             if (!sort.getColumnIds().contains(columnId)) {
                 sort.getColumnIds().add(columnId);
-                sort.getDirections().add(source.getOrderByDirection().getQuick(i));
+                sort.getDirections().add(SqlBinder.sortDirection(source.getOrderByDirection().getQuick(i)));
             }
         }
         sort.deriveOutput();
@@ -584,6 +585,16 @@ final class OrderBinder implements Mutable {
             project.getOutput().setTimestampIndex(-1);
         }
         return project;
+    }
+
+    /**
+     * Sorts the block's output that SUBSAMPLE then samples.
+     */
+    LogicalPlan bindSubsampleInputOrder(
+            QueryModel model, LogicalPlan sourcePlan, ProjectPlan project, QueryModel source, CharSequence scopeAlias,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return bindOutputOrder(model, sourcePlan, project, source, scopeAlias, null, null, executionContext);
     }
 
     void collectOrderSubstitutions(

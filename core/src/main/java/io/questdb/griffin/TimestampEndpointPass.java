@@ -24,12 +24,12 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.std.ObjectPool;
 
@@ -56,12 +56,12 @@ final class TimestampEndpointPass {
         if (LogicalPlans.isTimestampEndpointBackward(call)) {
             final SortPlan sort = sorts.next().of(input, position);
             sort.getColumnIds().add(input.getOutput().getTimestampColumnId());
-            sort.getDirections().add(QueryModel.ORDER_DIRECTION_DESCENDING);
-            sort.getOutput().copyFrom(input.getOutput());
+            sort.getDirections().add(SortDirection.DESCENDING);
+            sort.deriveOutput();
             input = sort;
         }
         final LimitPlan limit = limits.next().of(input, constants.next().ofInt(1, position), null, position);
-        limit.getOutput().copyFrom(input.getOutput());
+        limit.deriveOutput();
         aggregate.replaceInput(0, limit);
     }
 

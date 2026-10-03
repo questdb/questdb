@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionBinder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -59,7 +58,7 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
                 final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
                 final OutputSchema original = wideSchema(type);
                 final OutputSchema pruned = new OutputSchema().add(70, "value", type, true);
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final BoundExpression expression = binder.bind(binary("-", literal("value"), constant("1L")),
                             original, null, sqlExecutionContext);
                     try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
@@ -87,7 +86,7 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final OutputSchema input = new OutputSchema().add(70, "value", ColumnType.TIMESTAMP_MICRO, true);
             input.setTimestampIndex(0);
-            try (FunctionBinder binder = new FunctionBinder(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(new FunctionParser(configuration, engine.getFunctionFactoryCache()))) {
                 final ExpressionNode equality = binary("=", cast(literal("value"), "timestamp"),
                         cast(constant("'1970-01-01T00:00:00.000000001Z'"), "timestamp_ns"));
                 final ConstantExpression folded = (ConstantExpression) binder.bindPredicate(equality, input, null, sqlExecutionContext);
@@ -134,13 +133,13 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
                 final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.DATE, true);
                 final OutputSchema workerLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                         .add(70, "value", ColumnType.DATE, true);
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final ExpressionNode node = cast(literal("value"), type == ColumnType.TIMESTAMP_MICRO ? "timestamp" : "timestamp_ns");
                     final FunctionExpression expression = (FunctionExpression) binder.bind(node, original, null, sqlExecutionContext);
                     Assert.assertEquals(type, expression.getDataType());
                     Assert.assertEquals(type, expression.argumentAt(1).getDataType());
                     TestUtils.assertEquals("cast(Mn)", expression.getSignature());
-                    Assert.assertEquals(1, constructed.size());
+                    Assert.assertEquals(0, constructed.size());
                     node.clear();
                     try (Function owner = binder.instantiate(expression, firstLayout, sqlExecutionContext);
                          Function worker = binder.instantiate(expression, workerLayout, sqlExecutionContext)) {
@@ -172,7 +171,7 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
                     final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
                     final OutputSchema original = wideSchema(sourceType);
                     final OutputSchema pruned = new OutputSchema().add(70, "value", sourceType, true);
-                    try (FunctionBinder binder = new FunctionBinder(parser)) {
+                    try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                         final BoundExpression expression = binder.bind(cast(literal("value"),
                                 targetType == ColumnType.TIMESTAMP_MICRO ? "timestamp" : "timestamp_ns"), original, null, sqlExecutionContext);
                         try (Function owner = binder.instantiate(expression, pruned, sqlExecutionContext);
@@ -216,14 +215,16 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
             membership.args.add(constant("4"));
             membership.args.add(constant("3"));
             membership.args.add(constant("2"));
-            membership.args.add(literal("value"));
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 1);
+            membership.args.add(parameter("$1"));
             membership.paramCount = 4;
             final ExpressionNode bad = cast(constant("'not-an-ip'"), "ipv4");
             final ExpressionNode root = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "concat", 0, 0);
             root.lhs = bad;
             root.rhs = cast(membership, "timestamp_ns");
             root.paramCount = 2;
-            try (FunctionBinder binder = new FunctionBinder(parser)) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                 try {
                     binder.bind(root, input, null, sqlExecutionContext);
                     Assert.fail();
@@ -255,7 +256,7 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
                 final OutputSchema firstLayout = new OutputSchema().add(70, "value", type, true);
                 final OutputSchema workerLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
                         .add(70, "value", type, true);
-                try (FunctionBinder binder = new FunctionBinder(parser)) {
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(parser)) {
                     final FunctionExpression expression = (FunctionExpression) binder.bind(cast(literal("value"), "varchar"), original, null, sqlExecutionContext);
                     Assert.assertEquals(type, expression.argumentAt(0).getDataType());
                     try (Function owner = binder.instantiate(expression, firstLayout, sqlExecutionContext);
@@ -302,6 +303,10 @@ public class FunctionBinderTemporalCastTest extends AbstractCairoTest {
 
     private static ExpressionNode literal(String value) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, value, 0, 0);
+    }
+
+    private static ExpressionNode parameter(String token) {
+        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, token, 0, 0);
     }
 
     private static Record record(int expectedIndex, int expectedType, long value) {

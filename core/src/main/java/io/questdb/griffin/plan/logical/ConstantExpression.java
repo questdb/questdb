@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -42,9 +43,10 @@ public final class ConstantExpression extends BoundExpression {
     private long hh;
     private long hl;
     private boolean isLiteral;
-    private FunctionExpression source;
+    private boolean isUnparsedTimestamp;
     private long lh;
     private long longValue;
+    private FunctionExpression source;
     private Object value;
 
     @Override
@@ -54,43 +56,10 @@ public final class ConstantExpression extends BoundExpression {
         hl = 0;
         lh = 0;
         isLiteral = false;
+        isUnparsedTimestamp = false;
         source = null;
         longValue = 0;
         value = null;
-    }
-
-    /** Both constants hold the same value of the same type. */
-    public boolean isSameValue(ConstantExpression that) {
-        return getDataType() == that.getDataType() && longValue == that.longValue && hh == that.hh && hl == that.hl && lh == that.lh
-                && (value == that.value
-                || value instanceof CharSequence text && that.value instanceof CharSequence other && Chars.equals(text, other)
-                || value instanceof Utf8Sequence text && that.value instanceof Utf8Sequence other && Utf8s.equals(text, other));
-    }
-
-    /** The value is spelled in SQL as a literal, optionally negated, rather than folded from an expression. */
-    public boolean isLiteral() {
-        return isLiteral;
-    }
-
-    public ConstantExpression markLiteral() {
-        isLiteral = true;
-        return this;
-    }
-
-    /** The folded operator expression, when the value is folded from an operator call. */
-    public FunctionExpression getSource() {
-        return source;
-    }
-
-    public ConstantExpression markLiteral(FunctionExpression source) {
-        isLiteral = true;
-        this.source = source;
-        return this;
-    }
-
-    public ConstantExpression withSource(FunctionExpression source) {
-        this.source = source;
-        return this;
     }
 
     public long getDecimalHh() {
@@ -109,12 +78,20 @@ public final class ConstantExpression extends BoundExpression {
         return Double.longBitsToDouble(longValue);
     }
 
+    public float getFloatValue() {
+        return Float.intBitsToFloat((int) longValue);
+    }
+
     public long getIntervalHi() {
         return lh;
     }
 
-    public float getFloatValue() {
-        return Float.intBitsToFloat((int) longValue);
+    /**
+     * The SQL spelling of a floating-point literal, or null when the value is not spelled as one.
+     */
+    public CharSequence getLiteralText() {
+        final int tag = ColumnType.tagOf(getDataType());
+        return tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT ? (CharSequence) value : null;
     }
 
     public long getLong128Hi() {
@@ -130,17 +107,19 @@ public final class ConstantExpression extends BoundExpression {
     }
 
     public long getLongValue() {
+        assert !isUnparsedTimestamp;
         return longValue;
+    }
+
+    /**
+     * The folded operator expression, when the value is folded from an operator call.
+     */
+    public FunctionExpression getSource() {
+        return source;
     }
 
     public String getStrValue() {
         return (String) value;
-    }
-
-    /** The SQL spelling of a floating-point literal, or null when the value is not spelled as one. */
-    public CharSequence getLiteralText() {
-        final int tag = ColumnType.tagOf(getDataType());
-        return tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT ? (CharSequence) value : null;
     }
 
     public CharSequence getTimestampText() {
@@ -150,6 +129,69 @@ public final class ConstantExpression extends BoundExpression {
 
     public Utf8Sequence getVarcharValue() {
         return (Utf8Sequence) value;
+    }
+
+    /**
+     * The value is spelled in SQL as a literal, optionally negated, rather than folded from an expression.
+     */
+    public boolean isLiteral() {
+        return isLiteral;
+    }
+
+    /**
+     * Both constants hold the same value of the same type.
+     */
+    public boolean isSameValue(ConstantExpression that) {
+        return getDataType() == that.getDataType() && isUnparsedTimestamp == that.isUnparsedTimestamp && longValue == that.longValue && hh == that.hh && hl == that.hl && lh == that.lh
+                && (value == that.value
+                || value instanceof CharSequence text && that.value instanceof CharSequence other && Chars.equals(text, other)
+                || value instanceof Utf8Sequence text && that.value instanceof Utf8Sequence other && Utf8s.equals(text, other));
+    }
+
+    /**
+     * The constant spells a TIMESTAMP with text that does not parse as one: it holds only that
+     * {@link #getTimestampText() text} and no value.
+     */
+    public boolean isUnparsedTimestamp() {
+        return isUnparsedTimestamp;
+    }
+
+    public ConstantExpression markLiteral() {
+        isLiteral = true;
+        return this;
+    }
+
+    public ConstantExpression markLiteral(FunctionExpression source) {
+        isLiteral = true;
+        this.source = source;
+        return this;
+    }
+
+    /**
+     * Copies the value of the constant; the copy reads the given folded expression, which is the caller's copy
+     * of the original's source.
+     */
+    public ConstantExpression of(ConstantExpression that, FunctionExpression source) {
+        configure(that.getDataType(), that.getPosition(), that.getFunctionFlags());
+        hh = that.hh;
+        hl = that.hl;
+        lh = that.lh;
+        longValue = that.longValue;
+        isLiteral = that.isLiteral;
+        isUnparsedTimestamp = that.isUnparsedTimestamp;
+        if (that.value == that.long256) {
+            long256.copyFrom(that.long256);
+            value = long256;
+        } else {
+            value = that.value;
+        }
+        this.source = source;
+        return this;
+    }
+
+    public ConstantExpression ofBinaryNull(int position) {
+        configure(ColumnType.BINARY, position, CONSTANT | STABLE_WITHIN_EXECUTION);
+        return this;
     }
 
     public ConstantExpression ofBoolean(boolean value, int position) {
@@ -173,11 +215,6 @@ public final class ConstantExpression extends BoundExpression {
     public ConstantExpression ofDate(long value, int position) {
         configure(ColumnType.DATE, position, CONSTANT | STABLE_WITHIN_EXECUTION);
         longValue = value;
-        return this;
-    }
-
-    public ConstantExpression ofBinaryNull(int position) {
-        configure(ColumnType.BINARY, position, CONSTANT | STABLE_WITHIN_EXECUTION);
         return this;
     }
 
@@ -235,6 +272,13 @@ public final class ConstantExpression extends BoundExpression {
         return this;
     }
 
+    public ConstantExpression ofLong128(long lo, long hi, int position) {
+        configure(ColumnType.LONG128, position, CONSTANT | STABLE_WITHIN_EXECUTION);
+        longValue = lo;
+        lh = hi;
+        return this;
+    }
+
     public ConstantExpression ofLong256(Long256 value, int position) {
         configure(ColumnType.LONG256, position, CONSTANT | STABLE_WITHIN_EXECUTION);
         long256.copyFrom(value);
@@ -274,6 +318,15 @@ public final class ConstantExpression extends BoundExpression {
         return this;
     }
 
+    public ConstantExpression ofUnparsedTimestamp(CharSequence text, int type, int position) {
+        assert ColumnType.isTimestamp(type);
+        configure(type, position, CONSTANT | STABLE_WITHIN_EXECUTION);
+        longValue = Numbers.LONG_NULL;
+        value = Chars.toString(text);
+        isUnparsedTimestamp = true;
+        return this;
+    }
+
     public ConstantExpression ofUuid(long lo, long hi, int position) {
         configure(ColumnType.UUID, position, CONSTANT | STABLE_WITHIN_EXECUTION);
         longValue = lo;
@@ -290,6 +343,11 @@ public final class ConstantExpression extends BoundExpression {
     public ConstantExpression withLiteralText(CharSequence text) {
         assert ColumnType.tagOf(getDataType()) == ColumnType.DOUBLE || ColumnType.tagOf(getDataType()) == ColumnType.FLOAT;
         value = text;
+        return this;
+    }
+
+    public ConstantExpression withSource(FunctionExpression source) {
+        this.source = source;
         return this;
     }
 

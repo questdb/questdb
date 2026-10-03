@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -42,27 +43,43 @@ import io.questdb.std.ObjList;
 public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return "round_down(DI)";
     }
 
     @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return !isNullScale(args.getQuick(1));
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function scale = args.getQuick(1);
-        if (scale.isConstant()) {
-            int scaleValue = scale.getInt(null);
-            if (scaleValue != Numbers.INT_NULL) {
-                if (scaleValue > -1 && scaleValue < Numbers.pow10max) {
-                    return new FuncPosConst(args.getQuick(0), scaleValue);
-                }
-                if (scaleValue < 0 && scaleValue > -Numbers.pow10max) {
-                    return new FuncNegConst(args.getQuick(0), -scaleValue);
-                }
-            }
+        if (isNullScale(scale)) {
             Misc.free(args.getQuick(0));
             return DoubleConstant.NULL;
         }
+        if (scale.isConstant()) {
+            final int scaleValue = scale.getInt(null);
+            return scaleValue > -1 ? new FuncPosConst(args.getQuick(0), scaleValue) : new FuncNegConst(args.getQuick(0), -scaleValue);
+        }
         return new Func(args.getQuick(0), args.getQuick(1));
+    }
+
+    /**
+     * Whether the scale is a constant NULL or out of the supported range, which makes the call a NULL constant.
+     */
+    private static boolean isNullScale(Function scale) {
+        if (!scale.isConstant()) {
+            return false;
+        }
+        final int scaleValue = scale.getInt(null);
+        return scaleValue == Numbers.INT_NULL || (scaleValue > -1 ? scaleValue >= Numbers.pow10max : scaleValue <= -Numbers.pow10max);
     }
 
     private static class Func extends DoubleFunction implements ArithmeticBinaryFunction {

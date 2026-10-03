@@ -45,6 +45,11 @@ public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "+";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return OPERATOR_NAME + "(D[]D)";
     }

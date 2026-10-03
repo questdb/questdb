@@ -38,6 +38,50 @@ final class SubsampleValidator {
     private SubsampleValidator() {
     }
 
+    private static void validateStride(Function targetFunc, int targetType, int position) throws SqlException {
+        final long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+        } else {
+            final int intValue = targetFunc.getInt(null);
+            if (intValue == Numbers.INT_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+            value = intValue;
+        }
+        if (value < 1) {
+            throw SqlException.$(position, "stride must be at least 1");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+    }
+
+    private static void validateTargetPoints(Function targetFunc, int targetType, int position) throws SqlException {
+        final long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+        } else {
+            final int intValue = targetFunc.getInt(null);
+            if (intValue == Numbers.INT_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+            value = intValue;
+        }
+        if (value < 2) {
+            throw SqlException.$(position, "target points must be at least 2");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+    }
+
     static boolean hasUnresolvableSdtCompdevReference(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {
         // An independently invalid outer reference preserves SDT's shape error even when
         // parsing encounters another error first. Inspect only the error path: successful
@@ -86,6 +130,41 @@ final class SubsampleValidator {
         return false;
     }
 
+    static void validateCadenceSeedOrThrow(
+            ExpressionNode node,
+            FunctionParser functionParser,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (node.type == ExpressionNode.LITERAL) {
+            throw SqlException.$(node.position, "seed must be a constant, bind variable, or NULL");
+        }
+        Function function = null;
+        try {
+            function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            validateCadenceSeedOrThrow(function, node.position);
+        } finally {
+            Misc.free(function);
+        }
+    }
+
+    /**
+     * Borrows the function; a NULL seed selects random cadence.
+     */
+    static void validateCadenceSeedOrThrow(Function function, int position) throws SqlException {
+        if (ColumnType.isNull(function.getType())) {
+            return;
+        }
+        final boolean isConstant = function.isConstant();
+        if (!isConstant && !function.isRuntimeConstant()) {
+            throw SqlException.$(position, "seed must be a constant, bind variable, or NULL");
+        }
+        if (isConstant) {
+            final int tag = ColumnType.tagOf(function.getType());
+            if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                throw SqlException.$(position, "integer or NULL expected for seed");
+            }
+        }
+    }
 
     static void validateLttbGapOrThrow(ExpressionNode gapNode) throws SqlException {
         final CharSequence gapStr = gapNode.token;
@@ -124,7 +203,9 @@ final class SubsampleValidator {
         }
     }
 
-    /** Borrows the function; runtime values are validated by the window function at each execution. */
+    /**
+     * Borrows the function; runtime values are validated by the window function at each execution.
+     */
     static void validatePositionTargetOrThrow(Function function, int position, boolean isCadence) throws SqlException {
         final boolean isConstant = function.isConstant();
         if (!isConstant && !function.isRuntimeConstant()) {
@@ -147,41 +228,9 @@ final class SubsampleValidator {
         }
     }
 
-    static void validateCadenceSeedOrThrow(
-            ExpressionNode node,
-            FunctionParser functionParser,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        if (node.type == ExpressionNode.LITERAL) {
-            throw SqlException.$(node.position, "seed must be a constant, bind variable, or NULL");
-        }
-        Function function = null;
-        try {
-            function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            validateCadenceSeedOrThrow(function, node.position);
-        } finally {
-            Misc.free(function);
-        }
-    }
-
-    /** Borrows the function; a NULL seed selects random cadence. */
-    static void validateCadenceSeedOrThrow(Function function, int position) throws SqlException {
-        if (ColumnType.isNull(function.getType())) {
-            return;
-        }
-        final boolean isConstant = function.isConstant();
-        if (!isConstant && !function.isRuntimeConstant()) {
-            throw SqlException.$(position, "seed must be a constant, bind variable, or NULL");
-        }
-        if (isConstant) {
-            final int tag = ColumnType.tagOf(function.getType());
-            if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
-                throw SqlException.$(position, "integer or NULL expected for seed");
-            }
-        }
-    }
-
-    /** Borrows the function and retains no executable state. */
+    /**
+     * Borrows the function and retains no executable state.
+     */
     static void validateSdtCompdev(Function function, int position) throws SqlException {
         if (function.isConstant()) {
             final int tag = ColumnType.tagOf(function.getType());
@@ -195,49 +244,5 @@ final class SubsampleValidator {
             }
         }
         throw SqlException.$(position, "SUBSAMPLE sdt requires a constant, non-negative finite compdev");
-    }
-
-    private static void validateStride(Function targetFunc, int targetType, int position) throws SqlException {
-        final long value;
-        if (targetType == ColumnType.LONG) {
-            value = targetFunc.getLong(null);
-            if (value == Numbers.LONG_NULL) {
-                throw SqlException.$(position, "stride must be set");
-            }
-        } else {
-            final int intValue = targetFunc.getInt(null);
-            if (intValue == Numbers.INT_NULL) {
-                throw SqlException.$(position, "stride must be set");
-            }
-            value = intValue;
-        }
-        if (value < 1) {
-            throw SqlException.$(position, "stride must be at least 1");
-        }
-        if (value > Integer.MAX_VALUE) {
-            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
-        }
-    }
-
-    private static void validateTargetPoints(Function targetFunc, int targetType, int position) throws SqlException {
-        final long value;
-        if (targetType == ColumnType.LONG) {
-            value = targetFunc.getLong(null);
-            if (value == Numbers.LONG_NULL) {
-                throw SqlException.$(position, "target point count must be set");
-            }
-        } else {
-            final int intValue = targetFunc.getInt(null);
-            if (intValue == Numbers.INT_NULL) {
-                throw SqlException.$(position, "target point count must be set");
-            }
-            value = intValue;
-        }
-        if (value < 2) {
-            throw SqlException.$(position, "target points must be at least 2");
-        }
-        if (value > Integer.MAX_VALUE) {
-            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
-        }
     }
 }

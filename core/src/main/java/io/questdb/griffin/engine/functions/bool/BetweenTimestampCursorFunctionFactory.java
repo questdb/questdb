@@ -63,6 +63,11 @@ import io.questdb.std.str.Utf8Sequence;
 public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "between(NCC)";
     }

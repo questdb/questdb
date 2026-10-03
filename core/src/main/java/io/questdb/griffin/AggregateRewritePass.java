@@ -29,13 +29,18 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -73,20 +78,19 @@ final class AggregateRewritePass implements Mutable {
     private final ObjList<BoundExpression> callArguments;
     private final CharacterStore characterStore;
     private final ObjectPool<ColumnExpression> columns;
+    private final OptimiserContext context;
     private final ProjectionMergePass projectionMerge;
     private final ObjectPool<ProjectPlan> projects;
     private final IntList removedAggregates;
     private final IntList replacedSumIds;
     private final IntList sortKeyIndexes;
-    private SqlExecutionContext executionContext;
-    private FunctionBinder functionBinder;
     // The projection whose aggregate the last rewriteProjectedAggregate call lifted keys from.
     private ProjectPlan liftedProject;
-    private int nextColumnId;
     // The last aggregate, in postorder, with two keys over one column; a LIMIT above its projection moves below it.
     private AggregatePlan repeatedKeyAggregate;
 
     AggregateRewritePass(
+            OptimiserContext context,
             ProjectionMergePass projectionMerge,
             CharacterStore characterStore,
             ObjectPool<ColumnExpression> columns,
@@ -96,6 +100,7 @@ final class AggregateRewritePass implements Mutable {
             IntList replacedSumIds,
             IntList sortKeyIndexes
     ) {
+        this.context = context;
         this.projectionMerge = projectionMerge;
         this.characterStore = characterStore;
         this.columns = columns;
@@ -108,8 +113,6 @@ final class AggregateRewritePass implements Mutable {
 
     @Override
     public void clear() {
-        executionContext = null;
-        functionBinder = null;
         liftedProject = null;
         repeatedKeyAggregate = null;
     }
@@ -142,6 +145,21 @@ final class AggregateRewritePass implements Mutable {
         return count;
     }
 
+    /**
+     * The index of the aggregate {@code name(column)}, or of {@code name()} when columnId is -1; -1 when absent.
+     */
+    private static int findAggregate(ObjList<FunctionExpression> aggregates, CharSequence name, int columnId) {
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            final FunctionExpression aggregate = aggregates.getQuick(i);
+            if (Chars.equalsIgnoreCase(aggregate.getName(), name) && (columnId < 0 ? aggregate.getArgumentCount() == 0
+                    : aggregate.getArgumentCount() == 1 && aggregate.argumentAt(0) instanceof ColumnExpression column
+                      && !column.isCast() && column.getColumnId() == columnId)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private static ColumnExpression firstColumn(BoundExpression expression) {
         if (expression instanceof ColumnExpression column) {
             return column;
@@ -158,21 +176,6 @@ final class AggregateRewritePass implements Mutable {
             }
         }
         return null;
-    }
-
-    /**
-     * The index of the aggregate {@code name(column)}, or of {@code name()} when columnId is -1; -1 when absent.
-     */
-    private static int findAggregate(ObjList<FunctionExpression> aggregates, CharSequence name, int columnId) {
-        for (int i = 0, n = aggregates.size(); i < n; i++) {
-            final FunctionExpression aggregate = aggregates.getQuick(i);
-            if (Chars.equalsIgnoreCase(aggregate.getName(), name) && (columnId < 0 ? aggregate.getArgumentCount() == 0
-                    : aggregate.getArgumentCount() == 1 && aggregate.argumentAt(0) instanceof ColumnExpression column
-                    && !column.isCast() && column.getColumnId() == columnId)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private static int groupingColumnIndex(AggregatePlan aggregate, int columnId) {
@@ -211,7 +214,7 @@ final class AggregateRewritePass implements Mutable {
         final ObjList<BoundExpression> expressions = project.getExpressions();
         for (int i = 0, n = expressions.size(); i < n; i++) {
             final BoundExpression expression = expressions.getQuick(i);
-            if (!isSelectedReference(expression, columnId) && FunctionBinder.references(expression, columnId)) {
+            if (!isSelectedReference(expression, columnId) && BoundExpressionRewriter.references(expression, columnId)) {
                 return true;
             }
         }
@@ -258,8 +261,10 @@ final class AggregateRewritePass implements Mutable {
     }
 
     private static boolean isJoinInput(AggregatePlan aggregate) {
-        final LogicalPlan.Type type = LogicalPlans.skipFilters(aggregate.getInput()).getType();
-        return type == LogicalPlan.Type.JOIN || type == LogicalPlan.Type.WINDOW_JOIN || type == LogicalPlan.Type.HORIZON_JOIN;
+        return switch (LogicalPlans.skipFilters(aggregate.getInput())) {
+            case JoinPlan _, WindowJoinPlan _, HorizonJoinPlan _ -> true;
+            default -> false;
+        };
     }
 
     private static boolean isNullableInteger(int type) {
@@ -287,9 +292,8 @@ final class AggregateRewritePass implements Mutable {
     /**
      * No FILL reads the aggregates by position.
      */
-    private static boolean isUnfilled(AggregatePlan aggregate) {
-        return aggregate.getType() == LogicalPlan.Type.AGGREGATE
-                || aggregate instanceof SampleByPlan sampleBy && sampleBy.getFillTokens().size() == 0;
+    private static boolean isUnfilled(GroupingPlan aggregate) {
+        return !(aggregate instanceof SampleByPlan sampleBy) || sampleBy.getFillTokens().size() == 0;
     }
 
     /**
@@ -328,9 +332,9 @@ final class AggregateRewritePass implements Mutable {
         return -1;
     }
 
-    private int addAggregate(AggregatePlan aggregate, FunctionExpression function, String name) {
+    private int addAggregate(GroupingPlan aggregate, FunctionExpression function, String name) {
         aggregate.getAggregates().add(function);
-        aggregate.getOutput().add(nextColumnId++, uniqueName(aggregate.getOutput(), name), function.getDataType(), false);
+        aggregate.getOutput().add(context.newColumnId(), uniqueName(aggregate.getOutput(), name), function.getDataType(), false);
         return aggregate.getAggregates().size() - 1;
     }
 
@@ -338,7 +342,7 @@ final class AggregateRewritePass implements Mutable {
      * Binds the aggregate {@code name} over {@link #callArguments}, which it clears.
      */
     private FunctionExpression bindAggregate(CharSequence name, int position, OutputSchema input) throws SqlException {
-        final BoundExpression bound = functionBinder.bindCall(name, position, callArguments, input, executionContext);
+        final BoundExpression bound = context.bindCall(name, position, callArguments, input);
         callArguments.clear();
         if (bound instanceof FunctionExpression function && function.isAggregate()) {
             return function;
@@ -350,7 +354,7 @@ final class AggregateRewritePass implements Mutable {
         callArguments.clear();
         callArguments.add(left);
         callArguments.add(right);
-        final BoundExpression bound = functionBinder.bindCall(operator, position, callArguments, input, executionContext);
+        final BoundExpression bound = context.bindCall(operator, position, callArguments, input);
         callArguments.clear();
         return bound;
     }
@@ -369,10 +373,10 @@ final class AggregateRewritePass implements Mutable {
         final ObjList<BoundExpression> expressions = project.getExpressions();
         boolean isMoved = false;
         for (int i = 0, n = expressions.size(); i < n; i++) {
-            if (FunctionBinder.references(expressions.getQuick(i), keyId)) {
-                final BoundExpression value = isMoved ? functionBinder.copyRemappedColumns(key, mapping) : functionBinder.remapColumns(key, mapping);
+            if (BoundExpressionRewriter.references(expressions.getQuick(i), keyId)) {
+                final BoundExpression value = isMoved ? context.getRewriter().copyRemappedColumns(key, mapping) : context.getRewriter().remapColumns(key, mapping);
                 isMoved = true;
-                expressions.setQuick(i, functionBinder.substituteColumn(expressions.getQuick(i), keyId, value));
+                expressions.setQuick(i, context.getRewriter().moveToColumn(expressions.getQuick(i), keyId, value));
             }
         }
         aggregate.getGroupingExpressions().remove(keyIndex);
@@ -412,7 +416,7 @@ final class AggregateRewritePass implements Mutable {
      * Rewrites each sum of the aggregate that the projection selects as a whole value; returns whether
      * the projection changed. The original sum stays while the projection reads it inside an expression.
      */
-    private boolean normaliseSums(ProjectPlan project, AggregatePlan aggregate) throws SqlException {
+    private boolean normaliseSums(ProjectPlan project, GroupingPlan aggregate) throws SqlException {
         if (!isUnfilled(aggregate)) {
             return false;
         }
@@ -508,7 +512,7 @@ final class AggregateRewritePass implements Mutable {
             final LogicalPlan input = plan.inputAt(i);
             if (input != null) {
                 liftedProject = null;
-                final LogicalPlan rewritten = rewriteProjectedAggregate(rewrite(input), plan.getType() != LogicalPlan.Type.DISTINCT);
+                final LogicalPlan rewritten = rewriteProjectedAggregate(rewrite(input), !(plan instanceof DistinctPlan));
                 if (rewritten != input) {
                     plan.replaceInput(i, rewritten);
                 }
@@ -538,14 +542,14 @@ final class AggregateRewritePass implements Mutable {
             return plan;
         }
         final LogicalPlan input = project.getInput();
-        if (input instanceof AggregatePlan grouped) {
+        if (input instanceof GroupingPlan grouped) {
             normaliseSums(project, grouped);
-            if (isKeyLiftable && grouped.getType() == LogicalPlan.Type.AGGREGATE && liftKeys(project, grouped)) {
+            if (isKeyLiftable && grouped instanceof AggregatePlan aggregate && liftKeys(project, aggregate)) {
                 liftedProject = project;
             }
             return project;
         }
-        if (!(input instanceof SortPlan sort) || !(sort.getInput() instanceof AggregatePlan aggregate)
+        if (!(input instanceof SortPlan sort) || !(sort.getInput() instanceof GroupingPlan aggregate)
                 || !ProjectionMergePass.projectsSortKeys(project, sort)) {
             return project;
         }
@@ -555,7 +559,7 @@ final class AggregateRewritePass implements Mutable {
         }
         project.replaceInput(0, aggregate);
         final boolean isNormalised = normaliseSums(project, aggregate);
-        final boolean isLifted = isKeyLiftable && aggregate.getType() == LogicalPlan.Type.AGGREGATE && liftKeys(project, aggregate);
+        final boolean isLifted = isKeyLiftable && aggregate instanceof AggregatePlan grouped && liftKeys(project, grouped);
         if (!isNormalised && !isLifted) {
             project.replaceInput(0, sort);
             return project;
@@ -587,13 +591,6 @@ final class AggregateRewritePass implements Mutable {
                 return candidate;
             }
         }
-    }
-
-    AggregateRewritePass of(FunctionBinder functionBinder, int nextColumnId, SqlExecutionContext executionContext) {
-        this.functionBinder = functionBinder;
-        this.nextColumnId = nextColumnId;
-        this.executionContext = executionContext;
-        return this;
     }
 
     LogicalPlan rewriteAggregates(LogicalPlan root) throws SqlException {

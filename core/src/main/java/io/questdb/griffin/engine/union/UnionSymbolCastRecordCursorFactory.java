@@ -151,6 +151,16 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     // operator clone/snapshot this projection and corrupt that dictionary. maybeResymboliseUnion enforces
     // the same invariant on the base at construction time.
     @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

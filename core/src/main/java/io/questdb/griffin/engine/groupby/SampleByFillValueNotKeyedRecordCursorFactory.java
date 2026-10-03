@@ -44,7 +44,9 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     private SimpleMapValue value;
     private SimpleMapValue valueB;
 
-    /** Placeholders contain resource-free constants or functions owned through recordFunctions. */
+    /**
+     * Placeholders contain resource-free constants or functions owned through recordFunctions.
+     */
     public SampleByFillValueNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,

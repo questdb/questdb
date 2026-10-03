@@ -80,6 +80,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final String SIGNATURE = NAME + "(D)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

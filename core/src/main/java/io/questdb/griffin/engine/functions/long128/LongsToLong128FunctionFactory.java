@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.long128;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -36,6 +37,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class LongsToLong128FunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG128;
+    }
+
     @Override
     public String getSignature() {
         return "to_long128(LL)";

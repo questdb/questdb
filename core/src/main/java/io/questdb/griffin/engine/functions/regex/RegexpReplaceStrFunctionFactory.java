@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -44,6 +45,11 @@ import java.util.regex.Matcher;
 
 public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "regexp_replace(SSS)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
 
     @Override
     public String getSignature() {

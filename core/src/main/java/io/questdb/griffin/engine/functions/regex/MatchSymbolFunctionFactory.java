@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
@@ -61,6 +62,11 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             return symbolKeys.binarySearchUniqueList(key) > -1;
         }
         return false;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override

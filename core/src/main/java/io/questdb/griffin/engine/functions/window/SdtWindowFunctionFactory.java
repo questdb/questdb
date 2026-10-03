@@ -120,6 +120,11 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

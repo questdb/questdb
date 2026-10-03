@@ -31,6 +31,7 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
@@ -58,21 +59,21 @@ import io.questdb.std.ObjList;
  * Copies bound plan subtrees and renames the columns plan nodes read. {@link #copy} gives every column the
  * subtree defines a fresh id, while references to columns defined outside it keep theirs; {@link #remap}
  * renames, in place, the columns and outer columns one node reads and forwards. Plan nodes come from the
- * statement's plan-node pools and expressions from the level's {@link FunctionBinder}, so copies live as long
- * as the original; a changed expression is a fresh description, unchanged ones are shared. A decorrelation
- * domain that shares a source inside a copied subtree shares that source's copy.
+ * statement's plan-node pools, expressions from the level's {@link BoundExpressionRewriter} and column ids from the
+ * {@link OptimiserContext} allocator, so copies live as long as the original; a changed expression is a fresh
+ * description, unchanged ones are shared. A decorrelation domain that shares a source inside a copied subtree
+ * shares that source's copy.
  */
 final class LogicalPlanCopier implements Mutable {
     private final IntIntHashMap columnIds = new IntIntHashMap();
+    private final OptimiserContext context;
     private final ObjList<JoinInput> copiedInputs = new ObjList<>();
     private final ObjList<JoinInput> originalInputs = new ObjList<>();
     private final BindContext planNodes;
     private final ObjList<AggregatePlan> sharingCopies = new ObjList<>();
-    private FunctionBinder functionBinder;
-    private TableFunctionSources functionSources;
-    private int nextColumnId;
 
-    LogicalPlanCopier(BindContext planNodes) {
+    LogicalPlanCopier(OptimiserContext context, BindContext planNodes) {
+        this.context = context;
         this.planNodes = planNodes;
     }
 
@@ -82,9 +83,6 @@ final class LogicalPlanCopier implements Mutable {
         copiedInputs.clear();
         originalInputs.clear();
         sharingCopies.clear();
-        functionBinder = null;
-        functionSources = null;
-        nextColumnId = 0;
     }
 
     private static int remapColumnId(int columnId, IntIntHashMap columnIds) {
@@ -108,7 +106,7 @@ final class LogicalPlanCopier implements Mutable {
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             final int columnId = output.getColumnId(i);
             if (columnIds.keyIndex(columnId) > -1) {
-                columnIds.put(columnId, nextColumnId++);
+                columnIds.put(columnId, context.newColumnId());
             }
         }
     }
@@ -128,20 +126,16 @@ final class LogicalPlanCopier implements Mutable {
         assignColumnIds(plan.getOutput());
     }
 
-    private void cloneAggregate(AggregatePlan aggregate, AggregatePlan clone) {
-        clone.getAggregates().addAll(aggregate.getAggregates());
-        clone.getGroupingExpressions().addAll(aggregate.getGroupingExpressions());
+    private AggregatePlan cloneAggregate(AggregatePlan aggregate) {
+        final AggregatePlan clone = planNodes.aggregates.next().of(aggregate.getInput(), aggregate.getPosition());
+        cloneGrouping(aggregate, clone);
         clone.getSharedInputIds().addAll(aggregate.getSharedInputIds());
         clone.getSharedSourceIds().addAll(aggregate.getSharedSourceIds());
-        clone.setConstantLeadingGroupBy(aggregate.hasConstantLeadingGroupBy());
-        clone.setDirectTableInput(aggregate.hasDirectTableInput());
-        clone.setExplicitGrouping(aggregate.hasExplicitGrouping());
-        clone.setKeySpellingKept(aggregate.hasKeySpellingKept());
-        clone.setSampleByBucket(aggregate.hasSampleByBucket());
         if (aggregate.getSharedSource() != null) {
             clone.setSharedSource(aggregate.getSharedSource());
             sharingCopies.add(clone);
         }
+        return clone;
     }
 
     private FillPlan cloneFill(FillPlan fill) {
@@ -160,6 +154,16 @@ final class LogicalPlanCopier implements Mutable {
         clone.setPeriod(fill.getPeriodToken(), fill.getPeriodPosition());
         clone.setTimestampColumnId(fill.getTimestampColumnId());
         return clone;
+    }
+
+    private void cloneGrouping(GroupingPlan grouping, GroupingPlan clone) {
+        clone.getAggregates().addAll(grouping.getAggregates());
+        clone.getGroupingExpressions().addAll(grouping.getGroupingExpressions());
+        clone.setConstantLeadingGroupBy(grouping.hasConstantLeadingGroupBy());
+        clone.setDirectTableInput(grouping.hasDirectTableInput());
+        clone.setExplicitGrouping(grouping.hasExplicitGrouping());
+        clone.setKeySpellingKept(grouping.hasKeySpellingKept());
+        clone.setSampleByBucket(grouping.hasSampleByBucket());
     }
 
     private HorizonJoinPlan cloneHorizonJoin(HorizonJoinPlan horizon) {
@@ -220,15 +224,12 @@ final class LogicalPlanCopier implements Mutable {
     private LogicalPlan cloneNode(LogicalPlan plan) {
         final LogicalPlan clone = switch (plan) {
             case ScanPlan scan -> cloneScan(scan);
-            case FunctionSourcePlan source -> functionSources.copy(source);
-            case FilterPlan filter -> planNodes.filters.next().of(filter.getInput(), filter.getPredicate(), filter.getPosition());
+            case FunctionSourcePlan source -> context.getFunctionSources().copy(source);
+            case FilterPlan filter ->
+                    planNodes.filters.next().of(filter.getInput(), filter.getPredicate(), filter.getPosition());
             case ProjectPlan project -> cloneProject(project);
             case SampleByPlan sampleBy -> cloneSampleBy(sampleBy);
-            case AggregatePlan aggregate -> {
-                final AggregatePlan aggregateClone = planNodes.aggregates.next().of(aggregate.getInput(), aggregate.getPosition());
-                cloneAggregate(aggregate, aggregateClone);
-                yield aggregateClone;
-            }
+            case AggregatePlan aggregate -> cloneAggregate(aggregate);
             case FillPlan fill -> cloneFill(fill);
             case WindowPlan window -> cloneWindow(window);
             case DistinctPlan distinct -> planNodes.distincts.next().of(distinct.getInput(), distinct.getPosition());
@@ -248,8 +249,8 @@ final class LogicalPlanCopier implements Mutable {
                 yield operationClone;
             }
             case SortPlan sort -> cloneSort(sort);
-            case LimitPlan limit -> planNodes.limits.next().of(limit.getInput(), limit.getLo(), limit.getHi(), limit.getPosition());
-            default -> throw new UnsupportedOperationException("plan copy: " + plan.getType());
+            case LimitPlan limit ->
+                    planNodes.limits.next().of(limit.getInput(), limit.getLo(), limit.getHi(), limit.getPosition());
         };
         clone.getOutput().copyFrom(plan.getOutput());
         return clone;
@@ -266,7 +267,7 @@ final class LogicalPlanCopier implements Mutable {
 
     private SampleByPlan cloneSampleBy(SampleByPlan sampleBy) {
         final SampleByPlan clone = planNodes.sampleByPlans.next().of(sampleBy.getInput(), sampleBy.getPosition());
-        cloneAggregate(sampleBy, clone);
+        cloneGrouping(sampleBy, clone);
         clone.getAggregateSql().addAll(sampleBy.getAggregateSql());
         clone.getFillPositions().addAll(sampleBy.getFillPositions());
         clone.getFillTokens().addAll(sampleBy.getFillTokens());
@@ -368,29 +369,12 @@ final class LogicalPlanCopier implements Mutable {
     }
 
     private BoundExpression remap(BoundExpression expression, IntIntHashMap columnIds) {
-        return expression == null ? null : functionBinder.remapColumns(expression, columnIds);
-    }
-
-    private void remapAggregate(AggregatePlan aggregate, IntIntHashMap columnIds) {
-        final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();
-        for (int i = 0, n = aggregates.size(); i < n; i++) {
-            aggregates.setQuick(i, functionBinder.remapColumns(aggregates.getQuick(i), columnIds));
-        }
-        remapExpressions(aggregate.getGroupingExpressions(), columnIds);
-        remapColumnIds(aggregate.getSharedInputIds(), columnIds);
-        remapColumnIds(aggregate.getSharedSourceIds(), columnIds);
-        if (aggregate instanceof SampleByPlan sampleBy) {
-            sampleBy.setFrom(remap(sampleBy.getFrom(), columnIds));
-            sampleBy.setTo(remap(sampleBy.getTo(), columnIds));
-            sampleBy.setOffset(remap(sampleBy.getOffset(), columnIds));
-            sampleBy.setTimezone(remap(sampleBy.getTimezone(), columnIds));
-            sampleBy.setTimestampColumnId(remapColumnId(sampleBy.getTimestampColumnId(), columnIds));
-        }
+        return expression == null ? null : context.getRewriter().remapColumns(expression, columnIds);
     }
 
     private void remapExpressions(ObjList<BoundExpression> expressions, IntIntHashMap columnIds) {
         for (int i = 0, n = expressions.size(); i < n; i++) {
-            expressions.setQuick(i, functionBinder.remapColumns(expressions.getQuick(i), columnIds));
+            expressions.setQuick(i, context.getRewriter().remapColumns(expressions.getQuick(i), columnIds));
         }
     }
 
@@ -403,6 +387,24 @@ final class LogicalPlanCopier implements Mutable {
         fill.setOffset(remap(fill.getOffset(), columnIds));
         fill.setTimezone(remap(fill.getTimezone(), columnIds));
         fill.setTimestampColumnId(remapColumnId(fill.getTimestampColumnId(), columnIds));
+    }
+
+    private void remapGrouping(GroupingPlan aggregate, IntIntHashMap columnIds) {
+        final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            aggregates.setQuick(i, context.getRewriter().remapColumns(aggregates.getQuick(i), columnIds));
+        }
+        remapExpressions(aggregate.getGroupingExpressions(), columnIds);
+        if (aggregate instanceof AggregatePlan shared) {
+            remapColumnIds(shared.getSharedInputIds(), columnIds);
+            remapColumnIds(shared.getSharedSourceIds(), columnIds);
+        } else if (aggregate instanceof SampleByPlan sampleBy) {
+            sampleBy.setFrom(remap(sampleBy.getFrom(), columnIds));
+            sampleBy.setTo(remap(sampleBy.getTo(), columnIds));
+            sampleBy.setOffset(remap(sampleBy.getOffset(), columnIds));
+            sampleBy.setTimezone(remap(sampleBy.getTimezone(), columnIds));
+            sampleBy.setTimestampColumnId(remapColumnId(sampleBy.getTimestampColumnId(), columnIds));
+        }
     }
 
     private void remapJoin(JoinPlan join, IntIntHashMap columnIds) {
@@ -426,7 +428,7 @@ final class LogicalPlanCopier implements Mutable {
     private void remapWindow(WindowPlan window, IntIntHashMap columnIds) {
         final ObjList<FunctionExpression> functions = window.getFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.setQuick(i, functionBinder.remapColumns(functions.getQuick(i), columnIds));
+            functions.setQuick(i, context.getRewriter().remapColumns(functions.getQuick(i), columnIds));
             final WindowSpec spec = window.getSpecs().getQuick(i);
             remapExpressions(spec.getPartitionBy(), columnIds);
             remapColumnIds(spec.getOrderByColumnIds(), columnIds);
@@ -440,7 +442,7 @@ final class LogicalPlanCopier implements Mutable {
             remapColumnIds(step.getAggregateColumnIds(), columnIds);
             final ObjList<FunctionExpression> aggregates = step.getAggregates();
             for (int k = 0, m = aggregates.size(); k < m; k++) {
-                aggregates.setQuick(k, functionBinder.remapColumns(aggregates.getQuick(k), columnIds));
+                aggregates.setQuick(k, context.getRewriter().remapColumns(aggregates.getQuick(k), columnIds));
             }
             remapOutput(step.getMasterScope(), columnIds);
             remapOutput(step.getScope(), columnIds);
@@ -475,24 +477,6 @@ final class LogicalPlanCopier implements Mutable {
     }
 
     /**
-     * The first column id no copy uses.
-     */
-    int getNextColumnId() {
-        return nextColumnId;
-    }
-
-    /**
-     * Copies plans of the level that {@code functionBinder} and {@code functionSources} bound, numbering
-     * new columns from {@code nextColumnId}, the first id that level does not use.
-     */
-    LogicalPlanCopier of(FunctionBinder functionBinder, TableFunctionSources functionSources, int nextColumnId) {
-        this.functionBinder = functionBinder;
-        this.functionSources = functionSources;
-        this.nextColumnId = nextColumnId;
-        return this;
-    }
-
-    /**
      * Renames, in the node itself, every column and outer column it reads or forwards that the map holds;
      * the inputs are not visited. Columns the node defines keep their ids unless the map holds them.
      */
@@ -502,9 +486,10 @@ final class LogicalPlanCopier implements Mutable {
                 remapColumnIds(scan.getIndexedColumnIds(), columnIds);
                 scan.setNativeTimestamp(remapColumnId(scan.getNativeTimestampColumnId(), columnIds), scan.getNativeTimestampType());
             }
-            case FilterPlan filter -> filter.of(filter.getInput(), remap(filter.getPredicate(), columnIds), filter.getPosition());
+            case FilterPlan filter ->
+                    filter.of(filter.getInput(), remap(filter.getPredicate(), columnIds), filter.getPosition());
             case ProjectPlan project -> remapExpressions(project.getExpressions(), columnIds);
-            case AggregatePlan aggregate -> remapAggregate(aggregate, columnIds);
+            case GroupingPlan aggregate -> remapGrouping(aggregate, columnIds);
             case FillPlan fill -> remapFill(fill, columnIds);
             case WindowPlan window -> remapWindow(window, columnIds);
             case LatestByPlan latest -> {
@@ -520,7 +505,8 @@ final class LogicalPlanCopier implements Mutable {
                 }
             }
             case SortPlan sort -> remapColumnIds(sort.getColumnIds(), columnIds);
-            case LimitPlan limit -> limit.of(limit.getInput(), remap(limit.getLo(), columnIds), remap(limit.getHi(), columnIds), limit.getPosition());
+            case LimitPlan limit ->
+                    limit.of(limit.getInput(), remap(limit.getLo(), columnIds), remap(limit.getHi(), columnIds), limit.getPosition());
             default -> {
             }
         }
