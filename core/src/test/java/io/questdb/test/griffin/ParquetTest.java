@@ -372,8 +372,8 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testBinaryVarLenMidFrameOffset() throws Exception {
-        // BinaryTypeDriver extends StringTypeDriver, so BINARY columns take the
-        // aux-shift rebase path on a mid-frame offset.
+        // BinaryTypeDriver shares StringTypeDriver's N+1 aux layout, so BINARY columns
+        // take the aux-shift rebase path on a mid-frame offset.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

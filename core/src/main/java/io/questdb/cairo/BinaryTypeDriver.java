@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.constants.NullBinConstant;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class BinaryTypeDriver extends StringTypeDriver {
+public final class BinaryTypeDriver extends NPlusOneAuxTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
     // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
     private static final short[] IMPLICIT_CASTS = {ColumnType.BINARY};

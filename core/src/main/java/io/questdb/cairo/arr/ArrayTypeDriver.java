@@ -142,7 +142,7 @@ import org.jetbrains.annotations.Nullable;
  *         * enough padding for `int` alignment, ready for the next record (see START ALIGNMENT note).
  * </pre>
  */
-public class ArrayTypeDriver implements ColumnTypeDriver {
+public final class ArrayTypeDriver implements ColumnTypeDriver {
     // ensure that writeArrayEntry appends correct amount of bytes, for the width
     public static final int ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES;
     // the one declared implicit-cast list (F34, PA-7): the overload row, best match first

@@ -54,7 +54,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
 
-public class VarcharTypeDriver implements ColumnTypeDriver {
+public final class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
     public static final int VARCHAR_AUX_WIDTH_BYTES = 2 * Long.BYTES;
     public static final int VARCHAR_HEADER_FLAG_NULL = 4;
