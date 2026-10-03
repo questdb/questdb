@@ -62,11 +62,6 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
     }
 
     @Override
-    public boolean followedOrderByAdvice() {
-        return slaveFactory.followedOrderByAdvice();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
@@ -84,7 +79,11 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
 
     @Override
     public int getScanDirection() {
-        return masterFactory.getScanDirection();
+        // This join rescans the master for every slave row (the slave is the outer loop) and emits unmatched
+        // slave rows in place, so the master's timestamps restart with each slave row. Reporting the master's
+        // scan would let generateOrderBy() elide an ORDER BY ts ASC over a TIMESTAMP(ts)-re-designated
+        // result; for the same reason the join does not claim to follow order-by advice.
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
