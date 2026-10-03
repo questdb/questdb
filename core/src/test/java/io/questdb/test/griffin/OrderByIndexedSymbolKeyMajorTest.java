@@ -282,6 +282,27 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInListGroupByOrderBySymKeepsCovering() throws Exception {
+        // GROUP BY sym ... ORDER BY sym pushes the ORDER BY advice to the scan, but the scan under
+        // a GROUP BY is not asked for its order: the key-major scan would not be used. The plan must
+        // not change because of it, so covering stays available.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table g (sym symbol index type " + indexType
+                            + ("posting".equals(indexType) ? " include (x)" : "")
+                            + ", x long, ts timestamp) timestamp(ts) partition by DAY"
+            );
+            execute("insert into g select case when x % 3 = 1 then 'A' when x % 3 = 2 then 'B' else 'C' end, x, ((x - 1) * " + (2 * HOUR) + ")::timestamp from long_sequence(" + ROWS + ")");
+            final String firstQuery = "select sym, first(x) from g where sym in ('A', 'B') order by sym";
+            assertQuery(firstQuery)
+                    .withPlanNotContaining("keyMajor")
+                    .withPlanContaining("posting".equals(indexType) ? "CoveringIndex" : "FilterOnValues")
+                    .sizeMayVary()
+                    .returns("sym\tfirst\nA\t1\nB\t2\n");
+        });
+    }
+
+    @Test
     public void testInListOrderBySymMaxKeys() throws Exception {
         assertMemoryLeak(() -> {
             // 3 keys, and every partition is several frames: key-major revisits each frame per key

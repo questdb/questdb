@@ -12400,7 +12400,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         // One key scanned frame by frame, in the frames' direction, is
                                         // in key and timestamp order already. As before, one partition.
                                         orderByKeyColumn = intervalHitsOnlyOnePartition;
-                                    } else if ((nKeyExcludedValues == 0 || isNotEqualsIndexScanUsable(reader, columnIndexes.getQuick(keyColumnIndex)))
+                                    } else if (model.getOrderByAdviceMnemonic() == OrderByMnemonic.ORDER_BY_INVARIANT
+                                            // Only a consumer that takes the scan's order (INVARIANT) gets the
+                                            // key-major cursor; under e.g. a GROUP BY the scan merges keys into
+                                            // row order, so claiming the key order here would only drop the
+                                            // designated timestamp and turn covering off for nothing.
+                                            && (nKeyExcludedValues == 0 || isNotEqualsIndexScanUsable(reader, columnIndexes.getQuick(keyColumnIndex)))
                                             && isKeyMajorScanAffordable(
                                             reader,
                                             scanIntervalModel,
