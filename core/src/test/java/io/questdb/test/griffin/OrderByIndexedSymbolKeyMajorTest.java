@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -110,8 +111,8 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             assertQuery(query)
                     .withPlanContaining("FilterOnValues")
                     .returns(expected(new String[]{"A", "B"}, false, 1, ROWS));
-            // two partitions: the planner keeps the sort, see SqlCodeGenerator
-            assertKeyMajorPlan(query, false);
+            // two partitions, but 2 keys x 6 frames is well under the cursor-open threshold
+            assertKeyMajorPlan(query, true);
         });
     }
 
@@ -123,7 +124,7 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             assertQuery(query)
                     .withPlanContaining("FilterOnValues")
                     .returns(expected(new String[]{"A", "C"}, false, 4, ROWS));
-            assertKeyMajorPlan(query, false);
+            assertKeyMajorPlan(query, true);
         });
     }
 
@@ -205,51 +206,20 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInListWindowOrderBySymDayMultiPartition() throws Exception {
+        // the shape of NYSE TAQ query 50, which has no time filter: several partitions
+        assertWindowOrderBySym("DAY");
+    }
+
+    @Test
     public void testInListWindowOrderBySymNoneMultiFrame() throws Exception {
         // The shape of NYSE TAQ query 50: a per-symbol moving window over an IN list, ordered by
-        // symbol. On one partition the key-major scan feeds the window in symbol order, so there
-        // is no sort, and a covering index is not used: its k-way merge into timestamp order
-        // would only be undone by the sort.
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table q (sym symbol index type " + indexType
-                            + ("posting".equals(indexType) ? " include (x)" : "")
-                            + ", x long, ts timestamp) timestamp(ts) partition by NONE"
-            );
-            execute(
-                    "insert into q select" +
-                            " case when x % 3 = 1 then 'A' when x % 3 = 2 then 'B' else 'C' end," +
-                            " x," +
-                            " ((x - 1) * " + (2 * HOUR) + ")::timestamp" +
-                            " from long_sequence(" + ROWS + ")"
-            );
-            final String query = "select sym, x, mavg from (" +
-                    " select sym, x, ts, avg(x) over (partition by sym rows between 4 preceding and current row) mavg" +
-                    " from q where sym in ('B', 'A') order by sym)";
-            final StringSink expected = new StringSink();
-            expected.put("sym\tx\tmavg\n");
-            for (String sym : new String[]{"A", "B"}) {
-                final long[] window = new long[5];
-                int n = 0;
-                for (int x = 1; x <= ROWS; x++) {
-                    if (sym.equals(symOf(x))) {
-                        window[n++ % 5] = x;
-                        long sum = 0;
-                        for (int i = 0, m = Math.min(n, 5); i < m; i++) {
-                            sum += window[i];
-                        }
-                        expected.put(sym).put('\t').put(x).put('\t').put((double) sum / Math.min(n, 5)).put('\n');
-                    }
-                }
-            }
-            assertQuery(query)
-                    .withPlanContaining("Window", "FilterOnValues symbolOrder: asc")
-                    .withPlanNotContaining("CoveringIndex")
-                    .noRandomAccess()
-                    .returns(expected);
-            assertKeyMajorPlan(query, true);
-        });
+        // symbol. The key-major scan feeds the window in symbol order, so there is no sort, and a
+        // covering index is not used: its k-way merge into timestamp order would only be undone
+        // by the sort.
+        assertWindowOrderBySym("NONE");
     }
+
 
     @Test
     public void testInListWithLimitNoneMultiFrame() throws Exception {
@@ -287,6 +257,54 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInListOrderBySymCursorOpenThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("DAY");
+            // the planner's estimate: 2 keys x the page frames of both partitions
+            final long rowsPerFrame = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
+                    0,
+                    12,
+                    sqlExecutionContext.getPageFrameMinRows(),
+                    sqlExecutionContext.getPageFrameMaxRows(),
+                    sqlExecutionContext.getSharedQueryWorkerCount()
+            );
+            final long cursorOpens = 2 * 2 * ((12 + rowsPerFrame - 1) / rowsPerFrame);
+            final String expected = expected(new String[]{"A", "B"}, false, 1, ROWS);
+
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_CURSOR_OPENS, cursorOpens);
+            final String atLimit = "select sym, x, ts from t where sym in ('A', 'B') order by sym";
+            assertQuery(atLimit).returns(expected);
+            assertKeyMajorPlan(atLimit, true);
+
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_CURSOR_OPENS, cursorOpens - 1);
+            final String overLimit = "select sym, x, ts from t where sym in ('B', 'A') order by sym";
+            assertQuery(overLimit).sizeMayVary().returns(expected);
+            assertKeyMajorPlan(overLimit, false);
+
+            // 0 turns the multi-partition key-major scan off, one partition is not affected
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_CURSOR_OPENS, 0);
+            assertKeyMajorPlan(atLimit, false);
+            assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') and ts in '1970-01-01' order by sym", true);
+        });
+    }
+
+    @Test
+    public void testInListOrderBySymMultiPartitionWithParquetPartition() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createTable("DAY");
+            execute("alter table t convert partition to parquet list '1970-01-01'");
+            // a Parquet partition anywhere in the table keeps the sort across partitions: each
+            // row group would be decoded again for every key that misses the decode cache
+            final String query = "select sym, x, ts from t where sym in ('A', 'C') order by sym, ts";
+            assertQuery(query)
+                    .withPlanContaining("FilterOnValues")
+                    .returns(expected(new String[]{"A", "C"}, false, 1, ROWS));
+            assertKeyMajorPlan(query, false);
+        });
+    }
+
+    @Test
     public void testInListOrderBySymParquetPartition() throws Exception {
         // a Parquet partition is split into page frames by row group: 3 row groups of 4 rows
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
@@ -297,6 +315,47 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             assertQuery(query)
                     .withPlanContaining("FilterOnValues")
                     .returns(expected(new String[]{"C", "A"}, true, 1, 12));
+            assertKeyMajorPlan(query, true);
+        });
+    }
+
+    @Test
+    public void testInListOrderBySymTsDescSplitPartitionMultiPartition() throws Exception {
+        // as below, but over the whole table: three physical partitions, walked backward
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTable("DAY");
+            try (TableReader ignore = getReader("t")) {
+                execute("insert into t values ('B', 101, '1970-01-01T21:00'), ('A', 103, '1970-01-01T21:30')");
+            }
+            assertQuery("select count() from table_partitions('t')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+            final String query = "select sym, x, ts from t where sym in ('B', 'A') order by sym desc, ts desc";
+            assertQuery(query)
+                    .withPlanContaining("FilterOnValues")
+                    .returns("""
+                            sym\tx\tts
+                            B\t23\t1970-01-02T20:00:00.000000Z
+                            B\t20\t1970-01-02T14:00:00.000000Z
+                            B\t17\t1970-01-02T08:00:00.000000Z
+                            B\t14\t1970-01-02T02:00:00.000000Z
+                            B\t101\t1970-01-01T21:00:00.000000Z
+                            B\t11\t1970-01-01T20:00:00.000000Z
+                            B\t8\t1970-01-01T14:00:00.000000Z
+                            B\t5\t1970-01-01T08:00:00.000000Z
+                            B\t2\t1970-01-01T02:00:00.000000Z
+                            A\t22\t1970-01-02T18:00:00.000000Z
+                            A\t19\t1970-01-02T12:00:00.000000Z
+                            A\t16\t1970-01-02T06:00:00.000000Z
+                            A\t13\t1970-01-02T00:00:00.000000Z
+                            A\t103\t1970-01-01T21:30:00.000000Z
+                            A\t10\t1970-01-01T18:00:00.000000Z
+                            A\t7\t1970-01-01T12:00:00.000000Z
+                            A\t4\t1970-01-01T06:00:00.000000Z
+                            A\t1\t1970-01-01T00:00:00.000000Z
+                            """);
             assertKeyMajorPlan(query, true);
         });
     }
@@ -342,6 +401,18 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable("NONE");
             final String query = "select sym, x, ts from t where sym != 'B' order by sym";
+            assertQuery(query)
+                    .withPlanContaining("FilterOnExcludedValues")
+                    .returns(expected(new String[]{"A", "C"}, false, 1, ROWS));
+            assertKeyMajorPlan(query, true);
+        });
+    }
+
+    @Test
+    public void testNotInOrderBySymDayMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("DAY");
+            final String query = "select sym, x, ts from t where sym not in ('B') order by sym";
             assertQuery(query)
                     .withPlanContaining("FilterOnExcludedValues")
                     .returns(expected(new String[]{"A", "C"}, false, 1, ROWS));
@@ -471,6 +542,48 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             case 2 -> "B";
             default -> "C";
         };
+    }
+
+    private void assertWindowOrderBySym(String partitionBy) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table q (sym symbol index type " + indexType
+                            + ("posting".equals(indexType) ? " include (x)" : "")
+                            + ", x long, ts timestamp) timestamp(ts) partition by " + partitionBy
+            );
+            execute(
+                    "insert into q select" +
+                            " case when x % 3 = 1 then 'A' when x % 3 = 2 then 'B' else 'C' end," +
+                            " x," +
+                            " ((x - 1) * " + (2 * HOUR) + ")::timestamp" +
+                            " from long_sequence(" + ROWS + ")"
+            );
+            final String query = "select sym, x, mavg from (" +
+                    " select sym, x, ts, avg(x) over (partition by sym rows between 4 preceding and current row) mavg" +
+                    " from q where sym in ('B', 'A') order by sym)";
+            final StringSink expected = new StringSink();
+            expected.put("sym\tx\tmavg\n");
+            for (String sym : new String[]{"A", "B"}) {
+                final long[] window = new long[5];
+                int n = 0;
+                for (int x = 1; x <= ROWS; x++) {
+                    if (sym.equals(symOf(x))) {
+                        window[n++ % 5] = x;
+                        long sum = 0;
+                        for (int i = 0, m = Math.min(n, 5); i < m; i++) {
+                            sum += window[i];
+                        }
+                        expected.put(sym).put('\t').put(x).put('\t').put((double) sum / Math.min(n, 5)).put('\n');
+                    }
+                }
+            }
+            assertQuery(query)
+                    .withPlanContaining("Window", "FilterOnValues symbolOrder: asc")
+                    .withPlanNotContaining("CoveringIndex")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertKeyMajorPlan(query, true);
+        });
     }
 
     private void assertKeyMajorPlan(String query, boolean expectSortElided) throws Exception {

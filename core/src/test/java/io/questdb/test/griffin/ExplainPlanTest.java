@@ -10061,7 +10061,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01b() throws Exception {
-        // if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan
+        // ordered by symbol over more than one partition: the key-major scan walks each key across all
+        // partitions, so there is no sort while keys x page frames stays under
+        // cairo.sql.index.key.major.max.cursor.opens
         assertMemoryLeak(() -> {
             execute("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
             execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
@@ -10072,24 +10074,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.setStr("s2", "S2");
 
             String expectedPlan = """
-                    Encode sort light lo: 5
-                      keys: [s#ORDER#]
-                        FilterOnValues symbolOrder: desc
+                    Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                        FilterOnValues symbolOrder: #ORDER#
                             Cursor-order scan
                                 Index forward scan on: s deferred: true
-                                  filter: s=:s2::string
+                                  filter: s=:#FIRST#::string
                                 Index forward scan on: s deferred: true
-                                  filter: s=:s1::string
+                                  filter: s=:#SECOND#::string
                             Interval forward scan on: a
                               intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
                     """;
 
             assertQuery(queryDesc)
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", " desc"));
+                    .assertsPlan(expectedPlan.replace("#ORDER#", "desc").replace("#FIRST#", "s2").replace("#SECOND#", "s1"));
             assertQuery(queryDesc)
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             s	ts
                             S2	1970-01-01T00:00:00.000000Z
@@ -10101,10 +10101,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             String queryAsc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
             assertQuery(queryAsc)
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", ""));
+                    .assertsPlan(expectedPlan.replace("#ORDER#", "asc").replace("#FIRST#", "s1").replace("#SECOND#", "s2"));
             assertQuery(queryAsc)
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             s	ts
                             S1	1970-01-01T00:00:00.000001Z

@@ -700,6 +700,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlIndexKeyMajorMaxCursorOpens() {
+        return 1_000_000;
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return 1000;
     }

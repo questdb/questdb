@@ -56,6 +56,7 @@ import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -300,6 +301,7 @@ import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
@@ -12372,10 +12374,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // needs the master in timestamp order. Honoring the order-by advice would
                     // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
                     // /LT/WINDOW merge that assumes ts order.
-                    if (intervalHitsOnlyOnePartition && !executionContext.isTimestampRequired()) {
+                    // Several keys are walked key by key across all page frames of the scan
+                    // (KeyMajorPageFrameRecordCursor), so the shortcut does not need a single
+                    // partition; it is taken across partitions when the scan is cheap enough.
+                    final boolean multiKey = nKeyValues > 1 || nKeyExcludedValues > 0;
+                    if ((intervalHitsOnlyOnePartition || multiKey) && !executionContext.isTimestampRequired()) {
                         final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                         final int orderByAdviceSize = orderByAdvice.size();
-                        if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
+                        if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && !intervalHitsOnlyOnePartition) {
+                            // ORDER BY <key>[, ts [DESC]] across partitions: key-major only when
+                            // affordable, otherwise leave the plan exactly as it was
+                            if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)
+                                    && (orderByAdviceSize == 1 || (model.getTimestamp() != null && Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)))
+                                    && isKeyMajorScanAffordable(reader, columnIndexes.getQuick(keyColumnIndex), nKeyValues, nKeyExcludedValues, executionContext)) {
+                                queryMeta.setTimestampIndex(-1);
+                                orderByKeyColumn = true;
+                                if (orderByAdviceSize == 2 && getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    indexDirection = IndexReader.DIR_BACKWARD;
+                                }
+                            }
+                        } else if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
                             guardAgainstDotsInOrderByAdvice(model);
                             // todo: when order by coincides with keyColumn and there is index we can incorporate
                             //    ordering in the code that returns rows from index rather than having an
@@ -13467,6 +13485,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (isFromTo) {
             throw SqlException.$(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
         }
+    }
+
+    /**
+     * Whether a multi-partition key-major index scan (see {@link io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor})
+     * is cheap enough to replace the sort under {@code ORDER BY <indexed symbol>}. The scan opens one
+     * index cursor per (key, page frame), so it is taken only while keys x frames stays within
+     * {@code cairo.sql.index.key.major.max.cursor.opens}, and only over native partitions: a Parquet
+     * row group would be decoded again for every key that misses the decode cache.
+     * <p>
+     * This is a plan-time estimate over the whole table, which bounds any interval. The cursor emits
+     * key order whatever the frame count, so a cached plan stays correct if the table later grows or
+     * a partition is converted to Parquet; only the cost estimate goes stale.
+     */
+    private boolean isKeyMajorScanAffordable(
+            TableReader reader,
+            int keyReaderColumnIndex,
+            int nKeyValues,
+            int nKeyExcludedValues,
+            SqlExecutionContext executionContext
+    ) {
+        final long maxCursorOpens = configuration.getSqlIndexKeyMajorMaxCursorOpens();
+        if (maxCursorOpens <= 0) {
+            return false;
+        }
+        final long keyCount = nKeyExcludedValues > 0
+                // every symbol (plus NULL) except the excluded ones; the upper bound is enough
+                ? reader.getSymbolMapReader(keyReaderColumnIndex).getSymbolCount() + 1L
+                : nKeyValues;
+        final int partitionCount = reader.getPartitionCount();
+        final long minRows = executionContext.getPageFrameMinRows();
+        final long maxRows = executionContext.getPageFrameMaxRows();
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        long frameCount = 0;
+        long rowsLeft = reader.size();
+        for (int i = 0; i < partitionCount; i++) {
+            if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
+                return false;
+            }
+            // the last partition's size lives in the transient row count, so take what is left
+            final long rows = i < partitionCount - 1 ? reader.getPartitionRowCountFromMetadata(i) : rowsLeft;
+            rowsLeft -= rows;
+            if (rows > 0) {
+                final long rowsPerFrame = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, rows, minRows, maxRows, workerCount);
+                frameCount += (rows + rowsPerFrame - 1) / rowsPerFrame;
+                if (keyCount * frameCount > maxCursorOpens) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {

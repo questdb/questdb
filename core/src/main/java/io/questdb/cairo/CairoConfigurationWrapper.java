@@ -675,6 +675,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlIndexKeyMajorMaxCursorOpens() {
+        return getDelegate().getSqlIndexKeyMajorMaxCursorOpens();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return getDelegate().getMaxUncommittedRows();
     }

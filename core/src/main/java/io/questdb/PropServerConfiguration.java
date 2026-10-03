@@ -561,6 +561,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxResizes;
     private final int sqlMaxArrayElementCount;
     private final int sqlMaxNegativeLimit;
+    private final long sqlIndexKeyMajorMaxCursorOpens;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
     private final boolean sqlOrderBySortEnabled;
@@ -1805,6 +1806,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
+            this.sqlIndexKeyMajorMaxCursorOpens = getLong(properties, env, PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_CURSOR_OPENS, 1_000_000);
             this.sqlSymbolPatternIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED, true);
             this.sqlSymbolPatternIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, 100);
             this.sqlAllPartitionOperationsAllowed = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ALL_PARTITION_OPERATIONS_ALLOWED, false);
@@ -4669,6 +4671,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxSymbolNotEqualsCount() {
             return sqlMaxSymbolNotEqualsCount;
+        }
+
+        @Override
+        public long getSqlIndexKeyMajorMaxCursorOpens() {
+            return sqlIndexKeyMajorMaxCursorOpens;
         }
 
         @Override

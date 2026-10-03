@@ -551,6 +551,13 @@ public interface CairoConfiguration {
 
     int getMaxSymbolNotEqualsCount();
 
+    /**
+     * Upper bound on the estimated number of index cursor opens (keys x page frames) for which
+     * a multi-partition {@code ORDER BY <indexed symbol>} over an index key scan drops the sort
+     * and walks each key across all page frames instead. Above it, the sort stays.
+     */
+    long getSqlIndexKeyMajorMaxCursorOpens();
+
     int getMaxUncommittedRows();
 
     int getMetadataPoolCapacity();
