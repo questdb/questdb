@@ -28,6 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowMapState;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -656,6 +659,57 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPrefetchOverEveryColumnTypeMatchesTwin() throws Exception {
+        // The key-major cursor buffers up to 32 row ids of a (key, frame) and loads their column
+        // cache lines ahead of emission. Frames of 256 rows give the frequent keys several full
+        // buffers per frame and the rare ones a partial buffer, over every fixed-size column
+        // type and the aux vectors of the var-size ones. The column added halfway is a column top
+        // that ends inside the last partition.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 256);
+            for (String partitionBy : PARTITION_BYS) {
+                execute("drop table if exists w");
+                execute("drop table if exists w_twin");
+                final String columns = "sym symbol%s, b boolean, by byte, sh short, ch char, i int, l long, f float, d double," +
+                        " s string, vc varchar, bin binary, u uuid, l256 long256, g geohash(5c), ip ipv4, dec decimal(18, 3)," +
+                        " arr double[], ts timestamp";
+                execute("create table w (" + String.format(columns, " index type " + indexType) + ") timestamp(ts) partition by " + partitionBy);
+                execute("create table w_twin (" + String.format(columns, "") + ") timestamp(ts) partition by " + partitionBy);
+                final String rows = "select" +
+                        // skewed keys: A about 60%, B 25%, C 10%, NULL 5%
+                        " case when x % 20 < 12 then 'A' when x % 20 < 17 then 'B' when x % 20 < 19 then 'C' else null end," +
+                        " rnd_boolean(), rnd_byte(), rnd_short(), rnd_char(), rnd_int(), rnd_long(), rnd_float(), rnd_double()," +
+                        " rnd_str(3, 8, 2), rnd_varchar(3, 30, 2), rnd_bin(4, 16, 2), rnd_uuid4(), rnd_long256(), rnd_geohash(25)," +
+                        " rnd_ipv4(), rnd_decimal(18, 3, 2), rnd_double_array(1, 2)," +
+                        " ((x - 1) * 60_000_000L)::timestamp" +
+                        " from long_sequence(3000)";
+                execute("insert into w_twin " + rows);
+                execute("insert into w select * from w_twin");
+                execute("alter table w add column late int");
+                execute("alter table w_twin add column late int");
+                final String more = "select" +
+                        " case when x % 3 = 0 then 'A' when x % 3 = 1 then 'C' else null end," +
+                        " rnd_boolean(), rnd_byte(), rnd_short(), rnd_char(), rnd_int(), rnd_long(), rnd_float(), rnd_double()," +
+                        " rnd_str(3, 8, 2), rnd_varchar(3, 30, 2), rnd_bin(4, 16, 2), rnd_uuid4(), rnd_long256(), rnd_geohash(25)," +
+                        " rnd_ipv4(), rnd_decimal(18, 3, 2), rnd_double_array(1, 2)," +
+                        " ((x + 2999) * 60_000_000L)::timestamp, x::int" +
+                        " from long_sequence(500)";
+                execute("insert into w_twin " + more);
+                execute("insert into w select * from w_twin where ts >= " + (3000 * 60_000_000L));
+                for (String[] c : new String[][]{
+                        {"sym in ('A', 'B', 'C', null) order by sym", "sym in ('A', 'B', 'C', null) order by sym, ts"},
+                        {"sym in ('C', null) order by sym desc", "sym in ('C', null) order by sym desc, ts"},
+                        {"sym != 'B' order by sym", "sym != 'B' order by sym, ts"},
+                }) {
+                    final String query = "select * from w where " + c[0];
+                    assertQuery(query).sizeMayVary().returns(oracle("select * from w_twin where " + c[1]));
+                    assertKeyMajorPlan(query, true);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnevenBindValuesChangeBetweenRuns() throws Exception {
         assertMemoryLeak(() -> {
             for (String partitionBy : PARTITION_BYS) {
@@ -735,6 +789,48 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             createUnevenTables("NONE");
             assertDifferential("sym = 'A' order by sym, ts desc", "sym = 'A' order by sym, ts desc", true);
             assertDifferential("sym = null order by sym, ts desc", "sym = null order by sym, ts desc", true);
+        });
+    }
+
+    @Test
+    public void testWindowOverKeyMajorScanMatchesGeneralPath() throws Exception {
+        // A PARTITION BY sym window over the key-major scan sees each key's rows as one run, in
+        // the order the general path sees them, so its values must match the twin's: the same
+        // window over a table-order scan, sorted afterwards. The uneven fixture puts key changes
+        // inside page frames and on their boundaries, keys missing from whole frames, and NULLs.
+        // avg(x) and sum(x) share one fused map group, which reuses a run's map value instead of
+        // probing for every row; the expression argument keeps avg(x * 2 + 1) on its own map.
+        assertMemoryLeak(() -> {
+            final String w = " over (partition by sym rows between 2 preceding and current row)";
+            final String columns = "sym, x, ts, avg(x)" + w + " a, sum(x)" + w + " s, avg(x * 2 + 1)" + w + " e";
+            for (String partitionBy : PARTITION_BYS) {
+                createUnevenTables(partitionBy);
+                for (String[] c : new String[][]{
+                        {"sym in (null, 'A', 'B', 'D') order by sym", "sym in (null, 'A', 'B', 'D') order by sym, ts"},
+                        {"sym in ('C', 'A', null) order by sym desc", "sym in ('C', 'A', null) order by sym desc, ts"},
+                        {"sym != 'B' order by sym", "sym != 'B' order by sym, ts"},
+                }) {
+                    final String query = "select " + columns + " from u where " + c[0];
+                    final String expected = oracle("select " + columns + " from u_twin where " + c[1]);
+                    assertQuery(query).noRandomAccess().sizeMayVary().returns(expected);
+                    assertKeyMajorPlan(query, true);
+                    // one probe per key run: the number of times sym changes in the output
+                    long runs = 0;
+                    String prev = null;
+                    final String[] lines = expected.split("\n");
+                    for (int i = 1; i < lines.length; i++) {
+                        final String sym = lines[i].substring(0, lines[i].indexOf('\t'));
+                        if (!sym.equals(prev)) {
+                            runs++;
+                            prev = sym;
+                        }
+                    }
+                    Assert.assertTrue(runs > 1);
+                    Assert.assertEquals(query, runs, drainAndCountProbes(query));
+                    // the general path's table-order input changes key more often than once per key
+                    Assert.assertTrue(drainAndCountProbes("select " + columns + " from u_twin where " + c[1]) > runs);
+                }
+            }
         });
     }
 
@@ -819,6 +915,27 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
                     .returns(expected);
             assertKeyMajorPlan(query, true);
         });
+    }
+
+    private long drainAndCountProbes(String query) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            RecordCursorFactory f = factory;
+            while (!(f instanceof WindowRecordCursorFactory)) {
+                f = f.getBaseFactory();
+                Assert.assertNotNull("no window factory: " + query, f);
+            }
+            final ObjList<WindowMapState> states = ((WindowRecordCursorFactory) f).getWindowMapStates();
+            Assert.assertNotNull("no fused window group: " + query, states);
+            Assert.assertEquals(1, states.size());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                long rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
+                return states.getQuick(0).getProbeCount();
+            }
+        }
     }
 
     private void assertDifferential(String where, String twinWhere, boolean expectKeyMajor) throws Exception {

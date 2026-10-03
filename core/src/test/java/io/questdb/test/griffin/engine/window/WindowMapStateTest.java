@@ -1300,6 +1300,59 @@ public class WindowMapStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testARepeatedKeyIsProbedOncePerRun() throws Exception {
+        // A group keyed by one SYMBOL or INT column compares each row's key to the previous
+        // row's and reuses that row's value when they match. The rows below come in runs that
+        // recur after other keys - one of them after 3000 single-row keys, enough to take the map
+        // through several rehashes between two visits of the same key - and the NULL key has runs
+        // of its own. The answers must not move, and the group must probe once per run.
+        assertMemoryLeak(() -> {
+            execute("create table r as (select (x * 1_000_000L)::timestamp ts," +
+                    " case when x <= 6 then 'a' when x <= 9 then null when x <= 12 then 'b' when x <= 15 then 'a'" +
+                    "      when x <= 3015 then 'k' || x when x <= 3018 then null else 'a' end::symbol k," +
+                    " case when x <= 6 then 1 when x <= 9 then null when x <= 12 then 2 when x <= 15 then 1" +
+                    "      when x <= 3015 then x::int when x <= 3018 then null else 1 end i," +
+                    " case when x % 7 = 0 then null else x::double end x," +
+                    " case when x % 5 = 0 then null else (x * 2)::double end y" +
+                    " from long_sequence(3022)) timestamp(ts) partition by day");
+            // a(6) null(3) b(3) a(3) 3000 singles null(3) a(4)
+            final long runs = 3006;
+            for (String key : new String[]{"k", "i"}) {
+                final String window = "window w as (partition by " + key + " order by ts rows between 3 preceding and current row)";
+                assertFusedMatchesUnfusedOnWindow("r", window, "sum(x) over w", "avg(x) over w", "count(y) over w");
+                final String cumulative = "window w as (partition by " + key + " order by ts rows between unbounded preceding and current row)";
+                assertFusedMatchesUnfusedOnWindow("r", cumulative, "sum(x) over w", "count(y) over w");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, "select ts, sum(x) over w, count(y) over w from r " + window, sqlExecutionContext)) {
+                    final WindowRecordCursorFactory windowFactory = windowFactory(factory);
+                    assertBoundGroupCount(windowFactory, 1);
+                    final WindowMapState state = windowFactory.getWindowMapStates().getQuick(0);
+                    // twice, so that toTop() and a reopened cursor start without a reusable value
+                    for (int i = 0; i < 2; i++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertEquals(3022, drain(cursor));
+                            Assert.assertEquals(3022, state.getLookupCount());
+                            Assert.assertEquals(key, runs, state.getProbeCount());
+                            cursor.toTop();
+                            Assert.assertEquals(3022, drain(cursor));
+                            Assert.assertEquals(key, runs, state.getProbeCount());
+                        }
+                    }
+                }
+            }
+            // a key of two columns is probed for every row
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, "select ts, sum(x) over w, count(y) over w from r window w as (partition by k, i order by ts rows between 3 preceding and current row)", sqlExecutionContext)) {
+                final WindowMapState state = windowFactory(factory).getWindowMapStates().getQuick(0);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(3022, drain(cursor));
+                    Assert.assertEquals(3022, state.getProbeCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRepeatedCursorCyclesReleaseEveryByte() throws Exception {
         // The group's map is opened under the per-query tracker at of() and handed back at
         // close(), so ten cycles must net to zero on that counter - which is what
