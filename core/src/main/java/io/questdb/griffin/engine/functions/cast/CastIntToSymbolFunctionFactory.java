@@ -44,6 +44,8 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
      * it as null, so the body prints through the LONG form. The function keeps its NULL test and
      * renders its dictionary text in {@link AbstractCastToSymbolFunction}, with the same digits
      * for every other value.
+     * <p>
+     * Not called yet: the NULL wrappers of {@code cast(INT AS SYMBOL)} will call it.
      */
     public static void value(CharSink<?> sink, int operand) {
         Numbers.append(sink, operand, false);

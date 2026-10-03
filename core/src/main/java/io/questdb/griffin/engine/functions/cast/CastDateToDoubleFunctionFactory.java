@@ -33,6 +33,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastDateToDoubleFunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code cast(DATE AS DOUBLE)} will call it.
+     */
     public static double value(long operand) {
         return (double) operand;
     }

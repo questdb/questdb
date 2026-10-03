@@ -35,6 +35,9 @@ import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToLongFunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code cast(TIMESTAMP AS LONG)} will call it.
+     */
     public static long value(long operand) {
         return operand;
     }

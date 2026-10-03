@@ -35,6 +35,9 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class RegressionR2FunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code regr_r2(DOUBLE, DOUBLE)} will call it.
+     */
     public static void value(MapValue mapValue, int valueIndex, double y, double x) {
         RegressionSlopeFunctionFactory.value(mapValue, valueIndex, y, x);
     }

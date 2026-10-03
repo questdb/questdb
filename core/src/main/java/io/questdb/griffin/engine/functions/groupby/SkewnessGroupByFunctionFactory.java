@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 
 public class SkewnessGroupByFunctionFactory extends SkewnessSampleGroupByFunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code skewness(DOUBLE)} will call it.
+     */
     public static void value(MapValue mapValue, int valueIndex, double x) {
         SkewnessSampleGroupByFunctionFactory.value(mapValue, valueIndex, x);
     }

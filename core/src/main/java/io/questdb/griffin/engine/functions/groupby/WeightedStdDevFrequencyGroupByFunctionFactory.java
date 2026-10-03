@@ -36,6 +36,9 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class WeightedStdDevFrequencyGroupByFunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code weighted_stddev_freq(DOUBLE, DOUBLE)} will call it.
+     */
     public static void value(MapValue mapValue, int valueIndex, double sample, double weight) {
         WeightedStdDevReliabilityGroupByFunctionFactory.value(mapValue, valueIndex, sample, weight);
     }

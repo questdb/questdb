@@ -28,6 +28,9 @@ package io.questdb.griffin.engine.functions.math;
  * Postgres-compatibility ceiling() alias for the ceil() function.
  */
 public class CeilingDoubleFunctionFactory extends CeilDoubleFunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code ceiling(DOUBLE)} will call it.
+     */
     public static double value(double operand) {
         return CeilDoubleFunctionFactory.value(operand);
     }

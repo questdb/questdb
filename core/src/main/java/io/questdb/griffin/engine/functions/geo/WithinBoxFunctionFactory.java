@@ -65,6 +65,8 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
      * values it agrees with {@link #isWithinBox}. The functions keep that branchless test and do not
      * call the body: it answers NaN and infinite operands as outside the box within the same sign
      * test, where the body would need a NULL test on every operand of every row first.
+     * <p>
+     * Not called: {@code within_box(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE)} keeps its own comparison.
      */
     public static boolean value(double x, double y, double minX, double minY, double maxX, double maxY) {
         return Double.compare(x, minX) >= 0

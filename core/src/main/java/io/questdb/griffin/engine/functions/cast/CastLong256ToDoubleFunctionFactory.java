@@ -31,6 +31,8 @@ public class CastLong256ToDoubleFunctionFactory extends CastLongToDoubleFunction
      * Converts the operand's low 64 bits, as the LONG256 casts to the other numeric types do. The
      * class this factory inherits reads the operand's getDouble(), which {@code Long256Function} does
      * not support; that path stays as it is.
+     * <p>
+     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS DOUBLE)} will call it.
      */
     public static double value(Long256 operand) {
         return operand.getLong0();

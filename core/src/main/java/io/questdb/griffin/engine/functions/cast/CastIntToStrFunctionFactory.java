@@ -39,6 +39,8 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
      * Prints the reserved INT_NULL as a number too: {@link Numbers#append(CharSink, int)} prints
      * it as null, so the body prints through the LONG form. The function keeps its NULL test and
      * its INT print, which gives the same digits for every other value without the widening.
+     * <p>
+     * Not called yet: the NULL wrappers of {@code cast(INT AS STRING)} will call it.
      */
     public static void value(CharSink<?> sink, int operand) {
         Numbers.append(sink, operand, false);

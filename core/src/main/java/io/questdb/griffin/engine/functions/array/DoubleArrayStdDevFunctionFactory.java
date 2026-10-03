@@ -26,10 +26,16 @@ package io.questdb.griffin.engine.functions.array;
 
 public class DoubleArrayStdDevFunctionFactory extends DoubleArrayStdDevSampFunctionFactory {
 
+    /**
+     * Not called yet: the NULL wrappers of {@code array_stddev(DOUBLE[])} will call it.
+     */
     public static double value(double mean, double element, int count) {
         return DoubleArrayStdDevSampFunctionFactory.value(mean, element, count);
     }
 
+    /**
+     * Not called yet: the NULL wrappers of {@code array_stddev(DOUBLE[])} will call it.
+     */
     public static double advanceM2(double deltaSquaredSum, double element, double oldMean, double newMean) {
         return DoubleArrayStdDevSampFunctionFactory.advanceM2(deltaSquaredSum, element, oldMean, newMean);
     }

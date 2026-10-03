@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.std.Long256;
 
 public class CastLong256ToByteFunctionFactory extends CastLongToByteFunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS BYTE)} will call it.
+     */
     public static byte value(Long256 operand) {
         return (byte) operand.getLong0();
     }

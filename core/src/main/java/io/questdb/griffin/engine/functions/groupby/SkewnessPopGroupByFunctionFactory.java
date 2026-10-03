@@ -35,6 +35,9 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SkewnessPopGroupByFunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code skewness_pop(DOUBLE)} will call it.
+     */
     public static void value(MapValue mapValue, int valueIndex, double x) {
         SkewnessSampleGroupByFunctionFactory.value(mapValue, valueIndex, x);
     }

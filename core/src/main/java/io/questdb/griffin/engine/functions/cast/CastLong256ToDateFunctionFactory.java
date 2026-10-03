@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.std.Long256;
 
 public class CastLong256ToDateFunctionFactory extends CastLongToDateFunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS DATE)} will call it.
+     */
     public static long value(Long256 operand) {
         return operand.getLong0();
     }

@@ -33,6 +33,9 @@ import io.questdb.std.ObjList;
 
 public class IPv4StrMinusIPv4FunctionFactory implements FunctionFactory {
 
+    /**
+     * Not called yet: the NULL wrappers of {@code -(STRING, IPv4)} will call it.
+     */
     public static long value(int left, int right) {
         return IPv4MinusIPv4FunctionFactory.value(left, right);
     }

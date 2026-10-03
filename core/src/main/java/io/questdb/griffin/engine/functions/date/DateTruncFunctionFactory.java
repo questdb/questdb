@@ -36,6 +36,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class DateTruncFunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code date_trunc(STRING, TIMESTAMP)} will call it.
+     */
     public static long value(TimestampDriver.TimestampFloorMethod floor, long timestamp) {
         return floor.floor(timestamp);
     }

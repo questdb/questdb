@@ -35,6 +35,9 @@ import io.questdb.std.Transient;
 
 public class CovarPopGroupByFunctionFactory implements FunctionFactory {
 
+    /**
+     * Not called yet: the NULL wrappers of {@code covar_pop(DOUBLE, DOUBLE)} will call it.
+     */
     public static void value(MapValue mapValue, int valueIndex, double y, double x) {
         CovarSampleGroupByFunctionFactory.value(mapValue, valueIndex, y, x);
     }

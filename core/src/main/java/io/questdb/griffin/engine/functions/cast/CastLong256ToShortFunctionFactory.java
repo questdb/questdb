@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.std.Long256;
 
 public class CastLong256ToShortFunctionFactory extends CastLongToShortFunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS SHORT)} will call it.
+     */
     public static short value(Long256 operand) {
         return (short) operand.getLong0();
     }

@@ -61,6 +61,9 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
 
+    /**
+     * Not called: {@code between(TIMESTAMP, CURSOR, CURSOR)} keeps its own comparison.
+     */
     public static boolean value(long timestamp, long from, long to) {
         return Math.min(from, to) <= timestamp && timestamp <= Math.max(from, to);
     }

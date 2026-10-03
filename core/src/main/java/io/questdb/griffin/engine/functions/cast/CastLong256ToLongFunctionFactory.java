@@ -34,6 +34,9 @@ import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 
 public class CastLong256ToLongFunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS LONG)} will call it.
+     */
     public static long value(Long256 operand) {
         return operand.getLong0();
     }

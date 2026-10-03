@@ -35,6 +35,9 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class VarPopGroupByFunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code var_pop(DOUBLE)} will call it.
+     */
     public static void value(MapValue mapValue, int valueIndex, double x) {
         StdDevSampleGroupByFunctionFactory.value(mapValue, valueIndex, x);
     }

@@ -32,6 +32,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class BitwiseOrIPv4StrFunctionFactory implements FunctionFactory {
+    /**
+     * Not called yet: the NULL wrappers of {@code |(IPv4, STRING)} will call it.
+     */
     public static int value(int left, int right) {
         return BitwiseOrIPv4FunctionFactory.value(left, right);
     }

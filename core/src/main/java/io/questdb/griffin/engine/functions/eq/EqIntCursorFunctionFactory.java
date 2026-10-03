@@ -56,6 +56,10 @@ public class EqIntCursorFunctionFactory extends AbstractIntCursorFunctionFactory
         return left == right;
     }
 
+    /**
+     * Not called: for a LONG cursor value {@code =(INT, CURSOR)} compares through
+     * {@link EqLongCursorFunctionFactory#value(long, long)}.
+     */
     public static boolean value(long left, long right) {
         return left == right;
     }

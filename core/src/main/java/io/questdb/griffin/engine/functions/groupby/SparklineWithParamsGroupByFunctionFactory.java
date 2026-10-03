@@ -33,6 +33,9 @@ import io.questdb.std.ObjList;
 
 public class SparklineWithParamsGroupByFunctionFactory implements FunctionFactory {
 
+    /**
+     * Not called yet: the NULL wrappers of {@code sparkline(DOUBLE, DOUBLE, DOUBLE, INT)} will call it.
+     */
     public static int value(double element, double min, double range, int levels) {
         return SparklineGroupByFunctionFactory.value(element, min, range, levels);
     }

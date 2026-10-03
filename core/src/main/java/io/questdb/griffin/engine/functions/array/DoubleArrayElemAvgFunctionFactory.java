@@ -36,6 +36,9 @@ import io.questdb.std.Transient;
 
 public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
 
+    /**
+     * Not called yet: the NULL wrappers of {@code array_elem_avg(DOUBLE[], ...)} will call it.
+     */
     public static double value(double sum, double element) {
         return DoubleArrayElemSumFunctionFactory.value(sum, element);
     }

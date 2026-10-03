@@ -26,18 +26,30 @@ package io.questdb.griffin.engine.functions.window;
 
 public class VarSampDoubleWindowFunctionFactory extends AbstractStdDevDoubleWindowFunctionFactory {
 
+    /**
+     * Not called yet: the NULL wrappers of {@code var_samp(DOUBLE)} will call it.
+     */
     public static double value(double sum, double delta) {
         return AbstractStdDevDoubleWindowFunctionFactory.value(sum, delta);
     }
 
+    /**
+     * Not called yet: the NULL wrappers of {@code var_samp(DOUBLE)} will call it.
+     */
     public static double accumulateProduct(double sum, double x, double y) {
         return AbstractStdDevDoubleWindowFunctionFactory.accumulateProduct(sum, x, y);
     }
 
+    /**
+     * Not called yet: the NULL wrappers of {@code var_samp(DOUBLE)} will call it.
+     */
     public static double advanceMean(double mean, double next, long count) {
         return AbstractStdDevDoubleWindowFunctionFactory.advanceMean(mean, next, count);
     }
 
+    /**
+     * Not called yet: the NULL wrappers of {@code var_samp(DOUBLE)} will call it.
+     */
     public static double advanceM2(double m2, double next, double mean, double oldMean) {
         return AbstractStdDevDoubleWindowFunctionFactory.advanceM2(m2, next, mean, oldMean);
     }
