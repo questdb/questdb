@@ -1081,6 +1081,48 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackKeepsKeysOfRetainedSymbols() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // small capacity, so that the retained symbols share index buckets with the new ones
+            int capacity = 16;
+            int N = 1024;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", capacity, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    for (int i = 0; i < N; i++) {
+                        Assert.assertEquals(i, writer.put("sym" + i));
+                    }
+
+                    writer.rollback(N / 2);
+
+                    // the cache is empty now, but the symbols below N / 2 are still in the map
+                    for (int i = 0; i < N / 2; i++) {
+                        Assert.assertEquals(i, writer.put("sym" + i));
+                    }
+                    for (int i = N / 2; i < N; i++) {
+                        Assert.assertEquals(i, writer.put("new" + i));
+                    }
+                    for (int i = N / 2; i < N; i++) {
+                        Assert.assertEquals(i, writer.put("new" + i));
+                    }
+                    Assert.assertEquals(N, writer.getSymbolCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testShortHeader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
