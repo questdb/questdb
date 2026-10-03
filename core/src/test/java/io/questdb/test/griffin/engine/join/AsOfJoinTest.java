@@ -1000,6 +1000,76 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinInnerOnEqualityReadsCrossJoinedTable() throws Exception {
+        // The INNER ON conjunct td.k = f1.a1 reads the ASOF slave and a table CROSS-joined
+        // before it. The CROSS-joined table runs after the ASOF join, so the filter must sit above both.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE ta (ts #TIMESTAMP, x INT, k INT) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO ta VALUES
+                        ('2024-01-01T00:00:02.000000Z', 10, 1),
+                        ('2024-01-01T00:00:04.000000Z', 20, 2),
+                        ('2024-01-01T00:00:06.000000Z', 30, 3)
+                    """);
+            executeWithRewriteTimestamp("CREATE TABLE td (ts #TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO td VALUES
+                        ('2024-01-01T00:00:01.000000Z', 1, 'a'),
+                        ('2024-01-01T00:00:03.000000Z', 2, 'b'),
+                        ('2024-01-01T00:00:05.000000Z', 1, 'c')
+                    """);
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 2), (3, 1), (2, 2)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 1), (2, 3), (4, 2)");
+
+            assertQuery("""
+                    SELECT ta.x, f1.a1, td.v, f2.a2
+                    FROM ta
+                    CROSS JOIN f1
+                    ASOF JOIN td ON (k)
+                    JOIN f2 ON f2.a2 = ta.k AND td.k = f1.a1
+                    ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\ta1\tv\ta2
+                            10\t1\ta\t1
+                            20\t2\tb\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinInnerOnForwardReferenceToAsOfSlaveFails() throws Exception {
+        // The INNER ON conjunct t2.k = t1.k reads t1, which the query joins later with ASOF.
+        // The forward reference has no defined meaning, so the query must fail.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t0 (ts #TIMESTAMP, k INT, v0 INT) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO t0 VALUES
+                        ('2024-01-01T00:00:02.000000Z', 1, 10),
+                        ('2024-01-01T00:00:04.000000Z', 2, 20),
+                        ('2024-01-01T00:00:06.000000Z', 3, 30)
+                    """);
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, k INT, v1 INT) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO t1 VALUES
+                        ('2024-01-01T00:00:01.000000Z', 1, 100),
+                        ('2024-01-01T00:00:03.000000Z', 2, 200),
+                        ('2024-01-01T00:00:05.000000Z', 1, 101)
+                    """);
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, k INT, v2 INT) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO t2 VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 1000),
+                        ('2024-01-01T00:00:03.000000Z', 2, 2000)
+                    """);
+            assertExceptionNoLeakCheck("SELECT t0.k, v0, v1, v2 FROM t0 JOIN t2 ON t2.k = t1.k ASOF JOIN t1 ON (k)", 43, "Invalid column: t2.k");
+        });
+    }
+
+    @Test
     public void testAsOfJoinKeyedMultipleSlavePartitions() throws Exception {
         // Tests seekEstimate with keyed ASOF and multiple slave partitions.
         // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.
@@ -1401,6 +1471,165 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysSharingColumn() throws Exception {
+        // Two ON keys that share a column (a.x = b.k AND a.k = b.k) imply a.x = a.k, but only
+        // for rows that match. Pushing that implied equality into the master scan dropped
+        // master rows that ASOF and LT joins must keep with a null slave side.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO a VALUES (1, 1, 1, 10::TIMESTAMP), (2, 1, 2, 20::TIMESTAMP), (3, 3, 3, 30::TIMESTAMP)");
+            execute("CREATE TABLE b (id INT, k INT, m INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO b VALUES (10, 1, 1, 1::TIMESTAMP), (20, 5, 6, 2::TIMESTAMP)");
+
+            final String expected = """
+                    id\tid1
+                    1\t10
+                    2\tnull
+                    3\tnull
+                    """;
+            assertQuery("SELECT a.id, b.id FROM a ASOF JOIN b ON a.x = b.k AND a.k = b.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT a.id, b.id FROM a LT JOIN b ON a.x = b.k AND a.k = b.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            // The implied equality references only the slave, so it still filters the slave.
+            assertQuery("SELECT a.id, b.id FROM a ASOF JOIN b ON a.k = b.k AND a.k = b.m")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("filter: k=m")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingColumnMixedTypesFails() throws Exception {
+        // A column repeated across ON keys whose partners have different key types would be
+        // written with a single key type and never match, so the join rejects the query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, sy SYMBOL, s STRING, v VARCHAR, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO m VALUES (1, 'A', 'A', 'A', 5::TIMESTAMP, 5_000::TIMESTAMP_NS, 10::TIMESTAMP)");
+            execute("CREATE TABLE sl (id INT, sy SYMBOL, s STRING, t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO sl VALUES (10, 'A', 'A', 5::TIMESTAMP, 1::TIMESTAMP)");
+
+            assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.v = sl.s AND m.s = sl.s")
+                    .noLeakCheck()
+                    .fails(48, "join column is compared with columns of different types");
+            assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.t = sl.t AND m.tn = sl.t")
+                    .noLeakCheck()
+                    .fails(48, "join column is compared with columns of different types");
+            assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.sy = sl.sy AND m.v = sl.sy")
+                    .noLeakCheck()
+                    .fails(49, "join column is compared with columns of different types");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnFullFat() throws Exception {
+        // ASOF and LT joins keep both key pairs of m.x = s.k AND m.k = s.k, so the full-fat join
+        // sees the slave column s.k at two key positions and must expose it only once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, x INT, k INT, sx SYMBOL, sk SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                    (1, 1, 1, 'a', 'a', 10::TIMESTAMP),
+                    (2, 1, 2, 'a', 'b', 20::TIMESTAMP),
+                    (3, 3, 3, 'c', 'c', 30::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE s (id INT, k INT, sk SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO s VALUES
+                    (10, 1, 'a', 1::TIMESTAMP),
+                    (20, 3, 'c', 2::TIMESTAMP),
+                    (30, 2, 'b', 25::TIMESTAMP)
+                    """);
+            final String expected = """
+                    id\tid1\tk\tsk
+                    1\t10\t1\ta
+                    2\tnull\tnull\t
+                    3\t20\t3\tc
+                    """;
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT m.id, s.id, s.k, s.sk FROM m " + join + " JOIN s ON m.x = s.k AND m.k = s.k")
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                assertQuery("SELECT m.id, s.id, s.k, s.sk FROM m " + join + " JOIN s ON m.sx = s.sk AND m.sk = s.sk AND m.x = s.k")
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                // UNION ALL has no random access, so the default mode also picks the full-fat join
+                assertQuery("SELECT m.id, s2.id, s2.k, s2.sk FROM m " + join + " JOIN ((s UNION ALL s WHERE id < 0) TIMESTAMP(ts)) s2 ON m.x = s2.k AND m.k = s2.k")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, sy1 SYMBOL, sy2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO m VALUES (1, 'A', 'A', 10::TIMESTAMP), (2, 'A', 'B', 20::TIMESTAMP)");
+            execute("CREATE TABLE sl (id INT, sy SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO sl VALUES (10, 'A', 1::TIMESTAMP)");
+
+            assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.sy1 = sl.sy AND m.sy2 = sl.sy")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnMixedSymbolKeysWithCrossedColumnIndexes() throws Exception {
+        // tm.s (master index 1) pairs with tc.str (slave index 2) and tm.t (master index 2) pairs
+        // with tc.s (slave index 1). The first pair compares SYMBOL as a string, the second one
+        // compares symbol ids, so each key copier must decide the encoding of its own columns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tm (ts TIMESTAMP, s SYMBOL, t SYMBOL, id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO tm VALUES ('2024-01-01T00:00:02.000000Z', 'x', 'y', 1)");
+            execute("CREATE TABLE tc (ts TIMESTAMP, s SYMBOL, str STRING, cid INT) TIMESTAMP(ts)");
+            execute("INSERT INTO tc VALUES ('2024-01-01T00:00:01.000000Z', 'y', 'x', 100)");
+
+            final String expected = """
+                    ts\ts\tt\tid\tts1\ts1\tstr\tcid
+                    2024-01-01T00:00:02.000000Z\tx\ty\t1\t2024-01-01T00:00:01.000000Z\ty\tx\t100
+                    """;
+            for (String hint : new String[]{"", "/*+ asof_linear(tm tc) */ ", "/*+ asof_dense(tm tc) */ "}) {
+                assertQuery("SELECT " + hint + "* FROM tm ASOF JOIN tc ON tm.s = tc.str AND tm.t = tc.s")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+            assertQuery("SELECT * FROM tm LT JOIN tc ON tm.s = tc.str AND tm.t = tc.s")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnNullSymbolKeys() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -1457,6 +1686,66 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             BB\t1545253512\t1545253512
                             AA\t1573662097\t1573662097
                             AA\t339631474\t339631474
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnSlaveSymbolSharedBySymbolAndStringColumns() throws Exception {
+        // sl.sy pairs with the SYMBOL m.sy and with the STRING m.s. The SYMBOL-SYMBOL key could
+        // compare symbol ids, but sl.sy needs one encoding, so the join compares both keys as strings.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, sy SYMBOL, s STRING, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO m VALUES (1, 'A', 'A', 10::TIMESTAMP), (2, 'A', 'B', 20::TIMESTAMP), (3, 'C', 'C', 30::TIMESTAMP)");
+            execute("CREATE TABLE sl (id INT, sy SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO sl VALUES (10, 'A', 1::TIMESTAMP), (20, 'B', 2::TIMESTAMP)");
+
+            final String expected = """
+                    id\tid1
+                    1\t10
+                    2\tnull
+                    3\tnull
+                    """;
+            final String expectedMatched = """
+                    id\tid1
+                    1\t10
+                    """;
+            final String[] onClauses = {"m.sy = sl.sy AND m.s = sl.sy", "m.s = sl.sy AND m.sy = sl.sy"};
+            for (String join : new String[]{"ASOF", "LT"}) {
+                final String[] hints = join.equals("ASOF")
+                        ? new String[]{"", "/*+ asof_linear(m sl) */ ", "/*+ asof_dense(m sl) */ "}
+                        : new String[]{""};
+                for (String hint : hints) {
+                    for (String on : onClauses) {
+                        final String query = "SELECT " + hint + "m.id, sl.id FROM m " + join + " JOIN sl ON " + on;
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected);
+                        assertQuery(query + " WHERE sl.id IS NOT NULL")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .returns(expectedMatched);
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .fullFatJoins()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected);
+                    }
+                }
+            }
+            assertQuery("SELECT m.id, sl.id FROM m SPLICE JOIN sl ON m.sy = sl.sy AND m.s = sl.sy")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tid1
+                            null\t10
+                            null\t20
+                            1\t10
+                            2\tnull
+                            3\tnull
                             """);
         });
     }
@@ -3070,6 +3359,35 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinWhereEqualityReadsCrossJoinedTable() throws Exception {
+        // The WHERE equality reads the ASOF/LT slave and a table CROSS-joined before it.
+        // The CROSS-joined table runs after the ASOF join, so the filter must sit above both.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE ta (ts #TIMESTAMP, x INT, k INT) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 2), (3, 1)");
+            executeWithRewriteTimestamp("CREATE TABLE td (ts #TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("INSERT INTO td VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+
+            final String expected = """
+                    x\ta1\tv
+                    10\t1\ta1
+                    """;
+            assertQuery("SELECT ta.x, f1.a1, td.v FROM ta CROSS JOIN f1 ASOF JOIN td ON (k) WHERE td.k = f1.a1 ORDER BY a1")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: td.k=f1.a1")
+                    .returns(expected);
+            assertQuery("SELECT ta.x, f1.a1, td.v FROM ta CROSS JOIN f1 LT JOIN td ON (k) WHERE td.k = f1.a1 ORDER BY a1")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, f1.a1, td.v FROM ta CROSS JOIN f1 ASOF JOIN td ON (k) WHERE f1.a1 = td.k ORDER BY a1")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinWithIndexSearchHint() throws Exception {
         assertMemoryLeak(() -> {
             // Create tables with symbol index
@@ -3556,6 +3874,134 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             1\tnull
                             2\t1.09
                             """);
+        });
+    }
+
+    @Test
+    public void testAsOfSelfJoinOnSymbolSharedBySymbolColumns() throws Exception {
+        // t2.s pairs with its namesake t1.s and with t1.s2. The self-join key t1.s = t2.s could
+        // compare symbol ids, but t2.s needs one encoding, so the join compares both keys as strings.
+        // The SPLICE section also covers the master-side case, where t1.s is the shared column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, s SYMBOL, s2 SYMBOL, str STRING, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, 'A', 'A', 'A', 'A', 1::TIMESTAMP),
+                    (2, 'A', 'B', 'B', 'B', 2::TIMESTAMP),
+                    (3, 'B', 'B', 'B', 'B', 3::TIMESTAMP),
+                    (4, NULL, NULL, NULL, NULL, 4::TIMESTAMP),
+                    (5, 'B', NULL, NULL, NULL, 5::TIMESTAMP),
+                    (6, NULL, 'A', 'A', 'A', 6::TIMESTAMP),
+                    (7, 'A', 'A', 'A', 'A', 7::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE u AS (SELECT * FROM t) TIMESTAMP(ts)");
+
+            final String expectedAsOf = """
+                    id\tid1
+                    1\t1
+                    2\tnull
+                    3\t3
+                    4\t4
+                    5\tnull
+                    6\tnull
+                    7\t7
+                    """;
+            final String expectedAsOfMatched = """
+                    id\tid1
+                    1\t1
+                    3\t3
+                    4\t4
+                    7\t7
+                    """;
+            final String expectedLt = """
+                    id\tid1
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    4\tnull
+                    5\tnull
+                    6\tnull
+                    7\t2
+                    """;
+            final String expectedLtMatched = """
+                    id\tid1
+                    7\t2
+                    """;
+            final String[] onClauses = {
+                    "t1.s = t2.s AND t1.s2 = t2.s",
+                    "t1.s2 = t2.s AND t1.s = t2.s",
+                    "t1.s = t2.s AND t1.str = t2.s",
+                    "t1.str = t2.s AND t1.s = t2.s"
+            };
+            for (String join : new String[]{"ASOF", "LT"}) {
+                final String expected = join.equals("ASOF") ? expectedAsOf : expectedLt;
+                final String expectedMatched = join.equals("ASOF") ? expectedAsOfMatched : expectedLtMatched;
+                final String[] hints = join.equals("ASOF")
+                        ? new String[]{"", "/*+ asof_linear(t1 t2) */ ", "/*+ asof_dense(t1 t2) */ "}
+                        : new String[]{""};
+                for (String hint : hints) {
+                    for (int i = 0; i < onClauses.length; i++) {
+                        final String query = "SELECT " + hint + "t1.id, t2.id FROM t t1 " + join + " JOIN t t2 ON " + onClauses[i];
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected);
+                        assertQuery(query + " WHERE t2.id != NULL")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .returns(expectedMatched);
+                        // the full-fat join does not support the STRING column of the slave table
+                        if (i < 2) {
+                            assertQuery(query)
+                                    .noLeakCheck()
+                                    .fullFatJoins()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns(expected);
+                        }
+                    }
+                }
+            }
+
+            // SPLICE self-join returns the same rows as SPLICE against a copy of the table
+            final String spliceCopyQuery = "SELECT t1.id, t2.id FROM t t1 SPLICE JOIN u t2 ON t1.s = t2.s AND t1.s2 = t2.s";
+            final String spliceSelfQuery = "SELECT t1.id, t2.id FROM t t1 SPLICE JOIN t t2 ON t1.s = t2.s AND t1.s2 = t2.s";
+            final String expectedSplice = """
+                    id\tid1
+                    1\t1
+                    2\tnull
+                    3\t3
+                    4\t4
+                    5\tnull
+                    6\tnull
+                    7\t7
+                    """;
+            assertQuery(spliceCopyQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedSplice);
+            assertQuery(spliceSelfQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedSplice);
+            // t1.s pairs with its namesake t2.s and with t2.s2, so the master column t1.s needs one encoding;
+            // only SPLICE keeps both keys, the other joins turn t2.s = t2.s2 into a filter
+            for (String on : new String[]{"t1.s = t2.s AND t1.s = t2.s2", "t1.s = t2.s2 AND t1.s = t2.s"}) {
+                assertQuery("SELECT t1.id, t2.id FROM t t1 SPLICE JOIN u t2 ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expectedSplice);
+                assertQuery("SELECT t1.id, t2.id FROM t t1 SPLICE JOIN t t2 ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expectedSplice);
+            }
+
+            // SYMBOL and VARCHAR keys sharing a column still need different encodings
+            assertQuery("SELECT t1.id, t2.id FROM t t1 ASOF JOIN t t2 ON t1.s = t2.s AND t1.v = t2.s")
+                    .noLeakCheck()
+                    .fails(55, "join column is compared with columns of different types");
         });
     }
 

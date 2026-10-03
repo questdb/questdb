@@ -317,7 +317,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                    if (record.hasMaster()) {
+                    if (hasMaster()) {
                         if (filter.getBool(record)) {
                             MapKey keys = matchIdsMap.withKey();
                             keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
@@ -399,6 +399,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             if (!isMapBuilt) {
                 matchIdsMap.clear();
             }
+        }
+
+        // Reads the flag hasMaster(boolean) sets: when swapped, the record's slave side holds master rows.
+        private boolean hasMaster() {
+            return swapped ? record.hasSlave() : record.hasMaster();
         }
 
         private void hasMaster(boolean value) {

@@ -1149,6 +1149,141 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // The correlated WHERE conjunct p.k = o.k reads the slave of the ASOF join. With the
+    // non-equality t.v <= o.v and the aggregate, the rewriter keeps the outer-ref join, which it
+    // inserts before the ASOF join and whose ON holds p.k = o.k. That conjunct is not a forward
+    // reference: it must filter after the ASOF join.
+    @Test
+    public void testLateralCorrelatedEqualityOnAsOfJoinSlaveWithAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterRefJoinSlaveTables();
+            assertQuery("SELECT o.ok, s.c FROM o JOIN LATERAL (SELECT count(*) c FROM t ASOF JOIN p ON (id) WHERE p.k = o.k AND t.v <= o.v) s ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc
+                            1\t1
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // Same as testLateralCorrelatedEqualityOnAsOfJoinSlaveWithAggregate, for a LEFT join slave.
+    @Test
+    public void testLateralCorrelatedEqualityOnLeftJoinSlaveWithAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterRefJoinSlaveTables();
+            assertQuery("SELECT o.ok, s.c FROM o JOIN LATERAL (SELECT count(*) c FROM t LEFT JOIN p ON t.id = p.id WHERE p.k = o.k AND t.v <= o.v) s ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc
+                            1\t1
+                            2\t1
+                            3\t1
+                            """);
+        });
+    }
+
+    // Same as testLateralCorrelatedEqualityOnAsOfJoinSlaveWithAggregate, for an LT join slave.
+    @Test
+    public void testLateralCorrelatedEqualityOnLtJoinSlaveWithAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterRefJoinSlaveTables();
+            assertQuery("SELECT o.ok, s.c FROM o JOIN LATERAL (SELECT count(*) c FROM t LT JOIN p ON (id) WHERE p.k = o.k AND t.v <= o.v) s ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc
+                            1\t1
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // The outer-ref join must run before the FULL join, whose ON reads the outer row, so the
+    // unmatched rows of that join lose their outer row. Per outer row, o.k = 2 keeps trade 10
+    // and refunds 100 and 101 unmatched. That cannot be decorrelated, so the query fails.
+    @Test
+    public void testLateralCorrelatedFullJoinOnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t FULL JOIN refunds r ON r.k = o.k AND t.x = r.k AND t.id > 0) l")
+                    .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // The correlated ON of the INNER join before the FULL join keeps the outer-ref join ahead of
+    // the FULL join, which loses its unmatched refunds.
+    @Test
+    public void testLateralCorrelatedInnerOnBeforeFullJoinFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k FULL JOIN refunds r ON r.k = t.x) l")
+                    .fails(117, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // Per outer row, count(*) counts both refunds: 2 for each order.
+    @Test
+    public void testLateralCorrelatedRightJoinOnCountFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.c FROM orders o JOIN LATERAL (SELECT count(*) c FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k) l")
+                    .fails(77, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // Per outer row, the RIGHT JOIN keeps both refunds: 1 10 100, 1 null 101, 2 null 100 and
+    // 2 null 101. The unmatched ones would carry a NULL outer-ref key and be dropped.
+    @Test
+    public void testLateralCorrelatedRightJoinOnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k) l")
+                    .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // WHERE t.id IS NULL keeps exactly the unmatched refunds, which the decorrelated query loses.
+    @Test
+    public void testLateralCorrelatedRightJoinOnIsNullFilterFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.rid FROM orders o JOIN LATERAL (SELECT r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id IS NULL) l")
+                    .fails(77, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // WHERE t.id > 0 drops the unmatched refunds per outer row too, so losing them changes nothing.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithMasterFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id > 0) l ORDER BY o.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            """);
+        });
+    }
+
+    // The INNER join keyed on t.x drops the unmatched refunds per outer row too.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithMasterKeyedJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.tid, l.rid, l.v FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid, x.v FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k JOIN xs x ON x.k = t.x) l ORDER BY o.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid\tv
+                            1\t10\t100\t100
+                            """);
+        });
+    }
+
     // Exercises the model-replacement flag transfer directly via a @TestOnly accessor.
     // The same regression is also covered black-box by the LATERAL-count assertQuery
     // tests; this pins the unit-level contract of replaceAndTransferDependents.
@@ -1166,6 +1301,20 @@ public class LateralJoinTest extends AbstractCairoTest {
         Assert.assertEquals(1, newModel.getLateralCountTemplates().size());
         Assert.assertSame(template, newModel.getLateralCountTemplates().getQuick(0));
         Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
+    }
+
+    // The query writes q.id = p.id in q's ON, before the RIGHT join of p: a forward reference
+    // with no defined meaning. Inside a LATERAL body it must fail as it does outside one.
+    @Test
+    public void testLateralInnerOnForwardReferenceToRightJoinSlaveFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterRefJoinSlaveTables();
+            assertException(
+                    "SELECT o.ok, s.c FROM o JOIN LATERAL (SELECT count(*) c FROM t JOIN q ON q.id = p.id RIGHT JOIN p ON t.id = p.id WHERE t.v <= o.v) s ORDER BY 1",
+                    73,
+                    "Invalid column: q.id"
+            );
+        });
     }
 
     // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
@@ -9146,6 +9295,9 @@ public class LateralJoinTest extends AbstractCairoTest {
             // FULL OUTER JOIN: both sides preserved
             // For order 1: trades match, no refunds → (10, null), (20, null)
             // For order 2: no trades, refund matches → (null, 5.0)
+            // The rewriter places the outer-ref CROSS JOIN after the FULL JOIN, so the
+            // unmatched refund repeats per outer row without relying on the optimiser
+            // to reorder the joins.
             assertQuery("""
                     SELECT o.id, sub.qty, sub.amount
                     FROM orders o
@@ -9159,6 +9311,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("Cross Join\n                            Hash Full Outer Join Light")
                     .returns("""
                             id\tqty\tamount
                             1\t10.0\tnull
@@ -9219,6 +9372,122 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             id\tqty\tadj\tdisc
                             2\t30.0\tnull\t0.8
+                            """);
+        });
+    }
+
+    // T100d: the FULL JOIN keeps the unmatched refund once per outer row when only
+    // a later LEFT JOIN reads the outer row
+    @Test
+    public void testT100dFullJoinKeepsUnmatchedRowsWithCorrelatedLaterLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefundsAndXs();
+
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.amount, sub.xv
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, r.amount, x.v xv
+                        FROM trades t
+                        FULL JOIN refunds r ON r.order_id = t.order_id
+                        LEFT JOIN xs x ON x.k = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty, sub.amount
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tqty\tamount\txv
+                            1\t10.0\tnull\t100
+                            1\t20.0\tnull\t100
+                            1\tnull\t5.0\t100
+                            2\t10.0\tnull\tnull
+                            2\t20.0\tnull\tnull
+                            2\tnull\t5.0\tnull
+                            """);
+        });
+    }
+
+    // T100e: the RIGHT JOIN keeps the unmatched refund once per outer row when only
+    // a later LEFT JOIN reads the outer row
+    @Test
+    public void testT100eRightJoinKeepsUnmatchedRowsWithCorrelatedLaterLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefundsAndXs();
+
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.amount, sub.xv
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, r.amount, x.v xv
+                        FROM trades t
+                        RIGHT JOIN refunds r ON r.order_id = t.order_id
+                        LEFT JOIN xs x ON x.k = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty, sub.amount
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tqty\tamount\txv
+                            1\tnull\t5.0\t100
+                            2\tnull\t5.0\tnull
+                            """);
+        });
+    }
+
+    // T100f: the FULL JOIN keeps the unmatched refund for the outer row that the
+    // later correlated INNER JOIN accepts
+    @Test
+    public void testT100fFullJoinKeepsUnmatchedRowsWithCorrelatedLaterInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefundsAndXs();
+
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.amount, sub.xv
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, r.amount, x.v xv
+                        FROM trades t
+                        FULL JOIN refunds r ON r.order_id = t.order_id
+                        JOIN xs x ON x.k = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty, sub.amount
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tqty\tamount\txv
+                            1\t10.0\tnull\t100
+                            1\t20.0\tnull\t100
+                            1\tnull\t5.0\t100
+                            """);
+        });
+    }
+
+    // T100g: count(*) over a FULL JOIN counts the unmatched refund for every outer
+    // row when only a later LEFT JOIN reads the outer row
+    @Test
+    public void testT100gLeftLateralCountFullJoinWithCorrelatedLaterLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefundsAndXs();
+
+            assertQuery("""
+                    SELECT o.id, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) c
+                        FROM trades t
+                        FULL JOIN refunds r ON r.order_id = t.order_id
+                        LEFT JOIN xs x ON x.k = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t3
+                            2\t3
                             """);
         });
     }
@@ -16384,5 +16653,63 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (4, 3, 40.0, 400.0, '2024-01-01T02:30:00.000000Z'),
                 (5, 3, 50.0, 500.0, '2024-01-01T02:45:00.000000Z')
                 """);
+    }
+
+    // Trade 10 matches refund 100 only for o.k = 1. Every other refund, and trade 10 for
+    // o.k = 2, is unmatched for some outer row.
+    private void createCorrelatedRightJoinTables() throws Exception {
+        execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("CREATE TABLE trades (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("CREATE TABLE xs (k INT, v INT)");
+        execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp)");
+        execute("INSERT INTO trades VALUES (10, 1, 1::timestamp)");
+        execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp)");
+        execute("INSERT INTO xs VALUES (1, 100)");
+    }
+
+    // Refund 2 matches no trade, so a FULL or RIGHT join of trades and refunds
+    // keeps it as an unmatched row with NULL trade columns.
+    private void createOrdersTradesRefundsAndXs() throws Exception {
+        execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE xs (k INT, v INT)");
+        execute("""
+                INSERT INTO orders VALUES
+                (1, '2024-01-01T00:00:00.000000Z'),
+                (2, '2024-01-01T01:00:00.000000Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                (1, 20.0, '2024-01-01T00:20:00.000000Z')
+                """);
+        execute("INSERT INTO refunds VALUES (2, 5.0, '2024-01-01T01:10:00.000000Z')");
+        execute("INSERT INTO xs VALUES (1, 100)");
+    }
+
+    // For o row 3 (k = 30), LEFT JOIN pairs t row 2 with the p row (2, 30) and counts 1, while
+    // ASOF and LT pick the earlier p row (2, 20) and count 0.
+    private void createOuterRefJoinSlaveTables() throws Exception {
+        execute("CREATE TABLE o (ok INT, k INT, v INT)");
+        execute("INSERT INTO o VALUES (1, 10, 1), (2, 20, 2), (3, 30, 2)");
+        execute("CREATE TABLE t (ts TIMESTAMP, id INT, v INT) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO t VALUES
+                ('2024-01-01T00:00:01.000000Z', 1, 1),
+                ('2024-01-01T00:00:03.000000Z', 2, 2),
+                ('2024-01-01T00:00:05.000000Z', 3, 3)
+                """);
+        execute("CREATE TABLE p (ts TIMESTAMP, id INT, k INT) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO p VALUES
+                ('2024-01-01T00:00:00.000000Z', 1, 10),
+                ('2024-01-01T00:00:02.000000Z', 2, 20),
+                ('2024-01-01T00:00:04.000000Z', 2, 30),
+                ('2024-01-01T00:00:06.000000Z', 3, 10)
+                """);
+        execute("CREATE TABLE q (id INT, z INT)");
+        execute("INSERT INTO q VALUES (1, 100), (2, 200), (3, 300)");
     }
 }
