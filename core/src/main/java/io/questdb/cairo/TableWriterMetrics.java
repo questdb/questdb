@@ -35,6 +35,14 @@ public class TableWriterMetrics implements Mutable {
     private final Counter commitCounter;
     private final Counter committedRowCounter;
     private final Counter o3CommitCounter;
+    // O3 partition work that could not be dispatched to the shared pool and so was run inline on the
+    // committing thread instead. Split by cause, because the remedies differ: `queue_full` means the
+    // o3 partition queue is undersized for the workload (cairo.o3.partition.queue.capacity), whereas
+    // `contended` means publishers merely lost the CAS and extra capacity would not have helped.
+    // Without these, the fallback is invisible: it emits no log line, and the only external evidence
+    // is the *absence* of the "o3 partition task" message.
+    private final Counter o3PartitionInlineContendedCounter;
+    private final Counter o3PartitionInlineQueueFullCounter;
     // For write amplification metric, `physicallyWrittenRowCounter / committedRowCounter`.
     private final Counter physicallyWrittenRowCounter;
     private final Counter rollbackCounter;
@@ -44,6 +52,8 @@ public class TableWriterMetrics implements Mutable {
         this.commitCounter = metricsRegistry.newCounter("commits");
         this.o3CommitCounter = metricsRegistry.newCounter("o3_commits");
         this.committedRowCounter = metricsRegistry.newCounter("committed_rows");
+        this.o3PartitionInlineQueueFullCounter = metricsRegistry.newCounter("o3_partitions_inline_queue_full");
+        this.o3PartitionInlineContendedCounter = metricsRegistry.newCounter("o3_partitions_inline_contended");
         this.physicallyWrittenRowCounter = metricsRegistry.newCounter("physically_written_rows");
         this.rollbackCounter = metricsRegistry.newCounter("rollbacks");
         this.suspendedTablesGauge = metricsRegistry.newAtomicLongGauge("suspended_tables");
@@ -62,6 +72,8 @@ public class TableWriterMetrics implements Mutable {
         commitCounter.reset();
         committedRowCounter.reset();
         o3CommitCounter.reset();
+        o3PartitionInlineContendedCounter.reset();
+        o3PartitionInlineQueueFullCounter.reset();
         physicallyWrittenRowCounter.reset();
         rollbackCounter.reset();
         suspendedTablesGauge.setValue(0);
@@ -83,6 +95,14 @@ public class TableWriterMetrics implements Mutable {
         return o3CommitCounter.getValue();
     }
 
+    public long getO3PartitionsInlineContended() {
+        return o3PartitionInlineContendedCounter.getValue();
+    }
+
+    public long getO3PartitionsInlineQueueFull() {
+        return o3PartitionInlineQueueFullCounter.getValue();
+    }
+
     public long getPhysicallyWrittenRows() {
         return physicallyWrittenRowCounter.getValue();
     }
@@ -101,6 +121,19 @@ public class TableWriterMetrics implements Mutable {
 
     public void incrementO3Commits() {
         o3CommitCounter.inc();
+    }
+
+    /**
+     * Records an o3 partition that was processed inline because the partition queue could not accept
+     * it. {@code cursor} is the value returned by the publisher sequence: {@code -1} means the queue
+     * was full, {@code -2} means the publish CAS was lost to another producer.
+     */
+    public void incrementO3PartitionsInline(long cursor) {
+        if (cursor == -1) {
+            o3PartitionInlineQueueFullCounter.inc();
+        } else {
+            o3PartitionInlineContendedCounter.inc();
+        }
     }
 
     public void incrementRollbacks() {
