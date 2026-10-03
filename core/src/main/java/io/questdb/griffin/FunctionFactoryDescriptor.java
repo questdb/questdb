@@ -152,6 +152,20 @@ public class FunctionFactoryDescriptor {
     }
 
     /**
+     * Records in {@code tagBySignatureChar} that signature character {@code c} names {@code tag}.
+     * A character that already names another tag fails, so two types can never share one; the
+     * class initialisation registers every type through here.
+     */
+    public static void registerSignatureChar(IntShortHashMap tagBySignatureChar, char c, ColumnTypeTag tag) {
+        final short taken = tagBySignatureChar.get(c);
+        if (taken != -1) {
+            throw new IllegalStateException("signature character taken twice [char=" + c
+                    + ", first=" + ColumnTypeTag.of(taken) + ", second=" + tag + ']');
+        }
+        tagBySignatureChar.put(c, tag.code());
+    }
+
+    /**
      * The type name {@link #translateSignature(CharSequence, String, StringSink)} prints for a
      * signature character; the {@code functions()} catalogue shows it. A real type's name is its
      * definition's name in lower case; a pseudo tag's is in the table below. Defined only for tags
@@ -313,8 +327,7 @@ public class FunctionFactoryDescriptor {
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
             final char c = signatureChar(tag);
             if (c != NO_SIGNATURE_CHAR) {
-                assert TAG_BY_SIGNATURE_CHAR.get(c) == -1 : "signature character taken twice: " + c;
-                TAG_BY_SIGNATURE_CHAR.put(c, tag.code());
+                registerSignatureChar(TAG_BY_SIGNATURE_CHAR, c, tag);
                 final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(tag.code());
                 SIGNATURE_TYPE_NAMES[tag.code()] = driver != null
                         ? driver.getTypeName().toLowerCase(Locale.ROOT)

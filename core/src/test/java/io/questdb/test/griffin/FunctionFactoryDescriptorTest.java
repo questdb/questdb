@@ -33,6 +33,7 @@ import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.IntShortHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -42,6 +43,27 @@ import org.junit.Test;
 public class FunctionFactoryDescriptorTest {
 
     private static final StringSink sink = new StringSink();
+
+    @Test
+    public void testDuplicateSignatureCharacterFails() {
+        // the table the class initialisation builds, then a second tag under INT's character
+        final IntShortHashMap tagBySignatureChar = new IntShortHashMap();
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            final char c = FunctionFactoryDescriptor.signatureChar(tag);
+            if (c != FunctionFactoryDescriptor.NO_SIGNATURE_CHAR) {
+                FunctionFactoryDescriptor.registerSignatureChar(tagBySignatureChar, c, tag);
+            }
+        }
+        final char c = FunctionFactoryDescriptor.signatureChar(ColumnTypeTag.INT);
+        try {
+            FunctionFactoryDescriptor.registerSignatureChar(tagBySignatureChar, c, ColumnTypeTag.LONG);
+            Assert.fail("a second tag took signature character " + c);
+        } catch (IllegalStateException e) {
+            TestUtils.assertContains(e.getMessage(), "signature character taken twice [char=i, first=INT, second=LONG]");
+        }
+        // the table still names INT
+        Assert.assertEquals(ColumnType.INT, tagBySignatureChar.get(c));
+    }
 
     @Test
     public void testGetArgTypeTagOfNonSignatureChars() {
