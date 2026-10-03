@@ -134,8 +134,6 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
-    // LateralJoinRewriter gives this alias prefix to the joins it inserts for outer references
-    private static final String LATERAL_OUTER_REF_PREFIX = "__qdb_outer_ref__";
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
@@ -817,7 +815,7 @@ public class SqlOptimiser implements Mutable {
     // Returns true for the join that LateralJoinRewriter.terminateHere() inserts for the outer references
     // of a LATERAL sub-query. Its ON holds the sub-query's correlated WHERE conjuncts.
     private static boolean isLateralOuterRefJoin(IQueryModel joinModel) {
-        return joinModel.getAlias() != null && Chars.startsWith(joinModel.getAlias().token, LATERAL_OUTER_REF_PREFIX);
+        return joinModel.getAlias() != null && Chars.startsWith(joinModel.getAlias().token, LateralJoinRewriter.OUTER_REF_PREFIX);
     }
 
     /**
@@ -1465,14 +1463,10 @@ public class SqlOptimiser implements Mutable {
                         || joinType == IQueryModel.JOIN_LT
                         || joinType == IQueryModel.JOIN_SPLICE))) {
                     if (!isInnerJoinKey) {
-                        // outer joins match on the extra equality without dropping preserved rows
-                        OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
-                        ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
-                        node.paramCount = 2;
-                        // the join context keeps ao and bo as keys, and the filter push-down rewrites
-                        // its nodes in place, so the outer join expression gets its own copies
-                        node.lhs = ExpressionNode.deepClone(expressionNodePool, ao);
-                        node.rhs = ExpressionNode.deepClone(expressionNodePool, bo);
+                        // Outer joins match on the extra equality without dropping preserved rows. The join
+                        // context keeps ao and bo as keys, and the filter push-down rewrites its nodes in
+                        // place, so the outer join expression gets its own copies.
+                        ExpressionNode node = makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
                         contextModel.setOuterJoinExpressionClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, contextModel.getOuterJoinExpressionClause(), node));
                     }
                     // mergeContexts drops the parent of the deleted key, and a later merge rebuilds
@@ -1498,13 +1492,9 @@ public class SqlOptimiser implements Mutable {
 
         if (ai == bi) {
             // (same table)
-            OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
-            ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
-            node.paramCount = 2;
             // the join context keeps ao and bo as keys, and the filter push-down rewrites
             // its nodes in place, so the filter gets its own copies
-            node.lhs = ExpressionNode.deepClone(expressionNodePool, ao);
-            node.rhs = ExpressionNode.deepClone(expressionNodePool, bo);
+            ExpressionNode node = makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
             if (ai < contextSlaveIndex && joinBarriers.excludes(joinType)) {
                 // The equality holds for the rows that the INNER join of the context matches. Place it
                 // like an ON conjunct of that join: at the table, unless a master-nulling join executes
@@ -1527,11 +1517,7 @@ public class SqlOptimiser implements Mutable {
                 // The implied equality holds for the rows that the INNER join of the context matches. As a
                 // key of the earlier join it would decide the matching of an outer join or run below a
                 // master-nulling join, so it filters like an ON conjunct of the INNER join instead.
-                OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
-                ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
-                node.paramCount = 2;
-                node.lhs = ExpressionNode.deepClone(expressionNodePool, ao);
-                node.rhs = ExpressionNode.deepClone(expressionNodePool, bo);
+                ExpressionNode node = makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
                 parent.addParsedWhereNode(node, true);
                 if (hasMasterNullingJoinBetween(parent, emittedSlaveIndex, contextSlaveIndex)) {
                     addModelOnPredicate(node, emittedSlaveIndex, contextSlaveIndex);
@@ -6935,9 +6921,6 @@ public class SqlOptimiser implements Mutable {
         return alias != null ? lateralCountTemplateMap.get(alias) : null;
     }
 
-    // Walks only the nested-model chain (not join models) because named windows are defined
-    // on the masterModel and propagated through nesting, never on join models.
-    // Stops at subquery boundaries to prevent resolving names from inner scopes.
     // Links the emitted clauses that no other ordering edge links. Left unlinked, such a clause leaves
     // doReorderTables unable to order the level.
     private void linkLoneEmittedClauses(IQueryModel parent) {
@@ -6951,6 +6934,9 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Walks only the nested-model chain (not join models) because named windows are defined
+    // on the masterModel and propagated through nesting, never on join models.
+    // Stops at subquery boundaries to prevent resolving names from inner scopes.
     private WindowExpression lookupNamedWindow(IQueryModel model, CharSequence windowName) {
         IQueryModel current = model;
         while (current != null) {
@@ -10155,11 +10141,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
-    // top-down column pruning cannot drop the keys that define the grouping. Runs only when the model
-    // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
-    // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
-    // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
     private void restoreJoinContexts(ObjList<IQueryModel> joinModels) {
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             final IQueryModel m = joinModels.getQuick(i);
@@ -10168,6 +10149,11 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
+    // top-down column pruning cannot drop the keys that define the grouping. Runs only when the model
+    // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
+    // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
+    // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
     private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
         if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
             final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
@@ -14662,15 +14648,6 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
-    /**
-     * Copies the provided order by advice into the given model.
-     *
-     * @param model                  The target model
-     * @param advice                 The order by advice to copy
-     * @param orderByMnemonic        The advice 'strength'
-     * @param orderByDirectionAdvice The advice direction
-     * @return boolean Don't pass through orderByMnemonic if `allowPropagationOfOrderByAdvice = false`
-     */
     private void saveJoinContexts(ObjList<IQueryModel> joinModels) {
         savedJoinContexts.clear();
         savedJoinTypes.clear();
@@ -14694,6 +14671,15 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Copies the provided order by advice into the given model.
+     *
+     * @param model                  The target model
+     * @param advice                 The order by advice to copy
+     * @param orderByMnemonic        The advice 'strength'
+     * @param orderByDirectionAdvice The advice direction
+     * @return boolean Don't pass through orderByMnemonic if `allowPropagationOfOrderByAdvice = false`
+     */
     private int setAndCopyAdvice(IQueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
         if (model.getAllowPropagationOfOrderByAdvice()) {
             model.setOrderByAdviceMnemonic(orderByMnemonic);
@@ -14826,8 +14812,8 @@ public class SqlOptimiser implements Mutable {
     /**
      * Moves reversible join clauses, such as a.x = b.x from table "from" to table "to".
      *
-     * @param to      target table index
-     * @param from    source table index
+     * @param to   target table index
+     * @param from source table index
      * @return false if "from" or "to" is a join barrier (outer, time-series or UNNEST join), otherwise - true
      */
     private boolean swapJoinOrder(IQueryModel parent, int to, int from) {

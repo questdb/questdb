@@ -60,6 +60,9 @@ class LateralJoinRewriter implements Mutable {
     // is the value the filter has to judge - the raw column is NULL for an outer row
     // with no group, and NULL fails every comparison.
     static final String LATERAL_COUNT_PLACEHOLDER = "__qdb_lateral_count__";
+    // Alias prefix of the joins that this rewriter inserts for outer references. SqlOptimiser
+    // recognises those joins by it.
+    static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     private static final int CMP_EQ = 0;
     private static final int CMP_GE = 5;
     private static final int CMP_GT = 4;
@@ -80,7 +83,6 @@ class LateralJoinRewriter implements Mutable {
     // sentinel for a LIMIT term that is not a compile-time constant; a bare
     // CONSTANT token is unsigned so a real limit can never collide with it
     private static final long LIMIT_NOT_CONSTANT = Long.MIN_VALUE;
-    private static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     // Verdict on what one lateral body layer does to the single row a scalar
     // count emits: the row provably survives, it provably goes, or it cannot be
     // decided at compile time. Introduced for LIMIT, now applied to every layer

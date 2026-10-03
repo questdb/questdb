@@ -1869,10 +1869,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    // HORIZON key copiers encode a key column once, whatever key positions it occupies. When one
-    // column is compared with columns of different key types, the positions need different
-    // encodings, and the join would never match.
-    private static void validateHorizonRepeatedKeyColumnTypes(
+    // Record copiers encode a key column once, whatever key positions it occupies. When one column
+    // is compared with columns of different key types, the positions need different encodings, and
+    // the join would never match.
+    private static void validateRepeatedKeyColumnTypes(
             JoinContext jc,
             ColumnTypes keyTypes,
             ListColumnFilter slaveKeyColumns,
@@ -5539,7 +5539,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                validateHorizonRepeatedKeyColumnTypes(asOfJoinContext, asOfJoinKeyTypes, listColumnFilterA, listColumnFilterB);
+                validateRepeatedKeyColumnTypes(asOfJoinContext, asOfJoinKeyTypes, listColumnFilterA, listColumnFilterB);
                 if (masterSymbolKeyCols != null) {
                     masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
                     slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
@@ -8349,7 +8349,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
 
-                    validateHorizonRepeatedKeyColumnTypes(asOfJoinContext, asOfJoinKeyTypes, listColumnFilterA, listColumnFilterB);
+                    validateRepeatedKeyColumnTypes(asOfJoinContext, asOfJoinKeyTypes, listColumnFilterA, listColumnFilterB);
                     if (masterSymbolKeyCols != null) {
                         masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
                         slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
@@ -14204,21 +14204,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // Record copiers encode a key column once, whatever key positions it occupies. When one
-        // column is compared with columns of different types, the positions need different
-        // encodings, and the join would never match.
-        for (int k = 1, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
-            final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
-            for (int j = 0; j < k; j++) {
-                final boolean isSharedA = columnIndexA == listColumnFilterA.getColumnIndexFactored(j);
-                if ((isSharedA || columnIndexB == listColumnFilterB.getColumnIndexFactored(j))
-                        && keyTypes.getColumnType(j) != keyTypes.getColumnType(k)) {
-                    final ExpressionNode sharedNode = isSharedA ? jc.aNodes.getQuick(k) : jc.bNodes.getQuick(k);
-                    throw SqlException.$(sharedNode.position, "join column is compared with columns of different types");
-                }
-            }
-        }
+        validateRepeatedKeyColumnTypes(jc, keyTypes, listColumnFilterA, listColumnFilterB);
     }
 
     private void processNodeQueryModels(ExpressionNode node, ModelOperator operator) {

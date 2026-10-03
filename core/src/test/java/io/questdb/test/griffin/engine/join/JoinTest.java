@@ -5741,15 +5741,14 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoinKeepsTableKeyedTransitivelyByLaterJoinLongSequence() throws Exception {
-        assertMemoryLeak(() -> assertQuery("SELECT * FROM long_sequence(3) a, long_sequence(3) c, long_sequence(3) d WHERE d.x = c.x AND d.x = a.x")
-                .noLeakCheck()
+        assertQuery("SELECT * FROM long_sequence(3) a, long_sequence(3) c, long_sequence(3) d WHERE d.x = c.x AND d.x = a.x")
                 .noRandomAccess()
                 .returns("""
                         x\tx1\tx2
                         1\t1\t1
                         2\t2\t2
                         3\t3\t3
-                        """));
+                        """);
     }
 
     @Test
