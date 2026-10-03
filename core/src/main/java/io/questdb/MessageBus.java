@@ -162,11 +162,7 @@ public interface MessageBus extends Closeable {
 
     MCSequence getPageFrameReduceSubSeq(int shard);
 
-    MPSequence getPostingSealPurgePubSeq();
-
-    RingQueue<PostingSealPurgeTask> getPostingSealPurgeQueue();
-
-    SCSequence getPostingSealPurgeSubSeq();
+    ConcurrentQueue<PostingSealPurgeTask> getPostingSealPurgeQueue();
 
     MPSequence getQueryCacheEventPubSeq();
 

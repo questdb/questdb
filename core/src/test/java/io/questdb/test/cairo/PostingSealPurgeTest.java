@@ -41,8 +41,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -402,17 +401,16 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 // The head-guard must have dropped the head-matching entry: scan
                 // everything published and assert the head sealTxn is not among it.
                 MessageBus bus = engine.getMessageBus();
-                RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
-                boolean headEnqueued = false;
-                long cursor;
-                while ((cursor = bus.getPostingSealPurgeSubSeq().next()) >= 0) {
-                    if (queue.get(cursor).getSealTxn() == headSealTxn) {
-                        headEnqueued = true;
+                ConcurrentQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
+                PostingSealPurgeTask task = new PostingSealPurgeTask();
+                boolean hasHeadEnqueued = false;
+                while (queue.tryDequeue(task)) {
+                    if (task.getSealTxn() == headSealTxn) {
+                        hasHeadEnqueued = true;
                     }
-                    bus.getPostingSealPurgeSubSeq().done(cursor);
                 }
                 assertFalse("publishPendingPurges must drop a purge whose sealTxn is the live chain head",
-                        headEnqueued);
+                        hasHeadEnqueued);
             }
         });
     }
@@ -947,23 +945,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             long sealTxn,
             long toTableTxn
     ) {
-        MessageBus bus = engine.getMessageBus();
-        MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
-        RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
-        long cursor;
-        while ((cursor = pubSeq.next()) == -2) {
-            Os.pause();
-        }
-        assertTrue("purge queue must accept the task", cursor >= 0);
-        try {
-            queue.get(cursor).of(
-                    tok, colName, TableUtils.COLUMN_NAME_TXN_NONE, sealTxn,
-                    0L, -1L, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO,
-                    0L, toTableTxn
-            );
-        } finally {
-            pubSeq.done(cursor);
-        }
+        engine.getMessageBus().getPostingSealPurgeQueue().enqueue(newPostingSealPurgeTask(tok, colName, sealTxn, toTableTxn));
     }
 
     private void runPurgeJob(PostingSealPurgeJob job) {

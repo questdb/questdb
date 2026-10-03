@@ -32,14 +32,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakMutableObjectPool;
@@ -77,8 +75,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private final Path completedPath;
     private final int completedWriterIndex;
     private final FilesFacade ff;
-    private final RingQueue<PostingSealPurgeTask> inQueue;
-    private final SCSequence inSubSequence;
+    private final ConcurrentQueue<PostingSealPurgeTask> inQueue;
     private final int pathRootLen;
     private final long retryDelay;
     private final long retryDelayLimit;
@@ -105,7 +102,6 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             this.pathRootLen = completedPath.size();
             this.longBuf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
             this.inQueue = engine.getMessageBus().getPostingSealPurgeQueue();
-            this.inSubSequence = engine.getMessageBus().getPostingSealPurgeSubSeq();
             this.taskPool = new WeakMutableObjectPool<>(RetryEntry::new, configuration.getColumnPurgeTaskPoolCapacity());
             this.retryQueue = new PriorityQueue<>(configuration.getColumnPurgeQueueCapacity(), PostingSealPurgeJob::compareRetry);
             this.retryDelay = configuration.getColumnPurgeRetryDelay();
@@ -420,20 +416,16 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         boolean useful = false;
         long now = clock.getTicks();
         while (writer != null) {
-            long cursor = inSubSequence.next();
-            if (cursor < -1) {
-                Os.pause();
-                continue;
-            }
-            if (cursor < 0) {
+            RetryEntry entry = taskPool.pop();
+            if (!inQueue.tryDequeue(entry)) {
+                taskPool.push(entry);
                 break;
             }
-            PostingSealPurgeTask src = inQueue.get(cursor);
-            RetryEntry entry = taskPool.pop();
             // First attempt immediate; retryDelay seeded with config base so
             // the first-failure backoff multiplies from a non-zero value.
-            entry.copyFrom(src, now, retryDelay, now);
-            inSubSequence.done(cursor);
+            entry.scheduledAt = now;
+            entry.retryDelay = retryDelay;
+            entry.nextRunTime = now;
             persistTask(entry);
             retryQueue.add(entry);
             useful = true;
@@ -608,22 +600,5 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             scheduledAt = 0L;
         }
 
-        void copyFrom(PostingSealPurgeTask src, long scheduledAt, long retryDelay, long nextRunTime) {
-            this.scheduledAt = scheduledAt;
-            this.retryDelay = retryDelay;
-            this.nextRunTime = nextRunTime;
-            of(
-                    src.getTableToken(),
-                    src.getIndexColumnName(),
-                    src.getPostingColumnNameTxn(),
-                    src.getSealTxn(),
-                    src.getPartitionTimestamp(),
-                    src.getPartitionNameTxn(),
-                    src.getPartitionBy(),
-                    src.getTimestampType(),
-                    src.getFromTableTxn(),
-                    src.getToTableTxn()
-            );
-        }
     }
 }
