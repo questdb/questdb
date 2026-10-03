@@ -409,6 +409,11 @@ public class GroupByUtilsTest {
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
+        @Override
         public void setAllocator(GroupByAllocator allocator) {
             lastAllocator = allocator;
             setAllocatorCount++;

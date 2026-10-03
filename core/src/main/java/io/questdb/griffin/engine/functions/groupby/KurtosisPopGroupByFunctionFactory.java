@@ -80,5 +80,10 @@ public class KurtosisPopGroupByFunctionFactory implements FunctionFactory {
         public String getName() {
             return "kurtosis_pop";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }

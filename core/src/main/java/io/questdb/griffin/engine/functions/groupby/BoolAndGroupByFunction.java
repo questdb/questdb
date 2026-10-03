@@ -103,6 +103,11 @@ public class BoolAndGroupByFunction extends BooleanFunction implements GroupByFu
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

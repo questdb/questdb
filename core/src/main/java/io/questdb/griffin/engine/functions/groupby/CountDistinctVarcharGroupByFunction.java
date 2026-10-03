@@ -143,6 +143,11 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

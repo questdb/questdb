@@ -161,6 +161,11 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

@@ -81,5 +81,10 @@ public class SkewnessPopGroupByFunctionFactory implements FunctionFactory {
         public String getName() {
             return "skewness_pop";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }
