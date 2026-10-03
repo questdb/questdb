@@ -10473,13 +10473,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from a " + "where s1 = 'S1' " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [s1, ts desc]
-                                DeferredSingleSymbolFilterPageFrame
-                                    Index forward scan on: s1
+                            FilterOnValues symbolOrder: asc
+                              keyMajor: true
+                                Cursor-order scan
+                                    Index backward scan on: s1
                                       filter: s1=1
-                                    Interval forward scan on: a
-                                      intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
         });
     }

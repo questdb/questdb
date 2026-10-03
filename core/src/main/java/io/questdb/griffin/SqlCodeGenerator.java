@@ -12372,6 +12372,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     assert nKeyValues > 0 || nKeyExcludedValues > 0;
 
                     boolean orderByKeyColumn = false;
+                    // a single key walked key-major: ORDER BY sym, ts DESC against the frames' direction
+                    boolean singleKeyMajor = false;
                     int indexDirection = IndexReader.DIR_FORWARD;
                     // Skip the order-by-key-column shortcut when an outer time-series join
                     // needs the master in timestamp order. Honoring the order-by advice would
@@ -12398,22 +12400,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         // One key scanned frame by frame, in the frames' direction, is
                                         // in key and timestamp order already. As before, one partition.
                                         orderByKeyColumn = intervalHitsOnlyOnePartition;
-                                    } else if (!singleKey
-                                            && (nKeyExcludedValues == 0 || isNotEqualsIndexScanUsable(reader, columnIndexes.getQuick(keyColumnIndex)))
+                                    } else if ((nKeyExcludedValues == 0 || isNotEqualsIndexScanUsable(reader, columnIndexes.getQuick(keyColumnIndex)))
                                             && isKeyMajorScanAffordable(
                                             reader,
                                             scanIntervalModel,
                                             countIndexScanKeys(reader, columnIndexes.getQuick(keyColumnIndex), intrinsicModel.keyValueFuncs, nKeyExcludedValues),
                                             executionContext
                                     )) {
-                                        // Several keys: KeyMajorPageFrameRecordCursor walks each key across
-                                        // all page frames of the scan, which is key order for any number
-                                        // of frames and partitions.
+                                        // KeyMajorPageFrameRecordCursor walks each key across all page
+                                        // frames of the scan, which is key order for any number of frames
+                                        // and partitions. A single key gets here when it is scanned against
+                                        // the frames' direction (ORDER BY sym, ts DESC): a backward index
+                                        // scan inside forward frames is not descending across them, but the
+                                        // key-major cursor walks the frames backward too.
                                         orderByKeyColumn = true;
+                                        singleKeyMajor = singleKey;
                                     }
-                                    // A single key scanned against the frames' direction (ORDER BY sym,
-                                    // ts DESC) keeps the sort: a backward index scan inside forward
-                                    // frames is not descending across them.
                                     if (orderByKeyColumn) {
                                         queryMeta.setTimestampIndex(-1);
                                         indexDirection = keyDirection;
@@ -12451,6 +12453,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             } finally {
                                 filter = Misc.free(filter);
                             }
+                        }
+
+                        if (nKeyValues == 1 && singleKeyMajor) {
+                            queryMeta.setTimestampIndex(-1);
+                            return new FilterOnValuesRecordCursorFactory(
+                                    configuration,
+                                    queryMeta,
+                                    dfcFactory,
+                                    intrinsicModel.keyValueFuncs,
+                                    keyColumnIndex,
+                                    reader,
+                                    filter,
+                                    model.getOrderByAdviceMnemonic(),
+                                    true,
+                                    false,
+                                    getOrderByDirectionOrDefault(model, 0),
+                                    indexDirection,
+                                    columnIndexes,
+                                    columnSizeShifts
+                            );
                         }
 
                         if (nKeyValues == 1) {
