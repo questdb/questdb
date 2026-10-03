@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,15 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.arr.ArrayView;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.window.WindowFunction;
 
-public interface WindowSPI {
-    long getAddress(long recordAddress, int columnIndex);
-
-    Record getRecordAt(long recordOffset);
-
-    void putArray(long recordOffset, int columnIndex, @NotNull ArrayView value);
+/**
+ * Window function that returns an array value.
+ */
+public interface WindowArrayFunction extends WindowFunction {
+    @Override
+    ArrayView getArray(Record rec);
 }
