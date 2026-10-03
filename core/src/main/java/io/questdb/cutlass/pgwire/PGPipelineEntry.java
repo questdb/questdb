@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -180,6 +181,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final CancellationBinding queryCancellation = new CancellationBinding();
+    private final StringSink selectCacheKeySink = new StringSink();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
@@ -212,6 +214,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
     private MemoryTracker queryMemoryTracker;
+    // the select cache scope of the principal the statement was parsed for, see SelectCacheKey
+    private CharSequence selectCacheScope = null;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -287,7 +291,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
-            tasCache.put(sqlText, tas);
+            tasCache.put(SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink), tas);
             tas = null;
         } else if (tai != null) {
             taiCache.put(sqlText, tai);
@@ -366,6 +370,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         preparedStatementNameToDeallocate = null;
         queryCancellation.clear();
         queryMemoryTracker = null;
+        selectCacheScope = null;
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
         sqlReturnRowCount = 0;
@@ -1130,6 +1135,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlReturnRowCountLimit = rowCountLimit;
     }
 
+    // the scope must be immutable, see SecurityContext.getSelectCacheScope()
+    public void setSelectCacheScope(CharSequence selectCacheScope) {
+        this.selectCacheScope = selectCacheScope;
+    }
+
     public void setStateBind(boolean stateBind) {
         this.stateBind = stateBind;
     }
@@ -1332,6 +1342,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
+        this.selectCacheScope = blueprint.selectCacheScope;
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
         this.sqlType = blueprint.sqlType;

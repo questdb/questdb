@@ -37,6 +37,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -50,6 +51,12 @@ import io.questdb.std.str.Path;
 
 public class FilesFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
+
+    @Override
+    public int getExecutionRequirements() {
+        // authorizes the caller, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
 
     @Override
     public String getSignature() {
@@ -91,6 +98,10 @@ public class FilesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            // Unlike import_files() and export_files(), files() lists any path it is given, the
+            // database root included, where table and column file names would disclose every
+            // table and its schema. Authorized per execution, since compiled factories are shared.
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.toTop(executionContext.getCircuitBreaker());
             return cursor;

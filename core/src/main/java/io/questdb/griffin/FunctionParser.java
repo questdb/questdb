@@ -703,8 +703,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         final int position = node.position;
         final int factoryExecutionRequirements = factory.getExecutionRequirements();
+        // CREATE rejects visibility-dependent functions, but refresh must keep compiling definitions
+        // persisted before that restriction. The view's permissions control its results.
         if (!sqlExecutionContext.allowNonDeterministicFunctions()
-                && (factoryExecutionRequirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+                && (factoryExecutionRequirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0
+                && !sqlExecutionContext.isMatViewRefresh()
+                && !sqlExecutionContext.isLiveViewRefresh()) {
             final CharSequence objectKind = sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view";
             final SqlException exception = SqlException.position(position)
                     .put("administrative function cannot be used in ")
@@ -913,7 +917,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         boolean hasPushedWindowContext = false;
+        final SqlExecutionContext.TableFunctionView previousView = sqlExecutionContext.getTableFunctionView();
         try {
+            // The sub-query reads table-name functions through the view it is written in, if any, see
+            // ExpressionNode.tableFunctionView, whichever model the compile that reaches it belongs to.
+            sqlExecutionContext.setTableFunctionView(node.tableFunctionView);
             if (!sqlExecutionContext.getWindowContext().isEmpty()) {
                 // The inner SELECT must resolve its own aggregates and windows independently.
                 // In particular, an inner window must not clear the outer function's OVER spec.
@@ -941,6 +949,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
             return function;
         } finally {
+            sqlExecutionContext.setTableFunctionView(previousView);
             if (hasPushedWindowContext) {
                 sqlExecutionContext.popWindowContext();
             }

@@ -29,6 +29,14 @@ import io.questdb.std.Mutable;
 
 public final class SqlExecutionRequirements implements Mutable {
     public static final int NONE = 0;
+    /**
+     * The result of the function depends on the security context of the caller: the function
+     * authorizes against it, or returns only the objects the caller may see (see
+     * {@link io.questdb.cairo.SecurityContext#isTableVisible(io.questdb.cairo.TableToken)}).
+     * Materialized and live views reject such functions: their refresh runs detached from any
+     * caller, under a context that may see and read everything, and would store what that context
+     * sees for every reader of the view.
+     */
     public static final int REQUIRES_ENTERPRISE_SECURITY_CONTEXT = 1 << 1;
     public static final int REQUIRES_LIVE_WAL_PROGRESS = 1;
     private String enterpriseSecurityContextFunctionName;

@@ -28,12 +28,19 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ReaderPoolFunctionFactory implements FunctionFactory {
+    @Override
+    public int getExecutionRequirements() {
+        // authorizes the caller, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
+
     @Override
     public String getSignature() {
         return "reader_pool()";

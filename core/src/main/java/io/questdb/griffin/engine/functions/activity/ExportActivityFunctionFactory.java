@@ -41,6 +41,7 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -54,6 +55,12 @@ import java.util.Objects;
 public class ExportActivityFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "export_activity()";
+
+    @Override
+    public int getExecutionRequirements() {
+        // authorizes the caller, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
 
     @Override
     public String getSignature() {

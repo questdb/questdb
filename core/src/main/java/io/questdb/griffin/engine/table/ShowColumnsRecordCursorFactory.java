@@ -68,17 +68,19 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
     private final int tokenPosition;
+    private final SqlExecutionContext.TableFunctionView view;
 
-    public ShowColumnsRecordCursorFactory(TableToken tableToken, int tokenPosition) {
+    public ShowColumnsRecordCursorFactory(TableToken tableToken, int tokenPosition, SqlExecutionContext.TableFunctionView view) {
         super(METADATA);
         this.tableToken = tableToken;
         this.tokenPosition = tokenPosition;
+        this.view = view;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        return cursor.of(executionContext, tableToken, tokenPosition);
+        return cursor.of(executionContext, tableToken, tokenPosition, view);
     }
 
     @Override
@@ -147,7 +149,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             return this;
         }
 
-        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
+        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition, SqlExecutionContext.TableFunctionView view) {
+            // Compilation already checked visibility, but the factory can be cached across a revoke.
+            if (!executionContext.isTableFunctionVisible(tableToken, view)) {
+                throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
+            }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             final CairoEngine engine = executionContext.getCairoEngine();
             // The token is resolved from the synchronously loaded registry, but the
