@@ -12393,14 +12393,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         }
                         // One partition is not one page frame: the frame cursor splits a partition
-                        // into frames of at most cairo.sql.page.frame.max.rows rows, and the index
-                        // row cursors walk their keys within one frame at a time. Only drop the sort
-                        // when that per-frame order is also the order of the whole result: a single
-                        // key, scanned in the same direction as the frames.
+                        // into frames of at most cairo.sql.page.frame.max.rows rows. With several
+                        // keys, FilterOnValues and FilterOnExcludedValues walk each key across all
+                        // frames (KeyMajorPageFrameRecordCursor), so their output is in key order.
+                        // A single key is scanned frame by frame, which is in key order trivially,
+                        // but in timestamp order only when the index runs in the same direction as
+                        // the frames: a backward index scan inside forward frames is not descending
+                        // across them. Keep the sort for that case.
                         if (orderByKeyColumn
-                                && (nKeyValues != 1
-                                || nKeyExcludedValues != 0
-                                || (indexDirection == IndexReader.DIR_FORWARD) != (order == ORDER_ASC))) {
+                                && nKeyValues == 1
+                                && nKeyExcludedValues == 0
+                                && (indexDirection == IndexReader.DIR_FORWARD) != (order == ORDER_ASC)) {
                             orderByKeyColumn = false;
                             indexDirection = IndexReader.DIR_FORWARD;
                         }
