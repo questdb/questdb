@@ -1180,6 +1180,9 @@ public class SqlOptimiser implements Mutable {
 
             final IQueryModel crossInner = queryModelPool.next();
             crossInner.setTableNameExpr(node);
+            // A cursor function in a view's select list reads its table through the view, like one in the
+            // view's FROM clause. addJoinModel() below propagates the view only after the function is parsed.
+            crossInner.setViewNameExpr(baseModel.getViewNameExpr());
             parseFunctionAndEnumerateColumns(crossInner, sqlExecutionContext, sqlParserCallback);
             cross.setNestedModel(crossInner);
 

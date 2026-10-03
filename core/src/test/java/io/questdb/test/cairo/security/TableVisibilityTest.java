@@ -330,6 +330,46 @@ public class TableVisibilityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectListTableNameFunctionsNextToViewsFailLikeMissingTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            execute("CREATE VIEW visible_proj AS (SELECT count() c FROM (SELECT table_partitions('secret_t')))");
+            execute("CREATE VIEW visible_proj_outer AS (SELECT * FROM visible_proj)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                // a table-name function in the caller's own select list is read as the caller, also when
+                // the caller reads a view
+                final String[] callerTemplates = {
+                        "SELECT table_partitions('%s')",
+                        "SELECT table_partitions('%s') FROM visible_v",
+                        "SELECT table_partitions('%s') FROM (visible_v)",
+                        "SELECT count() FROM (SELECT table_partitions('%s') FROM visible_v)",
+                        "SELECT table_partitions('%s') FROM visible_t CROSS JOIN visible_v",
+                        "SELECT table_partitions('%s') FROM visible_v CROSS JOIN visible_t",
+                        "SELECT c, table_partitions('%s') FROM visible_proj",
+                        "SELECT count() FROM (SELECT table_partitions('%s') FROM visible_proj_outer)",
+                        "WITH w AS (SELECT * FROM visible_v) SELECT table_partitions('%s') FROM w",
+                        "SELECT * FROM visible_v WHERE visible_col > (SELECT count() FROM (SELECT table_partitions('%s') FROM visible_v))",
+                        "SELECT count() FROM visible_v v CROSS JOIN LATERAL (SELECT table_partitions('%s') FROM visible_t t WHERE t.ts = v.ts)",
+                        "visible_proj UNION ALL SELECT count() FROM (SELECT table_partitions('%s'))",
+                        "SELECT * FROM visible_proj UNION ALL SELECT count() FROM (SELECT table_partitions('%s'))",
+                        "SELECT * FROM (visible_proj UNION ALL SELECT count() FROM (SELECT table_partitions('%s')))",
+                };
+                for (String template : callerTemplates) {
+                    assertMaskedLikeMissing(template, "secret_t", hidingContext);
+                    // the same statement reads the table for a principal who may see it
+                    try (
+                            RecordCursorFactory factory = select(String.format(template, "secret_t"));
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        Assert.assertTrue(template, cursor.hasNext());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testShowStatementsFailLikeMissingObjects() throws Exception {
         assertMemoryLeak(() -> {
             createObjects();
@@ -456,6 +496,33 @@ public class TableVisibilityTest extends AbstractCairoTest {
                 assertMaskedLikeMissing("SELECT * FROM visible_t CROSS JOIN %s", "secret_v", hidingContext);
                 assertMaskedLikeMissing("SELECT * FROM %s", "secret_mv", hidingContext);
                 assertMaskedLikeMissing("SELECT * FROM %s", "secret_lv", hidingContext);
+            }
+        });
+    }
+
+    @Test
+    public void testVisibleViewProjectionReadsInvisibleTableNameFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            // a table-name function in a select list of a view reads its argument through the view,
+            // like one in its FROM clause
+            execute("CREATE VIEW visible_proj AS (SELECT count() c FROM (SELECT table_partitions('secret_t')))");
+            execute("CREATE VIEW visible_proj_from AS (SELECT count() c FROM (SELECT ts, table_partitions('secret_t') FROM visible_t))");
+            execute("CREATE VIEW visible_proj_outer AS (SELECT * FROM visible_proj)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertQuery("SELECT * FROM visible_proj").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+                assertQuery("SELECT * FROM visible_proj_from").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+                assertQuery("SELECT * FROM visible_proj_outer").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            }
+            // The outer view's grant, not the inner view's visibility, covers a nested expansion.
+            try (SqlExecutionContext hidingInnerView = new SqlExecutionContextImpl(engine, 1).with(new HidingSecurityContext() {
+                @Override
+                public boolean isTableVisible(TableToken tableToken) {
+                    return super.isTableVisible(tableToken) && !Chars.equals(tableToken.getTableName(), "visible_proj");
+                }
+            })) {
+                assertQuery("SELECT * FROM visible_proj_outer").withContext(hidingInnerView).noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
             }
         });
     }
