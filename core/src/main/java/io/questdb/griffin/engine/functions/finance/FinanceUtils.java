@@ -43,4 +43,25 @@ public class FinanceUtils {
         }
     }
 
+    public static double imbalance(double bidSize, double askSize) {
+        if (Numbers.isNull(bidSize) || Numbers.isNull(askSize)) {
+            return Double.NaN;
+        }
+        double sum = bidSize + askSize;
+        if (sum == 0.0d) {
+            return Double.NaN;
+        }
+        return (bidSize - askSize) / sum;
+    }
+
+    public static double trueRange(double high, double low, double prevClose) {
+        if (Numbers.isNull(high) || Numbers.isNull(low) || Numbers.isNull(prevClose)) {
+            return Double.NaN;
+        }
+        double hl = high - low;
+        double hpc = Math.abs(high - prevClose);
+        double lpc = Math.abs(low - prevClose);
+        return Math.max(hl, Math.max(hpc, lpc));
+    }
+
 }
