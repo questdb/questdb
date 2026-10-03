@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
+"""Script to trigger GitHub Actions workflows for QuestDB."""
 
 import sys
 sys.dont_write_bytecode = True
 import subprocess
-import json
 import argparse
 
 
@@ -35,7 +35,7 @@ def get_current_branch():
 
 
 def trigger_github_action(branch, action):
-    """Trigger GitHub Action on the specified branch and get the run ID."""
+    """Trigger GitHub Action on the specified branch."""
     result = subprocess.run(
         ["gh", "workflow", "run", f"{action}.yml", "--ref", branch],
         capture_output=True, text=True
@@ -44,12 +44,13 @@ def trigger_github_action(branch, action):
         print(f"Could not trigger GitHub Action for branch: {branch}")
         print(result.stderr)
         sys.exit(1)
-    print(f"To view the status, run: `gh run list` and `gh run view <run-id>`")
+    print(f"Triggered '{action}' on branch '{branch}'.")
+    print("To view the status, run: `gh run list` and `gh run view <run-id>`")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("actions", metavar="ACTION", choices=VALID_ACTIONS, nargs="*")
+    parser.add_argument("actions", metavar="ACTION", choices=VALID_ACTIONS, nargs="+")
     return parser.parse_args()
 
 
