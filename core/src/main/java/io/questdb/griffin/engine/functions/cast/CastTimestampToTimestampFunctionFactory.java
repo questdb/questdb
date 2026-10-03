@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -36,29 +35,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Micros;
 
 public class CastTimestampToTimestampFunctionFactory implements FunctionFactory {
-
-    /**
-     * The unit conversion of {@code TimestampDriver.from(long, int)} without its NULL test: micro to
-     * nano multiplies and throws where the product overflows, the reserved pattern included; nano to
-     * micro divides, rounding toward zero. The function converts through the driver, which tests
-     * NULL first, so it stays as it is.
-     */
-    public static long value(int fromTimestampType, int toTimestampType, long operand) {
-        if (ColumnType.isTimestampMicro(fromTimestampType) && ColumnType.isTimestampNano(toTimestampType)) {
-            try {
-                return Math.multiplyExact(operand, Micros.MICRO_NANOS);
-            } catch (ArithmeticException e) {
-                throw ImplicitCastException.inconvertibleValue(operand, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
-            }
-        }
-        if (ColumnType.isTimestampNano(fromTimestampType) && ColumnType.isTimestampMicro(toTimestampType)) {
-            return operand / Micros.MICRO_NANOS;
-        }
-        return operand;
-    }
 
     @Override
     public String getSignature() {

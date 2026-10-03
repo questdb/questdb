@@ -254,6 +254,10 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         noValueBody("cast.CastSymbolToLong256FunctionFactory cast(Kh)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastSymbolToLongFunctionFactory cast(Kl)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastSymbolToTimestampFunctionFactory cast(Kn)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastTimestampToDateFunctionFactory cast(Nm)", "prints or converts through the timestamp driver, which owns the unit");
+        noValueBody("cast.CastTimestampToStrFunctionFactory cast(Ns)", "prints or converts through the timestamp driver, which owns the unit");
+        noValueBody("cast.CastTimestampToTimestampFunctionFactory cast(Nn)", "prints or converts through the timestamp driver, which owns the unit");
+        noValueBody("cast.CastTimestampToVarcharFunctionFactory cast(Nø)", "prints or converts through the timestamp driver, which owns the unit");
         noValueBody("cast.CastVarcharToDateFunctionFactory cast(Øm)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastVarcharToDoubleFunctionFactory cast(Ød)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastVarcharToFloatFunctionFactory cast(Øf)", "the in-scope argument is the cast's target type, a constant");
