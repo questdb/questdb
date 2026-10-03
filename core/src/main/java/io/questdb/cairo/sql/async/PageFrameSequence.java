@@ -415,7 +415,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         reduceLocally(countOnly);
                         return LOCAL_TASK_CURSOR;
                     }
-                    if (canPark) {
+                    // Park only while one of our own frames is in flight: its completion is the
+                    // progress we wait for. With nothing in flight, the full ring may be held by
+                    // another sequence that this same fiber drives (e.g. the other side of an
+                    // ASOF Light join over two async filters), and only this fiber can release
+                    // it. Parking would then wait for the query timeout, so fall through to the
+                    // local reduce below instead.
+                    if (canPark && dispatchStartFrameIndex > collectedFrameIndex + 1) {
                         final boolean isDraining = !isActive();
                         awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
                         continue;
