@@ -65,6 +65,10 @@ public class HorizonJoinTimeFrameHelper {
     private long bookmarkedRowIndex = Long.MIN_VALUE;
     // Adaptive scan state (managed by findKeyedAsOfMatch, reset by toTop)
     private long bwdScanRowsAtPositionStart;
+    // Backward scan row counter at the first position of the current window of small gaps
+    private long bwdScanRowsAtWindowStart;
+    // Distance in rows that the current window of small gaps covers
+    private long bwdScanWindowGap;
     // Cached findAsOfRow result: valid while target timestamp < cachedNextRowTs
     private long cachedAsOfRowId = Long.MIN_VALUE;
     private long cachedNextRowTs = Long.MIN_VALUE;
@@ -509,7 +513,7 @@ public class HorizonJoinTimeFrameHelper {
                             bwdScanMinGap,
                             bwdScanSwitchFactor,
                             bwdScanAbsoluteThreshold
-                    )) {
+                    ) || shouldSwitchToForwardScanOverWindow(gap)) {
                         isForwardScanMode = true;
                         initForwardWatermark(prevAsOfRowId);
                     }
@@ -713,6 +717,8 @@ public class HorizonJoinTimeFrameHelper {
         bookmarkedFrameIndex = -1;
         bookmarkedRowIndex = Long.MIN_VALUE;
         bwdScanRowsAtPositionStart = 0;
+        bwdScanRowsAtWindowStart = 0;
+        bwdScanWindowGap = 0;
         forwardWatermark = Long.MIN_VALUE;
         backwardWatermark = Long.MAX_VALUE;
         cachedAsOfRowId = Long.MIN_VALUE;
@@ -810,5 +816,42 @@ public class HorizonJoinTimeFrameHelper {
 
         // Scanned entire frame
         return result;
+    }
+
+    /**
+     * Applies the relative switch check to a run of ASOF positions that sit at most the min gap
+     * apart. No single gap of such a run passes the min gap test of
+     * {@link #shouldSwitchToForwardScan}, so backward-only mode would re-scan for the key at every
+     * position however long the run is. The gaps and the backward scan cost at the positions they
+     * connect accumulate into a window instead. Once the window covers more than the min gap, the
+     * check compares the window's cost with the rows a forward scan would have read over the same
+     * distance, and the next window starts.
+     *
+     * @param gap distance in rows from the previous ASOF position to the current one
+     * @return true if forward scan mode should be activated
+     */
+    private boolean shouldSwitchToForwardScanOverWindow(long gap) {
+        boolean isSwitch = false;
+        boolean isWindowOpen = gap > 0 && gap <= bwdScanMinGap;
+        if (isWindowOpen) {
+            bwdScanWindowGap += gap;
+            if (bwdScanWindowGap > bwdScanMinGap) {
+                isSwitch = shouldSwitchToForwardScan(
+                        backwardScanRows - bwdScanRowsAtWindowStart,
+                        bwdScanWindowGap,
+                        bwdScanMinGap,
+                        bwdScanSwitchFactor,
+                        Long.MAX_VALUE
+                );
+                isWindowOpen = false;
+            }
+        }
+        if (!isWindowOpen) {
+            // The window is spent, or the gap is above the min gap and had its own check; a
+            // cross-frame gap is far above it. Either way, a new window starts at the current position.
+            bwdScanWindowGap = 0;
+            bwdScanRowsAtWindowStart = backwardScanRows;
+        }
+        return isSwitch;
     }
 }

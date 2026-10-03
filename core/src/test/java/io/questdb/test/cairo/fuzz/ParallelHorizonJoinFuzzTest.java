@@ -25,9 +25,13 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -76,6 +80,12 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 1 + rnd.nextLong(262_144));
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1 + rnd.nextLong(2_048));
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, 1 + rnd.nextLong(16));
+        if (rnd.nextBoolean()) {
+            // A HORIZON JOIN without aggregation matches at most page.frame.max.rows / (offsets *
+            // slaves) rows of a frame per task; the owner thread matches the rest. Keep that
+            // budget below the frame size half of the time.
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 8 + rnd.nextInt(64));
+        }
         super.setUp();
     }
 
@@ -218,6 +228,67 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelHorizonJoinProjection() throws Exception {
+        testParallelHorizonJoinProjection(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                null
+        );
+    }
+
+    @Test
+    public void testParallelHorizonJoinProjectionFiltered() throws Exception {
+        testParallelHorizonJoinProjection(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                "t.side = 'sell'"
+        );
+    }
+
+    @Test
+    public void testParallelHorizonJoinProjectionFilteredThreadUnsafe() throws Exception {
+        testParallelHorizonJoinProjection(
+                "LIST (-1s, 0s, 3s) AS h",
+                new long[]{-1_000_000, 0, 3_000_000},
+                true,
+                "concat(t.side, '_00') = 'sell_00'"
+        );
+    }
+
+    @Test
+    public void testParallelHorizonJoinProjectionLateMaterialization() throws Exception {
+        // price > 28 passes ~10% of the rows, below the late materialization threshold.
+        testParallelHorizonJoinProjection(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                "t.price > 28.0"
+        );
+    }
+
+    @Test
+    public void testParallelHorizonJoinProjectionManyOffsets() throws Exception {
+        testParallelHorizonJoinProjection(
+                "LIST (-10s, -7s, -5s, -3s, -1s, 0s, 1s, 3s, 5s, 7s, 10s) AS h",
+                new long[]{-10_000_000, -7_000_000, -5_000_000, -3_000_000, -1_000_000, 0, 1_000_000, 3_000_000, 5_000_000, 7_000_000, 10_000_000},
+                true,
+                null
+        );
+    }
+
+    @Test
+    public void testParallelHorizonJoinProjectionNotKeyed() throws Exception {
+        testParallelHorizonJoinProjection(
+                "RANGE FROM -1s TO 1s STEP 1s AS h",
+                rangeOffsets(-1, 1),
+                false,
+                "t.price > 12.0"
+        );
+    }
+
+    @Test
     public void testParallelHorizonJoinRange() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
@@ -305,6 +376,36 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelMultiHorizonJoinNotKeyed() throws Exception {
         testParallelMultiHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                false,
+                null
+        );
+    }
+
+    @Test
+    public void testParallelMultiHorizonJoinProjection() throws Exception {
+        testParallelMultiHorizonJoinProjection(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                null
+        );
+    }
+
+    @Test
+    public void testParallelMultiHorizonJoinProjectionFiltered() throws Exception {
+        testParallelMultiHorizonJoinProjection(
+                "LIST (-3s, 0s, 1s) AS h",
+                new long[]{-3_000_000, 0, 1_000_000},
+                true,
+                "t.side = 'buy'"
+        );
+    }
+
+    @Test
+    public void testParallelMultiHorizonJoinProjectionNotKeyed() throws Exception {
+        testParallelMultiHorizonJoinProjection(
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
                 rangeOffsets(-2, 2),
                 false,
@@ -434,6 +535,124 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    private static void assertProjectionFactory(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String query) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            TestUtils.assertFactoryInTree(
+                    factory,
+                    sqlExecutionContext.isParallelHorizonJoinEnabled()
+                            ? AsyncHorizonJoinProjectionRecordCursorFactory.class
+                            : HorizonJoinProjectionRecordCursorFactory.class,
+                    query
+            );
+        }
+    }
+
+    private static void assertQueriesMatch(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String query, String referenceQuery) throws SqlException {
+        final StringSink actual = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, actual);
+        final StringSink expected = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, referenceQuery, expected);
+        try {
+            TestUtils.assertEquals(expected, actual);
+        } catch (AssertionError e) {
+            LOG.error().$("HORIZON JOIN query: ").$(query).$();
+            LOG.error().$("Reference query: ").$(referenceQuery).$();
+            throw e;
+        }
+    }
+
+    private static void createPricesTable(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String name) throws SqlException {
+        engine.execute(
+                "CREATE TABLE " + name + " ("
+                        + "    ts TIMESTAMP,"
+                        + "    sym SYMBOL CAPACITY 1024,"
+                        + "    bid DOUBLE,"
+                        + "    ask DOUBLE"
+                        + ") TIMESTAMP(ts) PARTITION BY HOUR;",
+                sqlExecutionContext
+        );
+        // Price rows at 360_000 us = 360ms spacing, 10x denser than trades.
+        engine.execute(
+                "INSERT INTO " + name
+                        + "  SELECT "
+                        + "      '2020-01-01'::timestamp + (360000*x) + rnd_long(-200, 200, 0) as ts, "
+                        + "      rnd_symbol_zipf(100, 2.0) as sym, "
+                        + "      rnd_double() * 10.0 + 5.0 as bid, "
+                        + "      rnd_double() * 10.0 + 5.0 as ask "
+                        + "  FROM long_sequence(" + 10 * ROW_COUNT + ");",
+                sqlExecutionContext
+        );
+    }
+
+    private static void createTradesTable(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.execute(
+                """
+                        CREATE TABLE trades (
+                                ts TIMESTAMP,
+                                sym SYMBOL,
+                                side SYMBOL,
+                                price DOUBLE,
+                                amount DOUBLE
+                        ) TIMESTAMP(ts) PARTITION BY HOUR;
+                        """,
+                sqlExecutionContext
+        );
+        // 3_600_000 us = 3.6s per row with at most 200us of jitter, so trade timestamps are unique
+        // and ascending, and span several hourly partitions.
+        engine.execute(
+                "INSERT INTO trades"
+                        + "  SELECT "
+                        + "      '2020-01-01T00:05'::timestamp + (3600000*x) + rnd_long(-200, 200, 0) as ts, "
+                        + "      rnd_symbol_zipf(100, 2.0) AS sym, "
+                        + "      rnd_symbol('buy', 'sell') as side, "
+                        + "      rnd_double() * 20 + 10 AS price, "
+                        + "      rnd_double() * 20 + 10 AS amount "
+                        + "  FROM long_sequence(" + ROW_COUNT + ");",
+                sqlExecutionContext
+        );
+    }
+
+    private static String projectionReference(
+            long[] offsetsMicros,
+            int slaveCount,
+            boolean keyed,
+            String innerFilter,
+            String projectedSlaveColumns
+    ) {
+        // Per offset, an ASOF JOIN of the trades shifted by the offset; one row per trade and
+        // offset, ordered like the HORIZON JOIN output: by trade, then by offset.
+        final StringBuilder ref = new StringBuilder();
+        ref.append("SELECT trade_ts, h_offset, sym").append(projectedSlaveColumns).append(" FROM (");
+        for (int i = 0; i < offsetsMicros.length; i++) {
+            if (i > 0) {
+                ref.append(" UNION ALL ");
+            }
+            ref.append("SELECT CAST(").append(offsetsMicros[i]).append(" AS long) AS h_offset, t.trade_ts, t.sym");
+            for (int s = 0; s < slaveCount; s++) {
+                final String alias = slaveCount == 1 ? "p" : "p" + s;
+                final String suffix = slaveCount == 1 ? "" : String.valueOf(s);
+                ref.append(", ").append(alias).append(".bid AS bid").append(suffix);
+                ref.append(", ").append(alias).append(".ask AS ask").append(suffix);
+            }
+            ref.append(" FROM (SELECT * FROM (SELECT dateadd('u', ").append(offsetsMicros[i])
+                    .append(", ts) AS ts, ts AS trade_ts, sym, side, price, amount FROM trades");
+            if (innerFilter != null) {
+                ref.append(" WHERE ").append(innerFilter);
+            }
+            ref.append(") TIMESTAMP(ts)) t");
+            for (int s = 0; s < slaveCount; s++) {
+                final String alias = slaveCount == 1 ? "p" : "p" + s;
+                final String table = slaveCount == 1 ? "prices" : "prices" + s;
+                ref.append(" ASOF JOIN ").append(table).append(' ').append(alias);
+                if (keyed) {
+                    ref.append(" ON (t.sym = ").append(alias).append(".sym)");
+                }
+            }
+        }
+        ref.append(") ORDER BY trade_ts, h_offset");
+        return ref.toString();
     }
 
     private static long[] rangeOffsets(int fromSec, int toSec) {
@@ -706,6 +925,51 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private void testParallelHorizonJoinProjection(
+            String horizonClause,
+            long[] offsetsMicros,
+            boolean keyed,
+            String filter
+    ) throws Exception {
+        // One row per trade and offset, in trade order and then offset order.
+        final String rowsQuery = "SELECT t.ts AS trade_ts, h.offset AS h_offset, t.sym, p.bid, p.ask"
+                + " FROM trades t"
+                + " HORIZON JOIN prices p"
+                + (keyed ? " ON (t.sym = p.sym)" : "")
+                + " " + horizonClause
+                + (filter != null ? " WHERE " + filter : "");
+        final String innerFilter = filter != null ? filter.replace("t.", "") : null;
+        final String rowsReference = projectionReference(offsetsMicros, 1, keyed, innerFilter, ", bid, ask");
+
+        // The aggregation of the report: an outer GROUP BY over the projection.
+        final String aggregateQuery = "SELECT h_offset" + (keyed ? ", sym" : "")
+                + ", count() AS n, count(bid) AS cnt_bid, max(ask) AS max_ask FROM (" + rowsQuery + ")"
+                + " ORDER BY h_offset" + (keyed ? ", sym" : "");
+        final String aggregateReference = "SELECT h_offset" + (keyed ? ", sym" : "")
+                + ", count() AS n, count(bid) AS cnt_bid, max(ask) AS max_ask FROM (" + rowsReference + ")"
+                + " ORDER BY h_offset" + (keyed ? ", sym" : "");
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        createTradesTable(engine, sqlExecutionContext);
+                        createPricesTable(engine, sqlExecutionContext, "prices");
+                        if (convertToParquet) {
+                            engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        assertProjectionFactory(engine, sqlExecutionContext, rowsQuery);
+                        assertQueriesMatch(engine, sqlExecutionContext, rowsQuery, rowsReference);
+                        assertQueriesMatch(engine, sqlExecutionContext, aggregateQuery, aggregateReference);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
     private void testParallelMultiHorizonJoin(
             String horizonClause,
             long[] offsetsMicros,
@@ -878,6 +1142,58 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                             LOG.error().$("Reference query: ").$(referenceQuery).$();
                             throw e;
                         }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelMultiHorizonJoinProjection(
+            String horizonClause,
+            long[] offsetsMicros,
+            boolean keyed,
+            String filter
+    ) throws Exception {
+        final int slaveCount = 2 + rnd.nextInt(3);
+        final StringBuilder rows = new StringBuilder("SELECT t.ts AS trade_ts, h.offset AS h_offset, t.sym");
+        final StringBuilder slaveColumns = new StringBuilder();
+        for (int s = 0; s < slaveCount; s++) {
+            rows.append(", p").append(s).append(".bid AS bid").append(s).append(", p").append(s).append(".ask AS ask").append(s);
+            slaveColumns.append(", bid").append(s).append(", ask").append(s);
+        }
+        rows.append(" FROM trades t");
+        for (int s = 0; s < slaveCount; s++) {
+            rows.append(" HORIZON JOIN prices").append(s).append(" AS p").append(s);
+            if (keyed) {
+                rows.append(" ON (t.sym = p").append(s).append(".sym)");
+            }
+        }
+        rows.append(' ').append(horizonClause);
+        if (filter != null) {
+            rows.append(" WHERE ").append(filter);
+        }
+        final String rowsQuery = rows.toString();
+        final String innerFilter = filter != null ? filter.replace("t.", "") : null;
+        final String rowsReference = projectionReference(offsetsMicros, slaveCount, keyed, innerFilter, slaveColumns.toString());
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        createTradesTable(engine, sqlExecutionContext);
+                        for (int s = 0; s < slaveCount; s++) {
+                            createPricesTable(engine, sqlExecutionContext, "prices" + s);
+                        }
+                        if (convertToParquet) {
+                            engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            for (int s = 0; s < slaveCount; s++) {
+                                engine.execute("ALTER TABLE prices" + s + " CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            }
+                        }
+                        assertProjectionFactory(engine, sqlExecutionContext, rowsQuery);
+                        assertQueriesMatch(engine, sqlExecutionContext, rowsQuery, rowsReference);
                     },
                     configuration,
                     LOG

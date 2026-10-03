@@ -63,6 +63,11 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 1 + rnd.nextLong(262_144));
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1 + rnd.nextLong(2_048));
         setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, 1 + rnd.nextLong(16));
+        if (rnd.nextBoolean()) {
+            // Tasks of a HORIZON JOIN without aggregation then match only the first rows of each
+            // frame, and the reading thread matches the rest.
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 8 + rnd.nextInt(64));
+        }
         super.setUp();
     }
 
@@ -168,6 +173,16 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                         horizonAggregates,
                         aggregates.toString(),
                         aggregatedColumns,
+                        horizonClause,
+                        offsetsMicros
+                );
+                assertFuzzProjection(
+                        tradesInner,
+                        symbolEq,
+                        groupBySym,
+                        horizonAggregates,
+                        aggregates.toString(),
+                        new CharSequence[][]{aggregatedColumns},
                         horizonClause,
                         offsetsMicros
                 );
@@ -301,8 +316,26 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                         horizonClause,
                         offsetsMicros
                 );
+                assertFuzzProjection(
+                        tradesInner,
+                        symbolEq,
+                        groupBySym,
+                        horizonAggregates,
+                        referenceAggregates,
+                        perSlaveColumns,
+                        horizonClause,
+                        offsetsMicros
+                );
             }
         });
+    }
+
+    private static String slaveAlias(boolean isMulti, int slaveIndex) {
+        return isMulti ? "p" + slaveIndex : "p";
+    }
+
+    private static String slaveTable(boolean isMulti, int slaveIndex) {
+        return isMulti ? "prices" + slaveIndex : "prices";
     }
 
     private void assertFuzzExecute(
@@ -399,6 +432,108 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Asserts the HORIZON JOIN without aggregation. Its rows must equal, in order, the per-offset
+     * ASOF JOINs of the shifted trades sorted by trade id and offset, and aggregating them in an
+     * outer query must give the fused aggregation's result. One slave uses the table "prices" and
+     * the alias "p"; several use "prices0", "prices1", ... and "p0", "p1", ...
+     */
+    private void assertFuzzProjection(
+            CharSequence tradesInner,
+            boolean symbolEq,
+            boolean groupBySym,
+            CharSequence horizonAggregates,
+            CharSequence referenceAggregates,
+            CharSequence[][] perSlaveColumns,
+            CharSequence horizonClause,
+            long[] offsetsMicros
+    ) throws SqlException {
+        final int slaveCount = perSlaveColumns.length;
+        // The multi-slave tables always come in two or more.
+        final boolean isMulti = slaveCount > 1;
+
+        sink.clear();
+        sink.put("SELECT t.id, h.offset AS h_offset, t.sym");
+        for (int s = 0; s < slaveCount; s++) {
+            for (CharSequence col : perSlaveColumns[s]) {
+                sink.put(", ").put(slaveAlias(isMulti, s)).put('.').put(col);
+            }
+        }
+        sink.put(" FROM ").put(tradesInner).put(" AS t");
+        for (int s = 0; s < slaveCount; s++) {
+            sink.put(" HORIZON JOIN ").put(slaveTable(isMulti, s)).put(" AS ").put(slaveAlias(isMulti, s));
+            if (symbolEq) {
+                sink.put(" ON (t.sym = ").put(slaveAlias(isMulti, s)).put(".sym)");
+            }
+        }
+        sink.put(' ').put(horizonClause);
+        final String rowsQuery = sink.toString();
+
+        sink.clear();
+        sink.put("SELECT id, h_offset, sym");
+        for (int s = 0; s < slaveCount; s++) {
+            for (CharSequence col : perSlaveColumns[s]) {
+                sink.put(", ").put(col);
+            }
+        }
+        sink.put(" FROM (");
+        for (int i = 0; i < offsetsMicros.length; i++) {
+            if (i > 0) {
+                sink.put(" UNION ALL ");
+            }
+            sink.put("SELECT cast(").put(offsetsMicros[i]).put(" AS long) AS h_offset, t.id, t.sym");
+            for (int s = 0; s < slaveCount; s++) {
+                for (CharSequence col : perSlaveColumns[s]) {
+                    sink.put(", ").put(slaveAlias(isMulti, s)).put('.').put(col);
+                }
+            }
+            sink.put(" FROM (SELECT * FROM (SELECT dateadd('u', ")
+                    .put(offsetsMicros[i])
+                    .put(", ts) AS ts, id, sym, price FROM ")
+                    .put(tradesInner)
+                    .put(") TIMESTAMP(ts)) t");
+            for (int s = 0; s < slaveCount; s++) {
+                sink.put(" ASOF JOIN ").put(slaveTable(isMulti, s)).put(' ').put(slaveAlias(isMulti, s));
+                if (symbolEq) {
+                    sink.put(" ON (t.sym = ").put(slaveAlias(isMulti, s)).put(".sym)");
+                }
+            }
+        }
+        sink.put(") ORDER BY id, h_offset");
+        final String rowsReference = sink.toString();
+        assertQueriesMatch(rowsQuery, rowsReference);
+
+        // The markout shape of the report: aggregate the projection in an outer query.
+        sink.clear();
+        sink.put("SELECT h.offset AS h_offset");
+        if (groupBySym) {
+            sink.put(", t.sym");
+        }
+        sink.put(", ").put(horizonAggregates).put(" FROM ").put(tradesInner).put(" AS t");
+        for (int s = 0; s < slaveCount; s++) {
+            sink.put(" HORIZON JOIN ").put(slaveTable(isMulti, s)).put(" AS ").put(slaveAlias(isMulti, s));
+            if (symbolEq) {
+                sink.put(" ON (t.sym = ").put(slaveAlias(isMulti, s)).put(".sym)");
+            }
+        }
+        sink.put(' ').put(horizonClause).put(" ORDER BY h_offset");
+        if (groupBySym) {
+            sink.put(", t.sym");
+        }
+        final String fusedQuery = sink.toString();
+
+        sink.clear();
+        sink.put("SELECT h_offset");
+        if (groupBySym) {
+            sink.put(", sym");
+        }
+        sink.put(", ").put(referenceAggregates).put(" FROM (").put(rowsQuery).put(") ORDER BY h_offset");
+        if (groupBySym) {
+            sink.put(", sym");
+        }
+        assertQueriesMatch(sink.toString(), fusedQuery);
+    }
+
     private void assertMultiFuzzExecute(
             CharSequence tradesInner,
             boolean symbolEq,
@@ -487,6 +622,20 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
             TestUtils.assertEquals(expectedSink, actualSink);
         } catch (AssertionError e) {
             LOG.error().$("Multi HORIZON JOIN query: ").$(horizonQuery).$();
+            LOG.error().$("Reference query: ").$(referenceQuery).$();
+            throw e;
+        }
+    }
+
+    private void assertQueriesMatch(String query, String referenceQuery) throws SqlException {
+        final StringSink actualSink = new StringSink();
+        printSql(query, actualSink);
+        final StringSink expectedSink = new StringSink();
+        printSql(referenceQuery, expectedSink);
+        try {
+            TestUtils.assertEquals(expectedSink, actualSink);
+        } catch (AssertionError e) {
+            LOG.error().$("HORIZON JOIN projection query: ").$(query).$();
             LOG.error().$("Reference query: ").$(referenceQuery).$();
             throw e;
         }
