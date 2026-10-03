@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.regex;
 
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -52,19 +53,16 @@ import java.util.regex.Pattern;
 public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory {
 
     public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) throws SqlException {
+        return escapeSpecialChars(pattern, prev, '\\');
+    }
+
+    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev, char escapeChar) throws SqlException {
         int len = pattern.length();
 
         StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0; i < len; i++) {
             char c = pattern.charAt(i);
-            if (c == '_') {
-                sink.put('.');
-            } else if (c == '%') {
-                sink.put(".*?");
-            } else if ("[](){}.*+?$^|#".indexOf(c) != -1) {
-                sink.put("\\");
-                sink.put(c);
-            } else if (c == '\\') {
+            if (c == escapeChar) {
                 i++;
                 if (i >= len) {
                     throw SqlException.parserErr(i - 1, pattern, "LIKE pattern must not end with escape character");
@@ -76,6 +74,13 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 } else {
                     sink.put(c);
                 }
+            } else if (c == '_') {
+                sink.put('.');
+            } else if (c == '%') {
+                sink.put(".*?");
+            } else if ("[](){}.*+?$^|#".indexOf(c) != -1) {
+                sink.put("\\");
+                sink.put(c);
             } else {
                 sink.put(c);
             }
@@ -85,6 +90,44 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             return null;
         }
         return Chars.toString(sink);
+    }
+
+    static char parseEscapeChar(Function escape, int position) throws SqlException {
+        if (!escape.isConstant()) {
+            throw SqlException.$(position, "ESCAPE expression must be a constant single character");
+        }
+        if (escape.getType() == ColumnType.CHAR) {
+            char c = escape.getChar(null);
+            if (c == 0) {
+                throw SqlException.$(position, "ESCAPE character must not be null");
+            }
+            return c;
+        }
+        final int type = escape.getType();
+        if (type != ColumnType.STRING && type != ColumnType.VARCHAR) {
+            throw SqlException.$(position, "ESCAPE expression must be a single character");
+        }
+        final CharSequence seq = escape.getStrA(null);
+        if (seq == null || seq.length() != 1) {
+            throw SqlException.$(position, "ESCAPE expression must be a single character");
+        }
+        return seq.charAt(0);
+    }
+
+    /**
+     * Extracts the ESCAPE character from the optional third function argument.
+     * The escape function is not retained by the like/ilike function, so it is
+     * closed here; ownership of the remaining arguments transfers to the caller
+     * per the {@link FunctionFactory} contract.
+     */
+    static char parseAndCloseEscapeChar(ObjList<Function> args, IntList argPositions) throws SqlException {
+        if (args.size() <= 2) {
+            return '\\';
+        }
+        final Function escape = args.getQuick(2);
+        final char escapeChar = parseEscapeChar(escape, argPositions.getQuick(2));
+        escape.close();
+        return escapeChar;
     }
 
     @Override
@@ -97,12 +140,13 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     ) throws SqlException {
         final Function value = args.getQuick(0);
         final Function pattern = args.getQuick(1);
+        final char escapeChar = parseAndCloseEscapeChar(args, argPositions);
 
         if (pattern.isConstant()) {
             final CharSequence likeSeq = pattern.getStrA(null);
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, escapeChar) == 0) {
                     final int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
@@ -145,7 +189,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                     }
                 }
 
-                String p = escapeSpecialChars(likeSeq, null);
+                String p = escapeSpecialChars(likeSeq, null, escapeChar);
                 assert p != null;
                 int flags = Pattern.DOTALL;
                 if (isCaseInsensitive()) {
@@ -162,7 +206,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         if (pattern.isRuntimeConstant()) {
             // bind variable
-            return new BindLikeStrFunction(value, pattern, isCaseInsensitive());
+            return new BindLikeStrFunction(value, pattern, isCaseInsensitive(), escapeChar);
         }
 
         throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
@@ -182,15 +226,17 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
     static class BindLikeStrFunction extends BooleanFunction implements BinaryFunction {
         private final boolean caseInsensitive;
+        private final char escapeChar;
         private final Function pattern;
         private final Function value;
         private String lastPattern = null;
         private Matcher matcher;
 
-        public BindLikeStrFunction(Function value, Function pattern, boolean caseInsensitive) {
+        public BindLikeStrFunction(Function value, Function pattern, boolean caseInsensitive, char escapeChar) {
             this.value = value;
             this.pattern = pattern;
             this.caseInsensitive = caseInsensitive;
+            this.escapeChar = escapeChar;
         }
 
         @Override
@@ -218,7 +264,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             // this is bind variable, we can use it as constant
             final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
-                String p = escapeSpecialChars(patternValue, lastPattern);
+                String p = escapeSpecialChars(patternValue, lastPattern, escapeChar);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
                     if (caseInsensitive) {
