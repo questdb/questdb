@@ -1212,6 +1212,34 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // Per outer row, the FULL join emits the b rows of s that match no a row with a NULL a.x, and
+    // WHERE a.x = o.x keeps them only for a NULL o.x: 2 null 22. One FULL join over the b rows of
+    // all outer rows cannot tell them apart from the b rows of o.x = 1, so the query fails.
+    @Test
+    public void testLateralCorrelatedFullJoinSubQueryWhereKeyFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyTables();
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x) l")
+                    .fails(80, "correlated sub-query at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // WHERE a.id > 0 drops the rows in which the FULL join NULL-extends a, per outer row too, so
+    // the decorrelated query is exact.
+    @Test
+    public void testLateralCorrelatedFullJoinSubQueryWhereKeyWithMasterFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyTables();
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x AND a.id > 0) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t21
+                            """);
+        });
+    }
+
     // The correlated ON of the INNER join before the FULL join keeps the outer-ref join ahead of
     // the FULL join, which loses its unmatched refunds.
     @Test
@@ -1254,6 +1282,40 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // WHERE t.x = o.k lets the rewrite drop the outer-ref join and key the rows by t.x, which the
+    // RIGHT join NULL-extends. For a NULL o.k, the ON clause matches no refund, and WHERE keeps
+    // every refund with a NULL t.x, also those that match trade 10 for o.k = 1. One RIGHT join
+    // cannot produce both, so the query fails as it does without the WHERE equality.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWhereKeyFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.x = o.k) l")
+                    .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // terminateHere() moves WHERE t.id > o.k into the outer-ref join's ON clause, ahead of the
+    // RIGHT join, so it never sees the unmatched refunds. Per outer row, WHERE drops them: t.id
+    // is NULL in them, and for the NULL o.k of order 3, t.id > o.k holds for no row at all. A
+    // copy of the condition in WHERE drops them after the join; without it, refund 101 reached
+    // order 3, as = matches its NULL outer-ref key to the NULL o.k.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithCorrelatedMasterFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO orders VALUES (3, NULL, 3::timestamp)");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id > o.k) l ORDER BY o.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_k<t.id\n                        Hash Right Outer Join Light")
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            """);
+        });
+    }
+
     // WHERE t.id > 0 drops the unmatched refunds per outer row too, so losing them changes nothing.
     @Test
     public void testLateralCorrelatedRightJoinOnWithMasterFilter() throws Exception {
@@ -1269,17 +1331,134 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The INNER join keyed on t.x drops the unmatched refunds per outer row too.
+    // t.x > 0 in the later INNER join drops the unmatched refunds per outer row too, although
+    // = matches their NULL t.x to the NULL key of xs.
     @Test
-    public void testLateralCorrelatedRightJoinOnWithMasterKeyedJoin() throws Exception {
+    public void testLateralCorrelatedRightJoinOnWithMasterFilterInInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             createCorrelatedRightJoinTables();
-            assertQuery("SELECT o.id, l.tid, l.rid, l.v FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid, x.v FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k JOIN xs x ON x.k = t.x) l ORDER BY o.id")
+            execute("INSERT INTO xs VALUES (NULL, 200)");
+            assertQuery("SELECT o.id, l.tid, l.rid, l.v FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid, x.v FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k JOIN xs x ON x.k = t.x AND t.x > 0) l ORDER BY o.id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
                             id\ttid\trid\tv
                             1\t10\t100\t100
+                            """);
+        });
+    }
+
+    // The INNER join keyed on t.x does not drop the unmatched refunds: = matches their NULL t.x
+    // to the NULL key of xs. Per outer row, o.k = 1 returns 1 10 100 100 and 1 null 101 200, and
+    // o.k = 2 returns 2 null 100 200 and 2 null 101 200. The unmatched refunds would carry a NULL
+    // outer-ref key and be lost, so the query fails.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithMasterKeyedJoinFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO xs VALUES (NULL, 200)");
+            assertQuery("SELECT o.id, l.tid, l.rid, l.v FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid, x.v FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k JOIN xs x ON x.k = t.x) l")
+                    .fails(104, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // NULL >= NULL is true, so per outer row WHERE t.id >= o.k keeps both unmatched refunds for
+    // the NULL o.k of order 3: 3 null 100 and 3 null 101. They would carry a NULL outer-ref key
+    // and be lost, so the query fails.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithNullableMasterFilterFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            execute("INSERT INTO orders VALUES (3, NULL, 3::timestamp)");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= o.k) l")
+                    .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // Per outer row: for o.x = 1, a matches b row 21 and WHERE a.x = 1 drops unmatched row 20.
+    // For a NULL o.x, a matches row 23 and WHERE drops the pair, as a.x is 1, while unmatched
+    // row 22 has a NULL a.x and stays. The rewrite keys the rows by a.x, which the RIGHT join
+    // NULL-extends, so the equality between that key and the outer key that s carries runs in
+    // WHERE, after the join, rather than in its ON clause.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyTables();
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Filter filter: s.__qdb_outer_ref__1_x=a.x", "Hash Right Outer Join")
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t21
+                            2\tnull\t22
+                            """);
+        });
+    }
+
+    // Per outer row, count(*) counts 1 for o.x = 1 and for a NULL o.x, and 0 for o.x = 3, whose s
+    // is empty.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyTables();
+            assertQuery("SELECT o.id, l.c FROM o JOIN LATERAL (SELECT count(*) c FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x) l ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLeftLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyTables();
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o LEFT JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE a.x = o.x) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t21
+                            2\tnull\t22
+                            3\tnull\tnull
+                            """);
+        });
+    }
+
+    // The rewrite keys the rows by s.k, which the RIGHT join preserves. The equality between s.k
+    // and the outer key that s carries must still filter them: b row 23 belongs to the NULL o.x
+    // only, although its k is 1.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyOnSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyTables();
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k WHERE s.k = o.x) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t21
+                            """);
+        });
+    }
+
+    // a matches no b row by id, so per outer row every b row of s is unmatched and has a NULL
+    // a.x, which WHERE a.x = o.x keeps only for a NULL o.x: rows 22 and 23, but not rows 20 and
+    // 21 of o.x = 1.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyUnmatched() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyTables();
+            assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.id = s.id WHERE a.x = o.x) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            2\tnull\t22
+                            2\tnull\t23
                             """);
         });
     }
@@ -16666,6 +16845,18 @@ public class LateralJoinTest extends AbstractCairoTest {
         execute("INSERT INTO trades VALUES (10, 1, 1::timestamp)");
         execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp)");
         execute("INSERT INTO xs VALUES (1, 100)");
+    }
+
+    // s = (SELECT id, k, x FROM b WHERE x = o.x) holds b rows 20 and 21 for o.x = 1, rows 22 and
+    // 23 for a NULL o.x, as = matches NULL to NULL, and no row for o.x = 3. On a.x = s.k, a
+    // matches row 21 and row 23.
+    private void createNullOuterKeyTables() throws Exception {
+        execute("CREATE TABLE o (id INT, x INT)");
+        execute("CREATE TABLE a (id INT, x INT)");
+        execute("CREATE TABLE b (id INT, k INT, x INT)");
+        execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+        execute("INSERT INTO a VALUES (10, 1)");
+        execute("INSERT INTO b VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL)");
     }
 
     // Refund 2 matches no trade, so a FULL or RIGHT join of trades and refunds
