@@ -49,7 +49,7 @@ public class VarPopGroupByFunctionFactory implements FunctionFactory {
         return new VarPopGroupByFunction(args.getQuick(0));
     }
 
-    private static class VarPopGroupByFunction extends VarSampleGroupByFunctionFactory.VarSampleGroupByFunction {
+    static class VarPopGroupByFunction extends VarSampleGroupByFunctionFactory.VarSampleGroupByFunction {
 
         public VarPopGroupByFunction(@NotNull Function arg) {
             super(arg);

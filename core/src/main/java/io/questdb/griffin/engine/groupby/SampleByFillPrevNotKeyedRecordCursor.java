@@ -73,6 +73,9 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
 
     @Override
     public boolean hasNext() {
+        if (hasNextNullTimestampRow(value)) {
+            return true;
+        }
         initTimestamps();
 
         if (baseRecord == null) {

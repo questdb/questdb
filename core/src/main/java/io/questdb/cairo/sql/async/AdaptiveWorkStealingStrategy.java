@@ -51,6 +51,10 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
 
     @Override
     public boolean shouldSteal(int finishedCount) {
+        // A negative count means that the caller passed a raw SOUnboundedCountDownLatch count,
+        // which counts down from zero. The subtraction below would then add the finished tasks
+        // to the started ones, and the owner would stop stealing for the rest of the phase.
+        assert finishedCount >= 0;
         // Give shared workers a chance to pick up the tasks.
         // The spin duration is time-based to ensure consistent behavior
         // across different CPU architectures (Intel vs AMD have very different
