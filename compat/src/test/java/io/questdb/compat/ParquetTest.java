@@ -281,6 +281,7 @@ public class ParquetTest extends AbstractTest {
                         (int) bloomFilterIndexes.size(),
                         0.01,
                         0.0,
+                        false, // failOnInvalidUtf16
                         -1,
                         -1L,
                         -1L
@@ -558,6 +559,7 @@ public class ParquetTest extends AbstractTest {
                         (int) bloomFilterIndexes.size(),
                         0.01,
                         0.0,
+                        false, // failOnInvalidUtf16
                         -1,
                         -1L,
                         -1L
@@ -655,6 +657,7 @@ public class ParquetTest extends AbstractTest {
                         (int) bloomFilterIndexes.size(),
                         0.01,
                         0.0,
+                        false, // failOnInvalidUtf16
                         -1,
                         -1L,
                         -1L
@@ -743,6 +746,7 @@ public class ParquetTest extends AbstractTest {
                         (int) bloomFilterIndexes.size(),
                         0.01,
                         0.0,
+                        false, // failOnInvalidUtf16
                         -1,
                         -1L,
                         -1L

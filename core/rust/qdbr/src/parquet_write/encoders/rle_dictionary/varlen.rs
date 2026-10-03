@@ -77,10 +77,14 @@ pub fn encode_string(
                         id
                     } else {
                         let mut utf8 = Vec::with_capacity(utf16.len() * 3);
-                        let utf8_len = write_utf8_from_utf16_iter(&mut utf8, utf16.iter().copied())
-                            .map_err(|e| {
-                                fmt_err!(Layout, "invalid UTF-16 data in string column: {e}")
-                            })?;
+                        let utf8_len = write_utf8_from_utf16_iter(
+                            &mut utf8,
+                            utf16.iter().copied(),
+                            options.strict_utf16,
+                        )
+                        .map_err(|e| {
+                            fmt_err!(Layout, "invalid UTF-16 data in string column: {e}")
+                        })?;
                         total_dict_bytes += 4 + utf8_len;
                         let id = u32::try_from(dict_entries.len())
                             .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;

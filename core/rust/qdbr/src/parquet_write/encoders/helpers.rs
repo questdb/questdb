@@ -220,6 +220,7 @@ mod tests {
             raw_array_encoding: false,
             bloom_filter_fpp: 0.01,
             min_compression_ratio: 0.0,
+            strict_utf16: false,
         };
         // 256 bytes / 8 bytes per row = 32 rows per page.
         assert_eq!(rows_per_page(&opts, 8), 32);
@@ -243,6 +244,7 @@ mod tests {
             raw_array_encoding: false,
             bloom_filter_fpp: 0.01,
             min_compression_ratio: 0.0,
+            strict_utf16: false,
         };
         assert_eq!(rows_per_page(&opts, 32), 1);
         assert_eq!(rows_per_page(&opts, 1024), 1);
