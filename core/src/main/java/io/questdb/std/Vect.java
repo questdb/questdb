@@ -431,6 +431,31 @@ public final class Vect {
 
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
+    /**
+     * Builds the same sort index as {@link #radixSortManySegmentsIndexAsc} in {@link #SHUFFLE_INDEX_FORMAT}
+     * without lag rows, following the plan built by
+     * {@link io.questdb.cairo.TableWriterSegmentCopyInfo#buildSortPlan()}. Copy items of the plan concatenate
+     * transactions which are already sorted and do not overlap, sort items are sorted by
+     * (timestamp, seqTxn, row). The result is identical to the radix sort of all the rows.
+     * Returns an index format that fails {@link #isIndexSuccess(long)} when the plan does not
+     * match the transactions or the copied rows turn out not to be sorted.
+     */
+    public static native long sortManySegmentsIndexByPlan(
+            long tsOutAddr,
+            long tsOutAddrCopy,
+            long segmentAddresses,
+            long segmentInfoAddress,
+            int segmentCount,
+            long txnInfo,
+            long txnCount,
+            long maxSegmentRowCount,
+            long planItemsAddress,
+            long planItemCount,
+            long planTxnsAddress,
+            long planTxnCount,
+            long totalRows
+    );
+
     public static native long sortStringColumn(
             long mergedTimestampsAddr,
             long valueCount,

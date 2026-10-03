@@ -834,6 +834,86 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
 }
 
 JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sortManySegmentsIndexByPlan(
+        JNIEnv *env,
+        jclass cl,
+        jlong pDataOut,
+        jlong pDataCpy,
+        jlong segmentAddresses,
+        jlong segmentInfo,
+        jint segmentCount,
+        jlong txnInfo,
+        jlong txnCount,
+        jlong maxSegmentRowCount,
+        jlong planItems,
+        jlong planItemCount,
+        jlong planTxns,
+        jlong planTxnCount,
+        jlong totalRowCount
+) {
+    auto segment_count = (uint32_t) segmentCount;
+    auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
+    auto max_segment_row_count = __JLONG_REINTERPRET_CAST__(int64_t, maxSegmentRowCount);
+    auto total_row_count = __JLONG_REINTERPRET_CAST__(int64_t, totalRowCount);
+
+    // Same index encoding as radixSortManySegmentsIndexAsc() without lag rows
+    auto total_row_count_bytes = integral_type_bytes(range_bytes(total_row_count + 1));
+    auto row_count_range_bytes = range_bytes(max_segment_row_count);
+    // at least one byte, the existing radix sort never produces segment-less index either
+    auto segments_range_bytes = std::max<uint8_t>(1, range_bytes(segment_count));
+
+    if (row_count_range_bytes + segments_range_bytes > 8) {
+        return merge_index_format(error_sort_segment_index_offset_range_overflow, 0, 0, 0);
+    }
+    if (total_row_count_bytes > 8 || total_row_count_bytes == 0) {
+        return merge_index_format(error_sort_row_count_overflow, 0, 0, 0);
+    }
+
+    auto segment_ts_maps = reinterpret_cast<const index_l **>(segmentAddresses);
+    auto segments = reinterpret_cast<const seg_info *>(segmentInfo);
+    auto txns = reinterpret_cast<const txn_info *>(txnInfo);
+    auto plan = reinterpret_cast<const sort_plan_item *>(planItems);
+    auto plan_txns = reinterpret_cast<const int64_t *>(planTxns);
+    auto out = reinterpret_cast<index_l *>(pDataOut);
+    auto cpy = reinterpret_cast<index_l *>(pDataCpy);
+    auto segment_bits = (uint16_t) (segments_range_bytes * 8u);
+    auto txn_bits = (uint16_t) range_bits(txn_count);
+
+    int64_t sorted_count;
+    switch (total_row_count_bytes) {
+        case 1:
+            sorted_count = sort_segments_index_by_plan<uint8_t>(
+                    segment_ts_maps, segments, segment_count, txns, txn_count, plan, planItemCount, plan_txns,
+                    planTxnCount, out, cpy, total_row_count, segment_bits, txn_bits
+            );
+            break;
+        case 2:
+            sorted_count = sort_segments_index_by_plan<uint16_t>(
+                    segment_ts_maps, segments, segment_count, txns, txn_count, plan, planItemCount, plan_txns,
+                    planTxnCount, out, cpy, total_row_count, segment_bits, txn_bits
+            );
+            break;
+        case 4:
+            sorted_count = sort_segments_index_by_plan<uint32_t>(
+                    segment_ts_maps, segments, segment_count, txns, txn_count, plan, planItemCount, plan_txns,
+                    planTxnCount, out, cpy, total_row_count, segment_bits, txn_bits
+            );
+            break;
+        default:
+            sorted_count = sort_segments_index_by_plan<uint64_t>(
+                    segment_ts_maps, segments, segment_count, txns, txn_count, plan, planItemCount, plan_txns,
+                    planTxnCount, out, cpy, total_row_count, segment_bits, txn_bits
+            );
+            break;
+    }
+
+    if (sorted_count < 0) {
+        return merge_index_format(sorted_count, 0, 0, 0);
+    }
+    return merge_index_format(sorted_count, total_row_count_bytes, segments_range_bytes, shuffle_index_format);
+}
+
+JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeShuffleFixedColumnFromManyAddresses(
         JNIEnv *env,
         jclass cl,
