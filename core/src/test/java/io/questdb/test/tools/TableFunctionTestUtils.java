@@ -131,6 +131,11 @@ public final class TableFunctionTestUtils {
         }
 
         @Override
+        public int getScanDirection() {
+            return delegate.getScanDirection();
+        }
+
+        @Override
         public RecordMetadata getMetadata() {
             return delegate.getMetadata();
         }

@@ -2968,8 +2968,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
                 if (timestamp < txWriter.getMaxTimestamp()) {
+                    // This is the only place that decides whether an out-of-order row is acceptable,
+                    // so it is the only place that can name a remedy. CTAS in particular relies on it:
+                    // CreateTableOperationImpl hands the SELECT's designated timestamp to the target
+                    // whatever direction the SELECT declares, because a declaration cannot tell an
+                    // ordered stream from an unordered one - only the rows can, and they arrive here.
                     throw CairoException.nonCritical()
-                            .put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                            .put("cannot insert rows out of order to non-partitioned table [table=").put(path)
+                            .put("]; add PARTITION BY so the writer sorts the rows on commit, or order the rows by the designated timestamp");
                 }
                 bumpMasterRef();
                 updateMaxTimestamp(timestamp);
