@@ -62,6 +62,13 @@ public class PageFrameSequenceFiberSelfWaitTest extends AbstractBootstrapTest {
             ASOF JOIN (quotes WHERE sym IN ('S0', 'S1')) q ON (sym)
             """;
     private static final String EXPECTED_COUNT = "500";
+    // the slave is a parallel GROUP BY (unordered sequence) that runs while the master
+    // async filter holds an ordered reduce-queue slot on the same fiber
+    private static final String FILTER_CROSS_GROUP_BY_COUNT = """
+            SELECT count() c
+            FROM (trades WHERE sym IN ('S0', 'S1')) t
+            CROSS JOIN (SELECT sym, count() n FROM quotes WHERE sym IN ('S0', 'S1')) g
+            """;
 
     @Before
     public void setUp() {
@@ -77,7 +84,7 @@ public class PageFrameSequenceFiberSelfWaitTest extends AbstractBootstrapTest {
                     TestHttpClient httpClient = new TestHttpClient()
             ) {
                 createTables(main);
-                assertPlan(main);
+                assertAsOfLightPlan(main);
                 final CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
                 queryParams.put("query", ASOF_LIGHT_COUNT);
                 for (int i = 0; i < 3; i++) {
@@ -99,7 +106,7 @@ public class PageFrameSequenceFiberSelfWaitTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (ServerMain main = startServer()) {
                 createTables(main);
-                assertPlan(main);
+                assertAsOfLightPlan(main);
                 try (
                         Connection connection = getConnection(main);
                         Statement statement = connection.createStatement()
@@ -117,23 +124,57 @@ public class PageFrameSequenceFiberSelfWaitTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void assertPlan(ServerMain main) throws Exception {
-        final StringSink plan = new StringSink();
-        try (
-                Connection connection = getConnection(main);
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery("EXPLAIN " + ASOF_LIGHT_COUNT)
-        ) {
-            while (rs.next()) {
-                plan.put(rs.getString(1)).put('\n');
+    @Test
+    public void testUnorderedGroupByWhileOrderedSlotHeldOverPgWire() throws Exception {
+        // UnorderedPageFrameSequence parks on a full queue too, but its queue releases a slot
+        // as soon as a worker picks the task up (there is no collect stage), so the waiting
+        // fiber never holds what it waits for. This pins that behaviour with the same tiny
+        // queues, while an ordered slot is held by the master async filter on this fiber.
+        assertMemoryLeak(() -> {
+            try (ServerMain main = startServer()) {
+                createTables(main);
+                final String plan = explain(main, FILTER_CROSS_GROUP_BY_COUNT);
+                TestUtils.assertContains(plan, "Cross Join");
+                TestUtils.assertContains(plan, "Group By");
+                Assert.assertTrue(plan, plan.indexOf("Async ") != plan.lastIndexOf("Async "));
+                try (
+                        Connection connection = getConnection(main);
+                        Statement statement = connection.createStatement()
+                ) {
+                    for (int i = 0; i < 3; i++) {
+                        try (ResultSet rs = statement.executeQuery(FILTER_CROSS_GROUP_BY_COUNT)) {
+                            Assert.assertTrue(rs.next());
+                            // 500 master rows x 2 groups
+                            Assert.assertEquals(1000, rs.getLong(1));
+                            Assert.assertFalse(rs.next());
+                        }
+                    }
+                }
             }
-        }
-        final String text = plan.toString();
+        });
+    }
+
+    private static void assertAsOfLightPlan(ServerMain main) throws Exception {
+        final String text = explain(main, ASOF_LIGHT_COUNT);
         // Guard against a vacuous pass: the deadlock needs one fiber to interleave two
         // ordered async page-frame cursors.
         TestUtils.assertContains(text, "AsOf Join Light");
         final int first = text.indexOf("Async ");
         Assert.assertTrue(text, first > -1 && text.indexOf("Async ", first + 1) > -1);
+    }
+
+    private static String explain(ServerMain main, String sql) throws Exception {
+        final StringSink plan = new StringSink();
+        try (
+                Connection connection = getConnection(main);
+                Statement statement = connection.createStatement();
+                ResultSet rs = statement.executeQuery("EXPLAIN " + sql)
+        ) {
+            while (rs.next()) {
+                plan.put(rs.getString(1)).put('\n');
+            }
+        }
+        return plan.toString();
     }
 
     private static void createTables(ServerMain main) throws Exception {
@@ -172,6 +213,7 @@ public class PageFrameSequenceFiberSelfWaitTest extends AbstractBootstrapTest {
                 PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT.getEnvVarName(), "1",
                 // fewer slots than the slave has frames
                 PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY.getEnvVarName(), "4",
+                PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY.getEnvVarName(), "2",
                 PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "100",
                 PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "1000",
                 PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "100",
