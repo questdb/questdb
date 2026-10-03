@@ -13545,13 +13545,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * of sorting. The output is key-ordered either way; this weighs only what the key-major walk
      * costs on top of the per-frame scan the sort would read from:
      * <ul>
-     *     <li>Each key revisits every page frame. While a partition is one frame, that is the
-     *     per-frame scan in another order; with several frames per partition, a table larger than
-     *     the page cache can be read once per key. Bounded by
+     *     <li>Each key comes back to every page frame, so a table larger than the page cache can be
+     *     read once per key. Only one partition of one frame is free of re-visits.</li>
+     *     <li>Re-visits within a partition (it spans several frames) are bounded by
      *     {@code cairo.sql.index.key.major.max.keys}.</li>
-     *     <li>Each key passes over every scanned partition, and all of them are opened before the
-     *     first row. Bounded by {@code cairo.sql.index.key.major.max.partition.passes} (keys x
-     *     partitions) when more than one partition is scanned.</li>
+     *     <li>Re-visits across the scan are bounded by
+     *     {@code cairo.sql.index.key.major.max.partition.passes}: keys x scanned partitions, or keys x
+     *     frames when one partition is scanned. All scanned partitions are also opened before the
+     *     first row.</li>
      *     <li>A Parquet row group would be decoded again for every key that misses the decode cache,
      *     so a Parquet partition among the scanned ones keeps the sort.</li>
      * </ul>
@@ -13577,6 +13578,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int partitionCount = reader.getPartitionCount();
         long rowsLeft = reader.size();
         int scannedPartitions = 0;
+        long lastPartitionFrames = 0;
         boolean multiFramePartition = false;
         for (int i = 0; i < partitionCount; i++) {
             // the last partition's size lives in the transient row count, so take what is left
@@ -13597,14 +13599,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             scannedPartitions++;
             // index scans run single-threaded: their frame cursor sizes frames for one worker
-            if (FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, rows, minRows, maxRows, 1) < rows) {
+            final long rowsPerFrame = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, rows, minRows, maxRows, 1);
+            lastPartitionFrames = (rows + rowsPerFrame - 1) / rowsPerFrame;
+            if (lastPartitionFrames > 1) {
                 multiFramePartition = true;
             }
         }
+        // re-visits within a partition: each key comes back to every frame of it
         if (multiFramePartition && keyCount > maxKeys) {
             return false;
         }
-        return scannedPartitions < 2 || keyCount * scannedPartitions <= configuration.getSqlIndexKeyMajorMaxPartitionPasses();
+        // Re-visits across the scan: each key comes back to every partition, or to every frame
+        // when there is only one partition, so a huge PARTITION BY NONE table is bounded as a
+        // table partitioned by DAY is. One partition of one frame has no re-visits.
+        final long revisitUnits = scannedPartitions > 1 ? scannedPartitions : lastPartitionFrames;
+        return revisitUnits < 2 || keyCount * revisitUnits <= configuration.getSqlIndexKeyMajorMaxPartitionPasses();
     }
 
     private boolean isNotEqualsIndexScanUsable(TableReader reader, int keyReaderColumnIndex) {

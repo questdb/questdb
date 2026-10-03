@@ -335,19 +335,27 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 4);
             assertQuery(query).returns(expected);
             assertKeyMajorPlan(query, true);
+            // one partition counts its frames instead: 12 rows in 4-row frames, 2 keys x 3 frames
+            final String oneDay = "select sym, x, ts from t where sym in ('A', 'B') and ts in '1970-01-02' order by sym";
+            assertKeyMajorPlan(oneDay, false);
+            // a static interval that hits both partitions counts both
+            assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') and ts >= '1970-01-01T12:00' order by sym", true);
 
             setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 3);
             assertQuery(query).sizeMayVary().returns(expected);
             assertKeyMajorPlan(query, false);
-            // an interval that hits one partition is not limited
-            assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') and ts in '1970-01-01' order by sym", true);
-            // a static interval that hits both partitions counts both
             assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') and ts >= '1970-01-01T12:00' order by sym", false);
 
-            // 0 limits the key-major scan to one partition
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 6);
+            assertQuery(oneDay).returns(expected(new String[]{"A", "B"}, false, 13, ROWS));
+            assertKeyMajorPlan(oneDay, true);
+
+            // 0 leaves the key-major scan to one partition of one frame
             setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 0);
             assertKeyMajorPlan(query, false);
-            assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') and ts in '1970-01-02' order by sym", true);
+            assertKeyMajorPlan(oneDay, false);
+            sqlExecutionContext.changePageFrameSizes(1, 1_000_000);
+            assertKeyMajorPlan(oneDay, true);
         });
     }
 
@@ -363,6 +371,22 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             assertQuery(query)
                     .withPlanContaining("FilterOnValues")
                     .returns(expected(new String[]{"A", "C"}, false, 1, ROWS));
+            assertKeyMajorPlan(query, false);
+        });
+    }
+
+    @Test
+    public void testInListOrderBySymMaxPartitionPassesCountsFramesOfOnePartition() throws Exception {
+        // one PARTITION BY NONE partition of 24 rows in 4-row frames: 3 keys x 6 frames = 18
+        assertMemoryLeak(() -> {
+            createTable("NONE");
+            final String query = "select sym, x, ts from t where sym in ('A', 'B', 'C') order by sym";
+            final String expected = expected(new String[]{"A", "B", "C"}, false, 1, ROWS);
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 18);
+            assertQuery(query).returns(expected);
+            assertKeyMajorPlan(query, true);
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 17);
+            assertQuery(query).sizeMayVary().returns(expected);
             assertKeyMajorPlan(query, false);
         });
     }
@@ -828,7 +852,11 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
         boolean hasSort = false;
         for (String line : plan.toString().split("\n")) {
             final String trimmed = line.trim();
-            if (trimmed.startsWith("Sort") && !trimmed.startsWith("SortedSymbolIndex") || trimmed.startsWith("Encode sort")) {
+            // every node that orders rows: Sort / Sort light, Encode sort, Radix sort, (Async) Top K
+            if (trimmed.startsWith("Sort") && !trimmed.startsWith("SortedSymbolIndex")
+                    || trimmed.startsWith("Encode sort")
+                    || trimmed.startsWith("Radix sort")
+                    || trimmed.contains("Top K")) {
                 hasSort = true;
                 break;
             }
