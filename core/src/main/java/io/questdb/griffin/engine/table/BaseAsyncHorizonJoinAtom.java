@@ -29,7 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
@@ -120,8 +120,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
-            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate,
+            @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -160,15 +160,18 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                     0L, // owner memory pool budget (single-buffer effective behavior)
                     0L  // per-worker memory pool budget
             );
-            // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
-            if (masterAsOfJoinMapSinkClass != null || slaveAsOfJoinMapSinkClass != null) {
-                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
-                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
+            // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types).
+            // The join keys decide whether the join is keyed; the templates build a LoopingRecordSink
+            // when class generation declined.
+            if (asOfJoinKeyTypes != null) {
+                assert masterAsOfJoinMapSinkTemplate != null && slaveAsOfJoinMapSinkTemplate != null;
+                this.ownerMasterAsOfJoinMapSink = masterAsOfJoinMapSinkTemplate.newInstance();
+                this.ownerSlaveAsOfJoinMapSink = slaveAsOfJoinMapSinkTemplate.newInstance();
                 this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(workerCount);
                 this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
-                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
+                    perWorkerMasterAsOfJoinMapSinks.add(masterAsOfJoinMapSinkTemplate.newInstance());
+                    perWorkerSlaveAsOfJoinMapSinks.add(slaveAsOfJoinMapSinkTemplate.newInstance());
                 }
             } else {
                 this.ownerMasterAsOfJoinMapSink = null;

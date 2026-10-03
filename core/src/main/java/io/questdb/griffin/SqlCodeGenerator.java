@@ -42,6 +42,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReader;
@@ -1724,6 +1725,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static boolean isBaseTimestampAscending(RecordCursorFactory factory, int timestampIndex) {
         return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
+    }
+
+    /**
+     * Checks that {@code ast} is {@code dateadd(unit, stride, ts)} where {@code unit} adds a fixed duration and
+     * {@code ts} resolves to the designated timestamp of {@code baseMetadata}. The lookup is the one the function
+     * parser uses, so a projection alias can't shadow the base column.
+     */
+    private static boolean isDateaddOverBaseTimestamp(ExpressionNode ast, RecordMetadata baseMetadata) {
+        final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+        if (baseTimestampIndex < 0 || ast == null || ast.type != FUNCTION || ast.paramCount != 3 || !isDateaddKeyword(ast.token)) {
+            return false;
+        }
+        // args are reversed: args[0] is the timestamp, args[2] is the unit
+        final ExpressionNode timestampArg = ast.args.getQuick(0);
+        return isFixedDurationDateaddUnit(ast.args.getQuick(2))
+                && timestampArg.type == LITERAL
+                && SqlUtil.getColumnIndexQuiet(baseMetadata, timestampArg.token) == baseTimestampIndex;
+    }
+
+    /**
+     * Checks that {@code unitArg} is a quoted single-character constant that names a dateadd() unit adding the
+     * same duration to every timestamp, so the result follows the order of the timestamp argument. Months
+     * ({@code 'M'}) and years ({@code 'y'}) don't: they clamp the day of month and keep the time of day, so
+     * January 29, 30 and 31 plus one month all land on the last day of February. The unit is case-sensitive,
+     * {@code 'm'} is minutes.
+     * <p>
+     * The list holds every unit TimestampDriver#getAddMethod() accepts except those two. A unit missing from it
+     * costs the projection its designated timestamp, never the row order.
+     */
+    private static boolean isFixedDurationDateaddUnit(ExpressionNode unitArg) {
+        final CharSequence token = unitArg.token;
+        if (unitArg.type != CONSTANT || token == null || token.length() != 3 || token.charAt(0) != '\'' || token.charAt(2) != '\'') {
+            return false;
+        }
+        return switch (token.charAt(1)) {
+            case 'n', 'u', 'U', 'T', 's', 'm', 'h', 'H', 'd', 'w' -> true;
+            default -> false;
+        };
     }
 
     // Fixed-size scalars and wide types that MapValue can put/get directly.
@@ -4950,12 +4989,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ExpressionNode filterExpr = model.getWhereClause();
 
-        // An and_offset wrapper that never reached interval extraction would otherwise be handed
-        // to the function compiler, which fails with "unknown function name: and_offset". Rebuild
-        // it into its dateadd residual here, before the backups are taken, so every copy of the
-        // filter carries the compilable form. Gate the rewrite on the designated timestamp so a
-        // hand-written and_offset over a non-timestamp column is left for the compiler to reject
-        // rather than silently rewritten into a dateadd over that column.
+        // An and_offset wrapper left in the filter would reach the function compiler, which fails
+        // with "unknown function name: and_offset". Rebuild it into its dateadd residual here,
+        // before this method backs up the filter, so every copy of it carries the compilable form.
+        // On a table scan's own filter, interval extraction (WhereClauseParser#analyzeAndOffset)
+        // has already turned SqlOptimiser's wrappers into intervals or rebuilt them. In any other
+        // WHERE clause, only this call rebuilds them: it rebuilds a wrapper that carries
+        // ExpressionNode#isOptimiserAndOffset over the column its predicate names. It rebuilds a
+        // hand-written call only over the designated timestamp and leaves any other for the
+        // compiler to reject, rather than silently turning it into a dateadd over a non-timestamp
+        // column. SqlOptimiser#rebuildStrandedAndOffsets rebuilds the wrappers in post-join
+        // filters, which the join code compiles without this method.
         final RecordMetadata filterMetadata = factory.getMetadata();
         final int filterTimestampIndex = filterMetadata.getTimestampIndex();
         WhereClauseParser.rebuildStrandedAndOffsets(
@@ -5406,37 +5450,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Process ASOF join key information for the join lookup
             ArrayColumnTypes asOfJoinKeyTypes = null;
-            Class<RecordSink> masterAsOfJoinMapSinkClass = null;
-            Class<RecordSink> slaveAsOfJoinMapSinkClass = null;
-            BitSet asOfWriteSymbolAsStringA = null;
-            BitSet asOfWriteSymbolAsStringB = null;
-            BitSet asOfWriteStringAsVarcharA = null;
-            BitSet asOfWriteStringAsVarcharB = null;
+            RecordSinkTemplate masterAsOfJoinMapSinkTemplate = null;
+            RecordSinkTemplate slaveAsOfJoinMapSinkTemplate = null;
             int[] masterSymbolKeyColumnIndices = null;
             int[] slaveSymbolKeyColumnIndices = null;
 
             JoinContext asOfJoinContext = slaveModel.getJoinContext();
             if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
-                // Process join context to get key types and column filters
-                // listColumnFilterA -> slave columns
-                // listColumnFilterB -> master columns
-                lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asOfJoinContext.aNames, slaveMetadata);
-                lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
+                // Process join context to get key types and column filters. The sink templates
+                // keep the filters and bit sets, so they can't be the shared scratch fields.
+                final ListColumnFilter slaveKeyColumnFilter = new ListColumnFilter();
+                final ListColumnFilter masterKeyColumnFilter = new ListColumnFilter();
+                lookupColumnIndexesUsingVanillaNames(slaveKeyColumnFilter, asOfJoinContext.aNames, slaveMetadata);
+                lookupColumnIndexes(masterKeyColumnFilter, asOfJoinContext.bNodes, masterMetadata);
 
                 // Build ASOF join key types and configure symbol/string handling
                 asOfJoinKeyTypes = new ArrayColumnTypes();
-                asOfWriteSymbolAsStringA = new BitSet();
-                asOfWriteSymbolAsStringB = new BitSet();
-                asOfWriteStringAsVarcharA = new BitSet();
-                asOfWriteStringAsVarcharB = new BitSet();
+                final BitSet asOfWriteSymbolAsStringA = new BitSet();
+                final BitSet asOfWriteSymbolAsStringB = new BitSet();
+                final BitSet asOfWriteStringAsVarcharA = new BitSet();
+                final BitSet asOfWriteStringAsVarcharB = new BitSet();
+                final BitSet asOfWriteTimestampAsNanosA = new BitSet();
+                final BitSet asOfWriteTimestampAsNanosB = new BitSet();
                 IntList masterSymbolKeyCols = null;
                 IntList slaveSymbolKeyCols = null;
-                writeTimestampAsNanosA.clear();
-                writeTimestampAsNanosB.clear();
 
-                for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-                    final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
-                    final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+                for (int k = 0, m = slaveKeyColumnFilter.getColumnCount(); k < m; k++) {
+                    final int columnIndexA = slaveKeyColumnFilter.getColumnIndexFactored(k);
+                    final int columnIndexB = masterKeyColumnFilter.getColumnIndexFactored(k);
                     final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
                     final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
 
@@ -5478,10 +5519,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else if (columnTypeA != columnTypeB && isTimestamp(columnTypeA) && isTimestamp(columnTypeB)) {
                         asOfJoinKeyTypes.add(TIMESTAMP_NANO);
                         if (!isTimestampNano(columnTypeA)) {
-                            writeTimestampAsNanosA.set(columnIndexA);
+                            asOfWriteTimestampAsNanosA.set(columnIndexA);
                         }
                         if (!isTimestampNano(columnTypeB)) {
-                            writeTimestampAsNanosB.set(columnIndexB);
+                            asOfWriteTimestampAsNanosB.set(columnIndexB);
                         }
                     } else {
                         asOfJoinKeyTypes.add(columnTypeA);
@@ -5493,29 +5534,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
                 }
 
-                // Generate key copier classes with proper symbol/varchar handling
-                // Two-phase pattern: generate class once, create per-worker instances in atoms
-                masterAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
+                // Generate key copier classes with proper symbol/varchar handling. Two-phase
+                // pattern: generate the class once, create per-worker instances in atoms. The
+                // templates fall back to LoopingRecordSink when class generation declines.
+                masterAsOfJoinMapSinkTemplate = new RecordSinkTemplate(
                         configuration,
                         asm,
                         masterMetadata,
-                        listColumnFilterB,
-                        null,
-                        null,
+                        masterKeyColumnFilter,
                         asOfWriteSymbolAsStringB,
                         asOfWriteStringAsVarcharB,
-                        writeTimestampAsNanosB
+                        asOfWriteTimestampAsNanosB
                 );
-                slaveAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
+                slaveAsOfJoinMapSinkTemplate = new RecordSinkTemplate(
                         configuration,
                         asm,
                         slaveMetadata,
-                        listColumnFilterA,
-                        null,
-                        null,
+                        slaveKeyColumnFilter,
                         asOfWriteSymbolAsStringA,
                         asOfWriteStringAsVarcharA,
-                        writeTimestampAsNanosA
+                        asOfWriteTimestampAsNanosA
                 );
             }
 
@@ -5526,29 +5564,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
 
-                // Create sink instances from generated classes for single-threaded path
+                // Create sink instances for the single-threaded path. A keyed join always gets
+                // sinks: the templates build a LoopingRecordSink when class generation declined.
                 final RecordSink masterAsOfJoinMapSink;
                 final RecordSink slaveAsOfJoinMapSink;
-                if (masterAsOfJoinMapSinkClass != null) {
-                    masterAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                            masterAsOfJoinMapSinkClass,
-                            masterMetadata,
-                            listColumnFilterB,
-                            null, null,
-                            asOfWriteSymbolAsStringB,
-                            asOfWriteStringAsVarcharB,
-                            writeTimestampAsNanosB
-                    );
-                    slaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                            slaveAsOfJoinMapSinkClass,
-                            slaveMetadata,
-                            listColumnFilterA,
-                            null,
-                            null,
-                            asOfWriteSymbolAsStringA,
-                            asOfWriteStringAsVarcharA,
-                            writeTimestampAsNanosA
-                    );
+                if (asOfJoinKeyTypes != null) {
+                    masterAsOfJoinMapSink = masterAsOfJoinMapSinkTemplate.newInstance();
+                    slaveAsOfJoinMapSink = slaveAsOfJoinMapSinkTemplate.newInstance();
                 } else {
                     masterAsOfJoinMapSink = null;
                     slaveAsOfJoinMapSink = null;
@@ -5669,8 +5691,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctions0,
                         valueTypesCopy.getColumnCount(),
                         asOfJoinKeyTypes,
-                        masterAsOfJoinMapSinkClass,
-                        slaveAsOfJoinMapSinkClass,
+                        masterAsOfJoinMapSinkTemplate,
+                        slaveAsOfJoinMapSinkTemplate,
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices,
@@ -5701,8 +5723,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyTypesCopy,
                     valueTypesCopy,
                     asOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClass,
-                    slaveAsOfJoinMapSinkClass,
+                    masterAsOfJoinMapSinkTemplate,
+                    slaveAsOfJoinMapSinkTemplate,
                     masterMetadata.getColumnCount(),
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -8209,10 +8231,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int masterTsType = masterMetadata.getTimestampType();
             slaveStates = new ObjList<>(slaveCount);
             ColumnTypes[] perSlaveAsOfJoinKeyTypes = new ColumnTypes[slaveCount];
-            @SuppressWarnings("unchecked")
-            Class<RecordSink>[] masterAsOfJoinMapSinkClasses = new Class[slaveCount];
-            @SuppressWarnings("unchecked")
-            Class<RecordSink>[] slaveAsOfJoinMapSinkClasses = new Class[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
                 RecordMetadata slaveMeta = slaveMetadatas[s];
                 IQueryModel slaveModel = slaveModels.getQuick(s);
@@ -8229,27 +8247,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // Process ASOF join keys for this slave
                 ArrayColumnTypes asOfJoinKeyTypes = null;
+                RecordSinkTemplate masterAsOfJoinMapSinkTemplate = null;
+                RecordSinkTemplate slaveAsOfJoinMapSinkTemplate = null;
                 int[] masterSymbolKeyColumnIndices = null;
                 int[] slaveSymbolKeyColumnIndices = null;
 
                 JoinContext asOfJoinContext = slaveModel.getJoinContext();
                 if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
-                    lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asOfJoinContext.aNames, slaveMeta);
-                    lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
+                    // The sink templates keep the filters and bit sets, so they can't be the
+                    // shared scratch fields.
+                    final ListColumnFilter slaveKeyColumnFilter = new ListColumnFilter();
+                    final ListColumnFilter masterKeyColumnFilter = new ListColumnFilter();
+                    lookupColumnIndexesUsingVanillaNames(slaveKeyColumnFilter, asOfJoinContext.aNames, slaveMeta);
+                    lookupColumnIndexes(masterKeyColumnFilter, asOfJoinContext.bNodes, masterMetadata);
 
                     asOfJoinKeyTypes = new ArrayColumnTypes();
-                    BitSet asOfWriteSymbolAsStringA = new BitSet();
-                    BitSet asOfWriteSymbolAsStringB = new BitSet();
-                    BitSet asOfWriteStringAsVarcharA = new BitSet();
-                    BitSet asOfWriteStringAsVarcharB = new BitSet();
+                    final BitSet asOfWriteSymbolAsStringA = new BitSet();
+                    final BitSet asOfWriteSymbolAsStringB = new BitSet();
+                    final BitSet asOfWriteStringAsVarcharA = new BitSet();
+                    final BitSet asOfWriteStringAsVarcharB = new BitSet();
+                    final BitSet asOfWriteTimestampAsNanosA = new BitSet();
+                    final BitSet asOfWriteTimestampAsNanosB = new BitSet();
                     IntList masterSymbolKeyCols = null;
                     IntList slaveSymbolKeyCols = null;
-                    writeTimestampAsNanosA.clear();
-                    writeTimestampAsNanosB.clear();
 
-                    for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-                        final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
-                        final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+                    for (int k = 0, m = slaveKeyColumnFilter.getColumnCount(); k < m; k++) {
+                        final int columnIndexA = slaveKeyColumnFilter.getColumnIndexFactored(k);
+                        final int columnIndexB = masterKeyColumnFilter.getColumnIndexFactored(k);
                         final int columnTypeA = slaveMeta.getColumnType(columnIndexA);
                         final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
 
@@ -8287,10 +8311,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         } else if (columnTypeA != columnTypeB && isTimestamp(columnTypeA) && isTimestamp(columnTypeB)) {
                             asOfJoinKeyTypes.add(TIMESTAMP_NANO);
                             if (!isTimestampNano(columnTypeA)) {
-                                writeTimestampAsNanosA.set(columnIndexA);
+                                asOfWriteTimestampAsNanosA.set(columnIndexA);
                             }
                             if (!isTimestampNano(columnTypeB)) {
-                                writeTimestampAsNanosB.set(columnIndexB);
+                                asOfWriteTimestampAsNanosB.set(columnIndexB);
                             }
                         } else {
                             asOfJoinKeyTypes.add(columnTypeA);
@@ -8302,17 +8326,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
                     }
 
-                    // Store ASOF join sink classes for this slave.
+                    // Store ASOF join sink templates for this slave.
                     // RecordSink instances have mutable fields (e.g. Decimal128/Decimal256)
-                    // and must not be shared across workers. The async atom constructor
-                    // creates owner + per-worker instances from these classes.
-                    masterAsOfJoinMapSinkClasses[s] = RecordSinkFactory.getInstanceClass(
-                            configuration, asm, masterMetadata, listColumnFilterB, null, null,
-                            asOfWriteSymbolAsStringB, asOfWriteStringAsVarcharB, writeTimestampAsNanosB
+                    // and must not be shared across workers. HorizonJoinSlaveState creates
+                    // instances from these templates: the MultiHorizonJoin*RecordCursorFactory
+                    // constructor takes one per slave for the single-threaded cursor, and the
+                    // BaseAsyncMultiHorizonJoinAtom constructor takes owner + per-worker ones.
+                    masterAsOfJoinMapSinkTemplate = new RecordSinkTemplate(
+                            configuration, asm, masterMetadata, masterKeyColumnFilter,
+                            asOfWriteSymbolAsStringB, asOfWriteStringAsVarcharB, asOfWriteTimestampAsNanosB
                     );
-                    slaveAsOfJoinMapSinkClasses[s] = RecordSinkFactory.getInstanceClass(
-                            configuration, asm, slaveMeta, listColumnFilterA, null, null,
-                            asOfWriteSymbolAsStringA, asOfWriteStringAsVarcharA, writeTimestampAsNanosA
+                    slaveAsOfJoinMapSinkTemplate = new RecordSinkTemplate(
+                            configuration, asm, slaveMeta, slaveKeyColumnFilter,
+                            asOfWriteSymbolAsStringA, asOfWriteStringAsVarcharA, asOfWriteTimestampAsNanosA
                     );
                 }
                 perSlaveAsOfJoinKeyTypes[s] = asOfJoinKeyTypes;
@@ -8322,6 +8348,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         perSlaveMasterTsScale,
                         perSlaveSlaveTsScale,
                         asOfJoinKeyTypes,
+                        masterAsOfJoinMapSinkTemplate,
+                        slaveAsOfJoinMapSinkTemplate,
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices
@@ -8358,8 +8386,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             innerMetadata0,
                             masterFactory,
                             slaveStates0,
-                            masterAsOfJoinMapSinkClasses,
-                            slaveAsOfJoinMapSinkClasses,
                             offsets,
                             masterTimestampColumnIndex,
                             groupByFunctions0,
@@ -8377,8 +8403,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         innerMetadata0,
                         masterFactory,
                         slaveStates0,
-                        masterAsOfJoinMapSinkClasses,
-                        slaveAsOfJoinMapSinkClasses,
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
@@ -8443,8 +8467,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterFactory,
                         slaveStates0,
                         perSlaveAsOfJoinKeyTypes,
-                        masterAsOfJoinMapSinkClasses,
-                        slaveAsOfJoinMapSinkClasses,
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
@@ -8510,8 +8532,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterFactory,
                     slaveStates0,
                     perSlaveAsOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClasses,
-                    slaveAsOfJoinMapSinkClasses,
                     offsets,
                     masterTimestampColumnIndex,
                     groupByFunctions0,
@@ -10647,7 +10667,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // The alias is stable across pruning: resolve it in the final columns, or restore it
         // as a hidden timestamp column below when it is no longer visible.
         int modelTimestampIndex = model.getTimestampColumnIndex();
-        final CharSequence timestampOffsetAlias = model.getTimestampOffsetAlias();
+        CharSequence timestampOffsetAlias = model.getTimestampOffsetAlias();
         if (timestampOffsetAlias != null) {
             modelTimestampIndex = -1;
             for (int i = 0; i < columnCount; i++) {
@@ -10657,10 +10677,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
+        final RecordMetadata baseMetadata = factory.getMetadata();
+        // SqlOptimiser.detectTimestampOffsetsRecursive() matches the dateadd() argument by name against
+        // the first model further down the tree that carries a timestamp. A GROUP BY, DISTINCT, UNION,
+        // ORDER BY, join or rename in between can reorder the rows or rebind the name, and
+        // optimiseOrderBy(), which runs later, can drop an ORDER BY that kept the rows in order. Keep
+        // the timestamp only when the argument is the designated timestamp of the base factory, which
+        // reflects the actual row order. The optimiser also tags dateadd() for any constant unit, and a
+        // month or year shift does not follow the order of its argument, so the unit must add a fixed
+        // duration as well.
+        if (timestampOffsetAlias != null || modelTimestampIndex > -1) {
+            final QueryColumn timestampOffsetColumn = timestampOffsetAlias != null
+                    ? model.getAliasToColumnMap().get(timestampOffsetAlias)
+                    : columns.getQuiet(modelTimestampIndex);
+            if (timestampOffsetColumn == null || !isDateaddOverBaseTimestamp(timestampOffsetColumn.getAst(), baseMetadata)) {
+                modelTimestampIndex = -1;
+                timestampOffsetAlias = null;
+            }
+        }
         // +1 accounts for an internal timestamp column, which can be added conditionally later.
         final int virtualColumnReservedSlots = columnCount + 1;
         final ObjList<Function> functions = new ObjList<>(virtualColumnReservedSlots);
-        final RecordMetadata baseMetadata = factory.getMetadata();
         // Lookup metadata will resolve column references, prioritising references to the projection
         // over the references to the base table.
         final PriorityMetadata priorityMetadata = new PriorityMetadata(virtualColumnReservedSlots, baseMetadata);

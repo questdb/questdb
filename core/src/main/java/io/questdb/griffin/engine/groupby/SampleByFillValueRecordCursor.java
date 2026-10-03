@@ -129,6 +129,10 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
+        // hasNext() consults the map cursor right after initMap() rebuilds the keys,
+        // so drop the rows that the previous execution left unread in it.
+        map.clear();
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
         isMapInitialized = false;
@@ -151,6 +155,8 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
     public void toTop() {
         super.toTop();
         map.clear();
+        // drop the rows left unread in the map cursor, as of() does
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
         isMapInitialized = false;

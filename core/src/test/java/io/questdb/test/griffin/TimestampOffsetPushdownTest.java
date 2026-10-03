@@ -24,10 +24,19 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
+import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.File;
 
 /**
  * Tests for timestamp predicate pushdown through virtual models with dateadd offset.
@@ -37,6 +46,32 @@ import org.junit.Test;
  * 3. The SQL plan shows the expected interval filters
  */
 public class TimestampOffsetPushdownTest extends AbstractCairoTest {
+    // unit, table of createDayClampTables() whose rows a one-unit shift folds onto the same day
+    private static final String[][] CALENDAR_UNIT_TABLES = {
+            {"M", "jan"},
+            {"y", "feb"},
+    };
+    // dateadd('M', 1, ts) over jan, in the order of the shifted value
+    private static final String JAN_PLUS_ONE_MONTH_ORDERED = """
+            x
+            2024-02-29T00:00:00.000000Z
+            2024-02-29T00:00:00.000000Z
+            2024-02-29T00:00:00.000000Z
+            2024-02-29T06:00:00.000000Z
+            2024-02-29T06:00:00.000000Z
+            2024-02-29T06:00:00.000000Z
+            2024-02-29T12:00:00.000000Z
+            2024-02-29T12:00:00.000000Z
+            2024-02-29T12:00:00.000000Z
+            2024-02-29T18:00:00.000000Z
+            2024-02-29T18:00:00.000000Z
+            2024-02-29T18:00:00.000000Z
+            2024-03-01T00:00:00.000000Z
+            2024-03-01T06:00:00.000000Z
+            2024-03-01T12:00:00.000000Z
+            2024-03-01T18:00:00.000000Z
+            """;
+    private static final String NO_DESIGNATED_TIMESTAMP_ERROR = "base query does not provide designated TIMESTAMP column";
 
     @Test
     public void testAndOffsetWithSubQueryPredicateArg() throws Exception {
@@ -202,6 +237,1092 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     "LATEST ON timestamp PARTITION BY sym")
                     .timestamp("timestamp")
                     .returns("sym\tprice\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitChainIsNotDesignatedTimestamp() throws Exception {
+        // A fixed-duration dateadd() over a month dateadd() inherits its out-of-order rows, and a month
+        // or year dateadd() over a fixed-duration one reorders the rows itself. Neither chain may keep
+        // the designated timestamp.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            final String[] chains = {
+                    "SELECT dateadd('h', 1, x) y FROM (SELECT dateadd('M', 1, ts) x FROM jan)",
+                    "SELECT dateadd('M', 1, x) y FROM (SELECT dateadd('h', 1, ts) x FROM jan)",
+            };
+            for (String chain : chains) {
+                assertQuery(chain + " LIMIT 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                y
+                                2024-02-29T01:00:00.000000Z
+                                """);
+                assertQuery("SELECT y FROM (" + chain + ") ORDER BY y")
+                        .noLeakCheck()
+                        .timestamp("y")
+                        .expectSize()
+                        .withPlanContaining("Encode sort light", "keys: [y]")
+                        .returns("""
+                                y
+                                2024-02-29T01:00:00.000000Z
+                                2024-02-29T01:00:00.000000Z
+                                2024-02-29T01:00:00.000000Z
+                                2024-02-29T07:00:00.000000Z
+                                2024-02-29T07:00:00.000000Z
+                                2024-02-29T07:00:00.000000Z
+                                2024-02-29T13:00:00.000000Z
+                                2024-02-29T13:00:00.000000Z
+                                2024-02-29T13:00:00.000000Z
+                                2024-02-29T19:00:00.000000Z
+                                2024-02-29T19:00:00.000000Z
+                                2024-02-29T19:00:00.000000Z
+                                2024-03-01T01:00:00.000000Z
+                                2024-03-01T07:00:00.000000Z
+                                2024-03-01T13:00:00.000000Z
+                                2024-03-01T19:00:00.000000Z
+                                """);
+            }
+
+            // a year dateadd() over a month one: 2024-02-29 plus one year lands on 2025-02-28
+            assertQuery("SELECT y FROM (SELECT dateadd('y', 1, x) y FROM (SELECT dateadd('M', 1, ts) x FROM jan)) ORDER BY y LIMIT 4")
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .expectSize()
+                    .returns("""
+                            y
+                            2025-02-28T00:00:00.000000Z
+                            2025-02-28T00:00:00.000000Z
+                            2025-02-28T00:00:00.000000Z
+                            2025-02-28T06:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitCopyPartitionByRequiresTimestamp() throws Exception {
+        // COPY ... PARTITION_BY exports through a temporary table that it partitions on the designated
+        // timestamp of the query. A month or year dateadd() projection no longer provides one, so the
+        // statement fails. It used to export: the writer of the temporary table sorted the
+        // out-of-order rows. ORDER BY in the query restores the designated timestamp.
+        final String exportDir = temp.newFolder().getAbsolutePath();
+        final String savedInputRoot = inputRoot;
+        // read_parquet() reads files under the input root only
+        inputRoot = exportDir;
+        try {
+            assertMemoryLeak(() -> {
+                node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, exportDir);
+                createDayClampTables();
+                for (String[] p : CALENDAR_UNIT_TABLES) {
+                    // the error points at the query: COPY validates it without the PARTITION_BY position
+                    assertExceptionNoLeakCheck(
+                            "COPY (SELECT dateadd('" + p[0] + "', 1, ts) x, i FROM " + p[1] + ") TO 'shifted' WITH FORMAT parquet PARTITION_BY DAY",
+                            6,
+                            "partitioning is possible only on tables with designated timestamps"
+                    );
+                }
+
+                try (
+                        RecordCursorFactory factory = select("COPY (SELECT dateadd('M', 1, ts) x, i FROM jan ORDER BY x) TO 'shifted' WITH FORMAT parquet PARTITION_BY DAY");
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                }
+                try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                    Assert.assertTrue(job.run());
+                }
+                final String exported = exportDir + File.separator + "shifted" + File.separator;
+                assertQuery("SELECT count() FROM read_parquet('" + exported + "2024-02-29.parquet')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                count
+                                12
+                                """);
+                assertQuery("SELECT x, i FROM read_parquet('" + exported + "2024-03-01.parquet')")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .expectSize()
+                        .returns("""
+                                x\ti
+                                2024-03-01T00:00:00.000000Z\t13
+                                2024-03-01T06:00:00.000000Z\t14
+                                2024-03-01T12:00:00.000000Z\t15
+                                2024-03-01T18:00:00.000000Z\t16
+                                """);
+            });
+        } finally {
+            inputRoot = savedInputRoot;
+        }
+    }
+
+    @Test
+    public void testDateaddCalendarUnitCreateTableAsSelect() throws Exception {
+        // CREATE TABLE AS SELECT takes the designated timestamp from the query and appends its rows in
+        // order. A month or year dateadd() projection used to claim one, so the out-of-order rows failed
+        // the copy with "cannot insert rows out of order". The new table now has no designated
+        // timestamp unless the statement names one.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            execute("CREATE TABLE next_month AS (SELECT dateadd('M', 1, ts) x, i FROM jan)");
+            assertQuery("SELECT x, i FROM next_month")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ti
+                            2024-02-29T00:00:00.000000Z\t1
+                            2024-02-29T06:00:00.000000Z\t2
+                            2024-02-29T12:00:00.000000Z\t3
+                            2024-02-29T18:00:00.000000Z\t4
+                            2024-02-29T00:00:00.000000Z\t5
+                            2024-02-29T06:00:00.000000Z\t6
+                            2024-02-29T12:00:00.000000Z\t7
+                            2024-02-29T18:00:00.000000Z\t8
+                            2024-02-29T00:00:00.000000Z\t9
+                            2024-02-29T06:00:00.000000Z\t10
+                            2024-02-29T12:00:00.000000Z\t11
+                            2024-02-29T18:00:00.000000Z\t12
+                            2024-03-01T00:00:00.000000Z\t13
+                            2024-03-01T06:00:00.000000Z\t14
+                            2024-03-01T12:00:00.000000Z\t15
+                            2024-03-01T18:00:00.000000Z\t16
+                            """);
+
+            execute("CREATE TABLE next_year AS (SELECT dateadd('y', 1, ts) x, i FROM feb)");
+            assertQuery("SELECT x, i FROM next_year")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ti
+                            2025-02-28T00:00:00.000000Z\t1
+                            2025-02-28T06:00:00.000000Z\t2
+                            2025-02-28T12:00:00.000000Z\t3
+                            2025-02-28T18:00:00.000000Z\t4
+                            2025-02-28T00:00:00.000000Z\t5
+                            2025-02-28T06:00:00.000000Z\t6
+                            2025-02-28T12:00:00.000000Z\t7
+                            2025-02-28T18:00:00.000000Z\t8
+                            2025-03-01T00:00:00.000000Z\t9
+                            2025-03-01T06:00:00.000000Z\t10
+                            2025-03-01T12:00:00.000000Z\t11
+                            2025-03-01T18:00:00.000000Z\t12
+                            """);
+
+            // Control: an explicit designated timestamp makes the writer sort the rows.
+            execute("CREATE TABLE next_month_ts AS (SELECT dateadd('M', 1, ts) x, i FROM jan) TIMESTAMP(x) PARTITION BY DAY");
+            assertQuery("SELECT x FROM next_month_ts")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns(JAN_PLUS_ONE_MONTH_ORDERED);
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitCreateTableAsSelectPartitionByRequiresTimestamp() throws Exception {
+        // PARTITION BY needs a designated timestamp, and CREATE TABLE AS SELECT without a TIMESTAMP
+        // clause takes it from the query. A month or year dateadd() projection no longer provides one,
+        // so the statement fails. It used to create the table: the writer sorted the out-of-order rows.
+        // TIMESTAMP(x) on the table or ORDER BY x in the query names the designated timestamp again.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            final String noTimestamp = "partitioning is possible only on tables with designated timestamps";
+            for (String[] p : CALENDAR_UNIT_TABLES) {
+                final String projection = "(SELECT dateadd('" + p[0] + "', 1, ts) x, i FROM " + p[1] + ")";
+                assertExceptionNoLeakCheck("CREATE TABLE shifted AS " + projection + " PARTITION BY DAY", 80, noTimestamp);
+                assertExceptionNoLeakCheck("CREATE TABLE shifted AS " + projection + " PARTITION BY DAY WAL", 80, noTimestamp);
+            }
+
+            execute("CREATE TABLE next_month_sorted AS (SELECT dateadd('M', 1, ts) x, i FROM jan ORDER BY x) PARTITION BY DAY");
+            execute("CREATE TABLE next_month_wal AS (SELECT dateadd('M', 1, ts) x, i FROM jan) TIMESTAMP(x) PARTITION BY DAY WAL");
+            drainWalQueue();
+            for (String table : new String[]{"next_month_sorted", "next_month_wal"}) {
+                assertQuery("SELECT x FROM " + table)
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .expectSize()
+                        .returns(JAN_PLUS_ONE_MONTH_ORDERED);
+            }
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitIsNotDesignatedTimestamp() throws Exception {
+        // dateadd() with months or years clamps the day of month and keeps the time of day: January
+        // 29, 30 and 31 plus one month all land on February 29, and February 29 plus or minus one year
+        // lands on February 28. The result does not follow the order of its argument, so the projection
+        // must not become the designated timestamp. It used to: ORDER BY skipped the sort, SAMPLE BY
+        // bucketed out-of-order rows without an error and CREATE TABLE AS SELECT failed.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            // dateadd() expression, table, first row
+            final String[][] projections = {
+                    {"dateadd('M', 1, ts)", "jan", "2024-02-29T00:00:00.000000Z"},
+                    {"dateadd('M', -1, ts)", "mar", "2024-02-28T00:00:00.000000Z"},
+                    {"dateadd('y', 1, ts)", "feb", "2025-02-28T00:00:00.000000Z"},
+                    {"dateadd('y', -1, ts)", "feb", "2023-02-28T00:00:00.000000Z"},
+            };
+            for (String[] p : projections) {
+                assertQuery("SELECT " + p[0] + " x FROM " + p[1] + " LIMIT 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("x\n" + p[2] + '\n');
+            }
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitLatestOnComparesTimestamps() throws Exception {
+        // LATEST ON takes the last row of each key when its input is in timestamp order. Over a month
+        // dateadd() projection the last row is not the latest one: January 31 at 06:00 lands on
+        // February 29 at 06:00, before January 30 at 18:00, which lands on February 29 at 18:00.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE late (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO late VALUES
+                        ('2024-01-30T12:00:00.000000Z', 1),
+                        ('2024-01-30T18:00:00.000000Z', 2),
+                        ('2024-01-31T00:00:00.000000Z', 3),
+                        ('2024-01-31T06:00:00.000000Z', 4)
+                    """);
+            assertQuery("SELECT * FROM (SELECT dateadd('M', 1, ts) x, i, 0 k FROM late) LATEST ON x PARTITION BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("order_by_timestamp: false")
+                    .returns("""
+                            x\ti\tk
+                            2024-02-29T18:00:00.000000Z\t2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitNanosIsNotDesignatedTimestamp() throws Exception {
+        // The nanosecond twin of the micros tests: the nanosecond driver clamps the day of month the
+        // same way.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE jan_ns AS (
+                        SELECT x::INT i, timestamp_sequence('2024-01-29', 21_600_000_000)::TIMESTAMP_NS ts
+                        FROM long_sequence(16)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            assertQuery("SELECT dateadd('M', 1, ts) x FROM jan_ns LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-02-29T00:00:00.000000000Z
+                            """);
+            assertDateaddCalendarUnitOrderBySorts(
+                    "dateadd('M', 1, ts)",
+                    "jan_ns",
+                    """
+                            x
+                            2024-02-29T00:00:00.000000000Z
+                            2024-02-29T00:00:00.000000000Z
+                            2024-02-29T00:00:00.000000000Z
+                            2024-02-29T06:00:00.000000000Z
+                            2024-02-29T06:00:00.000000000Z
+                            2024-02-29T06:00:00.000000000Z
+                            2024-02-29T12:00:00.000000000Z
+                            2024-02-29T12:00:00.000000000Z
+                            2024-02-29T12:00:00.000000000Z
+                            2024-02-29T18:00:00.000000000Z
+                            2024-02-29T18:00:00.000000000Z
+                            2024-02-29T18:00:00.000000000Z
+                            2024-03-01T00:00:00.000000000Z
+                            2024-03-01T06:00:00.000000000Z
+                            2024-03-01T12:00:00.000000000Z
+                            2024-03-01T18:00:00.000000000Z
+                            """
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT x, count() FROM (SELECT dateadd('M', 1, ts) x FROM jan_ns) SAMPLE BY 12h",
+                    0,
+                    NO_DESIGNATED_TIMESTAMP_ERROR
+            );
+            assertDateaddCalendarUnitSampleByOverSortedSubQuery(
+                    "dateadd('M', 1, ts)",
+                    "jan_ns",
+                    """
+                            x\tcount
+                            2024-02-29T00:00:00.000000000Z\t6
+                            2024-02-29T12:00:00.000000000Z\t6
+                            2024-03-01T00:00:00.000000000Z\t2
+                            2024-03-01T12:00:00.000000000Z\t2
+                            """
+            );
+            // Control: minutes keep the designated timestamp on a nanosecond base too.
+            assertQuery("SELECT dateadd('m', 1, ts) x FROM jan_ns LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-01-29T00:01:00.000000000Z
+                            2024-01-29T06:01:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitOrderBySorts() throws Exception {
+        // ORDER BY over a month or year dateadd() projection has to sort: the rows come out of the
+        // projection in the order of ts, which is not the order of the shifted value.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            assertDateaddCalendarUnitOrderBySorts("dateadd('M', 1, ts)", "jan", JAN_PLUS_ONE_MONTH_ORDERED);
+            // a negative stride clamps too: March 29, 30 and 31 minus one month land on February 29
+            assertDateaddCalendarUnitOrderBySorts(
+                    "dateadd('M', -1, ts)",
+                    "mar",
+                    """
+                            x
+                            2024-02-28T00:00:00.000000Z
+                            2024-02-28T06:00:00.000000Z
+                            2024-02-28T12:00:00.000000Z
+                            2024-02-28T18:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T06:00:00.000000Z
+                            2024-02-29T06:00:00.000000Z
+                            2024-02-29T06:00:00.000000Z
+                            2024-02-29T12:00:00.000000Z
+                            2024-02-29T12:00:00.000000Z
+                            2024-02-29T12:00:00.000000Z
+                            2024-02-29T18:00:00.000000Z
+                            2024-02-29T18:00:00.000000Z
+                            2024-02-29T18:00:00.000000Z
+                            2024-03-01T00:00:00.000000Z
+                            2024-03-01T06:00:00.000000Z
+                            2024-03-01T12:00:00.000000Z
+                            2024-03-01T18:00:00.000000Z
+                            """
+            );
+            // February 28 and 29 plus one year both land on February 28
+            assertDateaddCalendarUnitOrderBySorts(
+                    "dateadd('y', 1, ts)",
+                    "feb",
+                    """
+                            x
+                            2025-02-28T00:00:00.000000Z
+                            2025-02-28T00:00:00.000000Z
+                            2025-02-28T06:00:00.000000Z
+                            2025-02-28T06:00:00.000000Z
+                            2025-02-28T12:00:00.000000Z
+                            2025-02-28T12:00:00.000000Z
+                            2025-02-28T18:00:00.000000Z
+                            2025-02-28T18:00:00.000000Z
+                            2025-03-01T00:00:00.000000Z
+                            2025-03-01T06:00:00.000000Z
+                            2025-03-01T12:00:00.000000Z
+                            2025-03-01T18:00:00.000000Z
+                            """
+            );
+            assertDateaddCalendarUnitOrderBySorts(
+                    "dateadd('y', -1, ts)",
+                    "feb",
+                    """
+                            x
+                            2023-02-28T00:00:00.000000Z
+                            2023-02-28T00:00:00.000000Z
+                            2023-02-28T06:00:00.000000Z
+                            2023-02-28T06:00:00.000000Z
+                            2023-02-28T12:00:00.000000Z
+                            2023-02-28T12:00:00.000000Z
+                            2023-02-28T18:00:00.000000Z
+                            2023-02-28T18:00:00.000000Z
+                            2023-03-01T00:00:00.000000Z
+                            2023-03-01T06:00:00.000000Z
+                            2023-03-01T12:00:00.000000Z
+                            2023-03-01T18:00:00.000000Z
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitOverNullTimestampIsNotDesignatedTimestamp() throws Exception {
+        // A table cannot store NULL in its designated timestamp, but a timestamp(ts) clause can
+        // designate a column that holds one. dateadd() maps NULL to NULL, which sorts first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nulls (ts TIMESTAMP, i INT)");
+            execute("""
+                    INSERT INTO nulls VALUES
+                        (NULL, 1),
+                        ('2024-01-30T06:00:00.000000Z', 2),
+                        ('2024-01-31T00:00:00.000000Z', 3),
+                        ('2024-02-01T00:00:00.000000Z', 4)
+                    """);
+            assertQuery("SELECT dateadd('M', 1, ts) x, i FROM (nulls TIMESTAMP(ts))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ti
+                            \t1
+                            2024-02-29T06:00:00.000000Z\t2
+                            2024-02-29T00:00:00.000000Z\t3
+                            2024-03-01T00:00:00.000000Z\t4
+                            """);
+            assertQuery("SELECT x, i FROM (SELECT dateadd('M', 1, ts) x, i FROM (nulls TIMESTAMP(ts))) ORDER BY x")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .withPlanContaining("Encode sort light", "keys: [x]")
+                    .returns("""
+                            x\ti
+                            \t1
+                            2024-02-29T00:00:00.000000Z\t3
+                            2024-02-29T06:00:00.000000Z\t2
+                            2024-03-01T00:00:00.000000Z\t4
+                            """);
+
+            // Controls: a predicate on the projection drops the NULL row, and a fixed-duration unit
+            // keeps the designated timestamp over the same rows.
+            assertQuery("SELECT i FROM (SELECT dateadd('M', 1, ts) x, i FROM (nulls TIMESTAMP(ts))) WHERE x <= '2024-02-29T06:00:00'")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            2
+                            3
+                            """);
+            assertQuery("SELECT dateadd('d', 1, ts) x, i FROM (nulls TIMESTAMP(ts))")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x\ti
+                            \t1
+                            2024-01-31T06:00:00.000000Z\t2
+                            2024-02-01T00:00:00.000000Z\t3
+                            2024-02-02T00:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitPushdownMatchesMaterializedProjection() throws Exception {
+        // Control for the calendar-unit gate. The code generator drops the designated timestamp of a
+        // month or year dateadd() projection, yet the optimiser keeps pushing a predicate on it down
+        // to the table: as an interval wide enough to cover every row the day-of-month clamp folds
+        // onto the bound, with the predicate left behind as a filter. Each result must match the same
+        // predicate over a materialised copy of the projection, which has no designated timestamp and
+        // so no pushdown.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            // dateadd() expression, table, two bounds 6 hours apart on the clamped day, the clamped day
+            final String[][] projections = {
+                    {"dateadd('M', 1, ts)", "jan", "2024-02-29T06:00:00", "2024-02-29T12:00:00", "2024-02-29"},
+                    {"dateadd('M', -1, ts)", "mar", "2024-02-29T06:00:00", "2024-02-29T12:00:00", "2024-02-29"},
+                    {"dateadd('y', 1, ts)", "feb", "2025-02-28T06:00:00", "2025-02-28T12:00:00", "2025-02-28"},
+                    {"dateadd('y', -1, ts)", "feb", "2023-02-28T06:00:00", "2023-02-28T12:00:00", "2023-02-28"},
+            };
+            final StringSink expected = new StringSink();
+            for (int i = 0; i < projections.length; i++) {
+                final String[] p = projections[i];
+                final String copy = "copy" + i;
+                execute("CREATE TABLE " + copy + " (x TIMESTAMP, i INT)");
+                execute("INSERT INTO " + copy + " SELECT " + p[0] + " x, i FROM " + p[1]);
+                final String[] predicates = {
+                        "x < '" + p[2] + "'",
+                        "x <= '" + p[2] + "'",
+                        "x > '" + p[2] + "'",
+                        "x >= '" + p[2] + "'",
+                        "x = '" + p[2] + "'",
+                        "x != '" + p[2] + "'",
+                        "x BETWEEN '" + p[2] + "' AND '" + p[3] + "'",
+                        "x NOT BETWEEN '" + p[2] + "' AND '" + p[3] + "'",
+                        "x > '" + p[2] + "' AND x <= '" + p[3] + "'",
+                        "x IN '" + p[4] + "'",
+                        "x IN ('" + p[2] + "', '" + p[3] + "')",
+                };
+                for (String predicate : predicates) {
+                    expected.clear();
+                    printSql("SELECT i FROM " + copy + " WHERE " + predicate, expected);
+                    assertQuery("SELECT i FROM (SELECT " + p[0] + " x, i FROM " + p[1] + ") WHERE " + predicate)
+                            .noLeakCheck()
+                            .returns(expected.toString());
+                }
+            }
+
+            // An upper bound that falls on the clamped day. A bare shifted interval,
+            // ts < '2024-01-29T06:00:00', would return row 1 alone; rows 5 and 9 are hour 00 of
+            // January 30 and 31, which the clamp folds onto February 29 as well.
+            assertQuery("SELECT i FROM (SELECT dateadd('M', 1, ts) x, i FROM jan) WHERE x < '2024-02-29T06:00:00'")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: dateadd('M',1,ts)<2024-02-29T06:00:00.000000Z")
+                    .returns("""
+                            i
+                            1
+                            5
+                            9
+                            """);
+            // The pushed interval covers the three days the clamp can fold onto the upper bound, and
+            // the filter drops the rows the wider scan lets in.
+            assertQuery("SELECT i FROM (SELECT dateadd('M', 1, ts) x, i FROM jan) WHERE x = '2024-02-29T06:00:00'")
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [i]
+                                Async Filter workers: 1
+                                  filter: 2024-02-29T06:00:00.000000Z=dateadd('M',1,ts)
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: jan
+                                          intervals: [("2024-01-29T06:00:00.000000Z","2024-02-01T06:00:00.000000Z")]
+                            """)
+                    .returns("""
+                            i
+                            2
+                            6
+                            10
+                            """);
+            assertQuery("SELECT i FROM (SELECT dateadd('y', 1, ts) x, i FROM feb) WHERE x >= '2025-02-28T18:00:00'")
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [i]
+                                Async Filter workers: 1
+                                  filter: dateadd('y',1,ts)>=2025-02-28T18:00:00.000000Z
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: feb
+                                          intervals: [("2024-02-28T18:00:00.000000Z","MAX")]
+                            """)
+                    .returns("""
+                            i
+                            4
+                            8
+                            9
+                            10
+                            11
+                            12
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitRejectsTimeSeriesJoinsAndWindowRange() throws Exception {
+        // The time-series joins and a window RANGE frame require rows in designated timestamp order.
+        // A month or year dateadd() projection does not deliver them, so these queries now fail to
+        // compile. They used to run over the out-of-order rows.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            final String noLeftTimestamp = "left side of time series join has no timestamp";
+            for (String[] p : CALENDAR_UNIT_TABLES) {
+                final String table = p[1];
+                final String projection = "(SELECT dateadd('" + p[0] + "', 1, ts) x, i FROM " + table + ")";
+                assertExceptionNoLeakCheck("SELECT a.x, b.ts FROM " + projection + " a ASOF JOIN " + table + " b", 67, noLeftTimestamp);
+                assertExceptionNoLeakCheck("SELECT a.x, b.ts FROM " + projection + " a LT JOIN " + table + " b", 67, noLeftTimestamp);
+                assertExceptionNoLeakCheck("SELECT a.x, b.ts FROM " + projection + " a SPLICE JOIN " + table + " b", 67, noLeftTimestamp);
+                // column pruning drops x from the projection, and the code generator must not restore
+                // it as a hidden timestamp
+                assertExceptionNoLeakCheck("SELECT a.i, b.ts FROM " + projection + " a ASOF JOIN " + table + " b", 67, noLeftTimestamp);
+                assertExceptionNoLeakCheck(
+                        "SELECT a.ts, b.x FROM " + table + " a ASOF JOIN " + projection + " b",
+                        28,
+                        "right side of time series join has no timestamp"
+                );
+                assertExceptionNoLeakCheck(
+                        "SELECT h.offset, count() c FROM " + projection + " a HORIZON JOIN " + table + " b LIST (0s, 1s) AS h",
+                        77,
+                        noLeftTimestamp
+                );
+                assertExceptionNoLeakCheck(
+                        "SELECT a.x, sum(b.i) s FROM " + projection + " a WINDOW JOIN " + table + " b RANGE BETWEEN 1 HOUR PRECEDING AND 1 HOUR FOLLOWING",
+                        73,
+                        noLeftTimestamp
+                );
+                assertExceptionNoLeakCheck(
+                        "SELECT x, sum(i) OVER (ORDER BY x RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW) s FROM " + projection,
+                        32,
+                        "RANGE is supported only for queries ordered by designated timestamp"
+                );
+            }
+
+            // ORDER BY in the sub-query restores the order and the designated timestamp. feb holds a
+            // row at every shifted timestamp, so each left row joins the feb row of its own timestamp.
+            // The first five rows tell the sorted projection from the unsorted one, which runs
+            // 00:00, 06:00, 12:00, 18:00 and 00:00 again: the join would pair that fifth row with
+            // the 18:00 row of feb.
+            assertQuery("SELECT a.x, b.ts FROM (SELECT dateadd('M', 1, ts) x, i FROM jan ORDER BY x) a ASOF JOIN feb b LIMIT 5")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tts
+                            2024-02-29T00:00:00.000000Z\t2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z\t2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z\t2024-02-29T00:00:00.000000Z
+                            2024-02-29T06:00:00.000000Z\t2024-02-29T06:00:00.000000Z
+                            2024-02-29T06:00:00.000000Z\t2024-02-29T06:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitSampleByOverSortedSubQuery() throws Exception {
+        // ORDER BY in the sub-query is the way to run SAMPLE BY over a month or year dateadd()
+        // projection. The optimiser used to drop that ORDER BY as redundant, so SAMPLE BY bucketed
+        // the out-of-order rows anyway.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            assertDateaddCalendarUnitSampleByOverSortedSubQuery(
+                    "dateadd('M', 1, ts)",
+                    "jan",
+                    """
+                            x\tcount
+                            2024-02-29T00:00:00.000000Z\t6
+                            2024-02-29T12:00:00.000000Z\t6
+                            2024-03-01T00:00:00.000000Z\t2
+                            2024-03-01T12:00:00.000000Z\t2
+                            """
+            );
+            assertDateaddCalendarUnitSampleByOverSortedSubQuery(
+                    "dateadd('M', -1, ts)",
+                    "mar",
+                    """
+                            x\tcount
+                            2024-02-28T00:00:00.000000Z\t2
+                            2024-02-28T12:00:00.000000Z\t2
+                            2024-02-29T00:00:00.000000Z\t6
+                            2024-02-29T12:00:00.000000Z\t6
+                            2024-03-01T00:00:00.000000Z\t2
+                            2024-03-01T12:00:00.000000Z\t2
+                            """
+            );
+            assertDateaddCalendarUnitSampleByOverSortedSubQuery(
+                    "dateadd('y', 1, ts)",
+                    "feb",
+                    """
+                            x\tcount
+                            2025-02-28T00:00:00.000000Z\t4
+                            2025-02-28T12:00:00.000000Z\t4
+                            2025-03-01T00:00:00.000000Z\t2
+                            2025-03-01T12:00:00.000000Z\t2
+                            """
+            );
+            assertDateaddCalendarUnitSampleByOverSortedSubQuery(
+                    "dateadd('y', -1, ts)",
+                    "feb",
+                    """
+                            x\tcount
+                            2023-02-28T00:00:00.000000Z\t4
+                            2023-02-28T12:00:00.000000Z\t4
+                            2023-03-01T00:00:00.000000Z\t2
+                            2023-03-01T12:00:00.000000Z\t2
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitSampleByRejectsUnsortedSubQuery() throws Exception {
+        // SAMPLE BY needs rows in designated timestamp order. A month or year dateadd() projection
+        // does not deliver them, so the query fails to compile instead of bucketing them as they come.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            // dateadd() expression, table
+            final String[][] projections = {
+                    {"dateadd('M', 1, ts)", "jan"},
+                    {"dateadd('M', -1, ts)", "mar"},
+                    {"dateadd('y', 1, ts)", "feb"},
+                    {"dateadd('y', -1, ts)", "feb"},
+            };
+            for (String[] p : projections) {
+                assertExceptionNoLeakCheck(
+                        "SELECT x, count() FROM (SELECT " + p[0] + " x FROM " + p[1] + ") SAMPLE BY 12h",
+                        0,
+                        NO_DESIGNATED_TIMESTAMP_ERROR
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitUnionAllIsNotMerged() throws Exception {
+        // ORDER BY over a UNION ALL merges the branches instead of sorting when each branch is already
+        // in order. A month dateadd() projection is not, so the union has to sort.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            final String query = """
+                    SELECT x FROM (
+                        SELECT dateadd('M', 1, ts) x FROM jan
+                        UNION ALL
+                        SELECT dateadd('M', 1, ts) x FROM jan
+                    ) ORDER BY x LIMIT 7
+                    """;
+            assertQuery(query).noLeakCheck().assertsPlanNotContaining("Union All Merge");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T00:00:00.000000Z
+                            2024-02-29T06:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateaddCalendarUnitZeroStrideIsNotDesignatedTimestamp() throws Exception {
+        // A zero stride leaves every timestamp unchanged, so this projection is in order. The code
+        // generator still classifies it by unit alone and drops the designated timestamp: the cost
+        // is a sort, never a wrong result.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            for (String unit : new String[]{"M", "y"}) {
+                final String projection = "SELECT dateadd('" + unit + "', 0, ts) x FROM jan";
+                assertQuery(projection + " LIMIT 2")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x
+                                2024-01-29T00:00:00.000000Z
+                                2024-01-29T06:00:00.000000Z
+                                """);
+                assertQuery("SELECT x FROM (" + projection + ") ORDER BY x LIMIT 2")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .expectSize()
+                        .withPlanContaining("keys: [x]")
+                        .returns("""
+                                x
+                                2024-01-29T00:00:00.000000Z
+                                2024-01-29T06:00:00.000000Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testDateaddFixedDurationUnitKeepsDesignatedTimestamp() throws Exception {
+        // Control for the calendar-unit gate: every unit that adds a fixed duration keeps the
+        // designated timestamp, the elided sort and the exact interval pushdown. The unit is
+        // case-sensitive: 'm' is minutes and stays in order, 'M' is months and does not.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            execute("CREATE TABLE fx (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fx VALUES
+                        ('2024-01-31T10:00:00.000000Z'),
+                        ('2024-01-31T22:00:00.000000Z')
+                    """);
+            // unit, the two rows of fx plus one unit; a nanosecond is below the column's resolution
+            final String[][] units = {
+                    {"n", "2024-01-31T10:00:00.000000Z", "2024-01-31T22:00:00.000000Z"},
+                    {"u", "2024-01-31T10:00:00.000001Z", "2024-01-31T22:00:00.000001Z"},
+                    {"U", "2024-01-31T10:00:00.000001Z", "2024-01-31T22:00:00.000001Z"},
+                    {"T", "2024-01-31T10:00:00.001000Z", "2024-01-31T22:00:00.001000Z"},
+                    {"s", "2024-01-31T10:00:01.000000Z", "2024-01-31T22:00:01.000000Z"},
+                    {"m", "2024-01-31T10:01:00.000000Z", "2024-01-31T22:01:00.000000Z"},
+                    {"h", "2024-01-31T11:00:00.000000Z", "2024-01-31T23:00:00.000000Z"},
+                    {"H", "2024-01-31T11:00:00.000000Z", "2024-01-31T23:00:00.000000Z"},
+                    {"d", "2024-02-01T10:00:00.000000Z", "2024-02-01T22:00:00.000000Z"},
+                    {"w", "2024-02-07T10:00:00.000000Z", "2024-02-07T22:00:00.000000Z"},
+            };
+            for (String[] unit : units) {
+                final String projection = "SELECT dateadd('" + unit[0] + "', 1, ts) x FROM fx";
+                final String expected = "x\n" + unit[1] + '\n' + unit[2] + '\n';
+                assertQuery(projection)
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .expectSize()
+                        .returns(expected);
+                // no sort
+                assertQuery("SELECT x FROM (" + projection + ") ORDER BY x")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .expectSize()
+                        .withPlan("VirtualRecord\n" +
+                                "  functions: [dateadd('" + unit[0] + "',1,ts)]\n" +
+                                "    PageFrame\n" +
+                                "        Row forward scan\n" +
+                                "        Frame forward scan on: fx\n")
+                        .returns(expected);
+                // the predicate becomes an interval and leaves no filter behind
+                assertQuery("SELECT * FROM (" + projection + ") WHERE x >= '" + unit[2] + "'")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .withPlanContaining("Interval forward scan on: fx")
+                        .withPlanNotContaining("filter")
+                        .returns("x\n" + unit[2] + '\n');
+            }
+
+            // negative and zero strides
+            assertQuery("SELECT dateadd('m', -1, ts) x FROM fx")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-01-31T09:59:00.000000Z
+                            2024-01-31T21:59:00.000000Z
+                            """);
+            assertQuery("SELECT dateadd('d', 0, ts) x FROM fx")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-01-31T10:00:00.000000Z
+                            2024-01-31T22:00:00.000000Z
+                            """);
+            // a chain of fixed-duration units
+            assertQuery("SELECT dateadd('m', 1, x) y FROM (SELECT dateadd('d', -1, ts) x FROM fx)")
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .expectSize()
+                    .returns("""
+                            y
+                            2024-01-30T10:01:00.000000Z
+                            2024-01-30T22:01:00.000000Z
+                            """);
+
+            // minutes over the month-end rows that months reorder
+            assertQuery("SELECT x, count() FROM (SELECT dateadd('m', 1, ts) x FROM jan) SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .noRandomAccess()
+                    .returns("""
+                            x\tcount
+                            2024-01-29T00:00:00.000000Z\t4
+                            2024-01-30T00:00:00.000000Z\t4
+                            2024-01-31T00:00:00.000000Z\t4
+                            2024-02-01T00:00:00.000000Z\t4
+                            """);
+            execute("CREATE TABLE next_minute AS (SELECT dateadd('m', 1, ts) x FROM fx)");
+            assertQuery("SELECT x FROM next_minute")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-01-31T10:01:00.000000Z
+                            2024-01-31T22:01:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateaddNonConstantUnitOrStrideIsNotDesignatedTimestamp() throws Exception {
+        // Control for the calendar-unit gate: the optimiser tags a dateadd() only when its unit and
+        // stride are constants, so these projections have no designated timestamp, whatever the unit.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            final String[] projections = {
+                    "SELECT dateadd(u, 1, ts) x FROM (SELECT ts, 'h'::CHAR u FROM jan)",
+                    "SELECT dateadd('h'::CHAR, 1, ts) x FROM jan",
+                    "SELECT dateadd('h', i, ts) x FROM jan",
+            };
+            for (String projection : projections) {
+                assertQuery(projection + " LIMIT 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x
+                                2024-01-29T01:00:00.000000Z
+                                """);
+            }
+            assertQuery("SELECT dateadd('M', i, ts) x FROM jan LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-02-29T00:00:00.000000Z
+                            """);
+            // The optimiser does tag a constant unit of any shape, so NULL, an empty unit and a
+            // two-character unit reach the code generator's unit check, which sees a token that is
+            // not a quoted single character. The function parser then rejects each of them.
+            assertExceptionNoLeakCheck("SELECT dateadd(NULL, 1, ts) x FROM jan", 15, "invalid time period");
+            assertExceptionNoLeakCheck("SELECT dateadd('', 1, ts) x FROM jan", 15, "invalid time period");
+            assertExceptionNoLeakCheck(
+                    "SELECT dateadd('ms', 1, ts) x FROM jan",
+                    7,
+                    "there is no matching function `dateadd` with the argument types: (STRING, INT, TIMESTAMP)"
+            );
+        });
+    }
+
+    @Test
+    public void testDateaddOverReorderingSubQueryIsNotDesignatedTimestamp() throws Exception {
+        // The optimiser matches a dateadd() argument by name against the table's designated timestamp,
+        // past any GROUP BY, DISTINCT, UNION, ORDER BY, join or rename in between. The projection used to
+        // trust that match and make the dateadd() column its designated timestamp, so ORDER BY skipped
+        // the sort and SAMPLE BY bucketed unordered rows without an error.
+        assertMemoryLeak(() -> {
+            // ts2 holds the same values as ts in reverse order
+            execute("""
+                    CREATE TABLE trades AS (
+                        SELECT ('S' || (x % 5))::SYMBOL sym, (100 + (x % 7))::DOUBLE price,
+                               (1_704_067_200_000_000 + (2_000 - x) * 1_000_000)::TIMESTAMP ts2,
+                               timestamp_sequence('2024-01-01', 1_000_000) ts
+                        FROM long_sequence(2_000)
+                    ) TIMESTAMP(ts) PARTITION BY HOUR
+                    """);
+            execute("""
+                    CREATE TABLE marks AS (
+                        SELECT ('S' || (x % 5))::SYMBOL sym, timestamp_sequence('2024-01-01', 60_000_000) ts
+                        FROM long_sequence(5)
+                    ) TIMESTAMP(ts)
+                    """);
+
+            final String expectedHead = """
+                    x
+                    2024-01-01T00:00:01.000000Z
+                    2024-01-01T00:00:02.000000Z
+                    2024-01-01T00:00:03.000000Z
+                    """;
+            final String expectedBuckets = """
+                    x\tcount
+                    2024-01-01T00:00:00.000000Z\t599
+                    2024-01-01T00:10:00.000000Z\t600
+                    2024-01-01T00:20:00.000000Z\t600
+                    2024-01-01T00:30:00.000000Z\t201
+                    """;
+            assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery(
+                    "SELECT DISTINCT ts, price FROM trades",
+                    expectedHead,
+                    expectedBuckets,
+                    0,
+                    "TIMESTAMP column is required but not provided"
+            );
+            assertDateaddOverUnorderedSubQuery("SELECT ts, price FROM trades ORDER BY price", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT ts2 ts, price FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery(
+                    "SELECT ts, sym FROM trades UNION ALL SELECT ts, sym FROM trades WHERE ts >= '2024-01-01T00:30'",
+                    expectedHead,
+                    """
+                            x\tcount
+                            2024-01-01T00:00:00.000000Z\t599
+                            2024-01-01T00:10:00.000000Z\t600
+                            2024-01-01T00:20:00.000000Z\t600
+                            2024-01-01T00:30:00.000000Z\t401
+                            """,
+                    0,
+                    NO_DESIGNATED_TIMESTAMP_ERROR
+            );
+            // the join output follows trades, so the slave timestamp cycles through the five marks
+            assertDateaddOverUnorderedSubQuery(
+                    "SELECT m.ts, t.price FROM trades t JOIN marks m ON (sym)",
+                    """
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:01.000000Z
+                            """,
+                    """
+                            x\tcount
+                            2024-01-01T00:00:00.000000Z\t2000
+                            """,
+                    59,
+                    "TIMESTAMP column is required but not provided"
+            );
+            assertDateaddOverUnorderedSubQuery(
+                    "SELECT sym, max(ts) ts FROM trades GROUP BY sym",
+                    """
+                            x
+                            2024-01-01T00:33:16.000000Z
+                            2024-01-01T00:33:17.000000Z
+                            2024-01-01T00:33:18.000000Z
+                            """,
+                    """
+                            x\tcount
+                            2024-01-01T00:30:00.000000Z\t5
+                            """,
+                    0,
+                    NO_DESIGNATED_TIMESTAMP_ERROR
+            );
+
+            // Column pruning drops x from the dateadd() projection, and the code generator restores a
+            // pruned dateadd() timestamp as a hidden column for an operator that requires one. The
+            // ASOF JOIN must not get it back over the GROUP BY output.
+            assertExceptionNoLeakCheck(
+                    """
+                            WITH t AS (
+                                SELECT dateadd('s', -30, ts) AS x, sym
+                                FROM (SELECT ts, sym, count() c FROM trades GROUP BY ts, sym)
+                            )
+                            SELECT t.sym, m.ts mts FROM t ASOF JOIN marks m ON (sym) LIMIT 3
+                            """,
+                    153,
+                    "left side of time series join has no timestamp"
+            );
+
+            // An outer ORDER BY drops the ORDER BY that SAMPLE BY adds to its own sub-query, so the
+            // rows that reach the projection are no longer in timestamp order.
+            assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) ORDER BY x LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:03.000000Z
+                            2024-01-01T00:00:05.000000Z
+                            """);
+
+            // Controls: a sub-query that keeps the row order still gives dateadd() a designated
+            // timestamp, and a bare timestamp over a GROUP BY still sorts.
+            assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns("""
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:03.000000Z
+                            2024-01-01T00:00:05.000000Z
+                            """);
+            assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s)) SAMPLE BY 10m")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .noRandomAccess()
+                    .returns("""
+                            x\tcount
+                            2024-01-01T00:00:00.000000Z\t300
+                            2024-01-01T00:10:00.000000Z\t300
+                            2024-01-01T00:20:00.000000Z\t300
+                            2024-01-01T00:30:00.000000Z\t100
+                            """);
+            assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, price FROM trades) LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns(expectedHead);
+            assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (SELECT ts, price FROM trades)) SAMPLE BY 10m")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .noRandomAccess()
+                    .returns(expectedBuckets);
+            assertQuery("SELECT dateadd('s', 1, x) y FROM (SELECT dateadd('s', 1, ts) x FROM trades) LIMIT 1")
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .expectSize()
+                    .returns("""
+                            y
+                            2024-01-01T00:00:02.000000Z
+                            """);
+            assertQuery("SELECT ts x FROM (SELECT ts, avg(price) a FROM trades) ORDER BY x LIMIT 1")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-01-01T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -377,6 +1498,49 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHandWrittenAndOffsetOverCalendarUnitProjectionIsRejected() throws Exception {
+        // generateFilter0() rebuilds a hand-written and_offset only over the designated timestamp of
+        // the factory it filters. A LIMIT on the dateadd() projection keeps the wrapper above that
+        // projection, and a month or year projection has no designated timestamp, so the wrapper
+        // reaches the function compiler, which rejects it as an unknown function. The code generator
+        // used to rebuild it into dateadd('d', -1, y), the explicit spelling below. and_offset is an
+        // internal pseudo-function, so the rejection is the one that
+        // testHandwrittenAndOffsetOverNonTimestampIsRejected pins for a non-timestamp column.
+        assertMemoryLeak(() -> {
+            createMonthEndTable();
+            for (String unit : new String[]{"M", "y"}) {
+                assertExceptionNoLeakCheck(
+                        "SELECT * FROM (SELECT dateadd('" + unit + "', 1, ts) y, v FROM tab LIMIT 10) WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)",
+                        72,
+                        "unknown function name: and_offset(BOOLEAN,CHAR,INT)"
+                );
+            }
+
+            // the explicit dateadd() spelling of the same predicate
+            assertQuery("SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM tab LIMIT 10) WHERE dateadd('d', -1, y) > '2024-03-30T00:00:00'")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,y)")
+                    .returns("""
+                            y\tv
+                            2024-04-01T00:00:00.000000Z\t3
+                            2024-04-30T00:00:00.000000Z\t4
+                            2024-04-30T00:00:00.000000Z\t5
+                            """);
+
+            // Control: a fixed-duration projection keeps the designated timestamp, so the code
+            // generator still rebuilds the hand-written wrapper over it.
+            assertQuery("SELECT * FROM (SELECT dateadd('h', 1, ts) y, v FROM tab LIMIT 10) WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)")
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .withPlanContaining("Filter filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,y)")
+                    .returns("""
+                            y\tv
+                            2024-03-31T01:00:00.000000Z\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testHandWrittenAndOffsetOverNonTimestampPredicateDoesNotDropIt() throws Exception {
         // and_offset is an internal pseudo-function with no FunctionFactory, but intrinsicOps
         // dispatches it on its token alone, so a hand-written call reached analyzeAndOffset
@@ -412,6 +1576,62 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM (SELECT dateadd('h', -1, ts) tt, s FROM ao) WHERE tt > '2020-01-01T12:00:00.000000Z'")
                     .timestamp("tt")
                     .returns("tt\ts\n2020-01-01T23:00:00.000000Z\tb\n");
+        });
+    }
+
+    @Test
+    public void testHandWrittenAndOffsetStrandedAboveLimitMatchesTableScan() throws Exception {
+        // isStaticTimestampPredicate() admits a hand-written and_offset, so SqlOptimiser wraps
+        // and_offset(y > ..., 'd', 1) over the dateadd() column y in a wrapper of its own and pushes
+        // the pair down. The LIMIT strands both wrappers above the table scan. generateFilter0()
+        // rebuilds the inner, hand-written wrapper before the optimiser's outer one, so the 'M' shift
+        // lands on ts itself: dateadd('d',-1,dateadd('M',1,ts)). Interval extraction builds the same
+        // filter without the LIMIT, and the explicit dateadd() spelling matches it. Month arithmetic
+        // does not commute with day arithmetic at month ends: the reversed nesting,
+        // dateadd('M',1,dateadd('d',-1,ts)), maps 2024-03-01 onto 2024-03-29 instead of 2024-03-31
+        // and drops that row.
+        assertMemoryLeak(() -> {
+            createMonthEndTable();
+            final String expected = """
+                    y\tv
+                    2024-04-01T00:00:00.000000Z\t3
+                    2024-04-30T00:00:00.000000Z\t4
+                    2024-04-30T00:00:00.000000Z\t5
+                    """;
+
+            // stranded above the LIMIT
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM (SELECT ts, v FROM tab LIMIT 10))
+                    WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('M',1,ts),v]
+                                Filter filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,dateadd('M',1,ts))
+                                    Limit value: 10 skip-rows: 0 take-rows: 5
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                            """)
+                    .returns(expected);
+
+            // the same hand-written call on the table scan goes through interval extraction
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM tab)
+                    WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,dateadd('M',1,ts))")
+                    .returns(expected);
+
+            // the explicit dateadd() spelling of the same predicate
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM (SELECT ts, v FROM tab LIMIT 10))
+                    WHERE dateadd('d', -1, y) > '2024-03-30T00:00:00'
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -792,7 +2012,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // testMonthOffsetPushdownKeepsDayClampedRows.
             assertQuery(query)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .withPlan("""
                             VirtualRecord
                               functions: [dateadd('M',-1,timestamp),price]
@@ -833,7 +2052,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE tt >= '2022-03-31T00:00:00.000000Z'
                     """)
                     .noLeakCheck()
-                    .timestamp("tt")
                     .withPlan("""
                             VirtualRecord
                               functions: [dateadd('M',-1,ts)]
@@ -875,7 +2093,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE tt <= '2022-02-28T00:00:00.000000Z'
                     """)
                     .noLeakCheck()
-                    .timestamp("tt")
                     .returns("""
                             tt
                             2022-02-28T00:00:00.000000Z
@@ -910,7 +2127,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE tt <= '2022-02-28T00:00:00.000000000Z'
                     """)
                     .noLeakCheck()
-                    .timestamp("tt")
                     .returns("""
                             tt
                             2022-02-28T00:00:00.000000000Z
@@ -944,7 +2160,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE tt <= '2022-02-28T00:00:00.000000Z'
                     """)
                     .noLeakCheck()
-                    .timestamp("tt")
                     .returns("""
                             tt
                             2022-02-28T00:00:00.000000Z
@@ -1040,7 +2255,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE tt != '2021-12-01T10:00:00.000000Z'
                     """)
                     .noLeakCheck()
-                    .timestamp("tt")
                     .returns("""
                             tt\tprice
                             2022-05-01T10:00:00.000000Z\t2.0
@@ -2530,7 +3744,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // finds. A model that never reaches interval extraction - here a sub-query carrying a
         // LIMIT - handed the wrapper straight to the function compiler, which failed with
         // "unknown function name: and_offset(BOOLEAN,CHAR,INT)", leaking an internal name to the
-        // user. generateFilter0 now rebuilds any stranded wrapper into its dateadd residual.
+        // user. generateFilter0 now rebuilds a stranded wrapper into its dateadd residual before it
+        // compiles the filter.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2574,6 +3789,548 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrandedOffsetPredicateBehindLimitOrOuterJoin() throws Exception {
+        // The pushdown of an and_offset wrapper can stop above a table scan even when the column stays
+        // a plain column all the way down: a LIMIT blocks it, a LEFT JOIN keeps a predicate on the slave
+        // after the join, and a projection over a table function has no table scan below it. There the
+        // wrapper reached the function compiler and failed with "unknown function name: and_offset". It
+        // now becomes a dateadd() filter where the pushdown stops.
+        assertMemoryLeak(() -> {
+            createTradesWithReversedTimestamp();
+            execute("""
+                    CREATE TABLE marks AS (
+                        SELECT ('S' || x)::SYMBOL sym, timestamp_sequence('2024-01-01T00:01', 60_000_000) ts
+                        FROM long_sequence(2)
+                    ) TIMESTAMP(ts)
+                    """);
+
+            // the GROUP BY output has no designated timestamp; generateFilter0() still rebuilds the
+            // optimiser's wrapper, over the column its predicate names
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT ts, sym, count() c FROM trades GROUP BY ts, sym LIMIT 100)
+                    )
+                    WHERE x < '2024-01-01T00:00:25'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlan("""
+                            Encode sort light
+                              keys: [x]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:25.000000Z
+                                        Limit value: 100 skip-rows-max: 0 take-rows-max: 100
+                                            Async Group By workers: 1
+                                              keys: [ts,sym]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:11.000000Z\tS2
+                            2024-01-01T00:00:21.000000Z\tS0
+                            """);
+
+            // pushed into the marks scan, the predicate would keep the trades that match no mark
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT m.ts, t.sym FROM trades t LEFT JOIN marks m ON (sym))
+                    )
+                    WHERE x < '2024-01-01T00:01:30'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                SelectedRecord
+                                    Filter filter: dateadd('s',1,m.ts)<2024-01-01T00:01:30.000000Z
+                                        Hash Left Outer Join Light
+                                          condition: m.sym=t.sym
+                                          symbolKeyJoin: true
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: marks
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM ((SELECT (1_704_067_200_000_000 + (x - 1) * 10_000_000)::TIMESTAMP ts FROM long_sequence(20)) TIMESTAMP(ts))
+                    )
+                    WHERE x < '2024-01-01T00:00:25'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns("""
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:11.000000Z
+                            2024-01-01T00:00:21.000000Z
+                            """);
+
+            // control: the predicate still reaches the slave scan of an inner join as an interval
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT m.ts, t.sym FROM trades t JOIN marks m ON (sym))
+                    )
+                    WHERE x < '2024-01-01T00:01:30'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: m.sym=t.sym
+                                      symbolKeyJoin: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: marks
+                                                  intervals: [("MIN","2024-01-01T00:01:28.999999Z")]
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            """);
+
+            // The pushdown clones the wrapper into every UNION branch. In the second branch an outer
+            // join keeps it on the slave after the join, and only the optimiser's pass over the union
+            // model rebuilds it there. The first branch still gets the shifted interval.
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (id INT, ts2 TIMESTAMP) TIMESTAMP(ts2) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                        (1, '2024-01-01T00:00:00'),
+                        (2, '2024-01-01T01:00:00'),
+                        (3, '2024-01-01T02:00:00')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                        (1, '2024-01-01T00:30:00'),
+                        (3, '2024-01-01T02:30:00')
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', 1, ts) x, id
+                        FROM (SELECT id, ts FROM t1 UNION ALL SELECT t1.id, t2.ts2 ts FROM t1 LEFT JOIN t2 ON (id))
+                    )
+                    WHERE x > '2024-01-01T02:00:00'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('h',1,ts),id]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t1
+                                          intervals: [("2024-01-01T01:00:00.000001Z","MAX")]
+                                    SelectedRecord
+                                        Filter filter: 2024-01-01T02:00:00.000000Z<dateadd('h',1,t2.ts2)
+                                            Hash Left Outer Join Light
+                                              condition: t2.id=t1.id
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            x\tid
+                            2024-01-01T03:00:00.000000Z\t3
+                            2024-01-01T03:30:00.000000Z\t3
+                            """);
+
+            // an ASOF JOIN keeps the predicate on the slave after the join the same way; the 00:30
+            // slave row passes only through the shifted bound, and the unmatched row fails it
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', 1, ts) x, id
+                        FROM (SELECT id, ts FROM t1 UNION ALL SELECT t1.id, t2.ts2 ts FROM t1 ASOF JOIN t2)
+                    )
+                    WHERE x > '2024-01-01T01:00:00'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('h',1,ts),id]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t1
+                                          intervals: [("2024-01-01T00:00:00.000001Z","MAX")]
+                                    SelectedRecord
+                                        Filter filter: 2024-01-01T01:00:00.000000Z<dateadd('h',1,t2.ts2)
+                                            AsOf Join Fast
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            x\tid
+                            2024-01-01T02:00:00.000000Z\t2
+                            2024-01-01T03:00:00.000000Z\t3
+                            2024-01-01T01:30:00.000000Z\t2
+                            2024-01-01T01:30:00.000000Z\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testStrandedOffsetPredicateOverAggregateTimestamp() throws Exception {
+        // The optimiser matches the dateadd() argument with the table's designated timestamp by name,
+        // so it wrapped x < ... in and_offset and pushed it into a sub-query where ts is an aggregate or
+        // a SAMPLE BY bucket. The wrapper stayed above the GROUP BY and failed to compile with
+        // "unknown function name: and_offset(BOOLEAN,CHAR,INT)". It now becomes a dateadd() filter over
+        // the GROUP BY output. Pushing the shifted bound into the table scan instead would change the
+        // aggregates. The one-sided bounds below make it change the rows too. The BETWEEN window
+        // would return the same rows either way, so its exact plan guards it.
+        assertMemoryLeak(() -> {
+            createTradesWithReversedTimestamp();
+
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym))
+                    WHERE x < '2024-01-01T00:03:05'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [sym]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:03:05.000000Z
+                                        GroupBy vectorized: true workers: 1
+                                          keys: [sym]
+                                          values: [max_designated(ts)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:02:51.000000Z\tS0
+                            2024-01-01T00:03:01.000000Z\tS1
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, first(ts) ts FROM trades GROUP BY sym))
+                    WHERE x > '2024-01-01T00:00:15'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:21.000000Z\tS0
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, last(ts) ts FROM trades GROUP BY sym))
+                    WHERE x < '2024-01-01T00:03:05'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:02:51.000000Z\tS0
+                            2024-01-01T00:03:01.000000Z\tS1
+                            """);
+            // an expression over the column still gets wrapped
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym))
+                    WHERE x + 0 < '2024-01-01T00:03:05'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:02:51.000000Z\tS0
+                            2024-01-01T00:03:01.000000Z\tS1
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym))
+                    WHERE x BETWEEN '2024-01-01T00:02:55' AND '2024-01-01T00:03:15'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [sym]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Filter filter: dateadd('s',1,ts) between 1704067375000000 and 1704067395000000
+                                        GroupBy vectorized: true workers: 1
+                                          keys: [sym]
+                                          values: [max_designated(ts)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:03:01.000000Z\tS1
+                            2024-01-01T00:03:11.000000Z\tS2
+                            """);
+            // two chained dateadd() projections wrap the predicate twice
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT dateadd('m', 1, ts) ts, sym FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym))
+                    )
+                    WHERE x < '2024-01-01T00:04:05'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [sym]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    VirtualRecord
+                                      functions: [dateadd('m',1,ts),sym]
+                                        Filter filter: dateadd('s',1,dateadd('m',1,ts))<2024-01-01T00:04:05.000000Z
+                                            GroupBy vectorized: true workers: 1
+                                              keys: [sym]
+                                              values: [max_designated(ts)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:03:51.000000Z\tS0
+                            2024-01-01T00:04:01.000000Z\tS1
+                            """);
+            // a pushed-down bound would cut the 00:01 bucket to three rows
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, c FROM (SELECT ts, count() c FROM trades SAMPLE BY 1m))
+                    WHERE x < '2024-01-01T00:01:30'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),c]
+                                Encode sort light
+                                  keys: [ts]
+                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:01:30.000000Z
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts)]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tc
+                            2024-01-01T00:00:01.000000Z\t6
+                            2024-01-01T00:01:01.000000Z\t6
+                            """);
+
+            // a hand-written and_offset over the same GROUP BY output is still rejected
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym) WHERE and_offset(ts < '2024-01-01T00:03:05', 's', 1)",
+                    70,
+                    "unknown function name: and_offset(BOOLEAN,CHAR,INT)"
+            );
+
+            // control: a GROUP BY key still takes the shifted interval
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT ts, sym, count() c FROM trades GROUP BY ts, sym))
+                    WHERE x < '2024-01-01T00:00:25'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("x")
+                    .withPlan("""
+                            Encode sort light
+                              keys: [x]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Async Group By workers: 1
+                                      keys: [ts,sym]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:11.000000Z\tS2
+                            2024-01-01T00:00:21.000000Z\tS0
+                            """);
+        });
+    }
+
+    @Test
+    public void testStrandedOffsetPredicateOverRenamedTimestamp() throws Exception {
+        // When the sub-query's ts is another column (ts2 AS ts) or an expression, the optimiser still
+        // wrapped x < ... in and_offset. Pushed to the table scan, the wrapper named a column other than
+        // the designated timestamp, and interval extraction rejected it with "unknown function name:
+        // and_offset"; over an expression it stayed above the projection and failed the same way. It
+        // now becomes a dateadd() filter over that column.
+        assertMemoryLeak(() -> {
+            createTradesWithReversedTimestamp();
+
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT ts2 ts, sym FROM trades))
+                    WHERE x < '2024-01-01T00:00:25'
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                SelectedRecord
+                                    Async Filter workers: 1
+                                      filter: dateadd('s',1,ts2)<2024-01-01T00:00:25.000000Z
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:21.000000Z\tS0
+                            2024-01-01T00:00:11.000000Z\tS1
+                            2024-01-01T00:00:01.000000Z\tS2
+                            """);
+            // an explicit TIMESTAMP(ts_recv) on the table doesn't change the designated timestamp that
+            // interval extraction uses
+            execute("""
+                    CREATE TABLE ticks AS (
+                        SELECT timestamp_sequence('2024-01-01', 10_000_000) ts,
+                               timestamp_sequence('2024-01-01T00:00:05', 10_000_000) ts_recv
+                        FROM long_sequence(20)
+                    ) TIMESTAMP(ts)
+                    """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts_recv) x FROM ticks TIMESTAMP(ts_recv))
+                    WHERE x < '2024-01-01T00:00:25'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts_recv)]
+                                Async Filter workers: 1
+                                  filter: dateadd('s',1,ts_recv)<2024-01-01T00:00:25.000000Z
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: ticks
+                            """)
+                    .returns("""
+                            x
+                            2024-01-01T00:00:06.000000Z
+                            2024-01-01T00:00:16.000000Z
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT timestamp_floor('m', ts) ts, sym FROM trades))
+                    WHERE x < '2024-01-01T00:01:00'
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                Filter filter: dateadd('s',1,ts)<2024-01-01T00:01:00.000000Z
+                                    VirtualRecord
+                                      functions: [timestamp_floor('minute',ts),sym]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:01.000000Z\tS2
+                            2024-01-01T00:00:01.000000Z\tS0
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:01.000000Z\tS2
+                            2024-01-01T00:00:01.000000Z\tS0
+                            """);
+            // each union branch gets its own outcome: an interval over ts, a filter over ts2
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT ts, sym FROM trades UNION ALL SELECT ts2 ts, sym FROM trades)
+                    )
+                    WHERE x < '2024-01-01T00:00:25'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                UnionSymbolCast
+                                  functions: [ts,sym::symbol]
+                                    Union All
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
+                                        SelectedRecord
+                                            Async Filter workers: 1
+                                              filter: dateadd('s',1,ts2)<2024-01-01T00:00:25.000000Z
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:11.000000Z\tS2
+                            2024-01-01T00:00:21.000000Z\tS0
+                            2024-01-01T00:00:21.000000Z\tS0
+                            2024-01-01T00:00:11.000000Z\tS1
+                            2024-01-01T00:00:01.000000Z\tS2
+                            """);
+        });
+    }
+
+    @Test
     public void testTimestampOverflowReturnsEmpty() throws Exception {
         // A bound the optimiser's own inverse-offset arithmetic pushes out of the timestamp range
         // used to fail the query. The user's query is valid, so it must not: the pushdown declines
@@ -2597,7 +4354,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM (" +
                     "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
                     ") WHERE ts > '2022-01-01'")
-                    .timestamp("ts")
                     .returns("ts\tprice\n");
 
             // CONTROL: the mirror direction, where the shift stays in range, still returns its rows.
@@ -2605,7 +4361,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM (" +
                     "SELECT dateadd('y', -1, timestamp) as ts, price FROM trades" +
                     ") WHERE ts > '2020-06-01'")
-                    .timestamp("ts")
                     .returns("""
                             ts\tprice
                             2021-01-01T12:00:00.000000Z\t100.0
@@ -2924,7 +4679,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // for the rows the un-widened bound dropped.
             assertQuery(query)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .withPlan("""
                             VirtualRecord
                               functions: [dateadd('y',-1,timestamp),price]
@@ -2963,7 +4717,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE tt >= '2024-02-29T00:00:00.000000Z'
                     """)
                     .noLeakCheck()
-                    .timestamp("tt")
                     .withPlan("""
                             VirtualRecord
                               functions: [dateadd('y',-1,ts)]
@@ -2979,5 +4732,97 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-03-01T00:00:00.000000Z
                             """);
         });
+    }
+
+    // rows at the month ends where one month added to ts clamps the day of month
+    private static void createMonthEndTable() throws SqlException {
+        execute("CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
+        execute("""
+                INSERT INTO tab VALUES
+                    ('2024-01-31T00:00:00.000000Z', 1),
+                    ('2024-02-29T00:00:00.000000Z', 2),
+                    ('2024-03-01T00:00:00.000000Z', 3),
+                    ('2024-03-30T00:00:00.000000Z', 4),
+                    ('2024-03-31T00:00:00.000000Z', 5)
+                """);
+    }
+
+    // ts runs from 00:00:00 to 00:03:10 in 10s steps; ts2 holds the same values in reverse order
+    private static void createTradesWithReversedTimestamp() throws SqlException {
+        execute("""
+                CREATE TABLE trades AS (
+                    SELECT ('S' || (x % 3))::SYMBOL sym,
+                           (1_704_067_200_000_000 + (20 - x) * 10_000_000)::TIMESTAMP ts2,
+                           timestamp_sequence('2024-01-01', 10_000_000) ts
+                    FROM long_sequence(20)
+                ) TIMESTAMP(ts) PARTITION BY HOUR
+                """);
+    }
+
+    private void assertDateaddCalendarUnitOrderBySorts(String dateadd, String table, String expectedOrdered) throws Exception {
+        assertQuery("SELECT x FROM (SELECT " + dateadd + " x FROM " + table + ") ORDER BY x")
+                .noLeakCheck()
+                .timestamp("x")
+                .expectSize()
+                .withPlanContaining("Encode sort light", "keys: [x]")
+                .returns(expectedOrdered);
+    }
+
+    private void assertDateaddCalendarUnitSampleByOverSortedSubQuery(String dateadd, String table, String expectedBuckets) throws Exception {
+        assertQuery("SELECT x, count() FROM (SELECT " + dateadd + " x FROM " + table + " ORDER BY x) SAMPLE BY 12h")
+                .noLeakCheck()
+                .timestamp("x")
+                .noRandomAccess()
+                .returns(expectedBuckets);
+    }
+
+    private void assertDateaddOverUnorderedSubQuery(
+            String subQuery,
+            String expectedHead,
+            String expectedBuckets,
+            int sampleByErrorPosition,
+            String sampleByError
+    ) throws Exception {
+        // ORDER BY sorts instead of trusting the sub-query's row order
+        assertQuery("SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ") ORDER BY x LIMIT 3")
+                .noLeakCheck()
+                .timestamp("x")
+                .sizeMayVary()
+                .returns(expectedHead);
+        // SAMPLE BY rejects the unordered rows...
+        assertExceptionNoLeakCheck(
+                "SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ")) SAMPLE BY 10m",
+                sampleByErrorPosition,
+                sampleByError
+        );
+        // ...and buckets them once they are sorted
+        assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ") ORDER BY x) SAMPLE BY 10m")
+                .noLeakCheck()
+                .timestamp("x")
+                .noRandomAccess()
+                .returns(expectedBuckets);
+    }
+
+    private void createDayClampTables() throws SqlException {
+        // 6-hourly rows around the three dates where month and year arithmetic clamps the day:
+        // jan covers 2024-01-29..02-01, mar covers 2024-03-28..04-01, feb covers 2024-02-28..03-01
+        execute("""
+                CREATE TABLE jan AS (
+                    SELECT x::INT i, timestamp_sequence('2024-01-29', 21_600_000_000) ts
+                    FROM long_sequence(16)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("""
+                CREATE TABLE mar AS (
+                    SELECT x::INT i, timestamp_sequence('2024-03-28', 21_600_000_000) ts
+                    FROM long_sequence(20)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("""
+                CREATE TABLE feb AS (
+                    SELECT x::INT i, timestamp_sequence('2024-02-28', 21_600_000_000) ts
+                    FROM long_sequence(12)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
     }
 }

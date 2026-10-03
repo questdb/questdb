@@ -124,6 +124,10 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
+        // hasNext() consults the map cursor right after initializeMap() rebuilds the keys,
+        // so drop the rows that the previous execution left unread in it.
+        map.clear();
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
         isMapInitialized = false;
@@ -141,6 +145,8 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     public void toTop() {
         super.toTop();
         map.clear();
+        // drop the rows left unread in the map cursor, as of() does
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
         isMapInitialized = false;

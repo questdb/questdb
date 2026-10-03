@@ -28,7 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -9344,26 +9347,78 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVirtualColumnRejectsNonTimestampModelTimestampIndex() throws Exception {
+    public void testVirtualColumnIgnoresModelTimestampIndexNotOverBaseTimestamp() throws Exception {
+        // The optimizer tags a dateadd() over the base timestamp as the projection's designated
+        // timestamp. Code generation keeps the tag only on such a dateadd(), so a tag on any other
+        // column, set by hand here, is dropped, and a projected base timestamp takes its place.
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES (1.5, '2024-01-01T00:00:00.000000Z')");
+            final String[] queries = {
+                    "SELECT x + 1 AS ts FROM long_sequence(1)",
+                    "SELECT price + 1 AS p, ts FROM trades",
+            };
+            // an empty name makes the assertion check that the factory has no designated timestamp
+            final String[] expectedTimestamps = {"", "ts"};
+            final String[] expectedRows = {
+                    """
+                    ts
+                    2
+                    """,
+                    """
+                    p\tts
+                    2.5\t2024-01-01T00:00:00.000000Z
+                    """,
+            };
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final String query = "SELECT x + 1 AS ts FROM long_sequence(1)";
-                final ExecutionModel executionModel = compiler.generateExecutionModel(query, sqlExecutionContext);
-                Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
-
-                final IQueryModel model = (IQueryModel) executionModel;
-                model.setTimestampColumnIndex(0);
-
-                RecordCursorFactory factory = null;
-                try {
-                    factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
-                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
-                    Assert.assertEquals(9, e.getPosition());
-                } finally {
-                    Misc.free(factory);
+                for (int i = 0; i < queries.length; i++) {
+                    final ExecutionModel executionModel = compiler.generateExecutionModel(queries[i], sqlExecutionContext);
+                    Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
+                    final IQueryModel model = (IQueryModel) executionModel;
+                    Assert.assertEquals(IQueryModel.SELECT_MODEL_VIRTUAL, model.getSelectModelType());
+                    model.setTimestampColumnIndex(0);
+                    // assertFactory() leaves the factory to its caller, so try-with-resources frees it
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
+                        assertFactory(factory)
+                                .withContext(sqlExecutionContext)
+                                .timestamp(expectedTimestamps[i])
+                                .expectSize()
+                                .returns(expectedRows[i]);
+                    }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testVirtualColumnKeepsDateaddTimestampOnlyForFixedDurationUnits() throws Exception {
+        // Months and years clamp the day of month, so a dateadd() over the base timestamp follows the
+        // base row order only for the units that add a fixed duration. The loop takes the units from
+        // the timestamp drivers, so a unit added to getAddMethod() fails here until the code generator
+        // classifies it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE micros (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE nanos (ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            final TimestampDriver[] drivers = {MicrosTimestampDriver.INSTANCE, NanosTimestampDriver.INSTANCE};
+            final String[] tables = {"micros", "nanos"};
+            for (int i = 0; i < tables.length; i++) {
+                int unitCount = 0;
+                for (char unit = 0; unit < 128; unit++) {
+                    if (drivers[i].getAddMethod(unit) == null) {
+                        continue;
+                    }
+                    unitCount++;
+                    final boolean isCalendarUnit = unit == 'M' || unit == 'y';
+                    try (RecordCursorFactory factory = select("SELECT dateadd('" + unit + "', 1, ts) x FROM " + tables[i])) {
+                        Assert.assertEquals(
+                                "unit=" + unit + ", table=" + tables[i],
+                                isCalendarUnit ? -1 : 0,
+                                factory.getMetadata().getTimestampIndex()
+                        );
+                    }
+                }
+                // n, u, U, T, s, m, h, H, d, w, M, y
+                Assert.assertEquals(12, unitCount);
             }
         });
     }

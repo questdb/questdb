@@ -443,6 +443,55 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableInSelectList() throws Exception {
+        // The optimizer used to put the bind variable in a virtual model under the window join model,
+        // which hid the join from the window join model and failed code generation. It now lifts the
+        // bind variable to the projection above the join, as it does for a constant.
+        assertMemoryLeak(() -> {
+            prepareTable();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "x");
+
+            final String windowJoin = "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING");
+            assertQuery("SELECT $1 tag, count() c " + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("functions: [$0::string,c]")
+                    .returns("""
+                            tag\tc
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t1
+                            x\t1
+                            x\t1
+                            x\t1
+                            """);
+            assertQuery("SELECT tag, count() n, sum(c) c FROM (SELECT count() c, $1 tag " + windowJoin + ")")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tn\tc
+                            x\t20\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testCalcSize() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -3994,6 +4043,42 @@ public class WindowJoinTest extends AbstractCairoTest {
                             100.0\t60.0
                             200.0\t100.0
                             """);
+        });
+    }
+
+    @Test
+    public void testNestedWindowFunctionNotAllowed() throws Exception {
+        // A window function nested in a select expression used to skip the WINDOW JOIN window check.
+        // Compilation failed with a NullPointerException or "expected window join model" at position 0,
+        // and next to an aggregate the window function ran as a plain aggregate: sum(p.price) -
+        // sum(p.price) OVER () returned 0.
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            final String windowJoin = " FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING");
+            final String[][] queries = {
+                    {"SELECT t.sym, row_number() OVER () + 1 rn, avg(p.price) a" + windowJoin, "row_number"},
+                    {"SELECT t.sym, (row_number() OVER ())::string rn, avg(p.price) a" + windowJoin, "row_number"},
+                    {"SELECT t.sym, avg(p.price) OVER () + 1 x, avg(p.price) a" + windowJoin, "avg"},
+                    {"SELECT t.sym, max(avg(p.price) OVER ()) x" + windowJoin, "avg"},
+                    {"SELECT t.sym, sum(p.price) - sum(p.price) OVER () x" + windowJoin, "sum(p.price) OVER"},
+                    {"SELECT t.sym, avg(p.price) a, row_number() OVER w + 1 rn" + windowJoin + " WINDOW w AS ()", "row_number"},
+                    {"SELECT t.sym, avg(p.price) a" + windowJoin + " ORDER BY row_number() OVER ()", "row_number"},
+            };
+            for (String[] query : queries) {
+                final String sql = query[0];
+                final int position = sql.indexOf(query[1]);
+                final String message = "WINDOW functions are not allowed in WINDOW JOIN queries";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(position, message);
+
+                final String outerPrefix = "SELECT count() FROM (";
+                assertQuery(outerPrefix + sql + ")")
+                        .noLeakCheck()
+                        .fails(outerPrefix.length() + position, message);
+            }
         });
     }
 

@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
@@ -120,8 +119,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             int @NotNull [] columnSources,
@@ -176,20 +173,13 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                 perWorkerSlaveAsOfJoinSinks.add(new ObjList<>(slaveCount));
             }
             for (int s = 0; s < slaveCount; s++) {
-                if (masterAsOfJoinMapSinkClasses[s] != null) {
-                    ownerMasterAsOfJoinSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    ownerSlaveAsOfJoinSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    for (int w = 0; w < workerCount; w++) {
-                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    }
-                } else {
-                    ownerMasterAsOfJoinSinks.add(null);
-                    ownerSlaveAsOfJoinSinks.add(null);
-                    for (int w = 0; w < workerCount; w++) {
-                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(null);
-                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(null);
-                    }
+                // null sinks for a slave without join keys
+                final HorizonJoinSlaveState slaveState = slaveStates.getQuick(s);
+                ownerMasterAsOfJoinSinks.add(slaveState.newMasterAsOfJoinMapSink());
+                ownerSlaveAsOfJoinSinks.add(slaveState.newSlaveAsOfJoinMapSink());
+                for (int w = 0; w < workerCount; w++) {
+                    perWorkerMasterAsOfJoinSinks.getQuick(w).add(slaveState.newMasterAsOfJoinMapSink());
+                    perWorkerSlaveAsOfJoinSinks.getQuick(w).add(slaveState.newSlaveAsOfJoinMapSink());
                 }
             }
 

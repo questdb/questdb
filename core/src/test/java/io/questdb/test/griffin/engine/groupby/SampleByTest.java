@@ -103,6 +103,52 @@ public class SampleByTest extends AbstractCairoTest {
               FROM long_sequence(480)
             ) timestamp(ts)
             """;
+    // keyedSampleByReuseSql() over createKeyedSampleByReuseTable(), per fill mode
+    private static final String KEYED_SAMPLE_BY_REUSE_FILL_NONE = """
+            sym\tsum
+            a\t1.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\t5.0
+            \t6.0
+            """;
+    private static final String KEYED_SAMPLE_BY_REUSE_FILL_NULL = """
+            sym\tsum
+            a\t1.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\tnull
+            \tnull
+            a\tnull
+            b\t5.0
+            \t6.0
+            """;
+    private static final String KEYED_SAMPLE_BY_REUSE_FILL_PREV = """
+            sym\tsum
+            a\t1.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\t5.0
+            \t6.0
+            """;
+    private static final String KEYED_SAMPLE_BY_REUSE_FILL_VALUE = """
+            sym\tsum
+            a\t1.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\t42.0
+            \t42.0
+            a\t42.0
+            b\t5.0
+            \t6.0
+            """;
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
     private static final String SYS_TELEMETRY_WAL_DDL = "CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
             "created TIMESTAMP, " +
@@ -3867,6 +3913,86 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedSampleByFillNoneLimit() throws Exception {
+        assertKeyedSampleByLimit("", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNonePartialRead() throws Exception {
+        assertKeyedSampleByPartialRead("", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNoneVarcharKeyLimit() throws Exception {
+        assertKeyedSampleByLimit("VARCHAR", "TIMESTAMP", "", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNoneVarcharKeyPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead("VARCHAR", "TIMESTAMP", "", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullLimit() throws Exception {
+        assertKeyedSampleByLimit(" FILL(NULL)", "null", KEYED_SAMPLE_BY_REUSE_FILL_NULL);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullNanosLimit() throws Exception {
+        assertKeyedSampleByLimit("SYMBOL", "TIMESTAMP_NS", " FILL(NULL)", "null", KEYED_SAMPLE_BY_REUSE_FILL_NULL);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullNanosPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead("SYMBOL", "TIMESTAMP_NS", " FILL(NULL)", "null", KEYED_SAMPLE_BY_REUSE_FILL_NULL);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(" FILL(NULL)", "null", KEYED_SAMPLE_BY_REUSE_FILL_NULL);
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevLimit() throws Exception {
+        assertKeyedSampleByLimit(" FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(" FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevStringKeyLimit() throws Exception {
+        assertKeyedSampleByLimit("STRING", "TIMESTAMP", " FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevStringKeyPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead("STRING", "TIMESTAMP", " FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueFirstObservationLimit() throws Exception {
+        assertKeyedSampleByLimit(" FILL(42) ALIGN TO FIRST OBSERVATION", "value", KEYED_SAMPLE_BY_REUSE_FILL_VALUE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueFirstObservationPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(" FILL(42) ALIGN TO FIRST OBSERVATION", "value", KEYED_SAMPLE_BY_REUSE_FILL_VALUE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueLimit() throws Exception {
+        assertKeyedSampleByLimit(" FILL(42)", "value", KEYED_SAMPLE_BY_REUSE_FILL_VALUE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValuePartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(" FILL(42)", "value", KEYED_SAMPLE_BY_REUSE_FILL_VALUE);
+    }
+
+    @Test
     public void testMultiFillCountMismatchPrecedesCapability() throws Exception {
         // When FILL(...) provides more than one value but fewer than the
         // aggregate count, GroupByUtils.assembleGroupByFunctions used to clamp
@@ -5029,6 +5155,72 @@ public class SampleByTest extends AbstractCairoTest {
                         ts\ts\tfirst\tavg\tlast\tmax
                         2022-12-01T00:00:00.000000Z\ts1\t1\t1.5\t2\t2
                         """);
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarNumericTimeZoneAndLimit() throws Exception {
+        // LIMIT rewinds the SAMPLE BY cursor before it reads the first row. toTop() restores the
+        // time zone offset that the first read saves, and nothing recomputes the offset of a numeric
+        // time zone, so the rewind used to replace +05:30 with zero and the buckets fell on UTC
+        // days: one bucket of four rows instead of the two below. A time zone name was not
+        // affected, because the first read derives its offset from the zone rules.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('b', 2.0, '2024-01-01T12:00:00.000000Z'),
+                        ('a', 4.0, '2024-01-01T19:00:00.000000Z'),
+                        ('b', 8.0, '2024-01-01T20:00:00.000000Z')
+                    """);
+            // The sub-query keeps the queries on the SAMPLE BY cursors, one per fill mode, keyed and
+            // not keyed. Both keys have a row in both buckets, so every fill mode returns the same rows.
+            for (String zone : new String[]{"+05:30", "Asia/Kolkata"}) {
+                for (String fill : new String[]{"", " FILL(PREV)", " FILL(NULL)", " FILL(42)"}) {
+                    final String sampleBy = " SAMPLE BY 1d" + fill + " ALIGN TO CALENDAR TIME ZONE '" + zone + "'";
+                    for (String limit : new String[]{"", " LIMIT 10"}) {
+                        assertQuery("SELECT ts, sym, sum(price) FROM (SELECT ts, sym, price FROM trades)" + sampleBy + limit)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .noRandomAccess()
+                                .withPlanContaining("Sample By\n", "keys: [ts,sym]")
+                                .returns("""
+                                        ts\tsym\tsum
+                                        2023-12-31T18:30:00.000000Z\ta\t1.0
+                                        2023-12-31T18:30:00.000000Z\tb\t2.0
+                                        2024-01-01T18:30:00.000000Z\ta\t4.0
+                                        2024-01-01T18:30:00.000000Z\tb\t8.0
+                                        """);
+                        assertQuery("SELECT ts, sum(price) FROM (SELECT ts, price FROM trades)" + sampleBy + limit)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .noRandomAccess()
+                                .withPlanContaining("Sample By\n", "values: [sum(price)]")
+                                .returns("""
+                                        ts\tsum
+                                        2023-12-31T18:30:00.000000Z\t3.0
+                                        2024-01-01T18:30:00.000000Z\t12.0
+                                        """);
+                    }
+                }
+            }
+
+            // WITH OFFSET moves the bucket start to 01:00 local time, which is 19:30 UTC
+            for (String limit : new String[]{"", " LIMIT 10"}) {
+                assertQuery("SELECT ts, sym, sum(price) FROM (SELECT ts, sym, price FROM trades) " +
+                        "SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE '+05:30' WITH OFFSET '01:00'" + limit)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .withPlanContaining("Sample By\n", "keys: [ts,sym]")
+                        .returns("""
+                                ts\tsym\tsum
+                                2023-12-31T19:30:00.000000Z\ta\t5.0
+                                2023-12-31T19:30:00.000000Z\tb\t2.0
+                                2024-01-01T19:30:00.000000Z\tb\t8.0
+                                """);
+            }
+        });
     }
 
     @Test
@@ -17689,6 +17881,22 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    private static void createKeyedSampleByReuseTable(String keyType, String timestampType) throws SqlException {
+        // Three one-hour buckets over the keys 'a', 'b' and NULL. The first bucket holds all three
+        // keys, so reading two rows leaves the NULL key unread; the later buckets have gaps to fill.
+        // A STRING or VARCHAR key puts the map on its variable-size cursor.
+        execute("CREATE TABLE trades (sym " + keyType + ", price DOUBLE, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO trades VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-01T00:10:00.000000Z'),
+                    (NULL, 3.0, '2024-01-01T00:20:00.000000Z'),
+                    ('a', 4.0, '2024-01-01T01:00:00.000000Z'),
+                    ('b', 5.0, '2024-01-01T02:10:00.000000Z'),
+                    (NULL, 6.0, '2024-01-01T02:20:00.000000Z')
+                """);
+    }
+
     @NotNull
     private static CairoConfiguration createMmapFailingConfiguration(int x) {
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -17709,6 +17917,23 @@ public class SampleByTest extends AbstractCairoTest {
                 return ff;
             }
         };
+    }
+
+    private static String keyedSampleByReusePlan(String planFill) {
+        return "Sample By\n" +
+                (planFill != null ? "  fill: " + planFill + "\n" : "") +
+                """
+                          keys: [sym]
+                          values: [sum(price)]
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                        """;
+    }
+
+    private static String keyedSampleByReuseSql(String fill) {
+        return "SELECT sym, sum(price) FROM (SELECT sym, price FROM trades) SAMPLE BY 1h" + fill;
     }
 
     private static String sampleByPushdownPlan(String fill, String align) {
@@ -17743,6 +17968,75 @@ public class SampleByTest extends AbstractCairoTest {
                 "            PageFrame\n" +
                 "                Row forward scan\n" +
                 "                Frame forward scan on: #TABLE#\n";
+    }
+
+    private void assertKeyedSampleByLimit(String fill, String planFill, String expected) throws Exception {
+        assertKeyedSampleByLimit("SYMBOL", "TIMESTAMP", fill, planFill, expected);
+    }
+
+    private void assertKeyedSampleByLimit(
+            String keyType,
+            String timestampType,
+            String fill,
+            String planFill,
+            String expected
+    ) throws Exception {
+        // The sub-query hides the designated timestamp from the SAMPLE BY to GROUP BY rewrite,
+        // so the query runs on the keyed SAMPLE BY cursor that owns the map.
+        assertMemoryLeak(() -> {
+            createKeyedSampleByReuseTable(keyType, timestampType);
+            final String sql = keyedSampleByReuseSql(fill);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan(keyedSampleByReusePlan(planFill))
+                    .returns(expected);
+            // LIMIT stops reading in the middle of the first bucket, so the repeated passes
+            // of the assertion rewind a partially read cursor.
+            assertQuery(sql + " LIMIT 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tsum
+                            a\t1.0
+                            b\t2.0
+                            """);
+        });
+    }
+
+    private void assertKeyedSampleByPartialRead(String fill, String planFill, String expected) throws Exception {
+        assertKeyedSampleByPartialRead("SYMBOL", "TIMESTAMP", fill, planFill, expected);
+    }
+
+    private void assertKeyedSampleByPartialRead(
+            String keyType,
+            String timestampType,
+            String fill,
+            String planFill,
+            String expected
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedSampleByReuseTable(keyType, timestampType);
+            final String sql = keyedSampleByReuseSql(fill);
+            assertQuery(sql).noLeakCheck().assertsPlan(keyedSampleByReusePlan(planFill));
+            try (RecordCursorFactory factory = select(sql)) {
+                // read two of the three keys of the first bucket, then close the cursor
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                }
+                // the next execution must not start with the key that the previous one left unread
+                assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().returns(expected);
+
+                // the same for toTop() on a partially read cursor
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                    cursor.toTop();
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
+            }
+        });
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {
