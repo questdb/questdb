@@ -422,6 +422,28 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSortedSymbolIndexOrderBySymOnePartitionInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("DAY");
+            // no key filter: with a bitmap index this is the SortedSymbolIndex scan, a posting
+            // index sorts
+            final String query = "select sym, x, ts from t where ts in '1970-01-01' order by sym";
+            assertQuery(query).returns(expected(new String[]{"A", "B", "C"}, false, 1, 12));
+            assertKeyMajorPlan(query, "bitmap".equals(indexType));
+        });
+    }
+
+    @Test
+    public void testSortedSymbolIndexOrderBySymTsDescOnePartitionInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("DAY");
+            final String query = "select sym, x, ts from t where ts in '1970-01-02' order by sym desc, ts desc";
+            assertQuery(query).returns(expected(new String[]{"C", "B", "A"}, true, 13, ROWS));
+            assertKeyMajorPlan(query, "bitmap".equals(indexType));
+        });
+    }
+
     private static void appendRows(StringSink sink, String sym, boolean desc, int xLo, int xHi, boolean evenOnly) {
         for (int i = 0, n = xHi - xLo + 1; i < n; i++) {
             final int x = desc ? xHi - i : xLo + i;

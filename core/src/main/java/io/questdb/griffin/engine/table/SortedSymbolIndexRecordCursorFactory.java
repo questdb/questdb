@@ -38,7 +38,7 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
-    private PageFrameRecordCursorImpl cursor;
+    private KeyMajorPageFrameRecordCursor cursor;
 
     public SortedSymbolIndexRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -52,7 +52,9 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
-        cursor = new PageFrameRecordCursorImpl(
+        // walk each symbol key across all page frames, not just within one, so that the
+        // output is in symbol order as a whole
+        cursor = new KeyMajorPageFrameRecordCursor(
                 configuration,
                 metadata,
                 new SortedSymbolIndexRowCursorFactory(
@@ -60,7 +62,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
                         columnOrderAsc,
                         indexDirection
                 ),
-                true,
+                partitionFrameCursorFactory.getOrder(),
                 null
         );
     }
@@ -89,7 +91,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
 
     @Override
     protected void _close() {
-        final PageFrameRecordCursorImpl cursor = this.cursor;
+        final KeyMajorPageFrameRecordCursor cursor = this.cursor;
         this.cursor = null;
         Throwable failure = null;
         try {

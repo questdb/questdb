@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
@@ -43,7 +42,13 @@ import io.questdb.std.CarrierLocal;
 
 import java.util.Comparator;
 
-public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
+/**
+ * Scans the index of a symbol column one key at a time, in the order of the symbol values.
+ * {@link #getCursor(PageFrame, PageFrameMemory)} walks the keys within one page frame;
+ * {@link KeyMajorPageFrameRecordCursor} walks each key across all page frames through
+ * {@link #getCursor(int, PageFrame, PageFrameMemory)}.
+ */
+public class SortedSymbolIndexRowCursorFactory implements KeyedRowCursorFactory {
     private final static CarrierLocal<SortHelper> TL_SORT_HELPER = new CarrierLocal<>(SortHelper::new);
     private final int columnIndex;
     private final boolean columnOrderDirectionAsc;
@@ -66,6 +71,28 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         cursor.of(pageFrame);
         return cursor;
+    }
+
+    @Override
+    public RowCursor getCursor(int keyIndex, PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        return pageFrame
+                .getIndexReader(columnIndex, indexDirection)
+                .getCursor(symbolKeys.getQuick(keyIndex), pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+    }
+
+    @Override
+    public int getIndexColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
+    public int getIndexDirection() {
+        return indexDirection;
+    }
+
+    @Override
+    public int getKeyCount() {
+        return symbolKeyLimit;
     }
 
     @Override
