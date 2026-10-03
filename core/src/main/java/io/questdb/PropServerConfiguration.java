@@ -539,6 +539,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlHorizonJoinBwdScanMinGap;
     private final long sqlHorizonJoinBwdScanSwitchFactor;
     private final int sqlHorizonJoinMaxOffsets;
+    private final int sqlIndexKeyMajorMaxKeys;
+    private final long sqlIndexKeyMajorMaxPartitionPasses;
     private final long sqlInsertModelBatchSize;
     private final int sqlInsertModelPoolCapacity;
     private final int sqlIntervalIncrementalMergeThreshold;
@@ -561,7 +563,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxResizes;
     private final int sqlMaxArrayElementCount;
     private final int sqlMaxNegativeLimit;
-    private final long sqlIndexKeyMajorMaxCursorOpens;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
     private final boolean sqlOrderBySortEnabled;
@@ -1806,7 +1807,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
-            this.sqlIndexKeyMajorMaxCursorOpens = getLong(properties, env, PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_CURSOR_OPENS, 1_000_000);
+            this.sqlIndexKeyMajorMaxKeys = getInt(properties, env, PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 1024);
+            this.sqlIndexKeyMajorMaxPartitionPasses = getLong(properties, env, PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 100_000);
             this.sqlSymbolPatternIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED, true);
             this.sqlSymbolPatternIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, 100);
             this.sqlAllPartitionOperationsAllowed = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ALL_PARTITION_OPERATIONS_ALLOWED, false);
@@ -4674,11 +4676,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSqlIndexKeyMajorMaxCursorOpens() {
-            return sqlIndexKeyMajorMaxCursorOpens;
-        }
-
-        @Override
         public int getMaxUncommittedRows() {
             return maxUncommittedRows;
         }
@@ -5156,6 +5153,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlHorizonJoinMaxOffsets() {
             return sqlHorizonJoinMaxOffsets;
+        }
+
+        @Override
+        public int getSqlIndexKeyMajorMaxKeys() {
+            return sqlIndexKeyMajorMaxKeys;
+        }
+
+        @Override
+        public long getSqlIndexKeyMajorMaxPartitionPasses() {
+            return sqlIndexKeyMajorMaxPartitionPasses;
         }
 
         @Override

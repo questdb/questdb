@@ -59,6 +59,14 @@ public interface KeyedRowCursorFactory extends RowCursorFactory {
     int getIndexDirection();
 
     /**
+     * Index key (see {@link io.questdb.cairo.TableUtils#toIndexKey(int)}) of the key at
+     * {@code keyIndex}, or -1 when it is resolved only inside the row cursor. Lets
+     * {@link KeyMajorPageFrameRecordCursor} check the index before it decodes a Parquet frame that
+     * may hold no rows of the key.
+     */
+    int getIndexKey(int keyIndex);
+
+    /**
      * Number of keys, valid once {@link #prepareCursor} has run for the current execution.
      */
     int getKeyCount();

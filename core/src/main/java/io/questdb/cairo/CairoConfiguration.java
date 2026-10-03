@@ -551,13 +551,6 @@ public interface CairoConfiguration {
 
     int getMaxSymbolNotEqualsCount();
 
-    /**
-     * Upper bound on the estimated number of index cursor opens (keys x page frames) for which
-     * a multi-partition {@code ORDER BY <indexed symbol>} over an index key scan drops the sort
-     * and walks each key across all page frames instead. Above it, the sort stays.
-     */
-    long getSqlIndexKeyMajorMaxCursorOpens();
-
     int getMaxUncommittedRows();
 
     int getMetadataPoolCapacity();
@@ -899,6 +892,24 @@ public interface CairoConfiguration {
     long getSqlHorizonJoinBwdScanSwitchFactor();
 
     int getSqlHorizonJoinMaxOffsets();
+
+    /**
+     * Largest number of keys for which {@code ORDER BY <indexed symbol>} over an index key scan
+     * ({@code IN}, {@code !=}, {@code NOT IN}, or the sorted symbol index scan) walks each key
+     * across all page frames instead of sorting. It matters only when a scanned partition spans
+     * more than one page frame: the key-major scan then revisits every frame once per key, so a
+     * table larger than the page cache can be read up to this many times. 0 disables the key-major
+     * scan, and every such query sorts.
+     */
+    int getSqlIndexKeyMajorMaxKeys();
+
+    /**
+     * Largest keys x scanned partitions for which a key-major index scan (see
+     * {@link #getSqlIndexKeyMajorMaxKeys()}) runs over more than one partition. Every key passes over
+     * every scanned partition, and all of them are opened before the first row. 0 limits the
+     * key-major scan to a single partition.
+     */
+    long getSqlIndexKeyMajorMaxPartitionPasses();
 
     /**
      * When the number of intervals exceeds this threshold during bracket expansion,

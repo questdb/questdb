@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -167,6 +168,9 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
 
     @Test
     public void testCoveringPageFrameHeapMergeParity() throws Exception {
+        // ORDER BY the key column would otherwise take the key-major index scan, which is preferred
+        // over covering; keep this test on the covering path it guards.
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 0);
         // SP4 Task 2: above HEAP_MERGE_MIN_KEYS the multi-key covering PAGE-FRAME
         // cursor (parallel GROUP BY path) merges per-key heads with an O(log N)
         // heap instead of the linear O(N) min-scan. The heap must emit
@@ -328,6 +332,9 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
 
     @Test
     public void testOrderBySymStaysConsistent() throws Exception {
+        // ORDER BY the key column would otherwise take the key-major index scan, which is preferred
+        // over covering; keep this test on the covering path it guards.
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 0);
         // GREEN today: when the query explicitly asks for key order (or a non-ts
         // order that forces a sort), covering and oracle must agree. Confirms the
         // bug is specific to timestamp-order expectations and that key-grouping is

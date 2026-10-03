@@ -675,11 +675,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlIndexKeyMajorMaxCursorOpens() {
-        return getDelegate().getSqlIndexKeyMajorMaxCursorOpens();
-    }
-
-    @Override
     public int getMaxUncommittedRows() {
         return getDelegate().getMaxUncommittedRows();
     }
@@ -1162,6 +1157,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlHorizonJoinMaxOffsets() {
         return getDelegate().getSqlHorizonJoinMaxOffsets();
+    }
+
+    @Override
+    public int getSqlIndexKeyMajorMaxKeys() {
+        return getDelegate().getSqlIndexKeyMajorMaxKeys();
+    }
+
+    @Override
+    public long getSqlIndexKeyMajorMaxPartitionPasses() {
+        return getDelegate().getSqlIndexKeyMajorMaxPartitionPasses();
     }
 
     @Override

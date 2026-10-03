@@ -29,8 +29,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -59,8 +61,9 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * The first {@link #hasNext()} drains the page frame cursor into the frame address cache, so
  * every frame can be revisited once per key. Each key then opens one index cursor per frame.
- * Native frames are revisited for free; a Parquet frame is decoded again for each key that
- * misses the decoded-frame cache.
+ * Native frames are revisited for free. A Parquet frame is skipped when the index shows the key
+ * has no rows in it, and is otherwise decoded again for each key that misses the decoded-frame
+ * cache, which is why the planner keeps the sort over Parquet partitions.
  */
 public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor {
     private final Function filter;
@@ -168,6 +171,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         areCursorsPrepared = false;
         resetWalk();
         super.init(sqlExecutionContext.getMemoryTracker());
+        // every key comes back to every frame, so give decoded Parquet frames the whole cache budget
+        frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
     }
 
     @Override
@@ -221,6 +226,10 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 final int frameIndex = walkFramesBackward ? frameCount - 1 - framePos : framePos;
                 framePos++;
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                if (frameAddressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET && hasNoRows(keyIndex, frameIndex)) {
+                    // a Parquet frame is decoded on navigation: skip it when the key has no rows in it
+                    continue;
+                }
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
                 frameSnapshot.of(frameIndex);
                 rowCursor = rowCursorFactory.getCursor(keyIndex, frameSnapshot, frameMemory);
@@ -232,6 +241,20 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             framePos = 0;
         }
         return false;
+    }
+
+    private boolean hasNoRows(int keyIndex, int frameIndex) {
+        final int indexKey = rowCursorFactory.getIndexKey(keyIndex);
+        if (indexKey < 0) {
+            return false;
+        }
+        final RowCursor probe = frameIndexReaders.getQuick(frameIndex)
+                .getCursor(indexKey, frameLos.getQuick(frameIndex), frameHis.getQuick(frameIndex) - 1);
+        try {
+            return !probe.hasNext();
+        } finally {
+            Misc.free(probe);
+        }
     }
 
     private void prepareRowCursorFactory() {

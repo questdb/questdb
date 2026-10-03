@@ -12296,9 +12296,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Non-final: covering paths null this after handing it to the
             // covering factory, so the outer catch will not double-free it.
             PartitionFrameCursorFactory dfcFactory;
+            // read-only view for the key-major cost estimate; dfcFactory owns it
+            RuntimeIntrinsicIntervalModel scanIntervalModel = null;
 
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
+                scanIntervalModel = intervalModel;
                 if (hasInterval == 0) {
                     executionContext.popIntervalModel();
                     executionContext.pushIntervalModel(intervalModel);
@@ -12374,56 +12377,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // needs the master in timestamp order. Honoring the order-by advice would
                     // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
                     // /LT/WINDOW merge that assumes ts order.
-                    // Several keys are walked key by key across all page frames of the scan
-                    // (KeyMajorPageFrameRecordCursor), so the shortcut does not need a single
-                    // partition; it is taken across partitions when the scan is cheap enough.
-                    final boolean multiKey = nKeyValues > 1 || nKeyExcludedValues > 0;
-                    if ((intervalHitsOnlyOnePartition || multiKey) && !executionContext.isTimestampRequired()) {
+                    if (!executionContext.isTimestampRequired()) {
                         final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                         final int orderByAdviceSize = orderByAdvice.size();
-                        if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && !intervalHitsOnlyOnePartition) {
-                            // ORDER BY <key>[, ts [DESC]] across partitions: key-major only when
-                            // affordable, otherwise leave the plan exactly as it was
-                            if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)
-                                    && (orderByAdviceSize == 1 || (model.getTimestamp() != null && Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)))
-                                    && isKeyMajorScanAffordable(reader, columnIndexes.getQuick(keyColumnIndex), nKeyValues, nKeyExcludedValues, executionContext)) {
-                                queryMeta.setTimestampIndex(-1);
-                                orderByKeyColumn = true;
-                                if (orderByAdviceSize == 2 && getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                    indexDirection = IndexReader.DIR_BACKWARD;
-                                }
+                        if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
+                            if (intervalHitsOnlyOnePartition) {
+                                guardAgainstDotsInOrderByAdvice(model);
                             }
-                        } else if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
-                            guardAgainstDotsInOrderByAdvice(model);
-                            // todo: when order by coincides with keyColumn and there is index we can incorporate
-                            //    ordering in the code that returns rows from index rather than having an
-                            //    "overhead" order by implementation, which would be trying to oder already ordered symbols
                             if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
-                                queryMeta.setTimestampIndex(-1);
-                                if (orderByAdviceSize == 1) {
-                                    orderByKeyColumn = true;
-                                } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                    orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                        indexDirection = IndexReader.DIR_BACKWARD;
+                                if (intervalHitsOnlyOnePartition) {
+                                    queryMeta.setTimestampIndex(-1);
+                                }
+                                final ExpressionNode timestamp = model.getTimestamp();
+                                if (orderByAdviceSize == 1 || (timestamp != null && Chars.equals(orderByAdvice.getQuick(1).token, timestamp.token))) {
+                                    final int keyDirection = orderByAdviceSize == 2 && getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING
+                                            ? IndexReader.DIR_BACKWARD
+                                            : IndexReader.DIR_FORWARD;
+                                    final boolean singleKey = nKeyValues == 1 && nKeyExcludedValues == 0;
+                                    if (singleKey && (keyDirection == IndexReader.DIR_FORWARD) == (order != ORDER_DESC)) {
+                                        // One key scanned frame by frame, in the frames' direction, is
+                                        // in key and timestamp order already. As before, one partition.
+                                        orderByKeyColumn = intervalHitsOnlyOnePartition;
+                                    } else if (!singleKey
+                                            && (nKeyExcludedValues == 0 || isNotEqualsIndexScanUsable(reader, columnIndexes.getQuick(keyColumnIndex)))
+                                            && isKeyMajorScanAffordable(
+                                            reader,
+                                            scanIntervalModel,
+                                            countIndexScanKeys(reader, columnIndexes.getQuick(keyColumnIndex), intrinsicModel.keyValueFuncs, nKeyExcludedValues),
+                                            executionContext
+                                    )) {
+                                        // Several keys: KeyMajorPageFrameRecordCursor walks each key across
+                                        // all page frames of the scan, which is key order for any number
+                                        // of frames and partitions.
+                                        orderByKeyColumn = true;
+                                    }
+                                    // A single key scanned against the frames' direction (ORDER BY sym,
+                                    // ts DESC) keeps the sort: a backward index scan inside forward
+                                    // frames is not descending across them.
+                                    if (orderByKeyColumn) {
+                                        queryMeta.setTimestampIndex(-1);
+                                        indexDirection = keyDirection;
                                     }
                                 }
                             }
-                        }
-                        // One partition is not one page frame: the frame cursor splits a partition
-                        // into frames of at most cairo.sql.page.frame.max.rows rows. With several
-                        // keys, FilterOnValues and FilterOnExcludedValues walk each key across all
-                        // frames (KeyMajorPageFrameRecordCursor), so their output is in key order.
-                        // A single key is scanned frame by frame, which is in key order trivially,
-                        // but in timestamp order only when the index runs in the same direction as
-                        // the frames: a backward index scan inside forward frames is not descending
-                        // across them. Keep the sort for that case.
-                        if (orderByKeyColumn
-                                && nKeyValues == 1
-                                && nKeyExcludedValues == 0
-                                && (indexDirection == IndexReader.DIR_FORWARD) != (order == ORDER_ASC)) {
-                            orderByKeyColumn = false;
-                            indexDirection = IndexReader.DIR_FORWARD;
                         }
                     }
                     boolean orderByTimestamp = false;
@@ -12820,8 +12816,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
 
-                            if (orderByKeyColumn) {
-                                // check that intrinsicModel.intervals hit only one partition
+                            // the sorted symbol index scan walks every symbol plus NULL
+                            if (orderByKeyColumn && isKeyMajorScanAffordable(
+                                    reader,
+                                    scanIntervalModel,
+                                    reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex)).getSymbolCount() + 1L,
+                                    executionContext
+                            )) {
                                 queryMeta.setTimestampIndex(-1);
                                 return new SortedSymbolIndexRecordCursorFactory(
                                         configuration,
@@ -13487,54 +13488,106 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private static boolean intervalsOverlap(LongList intervals, long lo, long hi) {
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            if (intervals.getQuick(i) <= hi && intervals.getQuick(i + 1) >= lo) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
-     * Whether a multi-partition key-major index scan (see {@link io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor})
-     * is cheap enough to replace the sort under {@code ORDER BY <indexed symbol>}. The scan opens one
-     * index cursor per (key, page frame), so it is taken only while keys x frames stays within
-     * {@code cairo.sql.index.key.major.max.cursor.opens}, and only over native partitions: a Parquet
-     * row group would be decoded again for every key that misses the decode cache.
-     * <p>
-     * This is a plan-time estimate over the whole table, which bounds any interval. The cursor emits
-     * key order whatever the frame count, so a cached plan stays correct if the table later grows or
-     * a partition is converted to Parquet; only the cost estimate goes stale.
+     * Number of keys a key-major index scan would walk: the IN-list keys present in the symbol
+     * table (a bind variable or other runtime value counts as one), or every symbol plus NULL for
+     * {@code !=} / {@code NOT IN}, an upper bound that ignores the excluded ones.
+     */
+    private static long countIndexScanKeys(TableReader reader, int keyReaderColumnIndex, ObjList<Function> keyValueFuncs, int nKeyExcludedValues) {
+        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyReaderColumnIndex);
+        if (nKeyExcludedValues > 0) {
+            return symbolMapReader.getSymbolCount() + 1L;
+        }
+        long keyCount = 0;
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final Function func = keyValueFuncs.getQuick(i);
+            if (!func.isConstant() || symbolMapReader.keyOf(func.getStrA(null)) != SymbolTable.VALUE_NOT_FOUND) {
+                keyCount++;
+            }
+        }
+        return keyCount;
+    }
+
+    /**
+     * Whether {@code ORDER BY <indexed symbol>} may walk the keys of an index scan one by one across
+     * all page frames ({@link io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor}) instead
+     * of sorting. The output is key-ordered either way; this weighs only what the key-major walk
+     * costs on top of the per-frame scan the sort would read from:
+     * <ul>
+     *     <li>Each key revisits every page frame. While a partition is one frame, that is the
+     *     per-frame scan in another order; with several frames per partition, a table larger than
+     *     the page cache can be read once per key. Bounded by
+     *     {@code cairo.sql.index.key.major.max.keys}.</li>
+     *     <li>Each key passes over every scanned partition, and all of them are opened before the
+     *     first row. Bounded by {@code cairo.sql.index.key.major.max.partition.passes} (keys x
+     *     partitions) when more than one partition is scanned.</li>
+     *     <li>A Parquet row group would be decoded again for every key that misses the decode cache,
+     *     so a Parquet partition among the scanned ones keeps the sort.</li>
+     * </ul>
+     * The estimate is taken at plan time, over the partitions a static interval hits or over the
+     * whole table. A cached plan stays correct if the table changes later; only the estimate goes
+     * stale.
      */
     private boolean isKeyMajorScanAffordable(
             TableReader reader,
-            int keyReaderColumnIndex,
-            int nKeyValues,
-            int nKeyExcludedValues,
+            @Nullable RuntimeIntrinsicIntervalModel intervalModel,
+            long keyCount,
             SqlExecutionContext executionContext
-    ) {
-        final long maxCursorOpens = configuration.getSqlIndexKeyMajorMaxCursorOpens();
-        if (maxCursorOpens <= 0) {
+    ) throws SqlException {
+        final int maxKeys = configuration.getSqlIndexKeyMajorMaxKeys();
+        if (maxKeys <= 0) {
             return false;
         }
-        final long keyCount = nKeyExcludedValues > 0
-                // every symbol (plus NULL) except the excluded ones; the upper bound is enough
-                ? reader.getSymbolMapReader(keyReaderColumnIndex).getSymbolCount() + 1L
-                : nKeyValues;
-        final int partitionCount = reader.getPartitionCount();
+        final LongList intervals = intervalModel != null && intervalModel.isStatic()
+                ? intervalModel.calculateIntervals(executionContext)
+                : null;
         final long minRows = executionContext.getPageFrameMinRows();
         final long maxRows = executionContext.getPageFrameMaxRows();
-        final int workerCount = executionContext.getSharedQueryWorkerCount();
-        long frameCount = 0;
+        final int partitionCount = reader.getPartitionCount();
         long rowsLeft = reader.size();
+        int scannedPartitions = 0;
+        boolean multiFramePartition = false;
         for (int i = 0; i < partitionCount; i++) {
-            if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
-                return false;
-            }
             // the last partition's size lives in the transient row count, so take what is left
             final long rows = i < partitionCount - 1 ? reader.getPartitionRowCountFromMetadata(i) : rowsLeft;
             rowsLeft -= rows;
-            if (rows > 0) {
-                final long rowsPerFrame = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, rows, minRows, maxRows, workerCount);
-                frameCount += (rows + rowsPerFrame - 1) / rowsPerFrame;
-                if (keyCount * frameCount > maxCursorOpens) {
-                    return false;
+            if (rows <= 0) {
+                continue;
+            }
+            if (intervals != null) {
+                final long lo = reader.getPartitionTimestampByIndex(i);
+                final long hi = i < partitionCount - 1 ? reader.getPartitionTimestampByIndex(i + 1) - 1 : Long.MAX_VALUE;
+                if (!intervalsOverlap(intervals, lo, hi)) {
+                    continue;
                 }
             }
+            if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
+                return false;
+            }
+            scannedPartitions++;
+            // index scans run single-threaded: their frame cursor sizes frames for one worker
+            if (FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, rows, minRows, maxRows, 1) < rows) {
+                multiFramePartition = true;
+            }
         }
-        return true;
+        if (multiFramePartition && keyCount > maxKeys) {
+            return false;
+        }
+        return scannedPartitions < 2 || keyCount * scannedPartitions <= configuration.getSqlIndexKeyMajorMaxPartitionPasses();
+    }
+
+    private boolean isNotEqualsIndexScanUsable(TableReader reader, int keyReaderColumnIndex) {
+        // with this many symbols the code generator does not use the index for != / NOT IN at all
+        return reader.getSymbolMapReader(keyReaderColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount();
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {

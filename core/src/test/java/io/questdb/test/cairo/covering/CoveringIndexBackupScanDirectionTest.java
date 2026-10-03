@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -60,6 +61,9 @@ public class CoveringIndexBackupScanDirectionTest extends AbstractCairoTest {
 
     @Test
     public void testBackupOrderingByKeyMakesThePairUnordered() throws Exception {
+        // ORDER BY the key column would otherwise take the key-major index scan, which is preferred
+        // over covering; keep this test on the covering path it guards.
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 0);
         // ORDER BY on the key column, not the timestamp: the IN-list backup takes its sequential
         // cursor and emits per key. The covering delegate would still be FORWARD, so the pair has
         // to answer OTHER.

@@ -2149,15 +2149,37 @@ public class ParquetTest extends AbstractCairoTest {
             // 2024-01-01 stays historic so ADD INDEX routes it through indexParquetPartition.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
             execute("ALTER TABLE x ALTER COLUMN s ADD INDEX");
+            // The planner keeps the sort over a Parquet partition (the key-major symbol index scan
+            // would decode every row group once per symbol), so this plan no longer reaches the scan.
             assertQuery("SELECT s, i FROM x WHERE ts in '2024-01-01' ORDER BY s LIMIT 3")
                     .noLeakCheck()
-                    .withPlanContaining("Index forward scan on: s")
+                    .withPlanContaining("Top K")
+                    .withPlanNotContaining("SortedSymbolIndex")
+                    .sizeMayVary()
                     .returns("""
                             s	i
                             aa	5
                             aa	6
                             aa	7
                             """);
+
+            // A plan made while the partition was native still runs the symbol index scan over it
+            // once it turns Parquet, so keep the clamp guarded there.
+            execute("CREATE TABLE y (s SYMBOL INDEX, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y SELECT s, i, ts FROM x");
+            try (RecordCursorFactory factory = select("SELECT s, i FROM y WHERE ts in '2024-01-01' ORDER BY s LIMIT 3")) {
+                planSink.of(factory, sqlExecutionContext);
+                TestUtils.assertContains(planSink.getSink(), "SortedSymbolIndex");
+                execute("ALTER TABLE y CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("""
+                            s	i
+                            aa	5
+                            aa	6
+                            aa	7
+                            """, cursor, factory.getMetadata(), true);
+                }
+            }
         });
     }
 

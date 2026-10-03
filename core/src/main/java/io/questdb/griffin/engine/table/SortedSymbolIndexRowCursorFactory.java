@@ -90,6 +90,11 @@ public class SortedSymbolIndexRowCursorFactory implements KeyedRowCursorFactory 
     }
 
     @Override
+    public int getIndexKey(int keyIndex) {
+        return symbolKeys.getQuick(keyIndex);
+    }
+
+    @Override
     public int getKeyCount() {
         return symbolKeyLimit;
     }

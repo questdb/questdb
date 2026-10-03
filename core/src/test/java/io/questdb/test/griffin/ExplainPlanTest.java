@@ -10062,8 +10062,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols01b() throws Exception {
         // ordered by symbol over more than one partition: the key-major scan walks each key across all
-        // partitions, so there is no sort while keys x page frames stays under
-        // cairo.sql.index.key.major.max.cursor.opens
+        // partitions, so there is no sort while keys x partitions stays within
+        // cairo.sql.index.key.major.max.partition.passes
         assertMemoryLeak(() -> {
             execute("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
             execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");

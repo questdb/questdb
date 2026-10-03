@@ -700,11 +700,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlIndexKeyMajorMaxCursorOpens() {
-        return 1_000_000;
-    }
-
-    @Override
     public int getMaxUncommittedRows() {
         return 1000;
     }
@@ -1158,6 +1153,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlHorizonJoinMaxOffsets() {
         return 10_000;
+    }
+
+    @Override
+    public int getSqlIndexKeyMajorMaxKeys() {
+        return 1024;
+    }
+
+    @Override
+    public long getSqlIndexKeyMajorMaxPartitionPasses() {
+        return 100_000;
     }
 
     @Override

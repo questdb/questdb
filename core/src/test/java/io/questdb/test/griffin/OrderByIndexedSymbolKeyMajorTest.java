@@ -28,11 +28,11 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -225,6 +225,28 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
 
 
     @Test
+    public void testInListOrderBySymPrefersKeyMajorOverCovering() throws Exception {
+        Assume.assumeTrue("posting".equals(indexType));
+        assertMemoryLeak(() -> {
+            execute("create table c (sym symbol index type posting include (x), x long, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into c select case when x % 3 = 1 then 'A' when x % 3 = 2 then 'B' else 'C' end, x, ((x - 1) * " + (2 * HOUR) + ")::timestamp from long_sequence(" + ROWS + ")");
+            final String query = "select sym, x, ts from c where sym in ('A', 'B') order by sym";
+            // the covering merge into timestamp order would only be undone by the sort
+            assertQuery(query)
+                    .withPlanNotContaining("CoveringIndex")
+                    .returns(expected(new String[]{"A", "B"}, false, 1, ROWS));
+            assertKeyMajorPlan(query, true);
+            // with the key-major scan off across partitions, covering serves the scan again
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 0);
+            assertQuery(query)
+                    .withPlanContaining("CoveringIndex")
+                    .sizeMayVary()
+                    .returns(expected(new String[]{"A", "B"}, false, 1, ROWS));
+            assertKeyMajorPlan(query, false);
+        });
+    }
+
+    @Test
     public void testInListWithLimitNoneMultiFrame() throws Exception {
         assertMemoryLeak(() -> {
             createTable("NONE");
@@ -260,34 +282,72 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInListOrderBySymCursorOpenThreshold() throws Exception {
+    public void testInListOrderBySymMaxKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // 3 keys, and every partition is several frames: key-major revisits each frame per key
+            createTable("NONE");
+            final String query = "select sym, x, ts from t where sym in ('A', 'B', 'C') order by sym";
+            final String expected = expected(new String[]{"A", "B", "C"}, false, 1, ROWS);
+
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 3);
+            assertQuery(query).returns(expected);
+            assertKeyMajorPlan(query, true);
+
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 2);
+            assertQuery(query).sizeMayVary().returns(expected);
+            assertKeyMajorPlan(query, false);
+
+            // keys missing from the symbol table are not walked
+            assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B', 'nope') order by sym", true);
+
+            // 0 turns the key-major scan off altogether
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 0);
+            assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') order by sym", false);
+        });
+    }
+
+    @Test
+    public void testInListOrderBySymMaxKeysIgnoredForSingleFramePartitions() throws Exception {
+        // with one frame per partition the key-major walk reads each frame once, as the sort does
+        assertMemoryLeak(() -> {
+            createTable("NONE");
+            sqlExecutionContext.changePageFrameSizes(1, 1_000_000);
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 1);
+            final String query = "select sym, x, ts from t where sym in ('A', 'B', 'C') order by sym";
+            assertQuery(query).returns(expected(new String[]{"A", "B", "C"}, false, 1, ROWS));
+            assertKeyMajorPlan(query, true);
+        });
+    }
+
+    @Test
+    public void testInListOrderBySymMaxPartitionPasses() throws Exception {
         assertMemoryLeak(() -> {
             createTable("DAY");
-            // the planner's estimate: 2 keys x the page frames of both partitions
-            final long rowsPerFrame = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
-                    0,
-                    12,
-                    sqlExecutionContext.getPageFrameMinRows(),
-                    sqlExecutionContext.getPageFrameMaxRows(),
-                    sqlExecutionContext.getSharedQueryWorkerCount()
-            );
-            final long cursorOpens = 2 * 2 * ((12 + rowsPerFrame - 1) / rowsPerFrame);
+            // two partitions, counted independently of the planner
+            assertQuery("select count() from table_partitions('t')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
             final String expected = expected(new String[]{"A", "B"}, false, 1, ROWS);
+            final String query = "select sym, x, ts from t where sym in ('A', 'B') order by sym";
 
-            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_CURSOR_OPENS, cursorOpens);
-            final String atLimit = "select sym, x, ts from t where sym in ('A', 'B') order by sym";
-            assertQuery(atLimit).returns(expected);
-            assertKeyMajorPlan(atLimit, true);
+            // 2 keys x 2 partitions
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 4);
+            assertQuery(query).returns(expected);
+            assertKeyMajorPlan(query, true);
 
-            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_CURSOR_OPENS, cursorOpens - 1);
-            final String overLimit = "select sym, x, ts from t where sym in ('B', 'A') order by sym";
-            assertQuery(overLimit).sizeMayVary().returns(expected);
-            assertKeyMajorPlan(overLimit, false);
-
-            // 0 turns the multi-partition key-major scan off, one partition is not affected
-            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_CURSOR_OPENS, 0);
-            assertKeyMajorPlan(atLimit, false);
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 3);
+            assertQuery(query).sizeMayVary().returns(expected);
+            assertKeyMajorPlan(query, false);
+            // an interval that hits one partition is not limited
             assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') and ts in '1970-01-01' order by sym", true);
+            // a static interval that hits both partitions counts both
+            assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') and ts >= '1970-01-01T12:00' order by sym", false);
+
+            // 0 limits the key-major scan to one partition
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_PARTITION_PASSES, 0);
+            assertKeyMajorPlan(query, false);
+            assertKeyMajorPlan("select sym, x, ts from t where sym in ('A', 'B') and ts in '1970-01-02' order by sym", true);
         });
     }
 
@@ -310,7 +370,8 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     @Test
     public void testInListOrderBySymParquetPartition() throws Exception {
         // A Parquet partition is split into page frames by row group: 3 row groups of 4 rows. The
-        // key-major scan would decode every row group once per key, so the sort stays.
+        // key-major scan would decode every row group once per key, so the sort stays, for the
+        // IN list and for the sorted symbol index scan alike.
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
             createTable("DAY");
@@ -319,6 +380,29 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
             assertQuery(query)
                     .withPlanContaining("FilterOnValues")
                     .returns(expected(new String[]{"C", "A"}, true, 1, 12));
+            assertKeyMajorPlan(query, false);
+            final String sortedQuery = "select sym, x, ts from t where ts in '1970-01-01' order by sym";
+            assertQuery(sortedQuery).returns(expected(new String[]{"A", "B", "C"}, false, 1, 12));
+            assertKeyMajorPlan(sortedQuery, false);
+            // the native partition is not affected
+            assertKeyMajorPlan("select sym, x, ts from t where sym in ('C', 'A') and ts in '1970-01-02' order by sym", true);
+        });
+    }
+
+    @Test
+    public void testInListOrderBySymParquetPartitionCachedPlan() throws Exception {
+        // a plan made over a native partition still runs after the partition turns Parquet: the
+        // key-major scan stays correct, it is only no longer the cheaper plan
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createUnevenTables("DAY");
+            final String query = "select sym, x, ts from u where sym in ('B', 'D', 'A') order by sym desc, ts desc";
+            final String oracleQuery = "select sym, x, ts from u_twin where sym in ('B', 'D', 'A') order by sym desc, ts desc";
+            try (RecordCursorFactory factory = select(query)) {
+                assertFactory(factory, oracle(oracleQuery));
+                execute("alter table u convert partition to parquet list '1970-01-01'");
+                assertFactory(factory, oracle(oracleQuery));
+            }
             assertKeyMajorPlan(query, false);
         });
     }

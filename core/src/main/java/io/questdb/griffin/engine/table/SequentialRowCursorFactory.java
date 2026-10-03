@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -105,6 +106,14 @@ public class SequentialRowCursorFactory implements KeyedRowCursorFactory {
     @Override
     public int getIndexDirection() {
         return indexDirection;
+    }
+
+    @Override
+    public int getIndexKey(int keyIndex) {
+        if (cursorFactories.getQuick(keyIndex) instanceof SymbolFunctionRowCursorFactory symbolFactory) {
+            return TableUtils.toIndexKey(symbolFactory.getSymbolKey());
+        }
+        return -1;
     }
 
     @Override
