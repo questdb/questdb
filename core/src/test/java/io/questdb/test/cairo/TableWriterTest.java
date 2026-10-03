@@ -43,6 +43,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexReader;
@@ -66,6 +67,7 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -96,8 +98,10 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
@@ -112,6 +116,51 @@ public class TableWriterTest extends AbstractCairoTest {
     public static String PRODUCT_FS;
     private TimestampDriver timestampDriver;
     private int timestampType;
+
+    // Produces data.parquet and _pm for the writer's last partition the way the storage-policy
+    // conversion does, then switches that (active) partition to parquet.
+    public static void switchLastPartitionToParquet(TableWriter writer) {
+        final TxWriter txWriter = writer.getTxWriter();
+        final int partitionIndex = txWriter.getPartitionCount() - 1;
+        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long parquetFileSize;
+        final TableUtils.SymbolTableProviderFromReader symbolProvider = new TableUtils.SymbolTableProviderFromReader();
+        try (
+                TableReader reader = engine.getReader(writer.getTableToken());
+                DirectIntList bloomIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT);
+                Path path = new Path();
+                Path other = new Path()
+        ) {
+            symbolProvider.of(reader);
+            final TxReader txReader = reader.getTxFile();
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            other.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            parquetFileSize = TableUtils.produceParquetFromNative(
+                    path,
+                    other,
+                    path.size(),
+                    partitionTs,
+                    txReader.getPartitionNameTxn(partitionIndex),
+                    txReader.getPartitionNameTxn(partitionIndex),
+                    reader.getTableToken().getTableName(),
+                    txReader.getPartitionSize(partitionIndex),
+                    reader.getMetadata(),
+                    reader.getColumnVersionReader(),
+                    symbolProvider,
+                    configuration,
+                    null,
+                    Double.NaN,
+                    bloomIndexes,
+                    -1L,
+                    txReader.getSeqTxn()
+            );
+        }
+        Assert.assertTrue("produceParquetFromNative must encode the partition", parquetFileSize > 0);
+        Assert.assertTrue(writer.markPartitionParquetReady(partitionTs));
+        Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTs, parquetFileSize));
+        Assert.assertTrue("the active partition must be parquet", txWriter.isPartitionParquet(partitionIndex));
+        Assert.assertEquals(partitionIndex + 1, txWriter.getPartitionCount());
+    }
 
     @Before
     public void setUp() {
@@ -1954,6 +2003,26 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetPartitionRowCountAfterWriterReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE partition_rows (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final TableToken tableToken = engine.verifyTableName("partition_rows");
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.newRow(0).append();
+                writer.newRow(Micros.DAY_MICROS).append();
+                writer.commit();
+            }
+            engine.releaseAllWriters();
+
+            try (TableWriter writer = getWriter(tableToken)) {
+                Assert.assertEquals(1, writer.getPartitionRowCountByPartitionTimestamp(0));
+                Assert.assertEquals(1, writer.getPartitionRowCountByPartitionTimestamp(Micros.DAY_MICROS));
+                Assert.assertEquals(-1, writer.getPartitionRowCountByPartitionTimestamp(2 * Micros.DAY_MICROS));
+            }
+        });
+    }
+
+    @Test
     public void testNonWalCommitDoesNotDrainAsyncCommandQueue() throws Exception {
         // commit() must NOT drain the async command queue. A non-WAL writer is drained by its
         // ingestion tick() and on pool return (with structure changes allowed); draining at commit
@@ -3120,7 +3189,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSwitchNativePartitionWithParquetActivePartition() throws Exception {
+    public void testSwitchNativePartitionWithParquetActivePartitionWithoutParquet() throws Exception {
         assertMemoryLeak(() -> {
             int N = 10000;
             create(FF, PartitionBy.DAY, N);
@@ -3139,11 +3208,11 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 activePartitionTimestamp = writer.getTxWriter().getMaxTimestamp();
 
-                // switchNativePartitionWithParquet on the active partition should return SWITCH_SKIPPED
-                // without throwing an exception
-                Assert.assertEquals(TableWriter.SWITCH_SKIPPED, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
+                // Active partitions are supported, so the missing generated parquet is the only reason
+                // this switch cannot proceed.
+                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
 
-                // Partition should remain native (not converted)
+                // Partition should remain native (not converted).
                 TxWriter txWriter = writer.getTxWriter();
                 int partitionIndex = txWriter.getPartitionIndex(
                         txWriter.getLogicalPartitionTimestamp(activePartitionTimestamp)
@@ -3151,6 +3220,516 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertFalse("Active partition should not be converted to parquet",
                         txWriter.isPartitionParquet(partitionIndex));
             }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionAbandonsNextPartitionRow() throws Exception {
+        // commit() and newRow() cancel a row left pending by a caller that neither appended nor
+        // cancelled it. When that row opened the partition after a parquet active partition, the
+        // cancel must restore the parquet last partition, and a following newRow() aimed at the
+        // parquet partition's range must still be merged through O3.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, s STRING, vc VARCHAR, sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, 's1', 'vc1', 'b', '2024-01-01T01:00:00.000000Z'),
+                        (2, 's2', 'vc2', 'a', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            try (TableWriter writer = getWriter("x")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                switchLastPartitionToParquet(writer);
+
+                putStrVarcharSymRow(writer, "2024-01-03T01:00:00.000000Z", -1);
+                writer.commit();
+                Assert.assertEquals(2, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+                assertNoNativeColumnFiles(writer, 1);
+
+                putStrVarcharSymRow(writer, "2024-01-03T01:00:00.000000Z", -2);
+                putStrVarcharSymRow(writer, "2024-01-02T02:00:00.000000Z", 3).append();
+                putStrVarcharSymRow(writer, "2024-01-03T02:00:00.000000Z", 4).append();
+                writer.commit();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+                Assert.assertFalse("the newer partition must be native", txWriter.isPartitionParquet(2));
+                assertNoNativeColumnFiles(writer, 1);
+            }
+
+            assertQuery("x").timestamp("ts").expectSize().returns("""
+                    v\ts\tvc\tsym\tts
+                    1\ts1\tvc1\tb\t2024-01-01T01:00:00.000000Z
+                    2\ts2\tvc2\ta\t2024-01-02T01:00:00.000000Z
+                    3\ts3\tvc3\tb\t2024-01-02T02:00:00.000000Z
+                    4\ts4\tvc4\ta\t2024-01-03T02:00:00.000000Z
+                    """);
+            assertQuery("SELECT v, ts FROM x WHERE sym = 'a'")
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-02T01:00:00.000000Z
+                            4\t2024-01-03T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionAddIndexCoversAllRows() throws Exception {
+        // ALTER TABLE ... ADD INDEX on the pooled writer indexes a parquet active partition through
+        // indexLastPartition -> indexParquetPartition -> indexParquetColumn, which sizes the partition
+        // from the writer's partition table slot. The switch must leave that slot at the active
+        // partition's row count; a zero slot built an empty index, and the index query silently
+        // dropped the active partition's rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('a', 1, '2024-01-01T01:00:00.000000Z'),
+                        ('b', 2, '2024-01-02T01:00:00.000000Z'),
+                        ('c', 3, '2024-01-02T02:00:00.000000Z'),
+                        ('a', 4, '2024-01-02T03:00:00.000000Z')
+                    """);
+
+            try (TableWriter writer = getWriter("x")) {
+                switchLastPartitionToParquet(writer);
+            }
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX");
+
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T01:00:00.000000Z
+                            4\t2024-01-02T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionCancelsNextPartitionRow() throws Exception {
+        // ILP and INSERT cancel a failed row. When that row opened the partition after a parquet active
+        // partition, the cancel must restore the parquet last partition without reopening native append
+        // columns in its directory: the reopen tripped the VARCHAR aux assert in setAppendPosition and
+        // left native column files next to data.parquet.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, s STRING, vc VARCHAR, sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, 's1', 'vc1', 'b', '2024-01-01T01:00:00.000000Z'),
+                        (2, 's2', 'vc2', 'a', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            try (TableWriter writer = getWriter("x")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                switchLastPartitionToParquet(writer);
+
+                putStrVarcharSymRow(writer, "2024-01-03T01:00:00.000000Z", -1).cancel();
+                Assert.assertEquals(2, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+                assertNoNativeColumnFiles(writer, 1);
+
+                putStrVarcharSymRow(writer, "2024-01-02T02:00:00.000000Z", 3).append();
+                putStrVarcharSymRow(writer, "2024-01-03T02:00:00.000000Z", 4).append();
+                writer.commit();
+
+                putStrVarcharSymRow(writer, "2024-01-04T01:00:00.000000Z", -2).cancel();
+                putStrVarcharSymRow(writer, "2024-01-03T03:00:00.000000Z", 5).append();
+                writer.commit();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+                Assert.assertFalse("the newer partition must be native", txWriter.isPartitionParquet(2));
+                assertNoNativeColumnFiles(writer, 1);
+            }
+
+            assertQuery("x").timestamp("ts").expectSize().returns("""
+                    v\ts\tvc\tsym\tts
+                    1\ts1\tvc1\tb\t2024-01-01T01:00:00.000000Z
+                    2\ts2\tvc2\ta\t2024-01-02T01:00:00.000000Z
+                    3\ts3\tvc3\tb\t2024-01-02T02:00:00.000000Z
+                    4\ts4\tvc4\ta\t2024-01-03T02:00:00.000000Z
+                    5\ts5\tvc5\tb\t2024-01-03T03:00:00.000000Z
+                    """);
+            assertQuery("SELECT v, ts FROM x WHERE sym = 'b'")
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T01:00:00.000000Z
+                            3\t2024-01-02T02:00:00.000000Z
+                            5\t2024-01-03T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionDistressesOnCommitFailure() throws Exception {
+        // The switch closes the active partition, links the parquet body, flips the in-memory parquet
+        // flag and only THEN commits _txn. A throw from that commit leaves the writer believing the
+        // active partition is parquet while _txn on disk still says native, with the native append
+        // columns closed -- and processAsyncWriterCommand hands such a writer back to the pool without
+        // distressing it. The recovery in the finally must therefore fire here; keying it off
+        // txWriter.isPartitionParquet() did not, because setPartitionParquet() has already run.
+        //
+        // TxWriter.commit() reads configuration.getCommitMode() on both of its paths, so throwing from
+        // there injects a failure inside the commit deterministically, without faulting the filesystem
+        // into a state the rest of the writer would also see.
+        assertMemoryLeak(() -> {
+            final int N = 1000;
+            // The switch commits _txn more than once -- the force-squash commits too -- so arming on the
+            // next getCommitMode() would fault the squash instead, which is a different (already covered)
+            // abort arm. Fire only once the in-memory parquet flag is set, which is precisely the window
+            // the finally guard used to miss.
+            final TableWriter[] writerRef = new TableWriter[1];
+            final int[] parquetFlaggedIndex = {-1};
+            final AtomicBoolean armed = new AtomicBoolean();
+            final AtomicBoolean faultFired = new AtomicBoolean();
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getCommitMode() {
+                    final TableWriter w = writerRef[0];
+                    final int idx = parquetFlaggedIndex[0];
+                    if (armed.get() && w != null && idx > -1 && w.getTxWriter().isPartitionParquet(idx)) {
+                        armed.set(false);
+                        faultFired.set(true);
+                        throw CairoException.critical(0).put("commit mode unavailable");
+                    }
+                    return super.getCommitMode();
+                }
+            };
+
+            create(FF, PartitionBy.DAY, N);
+            final Rnd rnd = new Rnd();
+            final long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            final long interval = 60000L * 1000L;
+
+            TableWriter writer = newOffPoolWriter(configuration, PRODUCT);
+            writerRef[0] = writer;
+            try {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                final TxWriter txWriter = writer.getTxWriter();
+                final long activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                final int partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+                final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+                final TableToken token = writer.getTableToken();
+
+                // Empty stubs are enough: the switch only checks existence and hard-links them.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, activePartitionTimestamp, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, activePartitionTimestamp, partitionNameTxn);
+                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
+                }
+
+                txWriter.setPartitionParquetGenerated(partitionIndex, true);
+                parquetFlaggedIndex[0] = partitionIndex;
+                armed.set(true);
+                try {
+                    writer.switchNativePartitionWithParquet(activePartitionTimestamp, 0L);
+                    Assert.fail("the _txn commit must have failed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "commit mode unavailable");
+                }
+                Assert.assertTrue("the commit fault must have fired after setPartitionParquet", faultFired.get());
+
+                // The assertion: a writer whose active partition is closed and whose in-memory format no
+                // longer matches _txn must never go back to the pool.
+                Assert.assertTrue("an aborted active-partition switch must distress the writer",
+                        writer.isDistressed());
+            } finally {
+                try {
+                    writer.close();
+                } catch (CairoException ignore) {
+                    // A distressed writer may refuse a clean close; the state under test is already asserted.
+                }
+            }
+
+            // The failed commit must not have reached disk: the partition is still native and intact.
+            try (TableWriter reopened = newOffPoolWriter(AbstractCairoTest.configuration, PRODUCT)) {
+                final TxWriter txWriter = reopened.getTxWriter();
+                final long activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                final int partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+                Assert.assertFalse("a failed commit must leave the partition native on disk",
+                        txWriter.isPartitionParquet(partitionIndex));
+                Assert.assertEquals(N, reopened.size());
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionLinksSymbolIndexFiles() throws Exception {
+        // The writer tracks the active partition's row count in transientRowCount, and its partition
+        // table slot stays at zero after an in-order append. The switch must hard-link the active
+        // partition's .k/.v files into the new parquet partition dir; sizing the partition from the
+        // stale slot skipped every indexed column and the index query failed to open s.k.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('a', 1, '2024-01-01T01:00:00.000000Z'),
+                        ('b', 2, '2024-01-02T01:00:00.000000Z'),
+                        ('c', 3, '2024-01-02T02:00:00.000000Z'),
+                        ('a', 4, '2024-01-02T03:00:00.000000Z')
+                    """);
+
+            try (TableWriter writer = getWriter("x")) {
+                switchLastPartitionToParquet(writer);
+            }
+
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T01:00:00.000000Z
+                            4\t2024-01-02T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionReopensOnAbort() throws Exception {
+        // An active-partition switch closes the active partition before it force-squashes and links.
+        // Every abort after that point must reopen it, or the next newRow() dereferences the closed
+        // native append columns. Marking the partition parquet-ready without producing data.parquet
+        // drives the switch past closeActivePartition() and into the missing-file abort.
+        assertMemoryLeak(() -> {
+            int N = 1000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                final TxWriter txWriter = writer.getTxWriter();
+                final long activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                final long rowCountBefore = writer.size();
+                final int partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+
+                // Generated but no data.parquet on disk: the switch passes the generated guard, closes
+                // the active partition, then aborts on the missing file.
+                txWriter.setPartitionParquetGenerated(partitionIndex, true);
+                Assert.assertEquals(
+                        TableWriter.SWITCH_NO_PARQUET,
+                        writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1)
+                );
+
+                Assert.assertFalse("aborted switch must leave the partition native",
+                        txWriter.isPartitionParquet(partitionIndex));
+                Assert.assertFalse("the missing parquet file must clear the generated flag",
+                        txWriter.isPartitionParquetGenerated(partitionIndex));
+
+                // The reopen is what this asserts: appending into the still-active partition must work.
+                populateProducts(writer, rnd, txWriter.getMaxTimestamp() + interval, 10, interval);
+                writer.commit();
+                Assert.assertEquals(rowCountBefore + 10, writer.size());
+            }
+
+            // And the rows survive a reopen of the writer.
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N + 10, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionReopensOnSquashFailure() throws Exception {
+        // switchNativePartitionWithParquet closes the active partition, then force-squashes it OUTSIDE
+        // the try/finally that reopens it. A filesystem fault inside squashPartitionForce therefore
+        // leaves the writer holding closed native append memories while processAsyncWriterCommand hands
+        // it back to the pool un-distressed, and the next non-WAL newRow() writes through them.
+        assertMemoryLeak(() -> {
+            final int N = 1000;
+            create(FF, PartitionBy.DAY, N);
+
+            final AtomicBoolean failMkdirs = new AtomicBoolean();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public int mkdirs(Path path, int mode) {
+                    if (failMkdirs.compareAndSet(true, false)) {
+                        return -1;
+                    }
+                    return super.mkdirs(path, mode);
+                }
+            };
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return ff;
+                }
+
+                @Override
+                public long getPartitionO3SplitMinSize() {
+                    // Any prefix qualifies for a split, so a single O3 row splits the active partition.
+                    return 1;
+                }
+            };
+
+            final Rnd rnd = new Rnd();
+            final long intervalMicros = 60_000L * 1000L;
+            final long startTs = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                final long maxTs = populateProducts(writer, rnd, startTs, N, intervalMicros);
+                writer.commit();
+
+                final TxWriter txWriter = writer.getTxWriter();
+                final long rowCountBefore;
+                final int partitionIndex;
+                final int partitionCountBefore;
+                final long activePartitionTimestamp;
+
+                // The reader pins a txn older than the split the next commit creates, so
+                // canSquashOverwritePartitionTail() refuses the in-place append and the force-squash
+                // copies the target partition into a fresh directory instead. That createDirsOrFail is
+                // the first filesystem call after closeActivePartition() and it runs before the squash
+                // mutates anything, so the fault lands squarely in the unprotected window.
+                try (TableReader ignore = engine.getReader(writer.getTableToken())) {
+                    // One O3 row half an interval before the last in-order row: the prefix is the whole
+                    // partition and the suffix is a single row, which is what O3PartitionJob requires to
+                    // split rather than rewrite.
+                    populateRow(writer, rnd, maxTs - timestampDriver.fromMicros(intervalMicros) / 2, 0);
+                    writer.commit();
+
+                    activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                    partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+                    partitionCountBefore = txWriter.getPartitionCount();
+                    Assert.assertEquals("the O3 row must have split the active partition", partitionIndex + 2, partitionCountBefore);
+                    Assert.assertEquals(
+                            "the extra partition must be a split of the active logical partition",
+                            activePartitionTimestamp,
+                            txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))
+                    );
+                    rowCountBefore = writer.size();
+
+                    txWriter.setPartitionParquetGenerated(partitionIndex, true);
+                    failMkdirs.set(true);
+                    try {
+                        writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1);
+                        Assert.fail("the force-squash must have failed");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not create directories");
+                    }
+                }
+                Assert.assertFalse("the mkdirs fault must have fired", failMkdirs.get());
+                // A successful squash would have merged the split and returned SWITCH_NO_PARQUET instead
+                // of throwing, so an unchanged partition count pins the throw to squashPartitionForce.
+                Assert.assertEquals("the force-squash must have aborted before merging the split",
+                        partitionCountBefore, txWriter.getPartitionCount());
+
+                // The reopen is what this asserts: appending into the still-active partition must work.
+                populateProducts(writer, rnd, txWriter.getMaxTimestamp(), 10, intervalMicros);
+                writer.commit();
+                Assert.assertEquals(rowCountBefore + 10, writer.size());
+            }
+
+            // And the rows survive a reopen of the writer.
+            try (TableWriter writer = newOffPoolWriter(AbstractCairoTest.configuration, PRODUCT)) {
+                Assert.assertEquals(N + 11, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionResumesAppends() throws Exception {
+        // A successful active-partition switch leaves the native append columns closed. Every in-order
+        // row aimed at the parquet active partition must be merged through O3 -- in the first
+        // transaction after the switch, after an O3 commit, and after a rollback -- until a row opens a
+        // newer native partition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T01:00:00.000000Z'), (2, '2024-01-02T01:00:00.000000Z')");
+
+            try (TableWriter writer = getWriter("x")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                switchLastPartitionToParquet(writer);
+
+                appendLongRow(writer, "2024-01-02T02:00:00.000000Z", 3);
+                appendLongRow(writer, "2024-01-02T03:00:00.000000Z", 4);
+                writer.commit();
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+
+                appendLongRow(writer, "2024-01-02T04:00:00.000000Z", 5);
+                writer.commit();
+
+                appendLongRow(writer, "2024-01-02T05:00:00.000000Z", -1);
+                writer.rollback();
+
+                appendLongRow(writer, "2024-01-02T06:00:00.000000Z", 6);
+                writer.commit();
+                Assert.assertEquals(2, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+
+                appendLongRow(writer, "2024-01-03T01:00:00.000000Z", 7);
+                appendLongRow(writer, "2024-01-03T02:00:00.000000Z", 8);
+                writer.commit();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, txWriter.getPartitionCount());
+                Assert.assertTrue(txWriter.isPartitionParquet(1));
+                Assert.assertFalse("the newer partition must be native", txWriter.isPartitionParquet(2));
+                Assert.assertEquals(8, writer.size());
+            }
+
+            assertQuery("x").timestamp("ts").expectSize().returns("""
+                    v\tts
+                    1\t2024-01-01T01:00:00.000000Z
+                    2\t2024-01-02T01:00:00.000000Z
+                    3\t2024-01-02T02:00:00.000000Z
+                    4\t2024-01-02T03:00:00.000000Z
+                    5\t2024-01-02T04:00:00.000000Z
+                    6\t2024-01-02T06:00:00.000000Z
+                    7\t2024-01-03T01:00:00.000000Z
+                    8\t2024-01-03T02:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionSwitchesToNewPartition() throws Exception {
+        // The first row after an active-partition switch lands past the parquet partition: it must open
+        // a new native partition and append in order, then keep appending natively.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T01:00:00.000000Z'), (2, '2024-01-02T01:00:00.000000Z')");
+
+            try (TableWriter writer = getWriter("x")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                switchLastPartitionToParquet(writer);
+
+                appendLongRow(writer, "2024-01-03T01:00:00.000000Z", 3);
+                appendLongRow(writer, "2024-01-03T02:00:00.000000Z", 4);
+                writer.commit();
+                appendLongRow(writer, "2024-01-03T03:00:00.000000Z", 5);
+                writer.commit();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, txWriter.getPartitionCount());
+                Assert.assertTrue(txWriter.isPartitionParquet(1));
+                Assert.assertFalse("the newer partition must be native", txWriter.isPartitionParquet(2));
+            }
+
+            assertQuery("x").timestamp("ts").expectSize().returns("""
+                    v\tts
+                    1\t2024-01-01T01:00:00.000000Z
+                    2\t2024-01-02T01:00:00.000000Z
+                    3\t2024-01-03T01:00:00.000000Z
+                    4\t2024-01-03T02:00:00.000000Z
+                    5\t2024-01-03T03:00:00.000000Z
+                    """);
         });
     }
 
@@ -3734,6 +4313,34 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
+    private static void appendLongRow(TableWriter writer, String timestamp, long value) {
+        TableWriter.Row r = writer.newRow(MicrosTimestampDriver.floor(timestamp));
+        r.putLong(0, value);
+        r.append();
+    }
+
+    private static void assertNoNativeColumnFiles(TableWriter writer, int partitionIndex) {
+        final TxWriter txWriter = writer.getTxWriter();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(writer.getTableToken());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    writer.getTimestampType(),
+                    writer.getPartitionBy(),
+                    txWriter.getPartitionTimestampByIndex(partitionIndex),
+                    txWriter.getPartitionNameTxn(partitionIndex)
+            );
+            final String[] fileNames = new File(path.toString()).list();
+            Assert.assertNotNull("partition dir must exist [path=" + path + ']', fileNames);
+            for (String fileName : fileNames) {
+                Assert.assertFalse(
+                        "native column file in parquet partition dir [path=" + path + ", file=" + fileName + ']',
+                        fileName.matches(".*\\.[di](\\.\\d+)?")
+                );
+            }
+        }
+    }
+
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
         TableWriter.Row r = w.newRow(timestamp - increment * 4);
         r.putSym(0, rnd.nextString(5));
@@ -3772,6 +4379,15 @@ public class TableWriterTest extends AbstractCairoTest {
         r.putLong(8, rnd.nextGeoHashLong(60)); // locationLong
         r.append();
         return ts;
+    }
+
+    private static TableWriter.Row putStrVarcharSymRow(TableWriter writer, String timestamp, long value) {
+        TableWriter.Row r = writer.newRow(MicrosTimestampDriver.floor(timestamp));
+        r.putLong(0, value);
+        r.putStr(1, "s" + value);
+        r.putVarchar(2, new Utf8String("vc" + value));
+        r.putSym(3, value % 2 == 0 ? "a" : "b");
+        return r;
     }
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
