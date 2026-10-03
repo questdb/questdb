@@ -320,6 +320,48 @@ public final class FiberMetrics implements Target, Mutable {
         PrometheusFormatUtils.appendNewLine(sink);
     }
 
+    @Override
+    public synchronized void snapshot(MetricSnapshotVisitor visitor) {
+        for (int i = 0, n = entries.size(); i < n; i++) {
+            final Entry entry = entries.getQuick(i);
+            final FiberRuntime runtime = entry.runtime;
+            final String poolName = entry.poolName;
+            visitor.visitLong(LIVE_NAME, MetricType.LONG_GAUGE, poolName, runtime.getLiveFiberCount());
+            visitor.visitLong(MAX_LIVE_NAME, MetricType.LONG_GAUGE, poolName, runtime.getMaxLiveFiberCount());
+            visitor.visitLong(OUTSTANDING_NAME, MetricType.LONG_GAUGE, poolName, runtime.getOutstandingTaskCount());
+            visitor.visitLong(QUEUED_NAME, MetricType.LONG_GAUGE, poolName, runtime.getQueuedCount());
+            visitor.visitLong(MOUNTED_NAME, MetricType.LONG_GAUGE, poolName, runtime.getMountedCount());
+            visitor.visitLong(FINALIZING_NAME, MetricType.LONG_GAUGE, poolName, runtime.getFinalizerCount());
+            visitor.visitLong(PARKED_NAME, MetricType.LONG_GAUGE, poolName, runtime.getParkedFiberCount());
+            visitor.visitLong(RETAINED_NAME, MetricType.LONG_GAUGE, poolName, runtime.getRetainedFiberCount());
+            visitor.visitLong(CREATED_NAME, MetricType.COUNTER, poolName, runtime.getCreatedFiberCount() - entry.createdBaseline);
+            visitor.visitLong(RETIRED_NAME, MetricType.COUNTER, poolName, runtime.getRetiredFiberCount() - entry.retiredBaseline);
+            visitor.visitLong(MOUNT_NAME, MetricType.COUNTER, poolName, runtime.getMountCount() - entry.mountBaseline);
+            visitor.visitLong(SATURATION_NAME, MetricType.COUNTER, poolName, runtime.getSaturationCount() - entry.saturationBaseline);
+            visitor.visitLong(BUDGET_EXHAUSTION_NAME, MetricType.COUNTER, poolName, runtime.getBudgetExhaustionCount() - entry.budgetExhaustionBaseline);
+            visitor.visitLong(INLINE_SUSPEND_VIOLATION_NAME, MetricType.COUNTER, poolName, runtime.getInlineSuspendViolationCount() - entry.inlineSuspendViolationBaseline);
+            visitor.visitLong(SCHEDULER_PUBLICATION_NAME, MetricType.COUNTER, poolName, "owner_local", runtime.getLocalPublicationCount() - entry.localPublicationBaseline);
+            visitor.visitLong(SCHEDULER_PUBLICATION_NAME, MetricType.COUNTER, poolName, "global", runtime.getGlobalPublicationCount() - entry.globalPublicationBaseline);
+            visitor.visitLong(SCHEDULER_PUBLICATION_NAME, MetricType.COUNTER, poolName, "local_fallback", runtime.getLocalFallbackPublicationCount() - entry.localFallbackPublicationBaseline);
+            visitor.visitLong(SCHEDULER_SELECTION_NAME, MetricType.COUNTER, poolName, "owner_local", runtime.getLocalSelectionCount() - entry.localSelectionBaseline);
+            visitor.visitLong(SCHEDULER_SELECTION_NAME, MetricType.COUNTER, poolName, "global", runtime.getGlobalSelectionCount() - entry.globalSelectionBaseline);
+            visitor.visitLong(SCHEDULER_SELECTION_NAME, MetricType.COUNTER, poolName, "stolen_local", runtime.getStolenSelectionCount() - entry.stolenSelectionBaseline);
+            visitor.visitLong(WAKE_NAME, MetricType.COUNTER, poolName, runtime.getWakeClaimCount() - entry.wakeBaseline);
+            visitor.visitLong(ORPHANED_SHARD_NAME, MetricType.COUNTER, poolName, runtime.getOrphanedShardTransitionCount() - entry.orphanedShardBaseline);
+            visitor.visitLong(ORPHAN_RECOVERY_NAME, MetricType.COUNTER, poolName, runtime.getOrphanedEntryRecoveryCount() - entry.orphanRecoveryBaseline);
+            for (int resultIndex = 0; resultIndex < LaunchResult.COUNT; resultIndex++) {
+                final LaunchResult result = LaunchResult.get(resultIndex);
+                visitor.visitLong(
+                        LAUNCH_NAME,
+                        MetricType.COUNTER,
+                        poolName,
+                        result.getMetricLabel(),
+                        runtime.getLaunchCount(result) - entry.launchBaselines[resultIndex]
+                );
+            }
+        }
+    }
+
     public synchronized void unregister(FiberRuntime runtime) {
         for (int i = 0, n = entries.size(); i < n; i++) {
             if (entries.getQuick(i).runtime == runtime) {
