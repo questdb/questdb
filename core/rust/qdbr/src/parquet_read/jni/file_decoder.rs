@@ -629,6 +629,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_columnRecordNotNullOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnMeta, not_null)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_columnRecordSize(
     _env: JNIEnv,
     _class: JClass,

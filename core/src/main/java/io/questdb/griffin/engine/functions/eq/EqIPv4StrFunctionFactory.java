@@ -35,7 +35,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqIPv4StrFunctionFactory implements FunctionFactory {
@@ -62,6 +64,13 @@ public class EqIPv4StrFunctionFactory implements FunctionFactory {
         Function strFunc = args.getQuick(1);
         if (strFunc.isConstant()) {
             int ipv4 = strFunc.getIPv4(null);
+            // `x IS NULL` / `x = null` resolves here with a genuine NULL constant (the
+            // spelled-out '0.0.0.0' address is data, not NULL). When the column is
+            // NOT NULL this is always false at compile time; NegatingFunctionFactory
+            // flips BooleanConstant.FALSE to TRUE for the IS NOT NULL path.
+            if (ipv4 == Numbers.IPv4_NULL && strFunc.getStrA(null) == null && ipv4Func.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
             return new ConstStrFunc(ipv4, ipv4Func);
         } else if (strFunc.isRuntimeConstant()) {
             return new RuntimeConstStrFunc(strFunc, ipv4Func);

@@ -107,6 +107,7 @@ fn bytes_segments_to_page<const N: usize>(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let null_value = fixed_null_value::<N>();
+    let not_null_hint = columns.iter().all(|column| column.not_null_hint);
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
@@ -124,7 +125,7 @@ fn bytes_segments_to_page<const N: usize>(
             validity.push_null();
         }
         for &value in view.slice {
-            if value == null_value {
+            if !not_null_hint && value == null_value {
                 validity.push_null();
             } else {
                 validity.push_present();

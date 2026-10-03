@@ -49,7 +49,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                 return builder.$("CREATE TABLE IF NOT EXISTS '")
                         .$(tableName)
                         .$("' (" +
-                                "created TIMESTAMP, " +
+                                "created TIMESTAMP NOT NULL, " +
                                 "event SHORT, " +
                                 "view_table_id INT, " +
                                 "base_table_txn LONG, " + // -1 stands for range refresh

@@ -231,6 +231,33 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumEmptyNotNullDecimalIsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // SUM over zero rows is SQL NULL regardless of the input column's
+            // NOT NULL contract: the accumulator's empty state must not be
+            // conflated with input-column nullability
+            execute("create table tab (d32 decimal(9,0) not null, d64 decimal(18,0) not null, d128 decimal(38,0) not null)");
+            assertQuery("select sum(d32) s32, sum(d64) s64, sum(d128) s128 from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s32\ts64\ts128\n\t\t\n");
+        });
+    }
+
+    @Test
+    public void testSumEmptyNotNullDecimalSiblingPrecisionsIsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (d8 decimal(2,0) not null, d16 decimal(4,0) not null, d256 decimal(76,0) not null)");
+            assertQuery("select sum(d8) s8, sum(d16) s16, sum(d256) s256 from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s8\ts16\ts256\n\t\t\n");
+        });
+    }
+
+    @Test
     public void testSumKeyedFixedSize() throws Exception {
         testSumMaps(false, null);
     }
@@ -263,6 +290,74 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumKeyedVarchar() throws Exception {
         testSumMaps(true, "varchar");
+    }
+
+    @Test
+    public void testSumNotNullDecimalKeyedWithRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (g symbol, d32 decimal(9,0) not null, d64 decimal(18,0) not null, d128 decimal(38,0) not null)");
+            execute("""
+                    insert into tab values
+                        ('a', 1, 10, 100),
+                        ('a', 2, 20, 200),
+                        ('b', 3, 30, 300)
+                    """);
+            assertQuery("select g, sum(d32) s32, sum(d64) s64, sum(d128) s128 from tab order by g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ts32\ts64\ts128
+                            a\t3\t30\t300
+                            b\t3\t30\t300
+                            """);
+        });
+    }
+
+    @Test
+    public void testSumNotNullDecimalReclassifiedSentinelIsData() throws Exception {
+        assertMemoryLeak(() -> {
+            // ALTER ... SET NOT NULL reclassifies stored sentinel bit patterns
+            // as data: SUM must absorb them as numbers, not report NULL
+            execute("create table tab32 (d decimal(9,0))");
+            execute("insert into tab32 values (null)");
+            execute("alter table tab32 alter column d set not null");
+            assertQuery("select sum(d) s from tab32")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s\n-2147483648\n");
+
+            execute("create table tab64 (d decimal(18,0))");
+            execute("insert into tab64 values (null)");
+            execute("alter table tab64 alter column d set not null");
+            assertQuery("select sum(d) is not null has_value from tab64")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("has_value\ntrue\n");
+        });
+    }
+
+    @Test
+    public void testSumNotNullDecimalSentinelParallelMerge() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        assertMemoryLeak(() -> {
+            execute("create table tab (d decimal(18,0), ts timestamp not null) timestamp(ts) partition by day bypass wal");
+            execute("""
+                    insert into tab values
+                        (null, '2024-01-01'),
+                        (5, '2024-01-02'),
+                        (7, '2024-01-03')
+                    """);
+            execute("alter table tab alter column d set not null");
+            // -9223372036854775808 (reclassified sentinel, now data) + 5 + 7
+            assertQuery("select sum(d) s from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s\n-9223372036854775796\n");
+        });
     }
 
     @Test

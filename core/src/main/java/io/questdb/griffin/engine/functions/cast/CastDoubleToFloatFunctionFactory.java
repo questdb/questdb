@@ -52,7 +52,7 @@ public class CastDoubleToFloatFunctionFactory implements FunctionFactory {
         @Override
         public float getFloat(Record rec) {
             double value = arg.getDouble(rec);
-            return Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE ? Float.NaN : (float) value;
+            return (!arg.isNotNull() && Numbers.isNull(value)) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE ? Float.NaN : (float) value;
         }
     }
 }

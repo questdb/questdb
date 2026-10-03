@@ -18,7 +18,7 @@ test_that("create - insert - select works", {
   )
 
   dbExecute(con, "DROP TABLE IF EXISTS r_test;")
-  dbExecute(con, "CREATE TABLE r_test(n int, ts timestamp) timestamp(ts) partition by hour;")
+  dbExecute(con, "CREATE TABLE r_test(n int, ts timestamp NOT NULL) timestamp(ts) partition by hour;")
   dbExecute(con, "INSERT INTO r_test VALUES (1, '2024-10-28');")
 
   # Wait for WAL

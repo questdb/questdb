@@ -307,6 +307,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
+    // Cached indices of enforceable NOT NULL columns. Built on demand from
+    // metadata and invalidated whenever the metadata changes (set to null).
+    // The hot path in rowAppend validates only these columns per row - the
+    // list is empty for tables without NOT NULL columns - instead of resolving
+    // metadata.getColumnType(i) + metadata.isNotNull(i) per row per column.
+    // per-column companion of enforceableNotNullColumnIndexes, for O(1) checks
+    // on the put* hot path; both arrays are rebuilt together.
+    private boolean[] enforceableNotNullByColumn;
+    private int[] enforceableNotNullColumnIndexes;
+    // columnCount enforceableNotNullColumnIndexes was built for; a mismatch
+    // marks the cache stale even without an explicit invalidation.
+    private int enforceableNotNullColumnIndexesColumnCount = -1;
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
     private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
@@ -671,7 +683,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 IndexType.NONE,
                 0,
                 false,
-                false,
                 securityContext
         );
     }
@@ -696,6 +707,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
+                false,
                 securityContext
         );
     }
@@ -739,6 +751,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isNotNull,
             SecurityContext securityContext
     ) {
         assert txWriter.getLagRowCount() == 0;
@@ -761,6 +774,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(" to ").$substr(pathRootSize, path)
                 .$();
 
+        // ADD COLUMN NOT NULL on a populated table back-fills existing rows
+        // via column_top, which reads as the type's null sentinel. Under the
+        // NOT NULL contract those sentinels are valid data, so the backfill
+        // is indistinguishable from rows the user wrote. Warn so operators
+        // migrating schemas see the behavioural detail.
+        if (isNotNull && txWriter.getRowCount() > 0) {
+            LOG.info()
+                    .$("ADD COLUMN NOT NULL on populated table, existing rows back-fill with type sentinel [table=")
+                    .$(tableToken).$(", column=").$safe(columnName)
+                    .$(", existingRowCount=").$(txWriter.getRowCount()).I$();
+        }
+
         addColumnToMeta(
                 columnName,
                 columnType,
@@ -769,12 +794,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexType,
                 indexValueBlockCapacity,
                 isDedupKey,
+                isNotNull,
                 columnNameTxn,
                 -1,
                 metadata
         );
 
 
+        invalidateEnforceableNotNullCache();
         // extend columnTop list to make sure row cancel can work
         // need for setting correct top is hard to test without being able to read from table
         int columnIndex = columnCount - 1;
@@ -1295,6 +1322,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
+            boolean isNotNull = metadata.isNotNull(existingColIndex);
             int columnIndex = columnCount;
             long columnNameTxn = getTxn();
 
@@ -1329,6 +1357,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexType,
                     indexValueBlockCapacity,
                     isDedupKey,
+                    isNotNull,
                     columnNameTxn,
                     existingColIndex,
                     metadata
@@ -2980,6 +3009,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             case ROW_ACTION_O3:
                 bumpMasterRef();
                 o3TimestampSetter(timestamp);
+                setRowValueNotNull(metadata.getTimestampIndex());
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
@@ -3008,6 +3038,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 break;
             default:
                 throw new AssertionError("Invalid row action constant");
+        }
+        if (metadata.getTimestampIndex() != -1) {
+            setRowValueNotNull(metadata.getTimestampIndex());
         }
         txWriter.append();
         return row;
@@ -3247,6 +3280,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (timestamp) {
             metadata.clearTimestampIndex();
         }
+        invalidateEnforceableNotNullCache();
         rewriteAndSwapMetadata(metadata);
 
         boolean committed = false;
@@ -3520,6 +3554,47 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         partitionRemoveCandidates.add(timestamp, partitionNameTxn);
         processPartitionRemoveCandidates();
+    }
+
+    @Override
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        checkDistressed();
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        if (!isNotNull && columnIndex == metadata.getTimestampIndex()) {
+            throw CairoException.nonCritical().put("cannot drop NOT NULL constraint on designated timestamp [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        // ALTER ... SET NOT NULL on a populated column is a metadata flip;
+        // pre-existing rows containing the null sentinel are silently
+        // reclassified as real data under the NOT NULL contract. Operators
+        // migrating schemas need visibility, so log a warning when the
+        // toggled column is not the designated timestamp (which was already
+        // NOT NULL implicitly) and the table has rows.
+        if (isNotNull && columnIndex != metadata.getTimestampIndex() && txWriter.getRowCount() > 0) {
+            LOG.info()
+                    .$("SET NOT NULL on populated column, any pre-existing sentinel rows are now real data [table=")
+                    .$(tableToken).$(", column=").$safe(columnName)
+                    .$(", existingRowCount=").$(txWriter.getRowCount()).I$();
+        }
+        commit();
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+        columnMetadata.setNotNullFlag(isNotNull);
+        invalidateEnforceableNotNullCache();
+        // SET/DROP NOT NULL is a structural change: the sequencer increments
+        // structureVersion on every toggle so concurrent WalWriters pick up
+        // the metadata refresh. The TableWriter must match by bumping
+        // columnStructureVersion alongside metadataVersion; otherwise the
+        // WAL apply loop rejects the change with
+        // "unexpected new WAL structure version".
+        rewriteAndSwapMetadata(metadata);
+        clearTodoAndCommitMetaStructureVersion();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
     }
 
     @Override
@@ -4362,6 +4437,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey,
+            boolean isNotNull,
             long columnNameTxn,
             int replaceColumnIndex,
             TableWriterMetadata metadata
@@ -4382,6 +4458,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 replaceColumnIndex,
                 symbolCacheFlag
         );
+
+        if (isNotNull) {
+            metadata.getColumnMetadata(metadata.getColumnCount() - 1).setNotNullFlag(true);
+        }
 
         rewriteAndSwapMetadata(metadata);
 
@@ -8557,6 +8637,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3MasterRef = masterRef;
         rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
+        setRowValueNotNull(metadata.getTimestampIndex());
         return row;
     }
 
@@ -13744,6 +13825,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long flags = encodeIndexTypeFlags(metadata.getIndexType(i));
 
+                if (metadata.isNotNull(i)) {
+                    flags |= META_FLAG_BIT_NOT_NULL;
+                }
+
                 if (metadata.isDedupKey(i)) {
                     flags |= META_FLAG_BIT_DEDUP_KEY;
                 }
@@ -13858,6 +13943,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void rowAppend(ObjList<Runnable> activeNullSetters) {
         if ((masterRef & 1) != 0) {
+            // Reject missing NOT NULL columns BEFORE any null setter runs: a null
+            // setter appends the column's default to storage, and rowCancel() must
+            // be able to treat a rejected row as never written (its rowChanged
+            // shortcut skips the append-position rewind when no column was set).
+            final int[] requiredColumnIndexes = enforceableNotNullColumnIndexes();
+            for (int i = 0, n = requiredColumnIndexes.length; i < n; i++) {
+                final int columnIndex = requiredColumnIndexes[i];
+                if (rowValueIsNotNull.getQuick(columnIndex) < masterRef) {
+                    throw CairoException.nonCritical()
+                            .put("NOT NULL constraint violation, column is required [column=")
+                            .put(metadata.getColumnName(columnIndex))
+                            .put(']');
+                }
+            }
             for (int i = 0; i < columnCount; i++) {
                 if (rowValueIsNotNull.getQuick(i) < masterRef) {
                     activeNullSetters.getQuick(i).run();
@@ -13865,6 +13964,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             masterRef++;
         }
+    }
+
+    private boolean columnRejectsNull(int columnIndex) {
+        // Nullability is static table metadata; the put* hot path must not walk
+        // metadata (incl. a volatile flag read) per value. The cache shares the
+        // validity rule and invalidation sites of enforceableNotNullColumnIndexes.
+        if (enforceableNotNullColumnIndexes == null || enforceableNotNullColumnIndexesColumnCount != columnCount) {
+            enforceableNotNullColumnIndexes();
+        }
+        return enforceableNotNullByColumn[columnIndex];
+    }
+
+    private int[] enforceableNotNullColumnIndexes() {
+        final int[] cache = enforceableNotNullColumnIndexes;
+        if (cache != null && enforceableNotNullColumnIndexesColumnCount == columnCount) {
+            return cache;
+        }
+        final boolean[] flags = new boolean[columnCount];
+        int requiredColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                flags[i] = true;
+                requiredColumnCount++;
+            }
+        }
+        final int[] rebuilt = new int[requiredColumnCount];
+        for (int i = 0, k = 0; i < columnCount; i++) {
+            if (flags[i]) {
+                rebuilt[k++] = i;
+            }
+        }
+        enforceableNotNullByColumn = flags;
+        enforceableNotNullColumnIndexesColumnCount = columnCount;
+        enforceableNotNullColumnIndexes = rebuilt;
+        return rebuilt;
+    }
+
+    private void invalidateEnforceableNotNullCache() {
+        enforceableNotNullColumnIndexes = null;
     }
 
     private void runFragile(FragileCode fragile, CairoException e) {
@@ -14243,7 +14381,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void setRowValueNotNull(int columnIndex) {
-        assert rowValueIsNotNull.getQuick(columnIndex) != masterRef;
+        // Double-put detection: writing the same column twice within one row appends
+        // twice and desynchronizes the aux vector for var-size types. The designated
+        // timestamp is exempt because newRow/newRowO3 mark it proactively (the value
+        // arrives via newRow(timestamp), not a put), so it may legitimately be marked
+        // again on the same masterRef.
+        assert columnIndex == metadata.getTimestampIndex() || rowValueIsNotNull.getQuick(columnIndex) != masterRef;
         rowValueIsNotNull.setQuick(columnIndex, masterRef);
     }
 
@@ -15272,6 +15415,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void writeMetadataToDisk() {
+        invalidateEnforceableNotNullCache();
         rewriteAndSwapMetadata(metadata);
         clearTodoAndCommitMeta();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
@@ -16075,6 +16219,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putArray(int columnIndex, @NotNull ArrayView array) {
+            if (array.isNull()) {
+                // A null array arrives as a non-null ArrayView with isNull()==true,
+                // so the Object null check in checkNotNullValue never sees it. Pass
+                // an explicit null to run the same NOT NULL enforcement as the other
+                // reference types.
+                checkNotNullValue(columnIndex, null);
+            }
             ArrayTypeDriver.appendValue(
                     getSecondaryColumn(columnIndex),
                     getPrimaryColumn(columnIndex),
@@ -16091,6 +16242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putBin(int columnIndex, BinarySequence sequence) {
+            checkNotNullValue(columnIndex, sequence);
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(sequence));
             setRowValueNotNull(columnIndex);
         }
@@ -16267,6 +16419,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStr(int columnIndex, CharSequence value) {
+            checkNotNullValue(columnIndex, value);
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
             setRowValueNotNull(columnIndex);
         }
@@ -16279,12 +16432,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+            checkNotNullValue(columnIndex, value);
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
             setRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            checkNotNullValue(columnIndex, value);
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
         }
@@ -16300,6 +16455,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putSym(int columnIndex, CharSequence value) {
+            // SYMBOL stores -1 (SymbolTable.VALUE_IS_NULL) for null. That sentinel
+            // is the same encoding the IS NULL operator matches against, so an
+            // accepted explicit-NULL insert into a NOT NULL SYMBOL column would
+            // make `WHERE col IS NULL` match the row -- defeating the constraint
+            // user-side. Numeric NOT NULL types (per testEnforceNotNullSentinelValuesAccepted)
+            // accept explicit NULL because their sentinel value is distinct from
+            // the NULL semantic; SYMBOL has no such distinction.
+            if (value == null && columnRejectsNull(columnIndex)) {
+                throw CairoException.nonCritical()
+                        .put("NOT NULL constraint violation, column is required [column=")
+                        .put(metadata.getColumnName(columnIndex))
+                        .put(']');
+            }
             getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
             setRowValueNotNull(columnIndex);
         }
@@ -16312,6 +16480,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putSymIndex(int columnIndex, int key) {
+            // SymbolTable.VALUE_IS_NULL = -1 -- guard the same way as putSym(null).
+            if (key == SymbolTable.VALUE_IS_NULL && columnRejectsNull(columnIndex)) {
+                throw CairoException.nonCritical()
+                        .put("NOT NULL constraint violation, column is required [column=")
+                        .put(metadata.getColumnName(columnIndex))
+                        .put(']');
+            }
             putInt(columnIndex, key);
         }
 
@@ -16351,12 +16526,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
+            checkNotNullValue(columnIndex, value);
             VarcharTypeDriver.appendValue(
                     getSecondaryColumn(columnIndex),
                     getPrimaryColumn(columnIndex),
                     value
             );
             setRowValueNotNull(columnIndex);
+        }
+
+        private void checkNotNullValue(int columnIndex, Object value) {
+            if (value == null && columnRejectsNull(columnIndex)) {
+                throw CairoException.nonCritical()
+                        .put("NOT NULL constraint violation, column is required [column=")
+                        .put(metadata.getColumnName(columnIndex))
+                        .put(']');
+            }
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

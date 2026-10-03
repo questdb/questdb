@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqDateFunctionFactory implements FunctionFactory {
@@ -45,7 +47,23 @@ public class EqDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new EqDateFunctionFactory.EqDateFunction(args.getQuick(0), args.getQuick(1));
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        // `x IS NULL` / `x = null` on a NOT NULL DATE column constant-folds to false:
+        // the stored sentinel bit pattern is data there, not NULL.
+        // NegatingFunctionFactory flips BooleanConstant.FALSE to TRUE for the
+        // IS NOT NULL path, so both sides of the constraint stay correct.
+        if (isDateNullConstant(left) && right.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (isDateNullConstant(right) && left.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        return new EqDateFunctionFactory.EqDateFunction(left, right);
+    }
+
+    private static boolean isDateNullConstant(Function f) {
+        return f.isConstant() && f.getDate(null) == Numbers.LONG_NULL;
     }
 
     private static class EqDateFunction extends AbstractEqBinaryFunction {

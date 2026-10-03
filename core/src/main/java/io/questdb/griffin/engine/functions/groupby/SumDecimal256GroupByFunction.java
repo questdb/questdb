@@ -40,6 +40,7 @@ import org.jetbrains.annotations.NotNull;
 
 class SumDecimal256GroupByFunction extends Decimal256Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final Decimal256 decimal256A = new Decimal256();
     private final Decimal256 decimal256B = new Decimal256();
     private final int position;
@@ -48,6 +49,7 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
     public SumDecimal256GroupByFunction(@NotNull Function arg, int position) {
         super(ColumnType.getDecimalType(Decimals.MAX_PRECISION, ColumnType.getDecimalScale(arg.getType())));
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.position = position;
     }
 
@@ -60,9 +62,9 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         arg.getDecimal256(record, decimal256A);
-        if (!decimal256A.isNull()) {
+        if (isArgNotNull || !decimal256A.isNull()) {
             mapValue.getDecimal256(valueIndex, decimal256B);
-            if (decimal256B.isNull()) {
+            if (!isArgNotNull && decimal256B.isNull()) {
                 mapValue.putDecimal256(valueIndex, decimal256A);
             } else {
                 try {
@@ -123,9 +125,9 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         srcValue.getDecimal256(valueIndex, decimal256A);
-        if (!decimal256A.isNull()) {
+        if (isArgNotNull || !decimal256A.isNull()) {
             destValue.getDecimal256(valueIndex, decimal256B);
-            if (decimal256B.isNull()) {
+            if (!isArgNotNull && decimal256B.isNull()) {
                 destValue.putDecimal256(valueIndex, decimal256A);
             } else {
                 try {

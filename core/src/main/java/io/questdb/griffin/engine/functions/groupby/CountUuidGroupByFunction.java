@@ -49,7 +49,7 @@ public class CountUuidGroupByFunction extends AbstractCountGroupByFunction {
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long hi = arg.getLong128Hi(record);
         final long lo = arg.getLong128Lo(record);
-        if (!Uuid.isNull(lo, hi)) {
+        if (isArgNotNull || !Uuid.isNull(lo, hi)) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -77,7 +77,7 @@ public class CountUuidGroupByFunction extends AbstractCountGroupByFunction {
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long lo = Unsafe.getLong(argAddr + rowIndex * UUID_BYTES);
                 final long hi = Unsafe.getLong(argAddr + rowIndex * UUID_BYTES + 8);
-                if (!Uuid.isNull(lo, hi)) {
+                if (isArgNotNull || !Uuid.isNull(lo, hi)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -88,7 +88,7 @@ public class CountUuidGroupByFunction extends AbstractCountGroupByFunction {
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long hi = arg.getLong128Hi(record);
                 final long lo = arg.getLong128Lo(record);
-                if (!Uuid.isNull(lo, hi)) {
+                if (isArgNotNull || !Uuid.isNull(lo, hi)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -100,7 +100,7 @@ public class CountUuidGroupByFunction extends AbstractCountGroupByFunction {
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long hi = arg.getLong128Hi(record);
         final long lo = arg.getLong128Lo(record);
-        if (!Uuid.isNull(lo, hi)) {
+        if (isArgNotNull || !Uuid.isNull(lo, hi)) {
             mapValue.addLong(valueIndex, 1);
         }
     }

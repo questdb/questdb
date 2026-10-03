@@ -157,6 +157,7 @@ public class GroupByUtils {
                                 func.getMetadata()
                         );
 
+                        m.setNotNullFlag(func.isNotNull());
                         if (func instanceof GroupByFunction) {
                             projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_GROUP_BY);
                         } else {
@@ -192,6 +193,7 @@ public class GroupByUtils {
                                 baseMetadata.isSymbolTableStatic(index),
                                 baseMetadata.getMetadata(index)
                         );
+                        m.setNotNullFlag(baseMetadata.isNotNull(index));
                     }
                 }
                 projectionMetadata.add(m);

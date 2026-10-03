@@ -52,11 +52,17 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
+            if (func.isNullConstant()) {
+                return VarcharConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(func.getDate(null));
             return new VarcharConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (func.isNotNull()) {
+            return new FuncNotNull(func);
+        }
+        return new Func(func);
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
@@ -87,6 +93,35 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
                 return sinkB;
             }
             return null;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return format(arg.getDate(rec), sinkA);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return format(arg.getDate(rec), sinkB);
+        }
+
+        private Utf8Sequence format(long value, Utf8StringSink sink) {
+            sink.clear();
+            if (value == Long.MIN_VALUE) {
+                Numbers.append(sink, value, false);
+            } else {
+                sink.putISODateMillis(value);
+            }
+            return sink;
         }
     }
 }

@@ -74,7 +74,13 @@ import org.junit.Assert;
  * as an aggregator argument forces
  * {@link io.questdb.griffin.engine.groupby.GroupByUtils#directArgColumnIndex} to
  * return {@code -1}, which exercises the {@code argColumnIndex < 0} side of the
- * {@code argAddr} ternary in every {@code computeKeyedBatch} override.
+ * {@code argAddr} ternary in every {@code computeKeyedBatch} override. Each of them
+ * also takes an {@code isNotNull} flag, so a record-path fixture can present an
+ * argument that carries its type's full range.
+ * <p>
+ * {@link #foldKeyedBatch} complements {@link #assertEquivalence}: it pins the absolute
+ * accumulator a batch leaves in one map entry, which an equivalence check cannot see
+ * when both implementations share the same rule.
  */
 final class KeyedBatchTestUtils {
 
@@ -390,6 +396,60 @@ final class KeyedBatchTestUtils {
     }
 
     /**
+     * Folds {@code rowIndexes} into a single map entry through
+     * {@link GroupByFunction#computeKeyedBatch} and returns the accumulator that entry ends up
+     * holding, widened to a long. The entry starts at the {@code setEmpty} etalon and
+     * {@code isNewFlags} says which of the rows the map would have flagged as creating it, so a
+     * {@code {true, false, false}} run reproduces a group whose second and third rows land on an
+     * entry the map has already seen.
+     * <p>
+     * {@link #assertEquivalence} only pins {@code computeKeyedBatch} against
+     * {@code computeFirst}/{@code computeNext}, so a rule both sides apply the same way is
+     * invisible to it. This helper pins an absolute value instead.
+     * <p>
+     * The function must register exactly one {@code INT} or {@code LONG} value column. The caller
+     * supplies an already-allocated argument buffer; ownership transfers to this method, which
+     * frees it before returning.
+     */
+    static long foldKeyedBatch(
+            GroupByFunction function,
+            boolean fastPath,
+            int elemSize,
+            long argBufferAddr,
+            long argBufferSize,
+            long[] rowIndexes,
+            boolean[] isNewFlags
+    ) {
+        try (TestFrameRecord record = new TestFrameRecord(elemSize, argBufferAddr, argBufferSize)) {
+            record.setPageAvailable(fastPath);
+
+            final ArrayColumnTypes types = new ArrayColumnTypes();
+            final long valueSize = initFunctionTypes(function, types);
+            Assert.assertEquals(1, types.getColumnCount());
+            final int valueType = types.getColumnType(0);
+            Assert.assertTrue(
+                    "foldKeyedBatch reads INT and LONG value columns only, got " + ColumnType.nameOf(valueType),
+                    valueType == ColumnType.INT || valueType == ColumnType.LONG
+            );
+
+            final FlyweightPackedMapValue flyweight = new FlyweightPackedMapValue(types);
+            final long base = allocEtalonRegion(function, 1, valueSize, flyweight);
+            try {
+                // Every row targets entry offset 0, so all of them fold into the one entry.
+                final long batch = buildBatchBuffer(rowIndexes, new long[rowIndexes.length], isNewFlags);
+                try {
+                    function.computeKeyedBatch(record, flyweight, base, batch, rowIndexes.length, 0);
+                } finally {
+                    Unsafe.free(batch, (long) rowIndexes.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+                return valueType == ColumnType.INT ? Unsafe.getInt(base) : Unsafe.getLong(base);
+            } finally {
+                Unsafe.free(base, valueSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    /**
      * Initializes a function's value-column indices via
      * {@link GroupByFunction#initValueTypes} and returns the resulting total
      * value-region size in bytes, derived from the registered column types.
@@ -530,14 +590,25 @@ final class KeyedBatchTestUtils {
 
     static final class IndirectIntArg extends IntFunction {
         private final int columnIndex;
+        private final boolean isNotNull;
 
         IndirectIntArg(int columnIndex) {
+            this(columnIndex, false);
+        }
+
+        IndirectIntArg(int columnIndex, boolean isNotNull) {
             this.columnIndex = columnIndex;
+            this.isNotNull = isNotNull;
         }
 
         @Override
         public int getInt(Record rec) {
             return rec.getInt(columnIndex);
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return isNotNull;
         }
     }
 
@@ -566,14 +637,25 @@ final class KeyedBatchTestUtils {
 
     static final class IndirectLongArg extends LongFunction {
         private final int columnIndex;
+        private final boolean isNotNull;
 
         IndirectLongArg(int columnIndex) {
+            this(columnIndex, false);
+        }
+
+        IndirectLongArg(int columnIndex, boolean isNotNull) {
             this.columnIndex = columnIndex;
+            this.isNotNull = isNotNull;
         }
 
         @Override
         public long getLong(Record rec) {
             return rec.getLong(columnIndex);
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return isNotNull;
         }
     }
 

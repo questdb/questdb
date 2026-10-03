@@ -195,7 +195,7 @@ final class ParquetRowGroupMaterializer {
                 if (ColumnType.isVarSize(columnType)) {
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                             columnId,
                             0,
                             columnDataAddress,
@@ -212,8 +212,8 @@ final class ParquetRowGroupMaterializer {
                     final MemoryR valuesMemory = symbolTableProvider.getSymbolValuesMemory(columnIndex);
                     final long valuesSize = offsetsMemory.getLong(SymbolMapWriter.keyToOffset(symbolCount));
                     int encoderColumnType = columnType;
-                    if (!symbolTableProvider.containsNullValue(columnIndex)) {
-                        encoderColumnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
+                    if (metadata.isNotNull(columnIndex)) {
+                        encoderColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                     }
                     descriptor.addColumn(
                             columnName,
@@ -231,7 +231,7 @@ final class ParquetRowGroupMaterializer {
                 } else {
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                             columnId,
                             0,
                             columnDataAddress,
@@ -291,8 +291,8 @@ final class ParquetRowGroupMaterializer {
                 if (columnType < 0) {
                     continue;
                 }
-                if (ColumnType.isSymbol(columnType) && !symbolTableProvider.containsNullValue(columnIndex)) {
-                    columnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
+                if (metadata.isNotNull(columnIndex)) {
+                    columnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                 }
                 final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
                 descriptor.addColumn(

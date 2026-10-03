@@ -68,6 +68,11 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             long lo;
             long hi;
             if (uuidStr == null) {
+                // `uuidCol = NULL`. On a NOT NULL UUID column this is always false.
+                // NegatingFunctionFactory handles IS NOT NULL by flipping the constant.
+                if (uuidFunc.isNotNull()) {
+                    return BooleanConstant.FALSE;
+                }
                 lo = Numbers.LONG_NULL;
                 hi = Numbers.LONG_NULL;
             } else {

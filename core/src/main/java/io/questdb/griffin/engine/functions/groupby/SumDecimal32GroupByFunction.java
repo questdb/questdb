@@ -41,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 
 class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal128 decimal128B = new Decimal128();
     private final int position;
@@ -51,6 +52,7 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
     public SumDecimal32GroupByFunction(@NotNull Function arg, int position) {
         super(ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), ColumnType.getDecimalScale(arg.getType())));
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.position = position;
         this.decimal128A.setScale(0);
         this.decimal128B.setScale(0);
@@ -59,25 +61,27 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int value = arg.getDecimal32(record);
-        if (value != Decimals.DECIMAL32_NULL) {
+        final boolean hasValue = isArgNotNull || value != Decimals.DECIMAL32_NULL;
+        if (hasValue) {
             mapValue.putLong(valueIndex + 1, value);
         } else {
             mapValue.putLong(valueIndex + 1, Decimals.DECIMAL64_NULL);
         }
         mapValue.putBool(valueIndex + 2, false);
+        mapValue.putBool(valueIndex + 3, hasValue);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         int value = arg.getDecimal32(record);
-        if (value != Decimals.DECIMAL32_NULL) {
+        if (isArgNotNull || value != Decimals.DECIMAL32_NULL) {
             try {
                 if (!mapValue.getBool(valueIndex + 2)) {
-                    final long decimal64B = mapValue.getDecimal64(valueIndex + 1);
-                    if (decimal64B == Decimals.DECIMAL64_NULL) {
+                    if (!mapValue.getBool(valueIndex + 3)) {
                         mapValue.putLong(valueIndex + 1, value);
+                        mapValue.putBool(valueIndex + 3, true);
                     } else {
-                        add(mapValue, value, decimal64B);
+                        add(mapValue, value, mapValue.getDecimal64(valueIndex + 1));
                     }
                 } else {
                     // decimal128 cannot be null, because it catches overflow, NULL would not overflow
@@ -101,13 +105,15 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
         overflow = rec.getBool(valueIndex + 2);
         if (overflow) {
             rec.getDecimal128(valueIndex, sink);
+        } else if (!rec.getBool(valueIndex + 3)) {
+            // no input value has been aggregated: SUM over zero rows is NULL
+            // regardless of the input column's nullability. The accumulator's
+            // bit pattern cannot decide this, since a NOT NULL column's
+            // reclassified sentinel is a legal value that may equal it.
+            sink.ofRawNull();
         } else {
             value = rec.getDecimal64(valueIndex + 1);
-            if (value == Decimals.DECIMAL64_NULL) {
-                sink.ofRawNull();
-            } else {
-                sink.ofRaw(value < 0 ? -1 : 0, value);
-            }
+            sink.ofRaw(value < 0 ? -1 : 0, value);
         }
     }
 
@@ -131,6 +137,10 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DECIMAL128);
         columnTypes.add(ColumnType.DECIMAL64);
+        // overflow: the accumulator has been promoted to decimal128
+        columnTypes.add(ColumnType.BOOLEAN);
+        // has-value: at least one input value has been aggregated; tracks
+        // the empty-aggregate state independently of accumulator bit patterns
         columnTypes.add(ColumnType.BOOLEAN);
     }
 
@@ -149,37 +159,37 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
         boolean srcOverflow = srcValue.getBool(valueIndex + 2);
         boolean destOverflow = destValue.getBool(valueIndex + 2);
 
+        // an aggregate that has absorbed no value cannot have overflown, so
+        // the has-value flag fully decides emptiness in every branch below
+        boolean srcHasValue = srcValue.getBool(valueIndex + 3);
+        boolean destHasValue = destValue.getBool(valueIndex + 3);
+        destValue.putBool(valueIndex + 3, srcHasValue || destHasValue);
+
         if (!srcOverflow && !destOverflow) {
             long decimal64B = srcValue.getDecimal64(valueIndex + 1);
             long decimal64A = destValue.getDecimal64(valueIndex + 1);
 
-            boolean srcNull = decimal64B == Decimals.DECIMAL64_NULL;
-            boolean destNull = decimal64A == Decimals.DECIMAL64_NULL;
-
-            if (!destNull && !srcNull) {
-                // both not null
+            if (destHasValue && srcHasValue) {
                 add(destValue, decimal64A, decimal64B);
-            } else if (destNull) {
+            } else if (srcHasValue) {
                 // put src value in
                 destValue.putLong(valueIndex + 1, decimal64B);
             }
         } else if (srcOverflow && !destOverflow) {
-            // src value cannot be null, null does not overflow
+            // src has overflown, therefore it has a value
             srcValue.getDecimal128(valueIndex, decimal128A);
             long decimal64A = destValue.getDecimal64(valueIndex + 1);
-            boolean destNull = decimal64A == Decimals.DECIMAL64_NULL;
 
-            if (!destNull) {
+            if (destHasValue) {
                 Decimal128.uncheckedAdd(decimal128A, decimal64A);
             }
             destValue.putDecimal128(valueIndex, decimal128A);
             destValue.putBool(valueIndex + 2, true);
         } else if (!srcOverflow) {
-            // dest overflown, it cannot be null
+            // dest has overflown, therefore it has a value
             long decimal64A = srcValue.getDecimal64(valueIndex + 1);
             destValue.getDecimal128(valueIndex, decimal128A);
-            if (decimal64A != Decimals.DECIMAL64_NULL) {
-                // both not null
+            if (srcHasValue) {
                 Decimal128.uncheckedAdd(decimal128A, decimal64A);
                 destValue.putDecimal128(valueIndex, decimal128A);
             }
@@ -197,6 +207,7 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
         mapValue.putDecimal128Null(valueIndex);
         mapValue.putLong(valueIndex + 1, Decimals.DECIMAL64_NULL);
         mapValue.putBool(valueIndex + 2, false);
+        mapValue.putBool(valueIndex + 3, false);
     }
 
     @Override

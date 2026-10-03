@@ -43,11 +43,17 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
+            if (func.isNullConstant()) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(func.getDate(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (func.isNotNull()) {
+            return new FuncNotNull(func);
+        }
+        return new Func(func);
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -78,6 +84,36 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.putISODateMillis(value);
             return sinkB;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return format(arg.getDate(rec), sinkA);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return format(arg.getDate(rec), sinkB);
+        }
+
+        private CharSequence format(long value, StringSink sink) {
+            sink.clear();
+            // appendDateTime short-circuits on MIN_VALUE; emit the numeric bit pattern instead (mirrors CursorPrinter).
+            if (value == Long.MIN_VALUE) {
+                Numbers.append(sink, value, false);
+            } else {
+                sink.putISODateMillis(value);
+            }
+            return sink;
         }
     }
 }

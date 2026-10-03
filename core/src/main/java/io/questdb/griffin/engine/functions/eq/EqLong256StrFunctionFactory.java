@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -42,7 +43,6 @@ import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjList;
-
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {
     private static final FiberLocal<Long256ConstDecoder> DECODER = new FiberLocal<>(Long256ConstDecoder::new);
@@ -71,6 +71,11 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         if (strFunc.isConstant()) {
             CharSequence value = strFunc.getStrA(null);
             if (value == null) {
+                // `long256Col = NULL`. On a NOT NULL LONG256 column this is always false.
+                // NegatingFunctionFactory handles IS NOT NULL by flipping the constant.
+                if (long256Func.isNotNull()) {
+                    return BooleanConstant.FALSE;
+                }
                 return new ConstStrFunc(long256Func);
             }
             Long256ConstDecoder decoder = DECODER.get();

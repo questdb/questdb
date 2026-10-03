@@ -136,10 +136,11 @@ struct EnumTypeMap<ColumnType::DATE> {
  * @param srcMem the source type mmap column
  * @param dstMem the destination type mmap column
  * @param rowCount the number of rows
+ * @param isSrcNotNull whether source sentinel bit patterns are data
  * @return
  */
 template<ColumnType src, ColumnType dst>
-jlong convert_from_type_to_type(void *srcBuff, void *dstBuff, size_t rowCount) {
+jlong convert_from_type_to_type(void *srcBuff, void *dstBuff, size_t rowCount, bool isSrcNotNull) {
     using T1 = typename EnumTypeMap<src>::type;
     using T2 = typename EnumTypeMap<dst>::type;
 
@@ -175,7 +176,7 @@ jlong convert_from_type_to_type(void *srcBuff, void *dstBuff, size_t rowCount) {
                     }
                 }
             } else {
-                if (srcMem[i] == srcSentinel) {
+                if (!isSrcNotNull && srcMem[i] == srcSentinel) {
                     dstMem[i] = dstSentinel;
                     continue;
                 }

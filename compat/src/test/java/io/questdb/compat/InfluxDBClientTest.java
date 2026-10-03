@@ -58,7 +58,7 @@ public class InfluxDBClientTest extends AbstractTest {
             serverMain.start();
             serverMain.getEngine().execute(
                     "create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL"
+                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL"
             );
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
@@ -101,7 +101,7 @@ public class InfluxDBClientTest extends AbstractTest {
         }})) {
             serverMain.start();
             serverMain.getEngine().execute(
-                    "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
+                    "create table wal_low_max_uncomitted(sym symbol, ts timestamp NOT NULL) " +
                             "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
             );
             List<String> lines = new ArrayList<>();
@@ -132,7 +132,7 @@ public class InfluxDBClientTest extends AbstractTest {
             serverMain.start();
             serverMain.getEngine().execute(
                     "create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp)"
+                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL)"
             );
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
@@ -186,7 +186,7 @@ public class InfluxDBClientTest extends AbstractTest {
             serverMain.start();
             serverMain.getEngine().execute(
                     "create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp)"
+                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL)"
             );
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
@@ -330,7 +330,7 @@ public class InfluxDBClientTest extends AbstractTest {
         }})) {
             serverMain.start();
             serverMain.getEngine().execute(
-                    "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
+                    "create table wal_low_max_uncomitted(sym symbol, ts timestamp NOT NULL) " +
                             "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
             );
             List<String> lines = new ArrayList<>();
@@ -361,7 +361,7 @@ public class InfluxDBClientTest extends AbstractTest {
             serverMain.start();
             serverMain.getEngine().execute(
                     "create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp)"
+                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL)"
             );
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
@@ -486,7 +486,7 @@ public class InfluxDBClientTest extends AbstractTest {
         }})) {
             serverMain.start();
             serverMain.getEngine().execute("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                    "i int, l long, ip ipv4, g geohash(4c), ts timestamp)");
+                    "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL)");
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 List<String> points = new ArrayList<>();
@@ -525,7 +525,7 @@ public class InfluxDBClientTest extends AbstractTest {
         }})) {
             serverMain.start();
             serverMain.getEngine().execute(
-                    "create table wal_low_max_uncomitted(sym symbol, i long, ts timestamp) " +
+                    "create table wal_low_max_uncomitted(sym symbol, i long, ts timestamp NOT NULL) " +
                             "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=" + count
             );
             List<String> lines = new ArrayList<>();
@@ -556,7 +556,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
             serverMain.start();
-            serverMain.getEngine().execute("create table wal_tbl(sym symbol, ts timestamp) " +
+            serverMain.getEngine().execute("create table wal_tbl(sym symbol, ts timestamp NOT NULL) " +
                     "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100");
             List<String> lines = new ArrayList<>();
             String goodLine = "wal_tbl,sym=aaa\n";
@@ -589,7 +589,7 @@ public class InfluxDBClientTest extends AbstractTest {
             serverMain.start();
             serverMain.getEngine().execute(
                     "create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL"
+                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL"
             );
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
@@ -618,7 +618,7 @@ public class InfluxDBClientTest extends AbstractTest {
             serverMain.start();
             serverMain.getEngine().execute(
                     "create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL"
+                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL"
             );
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {

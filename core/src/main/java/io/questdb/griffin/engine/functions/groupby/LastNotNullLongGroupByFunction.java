@@ -47,10 +47,10 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
             long offset = rowCount - 1;
             for (; hi >= dataAddr; hi -= 8L) {
                 long value = Unsafe.getLong(hi);
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL)) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putLong(valueIndex + 1, value);
                     }
@@ -86,11 +86,11 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
                 final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.LONG_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putLong(entryBase + valueColumnOffset, value);
                     }
@@ -103,11 +103,11 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);
                 final long value = arg.getLong(record);
-                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
                     final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.LONG_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                    if ((!isArgNotNull && existingValue == Numbers.LONG_NULL) || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putLong(entryBase + valueColumnOffset, value);
                     }
@@ -118,8 +118,8 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getLong(record) != Numbers.LONG_NULL) {
-            if (mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
+        if (isArgNotNull || arg.getLong(record) != Numbers.LONG_NULL) {
+            if ((!isArgNotNull && mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL) || rowId > mapValue.getLong(valueIndex)) {
                 computeFirst(mapValue, record, rowId);
             }
         }
@@ -133,12 +133,12 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcVal = srcValue.getLong(valueIndex + 1);
-        if (srcVal == Numbers.LONG_NULL) {
+        if (!isArgNotNull && srcVal == Numbers.LONG_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId || destValue.getLong(valueIndex + 1) == Numbers.LONG_NULL) {
+        if (srcRowId > destRowId || (!isArgNotNull && destValue.getLong(valueIndex + 1) == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcVal);
         }

@@ -52,7 +52,7 @@ public class CastDateToCharFunctionFactory implements FunctionFactory {
         @Override
         public char getChar(Record rec) {
             final long value = arg.getDate(rec);
-            return value != Numbers.LONG_NULL ? (char) value : 0;
+            return arg.isNotNull() || value != Numbers.LONG_NULL ? (char) value : 0;
         }
     }
 }
