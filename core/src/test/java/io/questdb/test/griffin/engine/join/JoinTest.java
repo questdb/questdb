@@ -6318,6 +6318,26 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnKeysSharingColumnMixedTypesFails() throws Exception {
+        // s.s1 is compared with the SYMBOL m.s1 and the VARCHAR m.v. Those key positions need
+        // different encodings, but the record copier encodes s.s1 once, so the hash join would never
+        // match: no INNER rows instead of a/a and b/b, and null-extended rows for every outer join.
+        // Each hash join type rejects the query instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (s1 SYMBOL, v VARCHAR)");
+            execute("INSERT INTO m VALUES ('a', 'a'), ('b', 'b'), ('c', 'x')");
+            execute("CREATE TABLE s (s1 SYMBOL, v VARCHAR)");
+            execute("INSERT INTO s VALUES ('a', 'a'), ('b', 'b'), ('c', 'c')");
+            for (String join : new String[]{"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"}) {
+                final String query = "SELECT m.s1, m.v, s.s1, s.v FROM m " + join + " s ON s.s1 = m.s1 AND s.v = m.v AND s.s1 = m.v";
+                assertQuery(query)
+                        .noLeakCheck()
+                        .fails(query.indexOf("s.s1 = m.s1"), "join column is compared with columns of different types");
+            }
+        });
+    }
+
+    @Test
     public void testJoinOnLong256() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
