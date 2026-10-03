@@ -135,16 +135,7 @@ namespace questdb::avx2 {
         }
     }
 
-    jit_value_t
-    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr, ValueCacheYmm &value_cache) {
-        // A bind variable is loop-invariant, so the broadcast is pure waste past the first one in a
-        // body. The cache does not hoist it out of the loop - that is a larger change - it only
-        // stops the CHAR and IPv4 ordering expansions re-broadcasting the same variable four or
-        // five times per body.
-        Vec cached;
-        if (value_cache.find(idx, type, true, cached)) {
-            return {cached, type, data_kind_t::kConst};
-        }
+    Vec broadcast_var(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
         auto value = x86::read_vars_mem(c, type, idx, vars_ptr);
         Mem mem = value.op().as<Mem>();
         Vec val = c.new_ymm();
@@ -180,6 +171,39 @@ namespace questdb::avx2 {
             default:
                 __builtin_unreachable();
         }
+        return val;
+    }
+
+    void preload_vars_ymm(Compiler &c,
+                          const instruction_t *istream,
+                          size_t size,
+                          const Gp &vars_ptr,
+                          ValueCacheYmm &cache) {
+        for (size_t i = 0; i < size && cache.size() < ValueCacheYmm::MAX_VALUES; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode != opcodes::Var) {
+                continue;
+            }
+            auto type = static_cast<data_type_t>(instr.options);
+            auto idx = static_cast<int32_t>(instr.ipayload.lo);
+            Vec dummy;
+            if (!cache.find(idx, type, true, dummy)) {
+                cache.add(idx, type, true, broadcast_var(c, type, idx, vars_ptr));
+            }
+        }
+    }
+
+    jit_value_t
+    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr, const ValueCacheYmm &var_cache,
+                  ValueCacheYmm &value_cache) {
+        // var_cache holds the broadcasts preload_vars_ymm hoisted out of the loop. value_cache
+        // covers the variables past its capacity, so the CHAR and IPv4 ordering expansions do
+        // not re-broadcast the same variable four or five times per body.
+        Vec cached;
+        if (var_cache.find(idx, type, true, cached) || value_cache.find(idx, type, true, cached)) {
+            return {cached, type, data_kind_t::kConst};
+        }
+        Vec val = broadcast_var(c, type, idx, vars_ptr);
         value_cache.add(idx, type, true, val);
         return {val, type, data_kind_t::kConst};
     }
@@ -1009,7 +1033,7 @@ namespace questdb::avx2 {
               uint32_t lane_count,
               const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
               const ColumnAddressCache &addr_cache, const ConstantCacheYmm&const_cache,
-              ValueCacheYmm &value_cache) {
+              const ValueCacheYmm &var_cache, ValueCacheYmm &value_cache) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
             switch (instr.opcode) {
@@ -1026,7 +1050,7 @@ namespace questdb::avx2 {
                 case opcodes::Var: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr, value_cache));
+                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr, var_cache, value_cache));
                 }
                     break;
                 case opcodes::Mem: {

@@ -46,7 +46,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public class BitmapIndexWriter implements IndexWriter {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
-    private static final long MAX_VALUE_OFFSET = 37L;
+    private static final long MAX_VALUE_OFFSET = BitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE;
     private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;

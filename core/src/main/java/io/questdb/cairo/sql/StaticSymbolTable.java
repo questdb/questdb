@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.Chars;
+
 public interface StaticSymbolTable extends SymbolTable, SymbolLookup {
 
     long NO_SYMBOL_TABLE_GENERATION = -1;
@@ -40,6 +42,20 @@ public interface StaticSymbolTable extends SymbolTable, SymbolLookup {
     }
 
     int getSymbolCount();
+
+    /**
+     * Resolves {@code value} like {@link #keyOf(CharSequence)}, but answers {@code cachedKey}
+     * without a dictionary lookup when it still maps to {@code value}.
+     */
+    default int keyOf(CharSequence value, int cachedKey) {
+        if (value == null) {
+            return VALUE_IS_NULL;
+        }
+        if (cachedKey > -1 && cachedKey < getSymbolCount() && Chars.equalsNc(value, valueOf(cachedKey))) {
+            return cachedKey;
+        }
+        return keyOf(value);
+    }
 
     @Override
     default boolean supportsKeyValueAccess() {

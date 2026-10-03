@@ -648,6 +648,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
+    public void releaseFrameMemory() {
+        unbind(FRAME_MEMORY_MASK);
+        frameMemory.clear();
+    }
+
     /**
      * Frees all decoded Parquet buffers and clears bookkeeping.
      * <p>

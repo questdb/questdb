@@ -38,11 +38,9 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
-    private final IntHashSet deferredSymbolKeys;
     private final IntList remainingKeys = new IntList();
     private final DirectLongList rows;
     private final IntHashSet symbolKeys;
@@ -55,14 +53,12 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             @NotNull RecordMetadata metadata,
             int columnIndex,
             @NotNull IntHashSet symbolKeys,
-            @Nullable IntHashSet deferredSymbolKeys,
             DirectLongList rows
     ) {
         super(configuration, metadata);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
-        this.deferredSymbolKeys = deferredSymbolKeys;
     }
 
     @Override
@@ -121,17 +117,6 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         index = 0;
     }
 
-    private static boolean keysDisjoint(IntHashSet symbolKeys, @Nullable IntHashSet deferredSymbolKeys) {
-        if (deferredSymbolKeys != null) {
-            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
-                if (symbolKeys.contains(deferredSymbolKeys.get(i))) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     private boolean addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
             if (cursor.hasNext()) {
@@ -143,24 +128,9 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     private void buildTreeMap() {
-        // remainingKeys drives both per-frame iteration and the early-exit condition below, so a
-        // duplicate between symbolKeys and deferredSymbolKeys would be probed twice per frame instead
-        // of once. The deduping is done by the factory
-        // (AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor); assert the invariant here, and
-        // defensively skip a duplicate below too, in case a future caller wires these sets up directly.
-        assert keysDisjoint(symbolKeys, deferredSymbolKeys)
-                : "deferredSymbolKeys must be deduped against symbolKeys (see AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor)";
         remainingKeys.clear();
         for (int i = 0, n = symbolKeys.size(); i < n; i++) {
             remainingKeys.add(symbolKeys.get(i));
-        }
-        if (deferredSymbolKeys != null) {
-            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
-                int symbolKey = deferredSymbolKeys.get(i);
-                if (!symbolKeys.contains(symbolKey)) {
-                    remainingKeys.add(symbolKey);
-                }
-            }
         }
 
         PageFrame frame;

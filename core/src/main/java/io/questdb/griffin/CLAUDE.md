@@ -517,8 +517,16 @@ One difference survives and is unrelated to inclusiveness: `FLOAT_EPSILON` is
 filter uses. Any shape that runs the compiled filter's f32 arm - an INT leaf against a fractional
 bound, via `serializeNumber`'s I4 arm - therefore still disagrees with the Java filter for a value
 that lands between the two tolerances.
-`CompiledFilterRegressionTest.testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width`
-pins it.
+`CompiledFilterRegressionTest.testNumericColumnVsFloatToleranceBoundConstant` pins it.
+
+#### Accepted JIT tolerance tradeoff
+
+The maintainer accepts this existing f32/Java tolerance-boundary difference across all
+compiled-filter query paths, not just LATEST ON, including JIT-mode and projection differences
+caused by column-top fallback. Do not report it again or require a FLOAT-specific fallback.
+`CompiledFilterRegressionTest` pins it in `testNumericColumnVsFloatToleranceBoundConstant`,
+`testFloatRuntimePairTolerance`, and the `testLatestOnFloat*` cases. This exception does not
+cover new numerical discrepancies, tolerance changes, or other bugs.
 
 ### Constant reassociation
 

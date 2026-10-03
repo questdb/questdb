@@ -1270,12 +1270,13 @@ public class SampleByTest extends AbstractCairoTest {
 
             engine.clear();
 
-            final CairoConfiguration configuration = createMmapFailingConfiguration(10);
+            final MmapFailingFilesFacade ff = new MmapFailingFilesFacade();
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(createMmapFailingConfiguration(ff))) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
+                            ff.failAfter(1);
                             RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine));
                             cursor.hasNext();
                         }
@@ -10642,11 +10643,12 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE"
             );
 
-            CairoConfiguration configuration = createMmapFailingConfiguration(5);
+            final MmapFailingFilesFacade ff = new MmapFailingFilesFacade();
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(createMmapFailingConfiguration(ff))) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 0)) {
+                        ff.failAfter(2);
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
                     } catch (SqlException e) {
@@ -10673,18 +10675,17 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE"
             );
 
-            CairoConfiguration configuration = createMmapFailingConfiguration(10);
+            final MmapFailingFilesFacade ff = new MmapFailingFilesFacade();
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(createMmapFailingConfiguration(ff))) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try {
-                        try (
-                                RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
-                                RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine))
-                        ) {
-                            // with mmap count = 5 we should get failure in cursor
-                            // noinspection StatementWithEmptyBody
-                            while (cursor.hasNext()) {
+                        try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
+                            ff.failAfter(1);
+                            try (RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine))) {
+                                // noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                }
                             }
                         }
                         Assert.fail();
@@ -17690,19 +17691,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @NotNull
-    private static CairoConfiguration createMmapFailingConfiguration(int x) {
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            int count = x;
-
-            @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (count-- > 0) {
-                    return super.mmap(fd, len, offset, flags, memoryTag);
-                }
-                return -1;
-            }
-        };
-
+    private static CairoConfiguration createMmapFailingConfiguration(FilesFacade ff) {
         return new DefaultTestCairoConfiguration(root) {
             @Override
             public @NotNull FilesFacade getFilesFacade() {
@@ -17976,5 +17965,23 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan(actualPlan);
         });
+    }
+
+    private static class MmapFailingFilesFacade extends TestFilesFacadeImpl {
+        private boolean isArmed;
+        private int remainingMmaps;
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            if (!isArmed || remainingMmaps-- > 0) {
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+            return -1;
+        }
+
+        void failAfter(int mmapCount) {
+            isArmed = true;
+            remainingMmaps = mmapCount;
+        }
     }
 }

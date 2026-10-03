@@ -37,6 +37,7 @@ import org.jetbrains.annotations.NotNull;
 
 class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
     private final Function filter;
+    private final LatestByFrameScanner scanner;
 
     public LatestByValueFilteredRecordCursor(
             @NotNull CairoConfiguration configuration,
@@ -47,6 +48,13 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
     ) {
         super(configuration, metadata, columnIndex, symbolKey);
         this.filter = filter;
+        this.scanner = new LatestByFrameScanner(filter, frameMemoryPool, frameAddressCache);
+    }
+
+    @Override
+    public void close() {
+        filter.cursorClosed();
+        super.close();
     }
 
     @Override
@@ -109,17 +117,14 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         OUT:
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
-
+            final int frameIndex = frameCount;
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    int key = recordA.getInt(columnIndex);
-                    if (key == symbolKey) {
+            scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
+            while (scanner.nextBatch(circuitBreaker)) {
+                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
+                    recordA.setRowIndex(scanner.getRow(i));
+                    if (scanner.isMatch(recordA) && recordA.getInt(columnIndex) == symbolKey) {
                         isRecordFound = true;
                         break OUT;
                     }

@@ -26,6 +26,7 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -104,6 +105,34 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
                             ? frameMemory.getAuxPageAddress(columnIndex)
                             : 0
             );
+        }
+    }
+
+    public static void populateJitAddresses(
+            @NotNull PageFrameMemory frameMemory,
+            @NotNull PageFrameAddressCache pageAddressCache,
+            @NotNull DirectLongList dataAddresses,
+            @NotNull DirectLongList auxAddresses,
+            long rowLo
+    ) {
+        if (rowLo == 0) {
+            populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses);
+            return;
+        }
+        dataAddresses.clear();
+        auxAddresses.clear();
+        for (int columnIndex = 0, n = pageAddressCache.getColumnCount(); columnIndex < n; columnIndex++) {
+            final int columnType = pageAddressCache.getColumnTypes().getQuick(columnIndex);
+            final long dataAddress = frameMemory.getPageAddress(columnIndex);
+            if (ColumnType.isVarSize(columnType)) {
+                // Aux entries retain their offsets into the original data vector.
+                dataAddresses.add(dataAddress);
+                auxAddresses.add(frameMemory.getAuxPageAddress(columnIndex)
+                        + ColumnType.getDriver(columnType).getAuxVectorOffset(rowLo));
+            } else {
+                dataAddresses.add(dataAddress + (rowLo << ColumnType.pow2SizeOf(columnType)));
+                auxAddresses.add(0);
+            }
         }
     }
 

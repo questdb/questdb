@@ -855,11 +855,10 @@ namespace questdb::x86 {
         Label l_exit = c.new_label();
         Gp r = c.new_gp32();
         Gp int_r = c.new_gp64();
-        // Work on copies to avoid modifying cached registers
+        // Copy lhs for destructive subtraction without changing cached registers.
         Vec lhs =c.new_xmm_sd();
-        Vec rhs =c.new_xmm_sd();
+        const Vec &rhs = xmm1;
         c.movsd(lhs, xmm0);
-        c.movsd(rhs, xmm1);
         c.movq(int_r, lhs);
         c.and_(int_r, inf_memory);
         c.cmp(int_r, inf_memory);
@@ -878,11 +877,12 @@ namespace questdb::x86 {
         c.bind(l_nan);
         c.subsd(lhs, rhs);
         c.andpd(lhs, nans_memory);
-        c.movsd(rhs, d);
+        Vec bound = c.new_xmm_sd();
+        c.movsd(bound, d);
         c.xor_(r, r);
-        c.ucomisd(rhs, lhs);
-        // ucomisd sets CF=1 when rhs < lhs and when the operands are unordered, CF=0 when
-        // rhs > lhs and when rhs == lhs. setae (CF==0) is therefore "epsilon >= |diff|",
+        c.ucomisd(bound, lhs);
+        // ucomisd sets CF=1 when bound < lhs and when the operands are unordered, CF=0 when
+        // bound > lhs and when bound == lhs. setae (CF==0) is therefore "epsilon >= |diff|",
         // the inclusive test, and it still answers false on a NaN diff. setb (CF==1) is its
         // exact complement and still answers true on a NaN diff, as double_ne_epsilon needs.
         if (eq) {
@@ -912,11 +912,10 @@ namespace questdb::x86 {
         Label l_nan = c.new_label();
         Label l_exit = c.new_label();
         Gp int_r = c.new_gp32("tmp_int_r");
-        // Work on copies to avoid modifying cached registers
+        // Copy lhs for destructive subtraction without changing cached registers.
         Vec lhs =c.new_xmm_ss();
-        Vec rhs =c.new_xmm_ss();
+        const Vec &rhs = xmm1;
         c.movss(lhs, xmm0);
-        c.movss(rhs, xmm1);
         c.movd(int_r, lhs);
         c.and_(int_r, 0x7F800000);
         c.cmp(int_r,  0x7F800000);
@@ -936,9 +935,10 @@ namespace questdb::x86 {
         c.bind(l_nan);
         c.subss(lhs, rhs);
         c.andps(lhs, nans_memory);
-        c.movss(rhs, d);
+        Vec bound = c.new_xmm_ss();
+        c.movss(bound, d);
         c.xor_(r, r);
-        c.ucomiss(rhs, lhs);
+        c.ucomiss(bound, lhs);
         // As in double_cmp_epsilon: setae (CF==0) is the inclusive "epsilon >= |diff|" and
         // setb (CF==1) its exact complement; both keep the unordered (NaN) answers unchanged.
         if (eq) {

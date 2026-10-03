@@ -205,3 +205,51 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
 | `TableWriter.java` | `isCommitDedupMode`, `getDedupCommitAddresses`, `convertPartitionParquetToNative`, `getParquetColumnType`, `TIMESTAMP_MERGE_ENTRY_BYTES` |
 | `ConvertOperatorImpl.java` (griffin) | eager `ALTER COLUMN TYPE` for native partitions + the parquet→native pre-pass (target SYMBOL / chained mismatch only) |
 | `row_groups.rs` / `decode.rs` (rust) | physical decode and `post_convert` (fixed→fixed scaling, boolean expansion) |
+
+## Symbol null flag
+
+`SymbolMapWriter` keeps a null flag in the `.o` file header. `LATEST ON` adds one to its
+distinct-key target when the flag is set and stops scanning once every target key is found, so
+a flag left unset on a column that holds NULL rows leaves the scan one group short: it drops
+the group the backward scan reaches last, which is the NULL group or a symbol. The unindexed
+requested-key paths (`s = NULL`, `s IN (..., NULL)`) also read the flag and drop a NULL key
+while it is unset.
+
+Every write path sets the flag: `SymbolMapWriter.put(null)`, WAL apply through
+`SymbolMapDiff.hasNullValue()`, and the `ADD COLUMN` nullers. `TableWriter` repairs it on
+`ATTACH PARTITION` from column tops, parquet chunk null counts, the partition's own data, or a
+parquet decode when statistics are absent. For an indexed column of a native partition, attach
+reads the index instead of the data: a NULL entry sets the flag, and the absence of one counts
+only when the index max value reaches the last row. Otherwise, or when the index cannot be
+read, attach scans the data. Two attach paths skip the index probe and that scan: an attach
+without `_dmeta` takes the answer from its column validation pass, which already maps the data,
+and a parallel `COPY` attach relies on `SymbolMapWriter.mergeSymbols()` having set the flag from
+the imported symbol tables. `Mig1002` repairs existing databases from column tops, parquet chunk
+null counts and bitmap index NULL entries only. It never reads column data, so an upgrade
+costs no scan proportional to table size.
+
+### Accepted residual
+
+A database written before this repair can still carry an unset flag on a native partition
+without a BITMAP index, or on a parquet partition written without statistics, that gained NULL
+rows through `DETACH` -> `TRUNCATE` -> `ATTACH` or through a parquet round trip of a converted
+column.
+An unfiltered `LATEST ON` over such a column comes up one group short when other symbols
+exist; the all-NULL case still resolves because the scan no longer stops on a zero target. A
+requested NULL key matches nothing.
+
+The pre-repair engine behaved the same way for the unfiltered scan, `s = NULL` and
+`s IN (..., NULL)`. It did not for an OR of key equalities: `s = 'A' OR s = NULL` ran as a row
+filter, which never reads the flag, and returned the NULL group whenever the scan reached it
+before the distinct-key target. `SqlCodeGenerator.normaliseLatestByKeyOr()` now rewrites that
+OR to `s IN ('A', NULL)`, so on such a column the query loses a NULL group it returned before
+the upgrade. The OR form keeps its NULL group on an indexed column, where the key lookup
+resolves NULL without the flag.
+
+The maintainer accepts this, the OR form included, in exchange for an upgrade that does not
+scan column data and an unindexed key list that stops early on a column without NULL rows. Do
+not report it again, require `Mig1002` to read `.d` files or decode parquet, or require the
+rewrite to skip a NULL arm.
+`Mig1002Test.testKeepsNullFlagUnsetForParquetPartitionWithoutStatistics` pins the migration's
+boundary and `testLatestOnFindsNullGroupOfLegacyAttachedPartitionWithoutFlag` pins the
+all-NULL case.

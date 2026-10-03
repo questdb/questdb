@@ -117,6 +117,13 @@ public interface IndexReader extends Closeable {
 
     long getKeyMemorySize();
 
+    /**
+     * Highest row id the index covers, or -1 when the index does not record it.
+     */
+    default long getMaxValue() {
+        return -1;
+    }
+
     long getPartitionTxn();
 
     long getValueBaseAddress();

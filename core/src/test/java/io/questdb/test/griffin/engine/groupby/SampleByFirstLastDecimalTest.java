@@ -142,8 +142,8 @@ public class SampleByFirstLastDecimalTest extends AbstractCairoTest {
                           keys: [sym]
                           values: [first(d8), last(d8), first(d32)]
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: sym
-                                  filter: sym=1
+                                Index forward scan on: sym deferred: true
+                                  filter: sym='A'
                                 Frame forward scan on: trades
                         """)
                 .returns("""

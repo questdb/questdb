@@ -40,11 +40,9 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
-    private final IntHashSet deferredSymbolKeys;
     private final Function filter;
     private final IntList remainingKeys = new IntList();
     private final DirectLongList rows;
@@ -60,19 +58,18 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             int columnIndex,
             DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
-            @Nullable IntHashSet deferredSymbolKeys,
             Function filter
     ) {
         super(configuration, metadata);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
-        this.deferredSymbolKeys = deferredSymbolKeys;
         this.filter = filter;
     }
 
     @Override
     public void close() {
+        filter.cursorClosed();
         // Free the shared rows list under the per-query tracker bound in of().
         rows.close();
         super.close();
@@ -133,17 +130,6 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         filter.toTop();
     }
 
-    private static boolean keysDisjoint(IntHashSet symbolKeys, @Nullable IntHashSet deferredSymbolKeys) {
-        if (deferredSymbolKeys != null) {
-            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
-                if (symbolKeys.contains(deferredSymbolKeys.get(i))) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     private boolean addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
             while (cursor.hasNext()) {
@@ -163,24 +149,9 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     }
 
     private void buildTreeMap() {
-        // remainingKeys drives both per-frame iteration and the early-exit condition below, so a
-        // duplicate between symbolKeys and deferredSymbolKeys would be probed twice per frame instead
-        // of once. The deduping is done by the factory
-        // (AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor); assert the invariant here, and
-        // defensively skip a duplicate below too, in case a future caller wires these sets up directly.
-        assert keysDisjoint(symbolKeys, deferredSymbolKeys)
-                : "deferredSymbolKeys must be deduped against symbolKeys (see AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor)";
         remainingKeys.clear();
         for (int i = 0, n = symbolKeys.size(); i < n; i++) {
             remainingKeys.add(symbolKeys.get(i));
-        }
-        if (deferredSymbolKeys != null) {
-            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
-                int symbolKey = deferredSymbolKeys.get(i);
-                if (!symbolKeys.contains(symbolKey)) {
-                    remainingKeys.add(symbolKey);
-                }
-            }
         }
 
         PageFrame frame;

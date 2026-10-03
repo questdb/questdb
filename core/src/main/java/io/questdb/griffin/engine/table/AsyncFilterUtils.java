@@ -98,10 +98,26 @@ public class AsyncFilterUtils {
             @NotNull DirectLongList filteredRows,
             long frameRowCount
     ) {
-        PageFrameReduceTask.populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses);
+        applyCompiledFilter(compiledFilter, bindVarMemory, bindVarFunctions, frameMemory,
+                pageAddressCache, dataAddresses, auxAddresses, filteredRows, 0, frameRowCount);
+    }
 
-        if (filteredRows.getCapacity() < frameRowCount) {
-            filteredRows.setCapacity(frameRowCount);
+    public static void applyCompiledFilter(
+            @NotNull CompiledFilter compiledFilter,
+            @NotNull MemoryCARW bindVarMemory,
+            @NotNull ObjList<Function> bindVarFunctions,
+            @NotNull PageFrameMemory frameMemory,
+            @NotNull PageFrameAddressCache pageAddressCache,
+            @NotNull DirectLongList dataAddresses,
+            @NotNull DirectLongList auxAddresses,
+            @NotNull DirectLongList filteredRows,
+            long rowLo,
+            long rowCount
+    ) {
+        PageFrameReduceTask.populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses, rowLo);
+
+        if (filteredRows.getCapacity() < rowCount) {
+            filteredRows.setCapacity(rowCount);
         }
 
         long hi = compiledFilter.call(
@@ -111,7 +127,7 @@ public class AsyncFilterUtils {
                 bindVarMemory.getAddress(),
                 bindVarFunctions.size(),
                 filteredRows.getAddress(),
-                frameRowCount
+                rowCount
         );
         filteredRows.setPos(hi);
     }

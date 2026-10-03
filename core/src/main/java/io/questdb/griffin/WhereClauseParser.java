@@ -2425,7 +2425,10 @@ public final class WhereClauseParser implements Mutable {
             SqlExecutionContext executionContext,
             IntrinsicModel model
     ) throws SqlException {
-        if (model.keyColumn != null && tempKeyValues.size() > 0 && keyExclNodes.size() > 0) {
+        if (model.keySubQuery != null) {
+            resetExcludedNodes();
+            clearExcludedKeys();
+        } else if (model.keyColumn != null && tempKeyValues.size() > 0 && keyExclNodes.size() > 0) {
             if (allKeyValuesAreKnown && allKeyExcludedValuesAreKnown) {
                 OUT:
                 for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
@@ -2933,7 +2936,7 @@ public final class WhereClauseParser implements Mutable {
                     }
                 }
             } else {
-                keyIndex = Chars.isQuoted(val.token) ? tempKeyValues.keyIndex(val.token, 1, val.token.length() - 1) : tempKeyValues.keyIndex(val.token);
+                keyIndex = tempKeyValues.keyIndex(unquote(val.token));
             }
 
             if (keyIndex < 0) {
@@ -4105,14 +4108,19 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
-     * Removes quotes and creates immutable char sequence. When value is not quoted it is returned verbatim.
+     * Removes quotes, unescapes doubled quotes and creates immutable char sequence. Unquoted values are returned verbatim.
      *
      * @param value immutable character sequence.
      * @return immutable character sequence without surrounding quote marks.
      */
     private CharSequence unquote(CharSequence value) {
         if (Chars.isQuoted(value)) {
-            return csPool.next().of(value, 1, value.length() - 2);
+            int hi = value.length() - 1;
+            char quote = value.charAt(0);
+            if (Chars.indexOf(value, 1, hi, quote) > -1) {
+                return Chars.toString(value, 1, hi, quote);
+            }
+            return csPool.next().of(value, 1, hi - 1);
         }
         return value;
     }

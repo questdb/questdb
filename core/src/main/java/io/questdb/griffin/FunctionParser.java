@@ -253,12 +253,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (name != null) {
             if (!name.isEmpty()) {
                 if (expressionType != ExpressionNode.BIND_VARIABLE) {
-                    return new StrConstant(name);
+                    return StrConstant.newUnquotedInstance(name);
                 }
                 return switch (name.charAt(0)) {
                     case ':' -> createNamedParameter(position, name);
                     case '$' -> parseIndexedParameter(position, name);
-                    default -> new StrConstant(name);
+                    default -> StrConstant.newUnquotedInstance(name);
                 };
             } else return StrConstant.EMPTY;
         }
