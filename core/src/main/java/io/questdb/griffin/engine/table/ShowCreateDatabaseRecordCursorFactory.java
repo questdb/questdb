@@ -164,20 +164,21 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     // the per-object SHOW CREATE factories take a token position for error reporting; a database dump
     // has no per-object source position, so it passes 0. An object dropped between collection and emit
     // is skipped by appendObjectDdl, so this 0 surfaces only for a genuine error that aborts the dump.
+    // The dump reads every object as the caller, not through a view, so it passes no view either.
     protected RecordCursorFactory liveViewFactory(TableToken token) {
-        return new ShowCreateLiveViewRecordCursorFactory(token, 0);
+        return new ShowCreateLiveViewRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory matViewFactory(TableToken token) {
-        return new ShowCreateMatViewRecordCursorFactory(token, 0);
+        return new ShowCreateMatViewRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory tableFactory(TableToken token) {
-        return new ShowCreateTableRecordCursorFactory(token, 0);
+        return new ShowCreateTableRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory viewFactory(TableToken token) {
-        return new ShowCreateViewRecordCursorFactory(token, 0);
+        return new ShowCreateViewRecordCursorFactory(token, 0, null);
     }
 
     private static int categoryBit(TableToken token) {

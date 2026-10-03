@@ -70,10 +70,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private final int tokenPosition;
     private final SqlExecutionContext.TableFunctionView view;
 
-    public ShowColumnsRecordCursorFactory(TableToken tableToken, int tokenPosition) {
-        this(tableToken, tokenPosition, null);
-    }
-
     public ShowColumnsRecordCursorFactory(TableToken tableToken, int tokenPosition, SqlExecutionContext.TableFunctionView view) {
         super(METADATA);
         this.tableToken = tableToken;

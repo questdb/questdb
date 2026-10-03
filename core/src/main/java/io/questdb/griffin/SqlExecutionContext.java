@@ -235,6 +235,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     @NotNull
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
+    /**
+     * The view whose definition is currently being compiled, which the table-name functions and SHOW
+     * statements written in it read the objects they name through, see
+     * {@link #isTableFunctionVisible(TableToken, TableFunctionView)}.
+     */
+    default TableFunctionView getTableFunctionView() {
+        return null;
+    }
+
     default int getTableStatus(Path path, CharSequence tableName) {
         return getCairoEngine().getTableStatus(path, tableName);
     }
@@ -257,13 +266,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
-    }
-
-    /**
-     * The view whose definition is currently being compiled as a table-valued function.
-     */
-    default TableFunctionView getTableFunctionView() {
-        return null;
     }
 
     /**
@@ -347,9 +349,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
-     * A table-name function in a view reads its argument through that view, not as the caller.
-     * Recheck the view's identity, definition and SELECT grant at execution: a cached cursor
-     * may outlive a revoke, a replacement or a drop and recreation under the same name.
+     * A table-name function or a SHOW statement in a view reads the object it names through that
+     * view, not as the caller. Recheck the view's identity, definition and SELECT grant at execution:
+     * a cached cursor may outlive a revoke, a replacement or a drop and recreation under the same name.
      */
     default boolean isTableFunctionVisible(TableToken tableToken, TableFunctionView view) {
         if (view == null) {

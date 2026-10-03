@@ -77,10 +77,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private FilesFacade ff;
     private Path path = new Path();
 
-    public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType, int tokenPosition) {
-        this(tableToken, timestampType, tokenPosition, null);
-    }
-
     public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType, int tokenPosition, SqlExecutionContext.TableFunctionView view) {
         super(ColumnType.isTimestampMicro(timestampType) ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
         this.tableToken = tableToken;

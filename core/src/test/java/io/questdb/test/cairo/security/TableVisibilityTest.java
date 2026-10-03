@@ -554,6 +554,56 @@ public class TableVisibilityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVisibleViewReadsInvisibleShowStatements() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            // a SHOW statement in a view reads the object it names through the view, like a table-name
+            // function does, in a sub-query of the view's expression as well as in its FROM clause
+            execute("CREATE VIEW visible_show_columns AS (SELECT * FROM (SHOW COLUMNS FROM secret_t))");
+            execute("CREATE VIEW visible_show_partitions AS (SELECT * FROM (SHOW PARTITIONS FROM secret_t))");
+            execute("CREATE VIEW visible_show_create_table AS (SELECT * FROM (SHOW CREATE TABLE secret_t))");
+            execute("CREATE VIEW visible_show_create_view AS (SELECT * FROM (SHOW CREATE VIEW secret_v))");
+            execute("CREATE VIEW visible_show_create_mv AS (SELECT * FROM (SHOW CREATE MATERIALIZED VIEW secret_mv))");
+            execute("CREATE VIEW visible_show_sub AS (SELECT visible_col FROM visible_t WHERE visible_col >= (SELECT count() FROM (SHOW COLUMNS FROM secret_t)))");
+            execute("CREATE VIEW visible_show_outer AS (SELECT * FROM visible_show_columns)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertQuery("SELECT count() FROM visible_show_columns").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+                assertQuery("SELECT count() FROM visible_show_partitions").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                assertQuery("SELECT count() FROM visible_show_create_table").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                assertQuery("SELECT count() FROM visible_show_create_view").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                assertQuery("SELECT count() FROM visible_show_create_mv").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                assertQuery("SELECT * FROM visible_show_sub").withContext(hidingContext).noLeakCheck().returns("visible_col\n2\n");
+                assertQuery("SELECT count() FROM visible_show_outer").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+                // the principal's own SHOW statements still hide the objects
+                assertMaskedLikeMissing("SELECT * FROM (SHOW COLUMNS FROM %s)", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM (SHOW CREATE TABLE %s)", "secret_t", hidingContext);
+            }
+            // A factory compiled while the view was visible must not bypass a later visibility change.
+            for (String view : new String[]{"visible_show_columns", "visible_show_partitions", "visible_show_create_table", "visible_show_create_view", "visible_show_create_mv"}) {
+                try (
+                        RecordCursorFactory factory = select("SELECT * FROM " + view);
+                        SqlExecutionContext hidingView = new SqlExecutionContextImpl(engine, 1).with(new HidingSecurityContext() {
+                            @Override
+                            public boolean isTableVisible(TableToken tableToken) {
+                                return super.isTableVisible(tableToken) && !Chars.equals(tableToken.getTableName(), view);
+                            }
+                        })
+                ) {
+                    try (RecordCursor ignored = factory.getCursor(hidingView)) {
+                        Assert.fail("a cached view cursor must recheck the view's visibility: " + view);
+                    } catch (Throwable th) {
+                        if (!(th instanceof FlyweightMessageContainer container)) {
+                            throw th;
+                        }
+                        TestUtils.assertContains(view, container.getFlyweightMessage(), "does not exist");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testVisibleViewReadsInvisibleTableNameFunctions() throws Exception {
         assertMemoryLeak(() -> {
             createObjects();
@@ -863,18 +913,6 @@ public class TableVisibilityTest extends AbstractCairoTest {
         @Override
         public boolean isTableVisible(TableToken tableToken) {
             return !Chars.startsWithIgnoreCase(tableToken.getTableName(), "secret");
-        }
-
-        @Override
-        protected SecurityContext newPrincipalContext(CharSequence principal) {
-            return this;
-        }
-    }
-
-    private static final class NoSystemAdminSecurityContext extends AllowAllSecurityContext {
-        @Override
-        public void authorizeSystemAdmin() {
-            throw CairoException.authorization().put("system admin required");
         }
 
         @Override

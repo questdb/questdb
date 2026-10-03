@@ -26,8 +26,6 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.catalogue.GlobFilesFunctionFactory;
@@ -44,6 +42,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.security.NoSystemAdminSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -1594,18 +1593,6 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
             createTestFile("mixed" + File.separator + "file_v1.parquet", 40);
             createTestFile("mixed" + File.separator + "file_v2.parquet", 41);
             createTestFile("mixed" + File.separator + "file_v10.parquet", 42);
-        }
-    }
-
-    private static final class NoSystemAdminSecurityContext extends AllowAllSecurityContext {
-        @Override
-        public void authorizeSystemAdmin() {
-            throw CairoException.authorization().put("system admin required");
-        }
-
-        @Override
-        protected SecurityContext newPrincipalContext(CharSequence principal) {
-            return this;
         }
     }
 }
