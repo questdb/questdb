@@ -10118,8 +10118,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectIndexedSymbols01c() throws Exception {
         assertQuery("select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
-                .assertsPlan("Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
-                        "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
+                .assertsPlan("""
+                        Encode sort light lo: 1
+                          keys: [s desc]
+                            FilterOnValues symbolOrder: desc
+                                Cursor-order scan
+                                    Index forward scan on: s deferred: true
+                                      symbolFilter: s='S2'
+                                      filter: length(s)=2
+                                    Index forward scan on: s deferred: true
+                                      symbolFilter: s='S1'
+                                      filter: length(s)=2
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
@@ -10232,18 +10243,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s symbol index)");
             String expectedPlan = """
-                    FilterOnExcludedValues symbolOrder: #ORDER#
-                      symbolFilter: s not in ['S1']
-                      filter: length(s)=2
-                        Cursor-order scan
-                        Frame forward scan on: a
+                    Encode sort light
+                      keys: [#KEYS#]
+                        FilterOnExcludedValues symbolOrder: desc
+                          symbolFilter: s not in ['S1']
+                          filter: length(s)=2
+                            Cursor-order scan
+                            Frame forward scan on: a
                     """;
             assertQuery("select * from a where s != 'S1' and length(s) = 2 order by s ")
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", "asc"));
+                    .assertsPlan(expectedPlan.replace("#KEYS#", "s"));
             assertQuery("select * from a where s != 'S1' and length(s) = 2 order by s desc")
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", "desc"));
+                    .assertsPlan(expectedPlan.replace("#KEYS#", "s desc"));
         });
     }
 
@@ -10254,21 +10267,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             String query = "select * from a where s != 'S1' and length(s) = 2 and ts in '2023-03-15' order by s #ORDER#";
             String expectedPlan = """
-                    FilterOnExcludedValues symbolOrder: #ORDER#
-                      symbolFilter: s not in ['S1']
-                      filter: length(s)=2
-                        Cursor-order scan
-                        Interval forward scan on: a
-                          intervals: [("2023-03-15T00:00:00.000000Z","2023-03-15T23:59:59.999999Z")]
+                    Encode sort light
+                      keys: [#KEYS#]
+                        FilterOnExcludedValues symbolOrder: desc
+                          symbolFilter: s not in ['S1']
+                          filter: length(s)=2
+                            Cursor-order scan
+                            Interval forward scan on: a
+                              intervals: [("2023-03-15T00:00:00.000000Z","2023-03-15T23:59:59.999999Z")]
                     """;
 
             assertQuery(query.replace("#ORDER#", "asc"))
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", "asc"));
+                    .assertsPlan(expectedPlan.replace("#KEYS#", "s"));
 
             assertQuery(query.replace("#ORDER#", "desc"))
                     .noLeakCheck()
-                    .assertsPlan(expectedPlan.replace("#ORDER#", "desc"));
+                    .assertsPlan(expectedPlan.replace("#KEYS#", "s desc"));
         });
     }
 
@@ -10282,16 +10297,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            FilterOnExcludedValues symbolOrder: asc
-                              symbolFilter: s not in ['a']
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=0
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=2
-                                Frame forward scan on: a
+                            Encode sort light
+                              keys: [s]
+                                FilterOnExcludedValues symbolOrder: desc
+                                  symbolFilter: s not in ['a']
+                                    Cursor-order scan
+                                        Index forward scan on: s
+                                          filter: s=2
+                                        Index forward scan on: s
+                                          filter: s=3
+                                        Index forward scan on: s
+                                          filter: s=0
+                                    Frame forward scan on: a
                             """);
 
             assertQuery(query)
@@ -10303,16 +10320,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            FilterOnExcludedValues symbolOrder: desc
-                              symbolFilter: s not in ['a']
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=2
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=0
-                                Frame forward scan on: a
+                            Encode sort light
+                              keys: [s desc]
+                                FilterOnExcludedValues symbolOrder: desc
+                                  symbolFilter: s not in ['a']
+                                    Cursor-order scan
+                                        Index forward scan on: s
+                                          filter: s=2
+                                        Index forward scan on: s
+                                          filter: s=3
+                                        Index forward scan on: s
+                                          filter: s=0
+                                    Frame forward scan on: a
                             """);
 
             assertQuery(query)
@@ -10328,16 +10347,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            FilterOnExcludedValues symbolOrder: desc
-                              symbolFilter: s not in [null]
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=2
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=1
-                                Frame forward scan on: a
+                            Encode sort light
+                              keys: [s desc]
+                                FilterOnExcludedValues symbolOrder: desc
+                                  symbolFilter: s not in [null]
+                                    Cursor-order scan
+                                        Index forward scan on: s
+                                          filter: s=2
+                                        Index forward scan on: s
+                                          filter: s=3
+                                        Index forward scan on: s
+                                          filter: s=1
+                                    Frame forward scan on: a
                             """);
 
             assertQuery(query)
@@ -10467,11 +10488,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from a " + "where s1 = 'S1' " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
+                            Encode sort light
+                              keys: [s1, ts desc]
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: s1
+                                      filter: s1=1
+                                    Interval forward scan on: a
+                                      intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
         });
     }
@@ -10484,14 +10507,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from a " + "where s1 in ('S1', 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
                     .noLeakCheck()
                     .assertsPlan("""
-                            FilterOnValues symbolOrder: asc
-                                Cursor-order scan
-                                    Index backward scan on: s1
-                                      filter: s1=1
-                                    Index backward scan on: s1
-                                      filter: s1=2
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
+                            Encode sort light
+                              keys: [s1, ts desc]
+                                FilterOnValues symbolOrder: desc
+                                    Cursor-order scan
+                                        Index forward scan on: s1
+                                          filter: s1=2
+                                        Index forward scan on: s1
+                                          filter: s1=1
+                                    Interval forward scan on: a
+                                      intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
         });
     }
@@ -10555,11 +10580,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select s from a where s != 'S1' and length(s) = 2 order by s ")
                 .ddl("create table a ( ts timestamp, s symbol index) timestamp(ts);")
                 .assertsPlan("""
-                        FilterOnExcludedValues symbolOrder: asc
-                          symbolFilter: s not in ['S1']
-                          filter: length(s)=2
-                            Cursor-order scan
-                            Frame forward scan on: a
+                        Encode sort light
+                          keys: [s]
+                            FilterOnExcludedValues symbolOrder: desc
+                              symbolFilter: s not in ['S1']
+                              filter: length(s)=2
+                                Cursor-order scan
+                                Frame forward scan on: a
                         """);
     }
 
@@ -13611,7 +13638,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                        Encode sort light lo: 5
+                          keys: [s desc]
                             FilterOnValues symbolOrder: desc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13623,6 +13651,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         s\tts
                         S2\t1970-01-01T00:00:00.000000Z
@@ -13636,18 +13665,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 5 skip-rows-max: 0 take-rows-max: 5
-                            FilterOnValues symbolOrder: asc
+                        Encode sort light lo: 5
+                          keys: [s]
+                            FilterOnValues symbolOrder: desc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
-                                      filter: s=:s1::string
-                                    Index forward scan on: s deferred: true
                                       filter: s=:s2::string
+                                    Index forward scan on: s deferred: true
+                                      filter: s=:s1::string
                                 Frame forward scan on: a
                         """);
 
         assertQuery(query)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         s\tts
                         S1\t1970-01-01T00:00:00.000001Z
@@ -13672,7 +13703,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                        Encode sort light lo: 5
+                          keys: [s desc]
                             FilterOnValues symbolOrder: desc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13685,6 +13717,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         assertQuery(query)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         s\tts
                         S2\t1970-01-01T00:00:00.000000Z
@@ -13698,19 +13731,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Limit value: 5 skip-rows-max: 0 take-rows-max: 5
-                            FilterOnValues symbolOrder: asc
+                        Encode sort light lo: 5
+                          keys: [s]
+                            FilterOnValues symbolOrder: desc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
-                                      filter: s=:s1::string
-                                    Index forward scan on: s deferred: true
                                       filter: s=:s2::string
+                                    Index forward scan on: s deferred: true
+                                      filter: s=:s1::string
                                 Interval forward scan on: a
                                   intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
                         """);
 
         assertQuery(query)
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         s\tts
                         S1\t1970-01-01T00:00:00.000001Z

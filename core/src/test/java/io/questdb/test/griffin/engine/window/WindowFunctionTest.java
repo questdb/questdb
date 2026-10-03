@@ -20425,19 +20425,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("select ts, i, j, row_number() over () from tab where sym IN ('X', 'Y') order by sym")
                     .noLeakCheck()
                     .timestamp(null)
-                    .supportsRandomAccess(false)
+                    .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
-                                Window
-                                  functions: [row_number()]
-                                    FilterOnValues symbolOrder: asc
-                                        Cursor-order scan
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='X'
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='Y'
-                                        Frame forward scan on: tab
+                                Encode sort
+                                  keys: [sym]
+                                    Window
+                                      functions: [row_number()]
+                                        FilterOnValues symbolOrder: desc
+                                            Cursor-order scan
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='Y'
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                            Frame forward scan on: tab
                             """)
                     .returns("ts\ti\tj\trow_number\n");
 
@@ -20489,18 +20491,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
-                                SelectedRecord
+                                Encode sort light
+                                  keys: [sym]
+                                    SelectedRecord
                             """ +
-                            (isCacheLightWindowEnabled ? "        CachedWindowLight\n" : "        CachedWindow\n") +
+                            (isCacheLightWindowEnabled ? "            CachedWindowLight\n" : "            CachedWindow\n") +
                             """
-                                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                                FilterOnValues symbolOrder: asc
-                                                    Cursor-order scan
-                                                        Index forward scan on: sym deferred: true
-                                                          filter: sym='X'
-                                                        Index forward scan on: sym deferred: true
-                                                          filter: sym='Y'
-                                                    Frame forward scan on: tab
+                                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                                    FilterOnValues symbolOrder: desc
+                                                        Cursor-order scan
+                                                            Index forward scan on: sym deferred: true
+                                                              filter: sym='Y'
+                                                            Index forward scan on: sym deferred: true
+                                                              filter: sym='X'
+                                                        Frame forward scan on: tab
                                     """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
         });

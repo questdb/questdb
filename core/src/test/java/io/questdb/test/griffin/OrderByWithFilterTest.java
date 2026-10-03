@@ -342,7 +342,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     // green with the comparator never invoked.
                     assertQuery("SELECT * FROM a WHERE s != 'a' ORDER BY s")
                             .noLeakCheck()
-                            .withPlanContaining("FilterOnExcludedValues symbolOrder: asc")
+                            .withPlanContaining("Encode sort light", "FilterOnExcludedValues symbolOrder: desc")
                             .returns("""
                                     s
                                     
