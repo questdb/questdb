@@ -56,6 +56,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     public static final long DEFAULT_SPIN_BEFORE_FLUSH = 100_000;
     private static final int DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
+    private static final long DEFAULT_FLUSH_INTERVAL_MICROS = Micros.MILLI_MICROS;
     private static final int INITIAL_LOG_FILE_LIST_SIZE = 1024;
     private static final int INITIAL_LOG_FILE_NAME_SINK_SIZE = 64 * 1024;
     private final MicrosecondClock clock;
@@ -73,6 +74,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String bufferSize;
     private long currentSize;
     private long fd = -1;
+    private long flushDeadline = Long.MAX_VALUE;
+    private boolean hasWritten;
     private long idleSpinCount = 0;
     private String lifeDuration;
     private long lim;
@@ -218,20 +221,24 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void close() {
-        if (buf != 0) {
-            if (_wptr > buf) {
+        try {
+            if (buf != 0 && _wptr > buf) {
                 flush();
             }
-            Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
-            buf = 0;
+        } finally {
+            // release native resources even when the final flush fails
+            if (buf != 0) {
+                Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
+                buf = 0;
+            }
+            if (fd != -1 && ff.close(fd)) {
+                fd = -1;
+            }
+            Misc.free(path);
+            Misc.free(renameToPath);
+            Misc.free(logFileList);
+            Misc.free(logFileNameSink);
         }
-        if (ff.close(fd)) {
-            fd = -1;
-        }
-        Misc.free(path);
-        Misc.free(renameToPath);
-        Misc.free(logFileList);
-        Misc.free(logFileNameSink);
     }
 
     @TestOnly
@@ -246,16 +253,18 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public boolean runSerially() {
-        if (subSeq.consumeAll(ring, copyToBufferRef)) {
-            return true;
+        hasWritten = false;
+        final boolean hasConsumed = subSeq.consumeAll(ring, copyToBufferRef);
+        if (_wptr > buf) {
+            final long ticks = clock.getTicks();
+            if (hasWritten || flushDeadline == Long.MAX_VALUE) {
+                flushDeadline = ticks + DEFAULT_FLUSH_INTERVAL_MICROS;
+            } else if (ticks > flushDeadline || (!hasConsumed && ++idleSpinCount > nSpinBeforeFlush)) {
+                flush();
+                return true;
+            }
         }
-
-        if (++idleSpinCount > nSpinBeforeFlush && _wptr > buf) {
-            flush();
-            idleSpinCount = 0;
-            return true;
-        }
-        return false;
+        return hasConsumed;
     }
 
     public void setBufferSize(String bufferSize) {
@@ -308,20 +317,15 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
             Vect.memcpy(_wptr, sink.ptr(), size);
             _wptr += size;
+            hasWritten = true;
         }
     }
 
     private void flush() {
         long ticks = Long.MIN_VALUE;
-        if (currentSize > nRollSize || (ticks = clock.getTicks()) > rollDeadline) {
-            ff.close(fd);
-            removeOldLogs();
-            if (ticks > rollDeadline) {
-                rollDeadline = rollDeadlineFunction.getDeadline();
-                locationParser.setDateValue(ticks);
-            }
-            openFile();
-            rolledCounter.incrementAndGet();
+        // fd is -1 after a failed roll; reading the clock first lets a pending time roll refresh its date and deadline
+        if (currentSize > nRollSize || (ticks = clock.getTicks()) > rollDeadline || fd == -1) {
+            roll(ticks);
         }
 
         int len = (int) (_wptr - buf);
@@ -330,6 +334,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
         currentSize += len;
         _wptr = buf;
+        flushDeadline = Long.MAX_VALUE;
+        idleSpinCount = 0;
     }
 
     private long getInfiniteDeadline() {
@@ -357,12 +363,21 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private void openFile() {
-        buildUniquePath();
+        buildFilePath(path);
+        openFilePath();
+    }
+
+    private void openFilePath() {
         fd = ff.openAppend(path.$());
         if (fd == -1) {
             throw new LogError("[" + ff.errno() + "] Cannot open file for append: " + path);
         }
         currentSize = ff.length(fd);
+    }
+
+    private void openUniqueFile() {
+        buildUniquePath();
+        openFilePath();
     }
 
     private void pushFileStackUp() {
@@ -491,6 +506,25 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             logFileList.clear();
             logFileList.resetCapacity();
         }
+    }
+
+    // A failed roll leaves fd at -1 and the deadline untouched, so the next flush retries the whole roll.
+    private void roll(long ticks) {
+        if (fd != -1) {
+            ff.close(fd);
+            fd = -1;
+        }
+        removeOldLogs();
+        final boolean isTimeRoll = ticks > rollDeadline;
+        if (isTimeRoll) {
+            // the new file name depends on the date, so setDateValue() must run before openUniqueFile()
+            locationParser.setDateValue(ticks);
+        }
+        openUniqueFile();
+        if (isTimeRoll) {
+            rollDeadline = rollDeadlineFunction.getDeadline();
+        }
+        rolledCounter.incrementAndGet();
     }
 
     @FunctionalInterface
