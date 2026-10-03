@@ -59,14 +59,16 @@
         <exec executable="${maven.executable}">
             <arg value="-P build-rust-library"/>
             <arg value="org.questdb:rust-maven-plugin:build@qdbr-build"/>
+            <arg value="org.apache.maven.plugins:maven-antrun-plugin:run@remove-rust-cli-binaries"/>
         </exec>
     </target>
 
-    <target name="qdbr-release-build" depends="set-mvn-path-windows, set-mvn-path-unix">
+    <target name="qdbr-debug-build" depends="set-mvn-path-windows, set-mvn-path-unix">
         <exec executable="${maven.executable}">
             <arg value="-P build-rust-library"/>
             <arg value="org.questdb:rust-maven-plugin:build@qdbr-build"/>
-            <arg value="-Dqdbr.release=true"/>
+            <arg value="org.apache.maven.plugins:maven-antrun-plugin:run@remove-rust-cli-binaries"/>
+            <arg value="-Dqdbr.release=false"/>
         </exec>
     </target>
 </project>
