@@ -24,10 +24,53 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testBindCastToStrongDims() throws Exception {
+        assertMemoryLeak(() -> {
+            defineWeakDimsBind();
+            try (RecordCursorFactory factory = select("SELECT first($1::DOUBLE[]) x FROM long_sequence(1)")) {
+                bindVariableService.setStr(0, "{1.0,2.0}");
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("x\n[1.0,2.0]\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBindWeakDimsArgFails() throws Exception {
+        assertMemoryLeak(() -> {
+            defineWeakDimsBind();
+            assertExceptionNoLeakCheck(
+                    "SELECT first($1) x FROM long_sequence(2)",
+                    13,
+                    "array bind variable argument is not supported"
+            );
+        });
+    }
+
+    @Test
+    public void testBindWeakDimsExpressionArgFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            defineWeakDimsBind();
+            assertExceptionNoLeakCheck(
+                    "SELECT first(arr * $1) x FROM t",
+                    17,
+                    "array bind variable argument is not supported"
+            );
+        });
+    }
 
     @Test
     public void testNotKeyed() throws Exception {
@@ -210,5 +253,11 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                             [2.0,3.0,4.0]
                             """);
         });
+    }
+
+    // defines bind 0 the way PG wire does for a float8[] parameter: an array type whose dims are unknown until Bind
+    private static void defineWeakDimsBind() throws SqlException {
+        bindVariableService.clear();
+        bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
     }
 }

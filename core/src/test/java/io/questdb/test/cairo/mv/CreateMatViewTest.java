@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionRequirements;
+import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -49,6 +50,8 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.CreateNameRaceTestUtils;
+import io.questdb.test.cairo.StaleTableStatusExecutionContext;
 import io.questdb.test.tools.TableFunctionTestUtils;
 import io.questdb.test.tools.TableFunctionTestUtils.CloseCountingRecordCursorFactory;
 import io.questdb.test.tools.TestUtils;
@@ -702,6 +705,86 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(34, "TIMESTAMP column does not exist or not present in select list [name=ts]");
             assertNull(getMatViewDefinition("testView"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewIfNotExistsLostRaceKeepsTableOnCircularDependency() throws Exception {
+        // the loser's definition would be circular over the winner's table; the loser must
+        // report the name collision instead of dropping that table
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE v (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO v VALUES ('1970-01-01T00:00:00.000000Z', 1), ('1970-01-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW v2 AS (SELECT ts, sum(x) x FROM v SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertCreateMatViewLostRaceFails("CREATE MATERIALIZED VIEW IF NOT EXISTS v AS (SELECT ts, sum(x) x FROM v2 SAMPLE BY 1d) PARTITION BY DAY");
+            assertQuery("SELECT count() FROM v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewIfNotExistsLostRaceKeepsWinnerDefinition() throws Exception {
+        // the loser reaches the engine while the winner has registered the name but not yet its
+        // view definition; the loser must not register its own definition for the winner's view
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO b VALUES ('1970-01-01T00:00:00.000000Z', 1), ('1970-01-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            CreateNameRaceTestUtils.runWhileWinnerParkedAfterNameRegistration(
+                    engine,
+                    "CREATE MATERIALIZED VIEW v AS (SELECT ts, sum(x) s FROM b SAMPLE BY 1h) PARTITION BY DAY",
+                    CreateMatViewOperation.class,
+                    "getMatViewDefinition",
+                    "v",
+                    () -> {
+                        try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                            assertFalse(staleContext.executeDdl(
+                                    "CREATE MATERIALIZED VIEW IF NOT EXISTS v AS (SELECT ts, sum(x) s FROM b SAMPLE BY 1d) PARTITION BY DAY"
+                            ));
+                        }
+                    }
+            );
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewIfNotExistsLostRaceToTableFails() throws Exception {
+        // a refresh of the loser's definition must not write into the winner's plain table
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO b VALUES ('1970-01-01T00:00:00.000000Z', 1), ('1970-01-01T01:00:00.000000Z', 2)");
+            execute("CREATE TABLE v (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertCreateMatViewLostRaceFails("CREATE MATERIALIZED VIEW IF NOT EXISTS v AS (SELECT ts, sum(x) x FROM b SAMPLE BY 1h) PARTITION BY DAY");
+            final TableToken tableToken = engine.getTableTokenIfExists("v");
+            assertFalse(tableToken.isMatView());
+            assertNull(engine.getDependentViewGraph().getViewDefinition(tableToken));
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -2564,6 +2647,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertCreateMatViewLostRaceFails(String ddl) {
+        try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+            staleContext.executeDdl(ddl);
+            fail("expected a name collision [ddl=" + ddl + ']');
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "table or view with the requested name already exists");
+        }
     }
 
     private static void assertMatViewDefinition(

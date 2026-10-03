@@ -354,6 +354,7 @@ public class CopyImportTask {
             CairoEngine cairoEngine,
             TableStructure targetTableStructure,
             ObjList<TypeAdapter> types,
+            int fileColumnCount,
             int atomicity,
             byte columnDelimiter,
             CharSequence importRoot,
@@ -368,6 +369,7 @@ public class CopyImportTask {
                 cairoEngine,
                 targetTableStructure,
                 types,
+                fileColumnCount,
                 atomicity,
                 columnDelimiter,
                 importRoot,
@@ -877,6 +879,7 @@ public class CopyImportTask {
         private Decimal256 decimal256;
         private CairoEngine engine;
         private long errors;
+        private int fileColumnCount;
         private int hi;
         private CharSequence importRoot;
         private int index;
@@ -1087,7 +1090,7 @@ public class CopyImportTask {
         private TableWriter.Row getRow(DirectUtf8Sequence dus, long offset) {
             final long timestamp;
             try {
-                timestamp = timestampAdapter.getTimestamp(dus);
+                timestamp = timestampAdapter.getTimestamp(dus, utf16Sink);
             } catch (Throwable e) {
                 if (atomicity == Atomicity.SKIP_ALL) {
                     throw TextException.$("could not parse timestamp [offset=").put(offset).put(", msg=").put(e.getMessage()).put(']');
@@ -1148,7 +1151,7 @@ public class CopyImportTask {
             final FilesFacade ff = configuration.getFilesFacade();
 
             offsets.clear();
-            lexer.setupBeforeExactLines(onFieldsPartitioned);
+            lexer.setupBeforeExactLines(onFieldsPartitioned, fileColumnCount);
 
             long fd = -1;
             try {
@@ -1261,7 +1264,7 @@ public class CopyImportTask {
             final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
-            lexer.setupBeforeExactLines(onFieldsPartitioned);
+            lexer.setupBeforeExactLines(onFieldsPartitioned, fileColumnCount);
 
             long fd = -1;
             try {
@@ -1320,8 +1323,9 @@ public class CopyImportTask {
 
                     long n = ff.read(fd, fileBufAddr, bytesToRead, offset);
                     if (n > 0) {
-                        // at this phase there is no way for lines to be split across buffers
-                        lexer.parse(fileBufAddr, fileBufAddr + n);
+                        // at this phase there is no way for lines to be split across buffers,
+                        // the file's last line may lack its line end and ends at the end of the read
+                        lexer.parseWholeLines(fileBufAddr, fileBufAddr + n);
                     } else {
                         throw TextException
                                 .$("could not read from file [path='").put(tmpPath)
@@ -1504,7 +1508,7 @@ public class CopyImportTask {
         private void parseLinesAndWrite(AbstractTextLexer lexer, long fileBufAddr, LongList offsets, int j) {
             final long lo = fileBufAddr + offsets.getQuick(j * 2);
             final long hi = lo + offsets.getQuick(j * 2 + 1);
-            lexer.parse(lo, hi);
+            lexer.parseWholeLines(lo, hi);
         }
 
         private void unmap(FilesFacade ff, DirectLongList mergeIndexes) {
@@ -1520,6 +1524,7 @@ public class CopyImportTask {
                 CairoEngine cairoEngine,
                 TableStructure targetTableStructure,
                 ObjList<TypeAdapter> types,
+                int fileColumnCount,
                 int atomicity,
                 byte columnDelimiter,
                 CharSequence importRoot,
@@ -1532,6 +1537,7 @@ public class CopyImportTask {
             this.engine = cairoEngine;
             this.targetTableStructure = targetTableStructure;
             this.types = types;
+            this.fileColumnCount = fileColumnCount;
             this.atomicity = atomicity;
             this.columnDelimiter = columnDelimiter;
             this.importRoot = importRoot;

@@ -10707,7 +10707,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // define "undefined" functions as string unless it's update.
                 if (model.isUpdate()) {
                     if (isUndefined(function.getType())) {
-                        function.assignType(targetColumnType, executionContext.getBindVariableService());
+                        try {
+                            function.assignType(targetColumnType, executionContext.getBindVariableService());
+                        } catch (Throwable th) {
+                            Misc.free(function);
+                            throw th;
+                        }
                     }
                 } else if (function.isUndefined()) {
                     function.assignType(STRING, executionContext.getBindVariableService());

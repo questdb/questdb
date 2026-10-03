@@ -124,7 +124,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
         // validate that there are no nulls in the array since we don't support them
         int increment = Integer.BYTES + expectedElementSize;
         int expectedElementSizeBE = Numbers.bswap(expectedElementSize);
-        for (long p = lo; p < hi; p += increment) {
+        for (long p = lo; hi - p >= Integer.BYTES; p += increment) {
 
             // element size as reported by the client
             int actualElementSizeBE = Unsafe.getInt(p);

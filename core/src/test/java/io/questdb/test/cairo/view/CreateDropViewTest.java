@@ -24,9 +24,14 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.test.cairo.CreateNameRaceTestUtils;
+import io.questdb.test.cairo.StaleTableStatusExecutionContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -34,7 +39,9 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.fail;
 
 public class CreateDropViewTest extends AbstractViewTest {
 
@@ -282,6 +289,53 @@ public class CreateDropViewTest extends AbstractViewTest {
                             """,
                     VIEW1, VIEW4
             );
+        });
+    }
+
+    @Test
+    public void testCreateViewIfNotExistsLostRaceKeepsWinnerDefinition() throws Exception {
+        // the loser reaches the engine while the winner has registered the name but not yet its
+        // view definition; the loser must not register its own definition for the winner's view
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO b VALUES ('1970-01-01T00:00:00.000000Z', 1), ('1970-01-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            CreateNameRaceTestUtils.runWhileWinnerParkedAfterNameRegistration(
+                    engine,
+                    "CREATE VIEW v AS (SELECT ts, x FROM b WHERE x = 1)",
+                    CreateViewOperation.class,
+                    "getViewDefinition",
+                    "v",
+                    () -> {
+                        try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                            assertFalse(staleContext.executeDdl("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, x FROM b WHERE x = 2)"));
+                        }
+                    }
+            );
+            drainWalAndViewQueues();
+            assertQuery("SELECT x FROM v")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateViewIfNotExistsLostRaceToTableFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                staleContext.executeDdl("CREATE VIEW IF NOT EXISTS t2 AS (SELECT ts, x FROM b)");
+                fail("expected a name collision with table t2");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table or materialized view with the requested name already exists");
+            }
+            final TableToken tableToken = engine.getTableTokenIfExists("t2");
+            assertFalse(tableToken.isView());
+            assertNull(engine.getViewGraph().getViewDefinition(tableToken));
         });
     }
 

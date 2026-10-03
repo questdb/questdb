@@ -115,4 +115,20 @@ public class ToStrDateAndTimestampTest extends AbstractCairoTest {
             }
         }
     }
+
+    @Test
+    public void testToStrSingleCharDelimiterAboveU7fff() throws Exception {
+        // Korean one-char delimiters and the fullwidth colon (U+FF1A) do not fit a sipush operand
+        assertQuery("""
+                SELECT
+                    to_str('2024-01-02T13:45:00.000000Z'::TIMESTAMP, 'yyyy년MM월dd일 HH：mm') ts,
+                    to_str('2024-01-02T13:45:00.000Z'::DATE, 'yyyy년MM월dd일 HH：mm') d,
+                    to_str('2024-01-02T13:45:00.000000000Z'::TIMESTAMP_NS, 'yyyy년MM월dd일 HH：mm') ns
+                """)
+                .expectSize()
+                .returns("""
+                        ts\td\tns
+                        2024년01월02일 13：45\t2024년01월02일 13：45\t2024년01월02일 13：45
+                        """);
+    }
 }

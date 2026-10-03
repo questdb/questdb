@@ -42,6 +42,8 @@ import io.questdb.std.str.StringSink;
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
     public static final BorrowedArray NULL = new BorrowedArray();
     private final DirectArray array = new DirectArray();
+    // position of the ARRAY[] expression, reported when assignType() rejects a non-array type
+    private int position;
 
     public ArrayConstant(FunctionArray arrayIn) {
         try {
@@ -58,7 +60,8 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         }
     }
 
-    private ArrayConstant(int nDims) {
+    private ArrayConstant(int nDims, int position) {
+        this.position = position;
         try {
             array.setType(ColumnType.encodeArrayType(ColumnType.UNDEFINED, nDims));
             array.applyShape();
@@ -104,12 +107,15 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         }
     }
 
-    public static ArrayConstant emptyUntyped(int nDims) {
-        return new ArrayConstant(nDims);
+    public static ArrayConstant emptyUntyped(int nDims, int position) {
+        return new ArrayConstant(nDims, position);
     }
 
     @Override
     public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        if (!ColumnType.isArray(type)) {
+            throw SqlException.inconvertibleTypes(position, ColumnType.ARRAY, type);
+        }
         this.type = type;
         array.setType(type);
     }

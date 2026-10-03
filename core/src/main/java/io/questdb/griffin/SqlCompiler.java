@@ -67,6 +67,19 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     ExpressionNode parseExpression(CharSequence expression) throws SqlException;
 
+    /**
+     * Generates a factory for a query model without retrying on a stale table reference.
+     * Use it for models that this compiler did not parse, such as a subquery of another
+     * compiler's statement: a retry re-parses this compiler's own SQL text, so the
+     * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} must reach the compiler
+     * that owns the statement text.
+     */
+    RecordCursorFactory generateSelect(
+            @Transient IQueryModel queryModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException;
+
     RecordCursorFactory generateSelectWithRetries(
             @Transient IQueryModel queryModel,
             @Nullable @Transient InsertModel insertModel,

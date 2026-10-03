@@ -29,6 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class Long256Adapter extends AbstractTypeAdapter {
@@ -51,7 +52,19 @@ public final class Long256Adapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putLong256(column, SqlKeywords.isNullKeyword(value) ? null : value.asAsciiCharSequence());
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        if (SqlKeywords.isNullKeyword(value)) {
+            row.putLong256(column, (CharSequence) null);
+            return;
+        }
+        final CharSequence hex = value.asAsciiCharSequence();
+        final int len = hex.length();
+        // the 0x prefix is optional, as in INSERT; the decoder throws ImplicitCastException on non-hex digits
+        final int start = len > 1 && hex.charAt(0) == '0' && (hex.charAt(1) | 32) == 'x' ? 2 : 0;
+        if (start == len) {
+            // the decoder turns an empty range into 0
+            throw NumericException.INSTANCE;
+        }
+        row.putLong256(column, hex, start, len);
     }
 }

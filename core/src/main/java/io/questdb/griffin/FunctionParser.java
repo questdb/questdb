@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
@@ -38,6 +39,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
+import io.questdb.griffin.engine.functions.bind.BindVariableNullCheckFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
@@ -120,6 +122,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.eq.ArrayNullCheckFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.ScalarSubQueryCompileCache;
 import io.questdb.griffin.model.ScalarTimestampBoundHolder;
@@ -154,6 +157,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private static final int MATCH_NO_MATCH = 0;
     private static final int MATCH_PARTIAL_MATCH = 2;
     private final CairoConfiguration configuration;
+    // untyped bind variable null tests of the expressions being parsed, and their nodes
+    private final ObjList<ExpressionNode> deferredNullCheckNodes = new ObjList<>();
+    private final ObjList<BindVariableNullCheckFunction> deferredNullChecks = new ObjList<>();
     private final SqlExecutionRequirements executionRequirements = new SqlExecutionRequirements();
     private final FunctionFactoryCache functionFactoryCache;
     private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
@@ -161,6 +167,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private final IntList mutableArgPositions = new IntList();
     private final ObjList<Function> mutableArgs = new ObjList<>();
+    private final IntList nullCheckArgPositions = new IntList();
+    private final ObjList<Function> nullCheckArgs = new ObjList<>();
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
@@ -371,6 +379,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (this.metadata != null) {
             metadataStack.push(this.metadata);
         }
+        final int deferredNullCheckMark = deferredNullChecks.size();
         try {
             this.metadata = metadata;
             if (node != null) {
@@ -378,6 +387,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
             try {
                 traverseAlgo.traverse(node, this);
+                resolveDeferredNullChecks(deferredNullCheckMark);
             } catch (Exception e) {
                 // Release parsed functions best-effort: keep closing the rest even if one close()
                 // throws, and fold close failures into e as suppressed instead of masking it.
@@ -396,6 +406,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
             return function;
         } finally {
+            deferredNullChecks.setPos(deferredNullCheckMark);
+            deferredNullCheckNodes.setPos(deferredNullCheckMark);
             if (metadataStack.isEmpty()) {
                 this.metadata = null;
             } else {
@@ -681,6 +693,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
+    private static boolean isEqualityOperator(CharSequence token) {
+        return Chars.equals(token, "=") || Chars.equals(token, "!=") || Chars.equals(token, "<>");
+    }
+
+    private static boolean isNullLiteral(Function function) {
+        return ColumnType.tagOf(function.getType()) == ColumnType.NULL && function.isConstant();
+    }
+
     private static long parseDate(CharSequence str, int position) throws SqlException {
         try {
             return MillisTimestampDriver.floor(str);
@@ -847,6 +867,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnTag == ColumnType.INTERVAL
                         || columnTag == ColumnType.ARRAY
         ) {
+            if (columnTag == ColumnType.ARRAY) {
+                final short elemType = ColumnType.decodeArrayElementType(columnType);
+                if (!ColumnType.isSupportedArrayElementType(elemType)) {
+                    throw SqlException.position(position)
+                            .put("unsupported array element type [type=")
+                            .put(ColumnType.nameOf(elemType))
+                            .put(']');
+                }
+            }
             return Constants.getTypeConstant(columnType);
         }
 
@@ -1071,11 +1100,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // to the variable, and it's most likely not that arbitrary type.
             if (ColumnType.isUndefined(fromType)) {
                 short castToTypeTag = ColumnType.tagOf(castToType);
+                // An undefined array (empty ARRAY[] or weak-dims array) can only take an
+                // array type; for any other target, overload resolution picks the cast.
+                if (fromType != ColumnType.UNDEFINED && castToTypeTag != ColumnType.ARRAY) {
+                    break skipAssigningType;
+                }
+                // an untyped bind variable takes the cast's target type, as in PostgreSQL
                 final int assignType;
                 switch (castToTypeTag) {
                     case ColumnType.VARCHAR:
                     case ColumnType.STRING:
                     case ColumnType.CHAR:
+                        assignType = ColumnType.STRING;
+                        break;
+                    case ColumnType.SYMBOL:
+                    case ColumnType.LONG256:
                         assignType = ColumnType.STRING;
                         break;
                     case ColumnType.BYTE:
@@ -1084,7 +1123,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     case ColumnType.LONG:
                     case ColumnType.FLOAT:
                     case ColumnType.DOUBLE:
-                        assignType = ColumnType.DOUBLE;
+                        assignType = castToType;
+                        break;
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                        assignType = castToType;
                         break;
                     case ColumnType.ARRAY:
                     case ColumnType.DECIMAL8:
@@ -1103,6 +1147,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // Now that that type is assigned, we can return the first argument, no additional cast needed
                     return arg0;
                 }
+            }
+        }
+
+        if (argCount == 2 && isEqualityOperator(node.token)) {
+            final Function nullCheck = createNullCheckOrNull(node, args, argPositions);
+            if (nullCheck != null) {
+                return nullCheck;
             }
         }
 
@@ -1527,7 +1578,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private Function createIndexParameter(int variableIndex, int position) throws SqlException {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
-            // bind variable is undefined
+            // The SQL text defines this bind variable. The service keeps indexed variables in a
+            // list as long as the highest index, so a $n above the limit would allocate a slot
+            // for every index up to it. A variable that the caller defined up front, such as
+            // WAL apply replaying an UPDATE, allocates nothing and skips the check.
+            final int maxBindVariables = configuration.getSqlMaxBindVariables();
+            if (variableIndex >= maxBindVariables) {
+                throw SqlException.$(position, "bind variable index exceeds ")
+                        .put(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES.getPropertyPath())
+                        .put(" [index=").put(variableIndex + 1)
+                        .put(", max=").put(maxBindVariables)
+                        .put(']');
+            }
             return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
@@ -1539,6 +1601,48 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.position(position).put("undefined bind variable: ").put(name);
         }
         return new NamedParameterLinkFunction(Chars.toString(name), function.getType());
+    }
+
+    /**
+     * {@code x IS [NOT] NULL} reaches here as {@code x = NULL} / {@code x != NULL}. Handles the two
+     * operand kinds that ordinary overload resolution cannot: an array (no array {@code =} overload
+     * takes the NULL literal) and an untyped bind variable (overload resolution would force an
+     * arbitrary type on it, while PostgreSQL leaves its type to other uses). Returns null for every
+     * other operand, which keeps its existing {@code =} overload.
+     */
+    @Nullable
+    private Function createNullCheckOrNull(
+            ExpressionNode node,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions
+    ) {
+        final int nullIndex;
+        if (isNullLiteral(args.getQuick(1))) {
+            nullIndex = 1;
+        } else if (isNullLiteral(args.getQuick(0))) {
+            nullIndex = 0;
+        } else {
+            return null;
+        }
+        final int operandIndex = 1 - nullIndex;
+        final Function operand = args.getQuick(operandIndex);
+        if (ColumnType.tagOf(operand.getType()) == ColumnType.ARRAY) {
+            args.clear(); // the function takes ownership of the operand; the NULL literal is a singleton
+            return new ArrayNullCheckFunction(operand, !Chars.equals(node.token, "="));
+        }
+        if (operand.getType() == ColumnType.UNDEFINED && operand instanceof IndexedParameterLinkFunction bindVariable) {
+            final BindVariableNullCheckFunction nullCheck = new BindVariableNullCheckFunction(
+                    bindVariable,
+                    argPositions.getQuick(operandIndex),
+                    argPositions.getQuick(nullIndex),
+                    operandIndex == 0
+            );
+            args.clear();
+            deferredNullChecks.add(nullCheck);
+            deferredNullCheckNodes.add(node);
+            return nullCheck;
+        }
+        return null;
     }
 
     /**
@@ -1875,6 +1979,54 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }
+    }
+
+    /**
+     * Types each untyped bind variable null test created since {@code mark}: the type other uses
+     * of the variable in the expression gave it, else STRING (PostgreSQL types it as text), then
+     * gives the test the ordinary {@code =}/{@code !=} function for that type.
+     */
+    private void resolveDeferredNullChecks(int mark) throws SqlException {
+        if (deferredNullChecks.size() == mark) {
+            return;
+        }
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        // the signature reported for the expression stays that of its root function
+        final String rootSignature = lastFunctionFactorySignature;
+        for (int i = mark, n = deferredNullChecks.size(); i < n; i++) {
+            final BindVariableNullCheckFunction nullCheck = deferredNullChecks.getQuick(i);
+            final int variableIndex = nullCheck.getVariableIndex();
+            final Function defined = bindVariableService.getFunction(variableIndex);
+            final int type = defined != null && defined.getType() != ColumnType.UNDEFINED ? defined.getType() : ColumnType.STRING;
+            if (nullCheck.isClosed()) {
+                // AND/OR constant folding (`false AND $1 IS NULL`) closed the test; the variable still needs a type
+                bindVariableService.define(variableIndex, type, nullCheck.getBindVariablePosition());
+                continue;
+            }
+            final IndexedParameterLinkFunction bindVariable = nullCheck.detachBindVariable();
+            try {
+                bindVariable.assignType(type, bindVariableService);
+            } catch (Throwable th) {
+                Misc.free(bindVariable, th);
+                throw th;
+            }
+            nullCheckArgs.clear();
+            nullCheckArgPositions.clear();
+            if (nullCheck.isBindVariableLeft()) {
+                nullCheckArgs.add(bindVariable);
+                nullCheckArgs.add(NullConstant.NULL);
+                nullCheckArgPositions.add(nullCheck.getBindVariablePosition());
+                nullCheckArgPositions.add(nullCheck.getNullPosition());
+            } else {
+                nullCheckArgs.add(NullConstant.NULL);
+                nullCheckArgs.add(bindVariable);
+                nullCheckArgPositions.add(nullCheck.getNullPosition());
+                nullCheckArgPositions.add(nullCheck.getBindVariablePosition());
+            }
+            // createFunction() frees the args when it throws
+            nullCheck.of(createFunction(deferredNullCheckNodes.getQuick(i), nullCheckArgs, nullCheckArgPositions));
+        }
+        lastFunctionFactorySignature = rootSignature;
     }
 
     static {

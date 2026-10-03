@@ -1701,6 +1701,49 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testSqlMaxBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                Assert.assertEquals(128, serverMain.getConfiguration().getCairoConfiguration().getSqlMaxBindVariables());
+
+                // the connection stays open across both reloads, and each Parse on it uses the
+                // limit in force at the time
+                try (Connection conn = getConnection("admin", "quest")) {
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.sql.max.bind.variables=2\n");
+                    }
+                    assertReloadConfigEventually();
+                    Assert.assertEquals(2, serverMain.getConfiguration().getCairoConfiguration().getSqlMaxBindVariables());
+                    try (PreparedStatement stmt = conn.prepareStatement("SELECT ? + ? + ?")) {
+                        stmt.setLong(1, 1);
+                        stmt.setLong(2, 2);
+                        stmt.setLong(3, 3);
+                        stmt.executeQuery();
+                        Assert.fail("3 parameters are above the limit of 2");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "exceeds cairo.sql.max.bind.variables");
+                    }
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.sql.max.bind.variables=3\n");
+                    }
+                    assertReloadConfigEventually();
+                    try (PreparedStatement stmt = conn.prepareStatement("SELECT ? + ? + ?")) {
+                        stmt.setLong(1, 1);
+                        stmt.setLong(2, 2);
+                        stmt.setLong(3, 3);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            Assert.assertTrue(rs.next());
+                            Assert.assertEquals(6, rs.getLong(1));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnknownPropertyAdditionIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {

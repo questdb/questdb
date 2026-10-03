@@ -286,6 +286,16 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public long getStructureVersion(final TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            try {
+                return sequencer.getStructureVersion();
+            } finally {
+                sequencer.unlockRead();
+            }
+        }
+    }
+
     @NotNull
     public SeqTxnTracker getTxnTracker(TableToken tableToken) {
         return getSeqTxnTracker(tableToken);

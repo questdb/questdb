@@ -70,6 +70,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.CreateNameRaceTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
@@ -149,6 +150,37 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void tearDown() throws Exception {
         path.close();
         super.tearDown();
+    }
+
+    @Test(timeout = TEST_TIMEOUT_IN_MS)
+    public void testAutoCreateTableBacksOffWhileDropHoldsPools() throws Exception {
+        // while a non-WAL DROP holds the pools of the table directory, the ILP auto-create
+        // must sleep between lock attempts instead of spinning: every failed attempt logs an error
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
+        runInContext((_) -> {
+            final TableToken droppingToken = CreateNameRaceTestUtils.newDroppingNonWalTableToken(configuration, "t");
+            final AtomicInteger lockBusyCount = new AtomicInteger();
+            engine.setPoolListener((factoryType, _, name, event, _, _) -> {
+                if (factoryType == PoolListener.SRC_TABLE_METADATA
+                        && event == PoolListener.EV_LOCK_BUSY
+                        && name != null
+                        && Chars.equals(name.getTableName(), "t")) {
+                    lockBusyCount.incrementAndGet();
+                }
+            });
+            try {
+                // the table appears only after the holder released the pools, so the action
+                // ends after the full hold
+                CreateNameRaceTestUtils.runWhileDropHoldsPools(engine, droppingToken, 200, () -> {
+                    send("t", WAIT_NO_WAIT, () -> sendToSocket("t x=1i\n"));
+                    assertTableSizeEventually(engine, "t", 1);
+                });
+            } finally {
+                engine.setPoolListener(null);
+            }
+            Assert.assertFalse(isWalTable("t"));
+            Assert.assertTrue("lock attempts while the pools were held: " + lockBusyCount.get(), lockBusyCount.get() <= 20);
+        });
     }
 
     @Test

@@ -1054,6 +1054,20 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testSingleCharDelimiterAboveU7fff() throws NumericException {
+        // one-char delimiters at U+8000 and above (Korean, fullwidth punctuation) do not fit a sipush operand
+        assertThat("yyyy년MM월dd일", "2024-01-02T00:00:00.000Z", "2024년01월02일");
+        assertThat("yyyy-MM-dd HH：mm", "2024-01-02T13:45:00.000Z", "2024-01-02 13：45");
+        assertThat("yyyy\u8000MM", "2024-03-01T00:00:00.000Z", "2024\u800003");
+        assertThat("yyyy\uFFFFMM", "2024-03-01T00:00:00.000Z", "2024\uFFFF03");
+        assertThat("yyyy\u7FFFMM", "2024-03-01T00:00:00.000Z", "2024\u7FFF03");
+        assertFormat("2024년01월02일 13：45", "yyyy년MM월dd일 HH：mm", "2024-01-02T13:45:00.000Z");
+        assertFormat("2024\u800003", "yyyy\u8000MM", "2024-03-01T00:00:00.000Z");
+        assertFormat("2024\uFFFF03", "yyyy\uFFFFMM", "2024-03-01T00:00:00.000Z");
+        assertFormat("2024\u7FFF03", "yyyy\u7FFFMM", "2024-03-01T00:00:00.000Z");
+    }
+
+    @Test
     public void testSingleDigitYear() {
         assertThat("yMM", "0001-03-01T00:00:00.000Z", "103");
     }

@@ -134,6 +134,12 @@ public class UpdateOperation extends AbstractOperation {
         return factory;
     }
 
+    // TableWriter.publishAsyncWriterCommand() sets this when it queues the operation on a busy
+    // writer. From then on, close() and closeWriter() each run once, so the operation runs once.
+    public boolean isExecutingAsync() {
+        return executingAsync;
+    }
+
     @Override
     public boolean isStructural() {
         return false;

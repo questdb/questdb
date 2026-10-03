@@ -52,15 +52,15 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
         int resolvedDims = AbstractDoubleArrayElemFunction.validateArgsAndResolveDims(
                 position, args, argPositions, "array_elem_avg"
         );
-        return new Func(configuration, new ObjList<>(args), resolvedDims);
+        return new Func(configuration, new ObjList<>(args), resolvedDims, position);
     }
 
     private static final class Func extends AbstractDoubleArrayElemFunction {
         private final DoubleList compensation = new DoubleList();
         private final IntList counts = new IntList();
 
-        Func(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
-            super(configuration, args, resolvedDims);
+        Func(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims, int position) {
+            super(configuration, args, resolvedDims, position);
         }
 
         @Override

@@ -22,17 +22,36 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cutlass.text.types;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.Numbers;
+import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sequence;
 
-public final class BadDateAdapter extends DateAdapter {
+/**
+ * Carries the type of a table column that the imported file lacks. The parallel importer
+ * builds its temporary tables from these adapters, so they must accept every column type,
+ * including the ones TypeManager has no text parser for (DATE, TIMESTAMP, arrays, BINARY).
+ * The file has no values for the column, so the importer never parses or writes through it.
+ */
+public final class MissingColumnAdapter extends AbstractTypeAdapter implements Mutable {
+    private int columnType;
 
-    public static final BadDateAdapter INSTANCE = new BadDateAdapter();
+    @Override
+    public void clear() {
+        columnType = ColumnType.UNDEFINED;
+    }
 
-    private BadDateAdapter() {
+    @Override
+    public int getType() {
+        return columnType;
+    }
+
+    public MissingColumnAdapter of(int columnType) {
+        this.columnType = columnType;
+        return this;
     }
 
     @Override
@@ -42,6 +61,6 @@ public final class BadDateAdapter extends DateAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putDate(column, Numbers.LONG_NULL);
+        throw new UnsupportedOperationException();
     }
 }

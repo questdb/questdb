@@ -31,6 +31,8 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
@@ -878,6 +880,121 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testUntypedBindIsNullCompileErrorFreesNullCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            createUntypedBindTable();
+            bindVariableService.clear();
+            assertExceptionNoLeakCheck("SELECT x FROM t WHERE $1 IS NULL AND no_such_col = 1", 37, "Invalid column: no_such_col");
+            bindVariableService.clear();
+            assertExceptionNoLeakCheck("SELECT x FROM t WHERE no_such_col = 1 OR $1 IS NULL", 22, "Invalid column: no_such_col");
+        });
+    }
+
+    @Test
+    public void testUntypedBindIsNullDefaultsToString() throws Exception {
+        assertMemoryLeak(() -> {
+            createUntypedBindTable();
+            for (String condition : new String[]{"$1 IS NULL", "$1 = NULL", "NULL = $1", "NOT ($1 IS NOT NULL)"}) {
+                assertUntypedBindNullCheck("SELECT x FROM t WHERE " + condition, ColumnType.STRING, "x\n1\n2\n", "abc", "x\n");
+            }
+            for (String condition : new String[]{"$1 IS NOT NULL", "$1 != NULL", "$1 <> NULL", "NULL != $1"}) {
+                assertUntypedBindNullCheck("SELECT x FROM t WHERE " + condition, ColumnType.STRING, "x\n", "abc", "x\n1\n2\n");
+            }
+            assertUntypedBindNullCheck("SELECT $1 IS NULL n", ColumnType.STRING, "n\ntrue\n", "abc", "n\nfalse\n");
+            assertUntypedBindNullCheck("SELECT count() c FROM t WHERE $1 IS NULL", ColumnType.STRING, "c\n2\n", "abc", "c\n0\n");
+        });
+    }
+
+    @Test
+    public void testUntypedBindIsNullFoldedAway() throws Exception {
+        assertMemoryLeak(() -> {
+            createUntypedBindTable();
+            // AND/OR with a constant operand close the null test before FunctionParser types the bind variable
+            for (String condition : new String[]{"false AND NULL = $1", "NULL = $1 AND 1 = 0", "$1 IS NULL AND 1 = 0", "false AND $1 IS NOT NULL"}) {
+                assertUntypedBindNullCheck("SELECT x FROM t WHERE " + condition, ColumnType.STRING, "x\n", "abc", "x\n");
+            }
+            for (String condition : new String[]{"true OR NULL != $1", "true OR $1 IS NULL", "$1 IS NULL OR 1 = 1"}) {
+                assertUntypedBindNullCheck("SELECT x FROM t WHERE " + condition, ColumnType.STRING, "x\n1\n2\n", "abc", "x\n1\n2\n");
+            }
+            assertUntypedBindNullCheck("SELECT (true OR $1 IS NULL) b", ColumnType.STRING, "b\ntrue\n", "abc", "b\ntrue\n");
+        });
+    }
+
+    @Test
+    public void testUntypedBindIsNullTakesTypeFromOtherUse() throws Exception {
+        assertMemoryLeak(() -> {
+            createUntypedBindTable();
+            for (String condition : new String[]{"ts = $1 OR $1 IS NULL", "$1 IS NULL OR ts = $1", "(ts = $1 OR NULL = $1)"}) {
+                assertUntypedBindNullCheck("SELECT x FROM t WHERE " + condition, ColumnType.TIMESTAMP, "x\n1\n2\n", "2024-01-01T00:00:00.000000Z", "x\n1\n");
+            }
+            assertUntypedBindNullCheck("SELECT x FROM t WHERE x = $1 OR $1 IS NOT NULL", ColumnType.INT, "x\n", "1", "x\n1\n2\n");
+            assertUntypedBindNullCheck("SELECT x FROM t WHERE $1 IS NULL OR x > $1", ColumnType.INT, "x\n1\n2\n", "1", "x\n2\n");
+        });
+    }
+
+    @Test
+    public void testUntypedCastOperandEmptyArrayStillFails() throws Exception {
+        assertException("SELECT ARRAY[]::TIMESTAMP x", 14, "no matching function");
+        assertException("SELECT ARRAY[]::BOOLEAN x", 14, "no matching function");
+        assertException("SELECT ARRAY[]::DATE x", 14, "no matching function");
+    }
+
+    @Test
+    public void testUntypedCastOperandEmptyArrayToScalarFails() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("SELECT ARRAY[]::DOUBLE x", 14, "there is no matching function `cast` with the argument types: (ARRAY, DOUBLE)");
+            assertExceptionNoLeakCheck("SELECT ARRAY[]::INT x", 14, "there is no matching function `cast` with the argument types: (ARRAY, INT)");
+            assertExceptionNoLeakCheck("SELECT ARRAY[]::VARCHAR x", 14, "there is no matching function `cast` with the argument types: (ARRAY, VARCHAR)");
+            assertExceptionNoLeakCheck("SELECT ARRAY[]::DECIMAL(10,2) x", 14, "there is no matching function `cast` with the argument types: (ARRAY, DECIMAL");
+            assertExceptionNoLeakCheck("SELECT ARRAY[ARRAY[]]::DOUBLE x", 21, "there is no matching function `cast`");
+            assertQuery("SELECT ARRAY[]::DOUBLE[] x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[]\n");
+        });
+    }
+
+    @Test
+    public void testUntypedCastOperandKeepsStringForTextTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            assertUntypedCastOperand("SELECT $1::SYMBOL s", ColumnType.STRING, ColumnType.SYMBOL, "abc", """
+                    s
+                    abc
+                    """);
+            assertUntypedCastOperand("SELECT $1::LONG256 l", ColumnType.STRING, ColumnType.LONG256, "0x01", """
+                    l
+                    0x01
+                    """);
+            assertUntypedCastOperand("SELECT CAST($1 AS GEOHASH(4c)) g", ColumnType.STRING, ColumnType.getGeoHashTypeWithBits(20), "u33d", """
+                    g
+                    u33d
+                    """);
+        });
+    }
+
+    @Test
+    public void testUntypedCastOperandTakesCastTargetType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertUntypedCastOperand("SELECT $1::TIMESTAMP ts", ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, "2024-01-01T00:00:00.000000Z", """
+                    ts
+                    2024-01-01T00:00:00.000000Z
+                    """);
+            assertUntypedCastOperand("SELECT CAST($1 AS DATE) d", ColumnType.DATE, ColumnType.DATE, "2024-01-01T00:00:00.000Z", """
+                    d
+                    2024-01-01T00:00:00.000Z
+                    """);
+            assertUntypedCastOperand("SELECT $1::LONG l", ColumnType.LONG, ColumnType.LONG, "9007199254740993", """
+                    l
+                    9007199254740993
+                    """);
+            assertUntypedCastOperand("SELECT $1::BOOLEAN b", ColumnType.BOOLEAN, ColumnType.BOOLEAN, "t", """
+                    b
+                    true
+                    """);
+        });
+    }
+
+    @Test
     public void testUppercaseIndexedStr() throws SqlException {
         bindVariableService.setLong(2, 10000);
         bindVariableService.setInt(0, 1);
@@ -921,6 +1038,104 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                             75b30bf9-e4cc-48b9-9658-97d4a2307622
                             """);
         });
+    }
+
+    @Test
+    public void testWeakDimsArrayBindCastToScalarFails() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+            assertExceptionNoLeakCheck("SELECT $1::DOUBLE x", 9, "there is no matching function `cast`");
+            assertExceptionNoLeakCheck("SELECT ($1 * 2.0)::DOUBLE x", 17, "there is no matching function `cast`");
+        });
+    }
+
+    @Test
+    public void testWeakDimsArrayBindCastToText() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+            try (RecordCursorFactory ignore = select("SELECT $1::VARCHAR x")) {
+                bindVariableService.setStr(0, "{1.0,2.0}");
+            }
+            assertQuery("SELECT $1::VARCHAR x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[1.0,2.0]\n");
+            assertQuery("SELECT ($1 * 2.0)::VARCHAR x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[2.0,4.0]\n");
+        });
+    }
+
+    @Test
+    public void testWeakDimsArrayBindIntoScalarColumnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, s VARCHAR, arr DOUBLE[], ts TIMESTAMP)");
+            execute("INSERT INTO t(d, s, arr, ts) VALUES (1.0, 'a', ARRAY[1.0], 0)");
+            bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+            assertExceptionNoLeakCheck("INSERT INTO t(d, ts) VALUES ($1, 0)", 29, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("INSERT INTO t(s, ts) VALUES ($1, 0)", 29, "inconvertible types: ARRAY -> VARCHAR");
+            assertExceptionNoLeakCheck("INSERT INTO t(d, ts) VALUES ($1 * 2.0, 0)", 32, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("UPDATE t SET d = $1", 17, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("UPDATE t SET d = $1 * 2.0", 20, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("SELECT * FROM t LIMIT $1", 22, "inconvertible types: ARRAY -> LONG");
+            // the rejections leave the bind variable an array, and array columns accept it
+            bindVariableService.setStr(0, "{1.0,2.0}");
+            execute("INSERT INTO t(arr, ts) VALUES ($1, 0)");
+            update("UPDATE t SET arr = $1 * 2.0");
+            assertQuery("SELECT d, s, arr FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\ts\tarr
+                            1.0\ta\t[2.0,4.0]
+                            null\t\t[2.0,4.0]
+                            """);
+        });
+    }
+
+    private static void assertUntypedBindNullCheckRows(RecordCursorFactory factory, String expected) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+        }
+    }
+
+    private static void createUntypedBindTable() throws SqlException {
+        execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+    }
+
+    // compiles sql with $1 untyped, then runs it with $1 NULL and with $1 set to value
+    private void assertUntypedBindNullCheck(
+            String sql,
+            int expectedBindType,
+            String expectedWhenNull,
+            String value,
+            String expectedWithValue
+    ) throws Exception {
+        bindVariableService.clear();
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertEquals(sql, ColumnType.nameOf(expectedBindType), ColumnType.nameOf(bindVariableService.getFunction(0).getType()));
+            assertUntypedBindNullCheckRows(factory, expectedWhenNull);
+            bindVariableService.setStr(0, value);
+            assertUntypedBindNullCheckRows(factory, expectedWithValue);
+        }
+    }
+
+    private void assertUntypedCastOperand(
+            String sql,
+            int expectedBindType,
+            int expectedColumnType,
+            String value,
+            String expected
+    ) throws Exception {
+        bindVariableService.clear();
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertEquals(ColumnType.nameOf(expectedBindType), ColumnType.nameOf(bindVariableService.getFunction(0).getType()));
+            Assert.assertEquals(ColumnType.nameOf(expectedColumnType), ColumnType.nameOf(factory.getMetadata().getColumnType(0)));
+        }
+        bindVariableService.setStr(0, value);
+        assertQuery(sql).noLeakCheck().expectSize().returns(expected);
     }
 
     private FunctionBuilder expr(String expression) {

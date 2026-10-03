@@ -1,0 +1,66 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+
+package io.questdb.griffin.engine.functions.eq;
+
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+
+/**
+ * {@code arr IS [NOT] NULL} for any array expression. {@code FunctionParser} creates it
+ * directly for {@code =}/{@code !=} between an array and the NULL literal; no array
+ * {@code =} overload accepts the NULL literal.
+ */
+public class ArrayNullCheckFunction extends NegatableBooleanFunction implements UnaryFunction {
+    private final Function arg;
+
+    public ArrayNullCheckFunction(Function arg, boolean isNegated) {
+        this.arg = arg;
+        this.negated = isNegated;
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public boolean getBool(Record rec) {
+        return negated != arg.getArray(rec).isNull();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(arg);
+        if (negated) {
+            sink.val(" is not null");
+        } else {
+            sink.val(" is null");
+        }
+    }
+}

@@ -198,6 +198,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_SEQUENCER_METADATA_POOL = "busySequencerMetaPool";
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
+    private static final long LOCK_ALL_RETRY_MAX_SLEEP_MILLIS = 32;
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     // Hard cap on TableReferenceOutOfDateException recompile retries in execute(). A
     // healthy table converges in 1-2 retries; an unbounded loop here turns a permanent
@@ -1310,7 +1311,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return null;
     }
 
-    public void createLiveView(
+    /**
+     * Creates a live view.
+     *
+     * @return true when this call created the live view, false when IF NOT EXISTS found the
+     * name registered by another object, which may be of another kind
+     */
+    public boolean createLiveView(
             CreateLiveViewOperation op,
             TableToken baseTableToken,
             SqlExecutionContext executionContext
@@ -1627,10 +1634,9 @@ public class CairoEngine implements Closeable, WriterSource {
             // below. The registry commit is the LV's atomic CREATE point - a
             // concurrent reader that resolves the name will get
             // "table does not exist" until commitDeferredTableNameAndRelease
-            // runs, so it cannot see a half-built LV. A null return signals
-            // that no deferred handoff happened: IF NOT EXISTS hit the
-            // pre-existing token path, or lockAll lost the race to a concurrent
-            // CREATE. Either way the caller has nothing left to finalise.
+            // runs, so it cannot see a half-built LV. A null return means
+            // IF NOT EXISTS found the name registered by another object, of any
+            // kind; the caller has nothing left to finalise.
             final TableToken liveViewToken = createTableOrViewOrMatViewUnsecure(
                     executionContext.getSecurityContext(),
                     mem,
@@ -1641,10 +1647,11 @@ public class CairoEngine implements Closeable, WriterSource {
                     false,
                     false,
                     TableUtils.TABLE_KIND_REGULAR_TABLE,
+                    true,
                     true
             );
             if (liveViewToken == null) {
-                return;
+                return false;
             }
 
             // From here on, any failure must roll back the table to avoid orphan
@@ -1752,10 +1759,17 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 throw t;
             }
+            return true;
         }
     }
 
-    public @NotNull MatViewDefinition createMatView(
+    /**
+     * Creates a materialized view.
+     *
+     * @return the definition of the created materialized view, or null when IF NOT EXISTS found
+     * the name registered by another object, of any kind
+     */
+    public @Nullable MatViewDefinition createMatView(
             SecurityContext securityContext,
             MemoryMARW mem,
             BlockFileWriter blockFileWriter,
@@ -1766,7 +1780,10 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         securityContext.authorizeMatViewCreate();
-        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE, false);
+        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE, true, false);
+        if (matViewToken == null) {
+            return null;
+        }
         final MatViewDefinition matViewDefinition = operation.getMatViewDefinition();
         try {
             if (dependentViewGraph.addView(matViewDefinition)) {
@@ -1815,16 +1832,46 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume,
             int tableKind
     ) {
+        final TableToken tableToken = createTable(securityContext, mem, path, ifNotExists, struct, keepLock, inVolume, tableKind, false);
+        assert tableToken != null;
+        return tableToken;
+    }
+
+    /**
+     * Creates a table.
+     *
+     * @param isNullIfExists when true and ifNotExists is true, the result is null if the name
+     *                       is registered by another object, of any kind. When false, the
+     *                       result is the token of that object.
+     * @return the token of the created table, or null as isNullIfExists describes
+     */
+    public @Nullable TableToken createTable(
+            SecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean ifNotExists,
+            TableStructure struct,
+            boolean keepLock,
+            boolean inVolume,
+            int tableKind,
+            boolean isNullIfExists
+    ) {
         if (tableKind != TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT && Chars.startsWith(struct.getTableName(), configuration.getParquetExportTableNamePrefix())) {
             throw CairoException.nonCritical().put("table name cannot start with reserved prefix [tableName=").put(struct.getTableName())
                     .put(", parquetExportPrefix=").put(configuration.getParquetExportTableNamePrefix())
                     .put(']');
         }
         securityContext.authorizeTableCreate(tableKind);
-        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind, false);
+        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind, isNullIfExists, false);
     }
 
-    public @NotNull ViewDefinition createView(
+    /**
+     * Creates a view.
+     *
+     * @return the definition of the created view, or null when IF NOT EXISTS found the name
+     * registered by another object, of any kind
+     */
+    public @Nullable ViewDefinition createView(
             SecurityContext securityContext,
             MemoryMARW mem,
             BlockFileWriter blockFileWriter,
@@ -1834,7 +1881,10 @@ public class CairoEngine implements Closeable, WriterSource {
             @Nullable RecordMetadata metadata
     ) {
         securityContext.authorizeViewCreate();
-        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE, false);
+        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE, true, false);
+        if (viewToken == null) {
+            return null;
+        }
         final ViewDefinition viewDefinition = operation.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
@@ -4026,16 +4076,22 @@ public class CairoEngine implements Closeable, WriterSource {
      * Creates the on-disk filesystem skeleton for a table / view / mat view /
      * live view and reserves the registry name. When deferRegisterName is
      * false (the default for CREATE TABLE / VIEW / MAT VIEW), the registry
-     * commit is the last step before return and the result is always non-null.
+     * commit is the last step before return.
      * <p>
      * When deferRegisterName is true (CREATE LIVE VIEW), the registry commit
      * is held back: the caller now owns the name + create locks and must
      * invoke {@link #commitDeferredTableNameAndRelease} after fsyncing any
      * follow-up artifacts (e.g. {@code _lv.s} / {@code _lv}), or
-     * {@link #rollbackDeferredLiveViewCreate} on failure. In deferred mode the
-     * result is null when no deferred handoff took place - the IF NOT EXISTS
-     * pre-existing path or the IF NOT EXISTS lock-race-lost path - so the
-     * caller has no follow-up work in that case.
+     * {@link #rollbackDeferredLiveViewCreate} on failure.
+     * <p>
+     * When ifNotExists is true and another object of any kind registered the
+     * name first, the result is null if isNullIfExists is true, and the token
+     * of that object otherwise. A null result means this call created nothing,
+     * so the caller must not treat the name as its own. When the pools of the
+     * new table directory are busy (a non-WAL DROP of the same name gives the
+     * name back before it releases the pools), ifNotExists retries for at most
+     * the spin lock timeout, then throws. It sleeps between these retries with
+     * a growing delay, because every failed pool lock logs an error.
      */
     private TableToken createTableOrViewOrMatViewUnsecure(
             SecurityContext securityContext,
@@ -4047,6 +4103,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean keepLock,
             boolean inVolume,
             int tableKind,
+            boolean isNullIfExists,
             boolean deferRegisterName
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
@@ -4054,6 +4111,8 @@ public class CairoEngine implements Closeable, WriterSource {
         validNameOrThrow(tableName);
 
         final int tableId = (int) tableIdGenerator.getNextId();
+        long lockAllDeadline = Long.MIN_VALUE;
+        long lockAllRetrySleepMillis = 1;
 
         while (true) {
             TableToken tableToken = lockTableName(tableName, tableId, struct.isView(), struct.isMatView(), struct.isLiveView(), struct.isWalEnabled());
@@ -4061,11 +4120,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (ifNotExists) {
                     tableToken = getTableTokenIfExists(tableName);
                     if (tableToken != null) {
+                        if (isNullIfExists) {
+                            return null;
+                        }
                         struct.init(tableToken);
-                        // Deferred mode: the LV already exists - no handoff,
-                        // no follow-up. Returning null tells the caller to
-                        // skip the FS writes and the commit step.
-                        return deferRegisterName ? null : tableToken;
+                        return tableToken;
                     }
                     Os.pause();
                     continue;
@@ -4080,10 +4139,9 @@ public class CairoEngine implements Closeable, WriterSource {
             // Tracks whether the deferred caller now owns the name lock and the
             // per-token create lock. Stays false on every error path so the
             // outer finally unwinds the locks the same way as a non-deferred
-            // create, and stays false on the lockedReason+ifNotExists fall-
-            // through path so deferred callers see a null return instead of a
-            // token whose name was never registered.
+            // create.
             boolean deferredHandoff = false;
+            boolean isLockAllRetry = false;
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
@@ -4127,6 +4185,17 @@ public class CairoEngine implements Closeable, WriterSource {
                     if (!ifNotExists) {
                         throw EntryUnavailableException.instance(lockedReason);
                     }
+                    // Nothing else has this name, so another object with the same
+                    // directory holds the pools: a non-WAL DROP of this name
+                    // between giving the name back and releasing its pools. Retry
+                    // with nothing held until that DROP finishes.
+                    final long now = configuration.getMillisecondClock().getTicks();
+                    if (lockAllDeadline == Long.MIN_VALUE) {
+                        lockAllDeadline = now + configuration.getSpinLockTimeout();
+                    } else if (now > lockAllDeadline) {
+                        throw EntryUnavailableException.instance(lockedReason);
+                    }
+                    isLockAllRetry = true;
                 }
             } catch (Throwable th) {
                 if (struct.isWalEnabled()) {
@@ -4164,12 +4233,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
 
+            if (isLockAllRetry) {
+                // nothing is held here, the finally above released the name and create locks
+                Os.sleep(lockAllRetrySleepMillis);
+                lockAllRetrySleepMillis = Math.min(lockAllRetrySleepMillis * 2, LOCK_ALL_RETRY_MAX_SLEEP_MILLIS);
+                continue;
+            }
             if (!deferredHandoff) {
-                if (deferRegisterName) {
-                    // IF NOT EXISTS lost the lockAll race - the helper did no
-                    // work the deferred caller can finalise.
-                    return null;
-                }
                 enqueueCompileView(tableToken);
             }
             return tableToken;

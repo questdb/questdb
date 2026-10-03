@@ -368,15 +368,18 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     public void parseLast() {
-        if (useFieldRollBuf) {
-            if (inQuote && lastQuotePos < fieldHi) {
-                errorCount++;
-                LOG.info().$("quote is missing [table=").$("tableName").$(']').$();
-            } else {
-                this.fieldHi++;
-                stashField(fieldIndex, 0);
-                triggerLine(0);
-            }
+        // only the last chunk can end inside a line
+        if (eol) {
+            return;
+        }
+        if (inQuote && lastQuotePos < fieldHi) {
+            errorCount++;
+            LOG.info().$("quote is missing [table=").$("tableName").$(']').$();
+        } else {
+            this.fieldHi++;
+            stashField(fieldIndex, 0);
+            indexLine(0, 0);
+            triggerLine(0);
         }
     }
 
@@ -411,6 +414,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void clearRollBuffer(long ptr) {
         useFieldRollBuf = false;
+        rollBufferUnusable = false;
         fieldRollBufCur = fieldRollBufPtr;
         this.fieldLo = this.fieldHi = ptr;
     }
@@ -436,18 +440,14 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
     }
 
-    private void eol(long ptr, byte c) {
-        if (c == '\n' || c == '\r') {
-            eol = true;
-            rollBufferUnusable = false;
-            clearRollBuffer(ptr);
-            fieldIndex = 0;
-            lineNumber++;
-        }
-    }
-
     private boolean fitsInBuffer(int requiredLength) {
         if (requiredLength > fieldRollBufLen) {
+            if (failOnTsError) {
+                throw TextException.$("timestamp column value too long [line=").put(lineNumber)
+                        .put(", column=").put(timestampIndex)
+                        .put(", maxLength=").put(fieldRollBufLen)
+                        .put(']');
+            }
             LOG.info()
                     .$("timestamp column value too long [path=").$(inputFileName)
                     .$(", line=").$(lineNumber)
@@ -507,7 +507,13 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     private void parse(long lo, long hi) {
-        this.fieldHi = useFieldRollBuf ? fieldRollBufCur : (this.fieldLo = lo);
+        // Once the timestamp field outgrows the roll buffer, fieldLo and fieldHi stop pointing at
+        // readable bytes. They keep advancing from where they were, because the quote handling
+        // only compares them with each other, until the field ends and clearRollBuffer() moves
+        // them back into the read buffer.
+        if (!rollBufferUnusable) {
+            this.fieldHi = useFieldRollBuf ? fieldRollBufCur : (this.fieldLo = lo);
+        }
         long ptr = lo;
 
         while (ptr < hi) {
@@ -529,16 +535,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
             }
 
             final byte b = Unsafe.getByte(ptr++);
-            if (rollBufferUnusable) {
-                eol(ptr, b);
-                continue;
-            }
-
-            if (useFieldRollBuf) {
+            if (useFieldRollBuf && !rollBufferUnusable) {
                 putToRollBuf(b);
-                if (rollBufferUnusable) {
-                    continue;
-                }
             }
 
             this.fieldHi++;
@@ -559,13 +557,14 @@ public class CsvFileIndexer implements Closeable, Mutable {
             }
         }
 
-        if (useFieldRollBuf) {
+        if (useFieldRollBuf || rollBufferUnusable) {
             return;
         }
 
         if (eol) {
             this.fieldLo = 0;
-        } else if (fieldIndex == timestampIndex) {
+        } else if (fieldIndex == timestampIndex && !header) {
+            // the header's timestamp column name is never parsed, so it needs no roll buffer
             rollField(hi);
         }
     }
@@ -573,7 +572,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private void parseTimestamp() {
         final long timestamp;
         try {
-            timestamp = timestampAdapter.getTimestamp(timestampField);
+            timestamp = timestampAdapter.getTimestamp(timestampField, utf16Sink);
         } catch (Exception e) {
             if (failOnTsError) {
                 throw TextException.$("could not parse timestamp [line=").put(lineNumber).put(", column=").put(timestampIndex).put(']');
@@ -665,15 +664,19 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void stashField(int fieldIndex, long ptr) {
         if (fieldIndex == timestampIndex && !header) {
-            if (lastQuotePos > -1) {
-                timestampField.of(fieldLo, lastQuotePos - 1);
-            } else {
-                timestampField.of(fieldLo, fieldHi - 1);
+            // fitsInBuffer() already counted a field too long for the roll buffer, and its bounds
+            // no longer point at readable bytes. The line keeps a Long.MIN_VALUE timestamp, so
+            // indexLine() drops it.
+            if (!rollBufferUnusable) {
+                if (lastQuotePos > -1) {
+                    timestampField.of(fieldLo, lastQuotePos - 1);
+                } else {
+                    timestampField.of(fieldLo, fieldHi - 1);
+                }
+                parseTimestamp();
             }
 
-            parseTimestamp();
-
-            if (useFieldRollBuf) {
+            if (useFieldRollBuf || rollBufferUnusable) {
                 clearRollBuffer(ptr);
             }
         }
@@ -685,7 +688,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private void triggerLine(long ptr) {
         eol = true;
         fieldIndex = 0;
-        if (useFieldRollBuf) {
+        if (useFieldRollBuf || rollBufferUnusable) {
             clearRollBuffer(ptr);
         }
 

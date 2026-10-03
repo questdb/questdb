@@ -115,7 +115,7 @@ public class CommonUtils {
         String delimiter = delimiters.getQuick(-op - 1);
         int len = delimiter.length();
         if (len == 1) {
-            asm.iconst(delimiter.charAt(0));
+            asm.ldc(delimIndices.getQuick(-op - 1));
             asm.aload(pInputStr);
             asm.iload(localPos);
             asm.iinc(localPos, 1);
@@ -141,7 +141,7 @@ public class CommonUtils {
                 asm.invokeInterface(sinkPutStrIndex, 1);
             } else {
                 asm.aload(faLocalSink);
-                asm.iconst(delimiter.charAt(0));
+                asm.ldc(delimiterIndexes.getQuick(-op - 1));
                 asm.invokeInterface(sinkPutChrIndex, 1);
             }
             asm.pop();

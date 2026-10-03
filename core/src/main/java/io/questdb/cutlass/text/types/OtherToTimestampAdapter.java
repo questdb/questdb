@@ -27,8 +27,11 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 
 public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable {
     private TimestampCompatibleAdapter compatibleAdapter;
@@ -40,13 +43,26 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
         this.compatibleAdapter = null;
     }
 
+    @Override
     public long getTimestamp(DirectUtf8Sequence value) throws Exception {
         return compatibleAdapter.getTimestamp(value, timestampDriver);
     }
 
     @Override
+    public long getTimestamp(DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
+        return compatibleAdapter.getTimestamp(value, timestampDriver, utf16Sink);
+    }
+
+    @Override
     public int getType() {
         return timestampType;
+    }
+
+    @Override
+    public boolean isDesignatedTimestampSupported() {
+        // a schema DATE pattern (or a UTF-8 DATE input format) cannot feed the designated timestamp: the
+        // importers refuse it upfront with "not a timestamp", as they did before DATE could feed TIMESTAMP
+        return !(compatibleAdapter instanceof DateUtf8Adapter);
     }
 
     public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter, int timestampType) {
@@ -59,6 +75,11 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
     @Override
     public boolean probe(DirectUtf8Sequence text) {
         return compatibleAdapter.probe(text);
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
+        row.putTimestamp(column, getTimestamp(value, utf16Sink));
     }
 
     @Override
