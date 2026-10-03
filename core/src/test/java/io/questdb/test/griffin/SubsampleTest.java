@@ -4780,7 +4780,7 @@ public class SubsampleTest extends AbstractCairoTest {
                             "        CachedWindow\n" +
                             "          unorderedFunctions: [m4(ts,price,4) over (order by [ts])]\n" +
                             "            SelectedRecord\n" +
-                            "                AsOf Join Fast\n" +
+                            "                AsOf Join Dense Single Symbol\n" +
                             "                  condition: v.symbol=p.symbol\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +

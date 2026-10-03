@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.join.AbstractJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinDenseDualSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
@@ -332,8 +333,15 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 assertOpenFailuresFreeChildCursorsOnce(
                         compiler,
-                        "SELECT om.k1, os.price FROM om ASOF JOIN os ON (k1, k2)",
+                        "SELECT /*+ asof_fast(om os) */ om.k1, os.price FROM om ASOF JOIN os ON (k1, k2)",
                         AsOfJoinFastRecordCursorFactory.class,
+                        false
+                );
+                // the default for a two-symbol key since #7423
+                assertOpenFailuresFreeChildCursorsOnce(
+                        compiler,
+                        "SELECT om.k1, os.price FROM om ASOF JOIN os ON (k1, k2)",
+                        AsOfJoinDenseDualSymbolRecordCursorFactory.class,
                         false
                 );
                 assertOpenFailuresFreeChildCursorsOnce(
@@ -345,7 +353,7 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                 assertOpenFailuresFreeChildCursorsOnce(
                         compiler,
                         "SELECT /*+ asof_dense(om os) */ om.k1, os.price FROM om ASOF JOIN os ON (k1, k2)",
-                        AsOfJoinDenseRecordCursorFactory.class,
+                        AsOfJoinDenseDualSymbolRecordCursorFactory.class,
                         false
                 );
                 assertOpenFailuresFreeChildCursorsOnce(
@@ -364,7 +372,7 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                 // reopens its symbol key cache before it adopts the child cursors.
                 assertOpenFailuresFreeChildCursorsOnce(
                         compiler,
-                        "SELECT om.k1, os.price FROM om ASOF JOIN os ON (k1)",
+                        "SELECT /*+ asof_fast(om os) */ om.k1, os.price FROM om ASOF JOIN os ON (k1)",
                         AsOfJoinFastRecordCursorFactory.class,
                         false
                 );
@@ -398,7 +406,7 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                 assertCachesChargeTracker(
                         compiler,
                         sqlExecutionContext,
-                        "SELECT m.k1 FROM m ASOF JOIN s ON (k1, k2)",
+                        "SELECT /*+ asof_fast(m s) */ m.k1 FROM m ASOF JOIN s ON (k1, k2)",
                         AsOfJoinFastRecordCursorFactory.class
                 );
                 assertCachesChargeTracker(
@@ -407,12 +415,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         "SELECT m.k1 FROM m ASOF JOIN (s WHERE price >= 0) s ON (k1, k2)",
                         FilteredAsOfJoinFastRecordCursorFactory.class
                 );
-                assertCachesChargeTracker(
-                        compiler,
-                        sqlExecutionContext,
-                        "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (k1, k2)",
-                        AsOfJoinDenseRecordCursorFactory.class
-                );
+                // No asof_dense case: since #7423 a two-symbol key under asof_dense takes Dense Dual Symbol,
+                // which translates through the bounded short-circuit symbol key caches, not SymbolTranslatingRecord.
                 assertCachesChargeTracker(
                         compiler,
                         sqlExecutionContext,
