@@ -393,6 +393,240 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastNOverIndexedScanWithResidualFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table trades (
+                        ts timestamp,
+                        sym symbol index,
+                        venue symbol,
+                        price double
+                    ) timestamp(ts) partition by day
+                    """);
+            execute("""
+                    insert into trades values
+                        ('2026-08-01T00:00:01.000000Z', 'AAA-BBB', 'venue-1', 1.0),
+                        ('2026-08-01T00:00:02.000000Z', 'AAA-BBB', 'venue-2', 2.0),
+                        ('2026-08-01T00:00:03.000000Z', 'CCC-DDD', 'venue-1', 3.0),
+                        ('2026-08-02T00:00:01.000000Z', 'AAA-BBB', 'venue-1', 4.0),
+                        ('2026-08-02T00:00:02.000000Z', 'AAA-BBB', 'venue-2', 5.0),
+                        ('2026-08-02T00:00:03.000000Z', 'AAA-BBB', 'venue-1', 6.0)
+                    """);
+
+            assertQuery("""
+                    select /*+ no_covering */ price
+                    from trades
+                    where sym = 'AAA-BBB'
+                        and venue = 'venue-1'
+                        and ts <= '2026-08-02T00:00:03.000000Z'
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Index backward scan on: sym")
+                    .returns("""
+                            price
+                            4.0
+                            6.0
+                            """);
+
+            assertQuery("""
+                    select /*+ no_covering */ ts, price
+                    from trades
+                    where sym = 'AAA-BBB'
+                        and venue = 'venue-1'
+                        and ts <= '2026-08-02T00:00:03.000000Z'
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
+                            Encode sort light
+                              keys: [ts]
+                                SelectedRecord
+                                    Limit value: 2 skip-rows-max: 0 take-rows-max: 2
+                                        PageFrame
+                                            Index backward scan on: sym
+                                              filter: sym=1 and venue='venue-1'
+                                            Interval backward scan on: trades
+                                              intervals: [("MIN","2026-08-02T00:00:03.000000Z")]
+                            """)
+                    .returns("""
+                            ts\tprice
+                            2026-08-02T00:00:01.000000Z\t4.0
+                            2026-08-02T00:00:03.000000Z\t6.0
+                            """);
+
+            assertQuery("""
+                    select /*+ no_index */ ts, price
+                    from trades
+                    where sym = 'AAA-BBB'
+                        and venue = 'venue-1'
+                        and ts <= '2026-08-02T00:00:03.000000Z'
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanNotContaining("Encode sort light", "Index backward scan on: sym")
+                    .returns("""
+                            ts\tprice
+                            2026-08-02T00:00:01.000000Z\t4.0
+                            2026-08-02T00:00:03.000000Z\t6.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLastNOverIndexedScanIgnoresEqualityUnderOr() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table trades (
+                        ts timestamp,
+                        sym symbol index,
+                        price double
+                    ) timestamp(ts) partition by day
+                    """);
+            execute("""
+                    insert into trades values
+                        ('2026-08-01T00:00:01.000000Z', 'AAA', 1.0),
+                        ('2026-08-01T00:00:02.000000Z', 'BBB', 2.0),
+                        ('2026-08-01T00:00:03.000000Z', 'AAA', 3.0),
+                        ('2026-08-01T00:00:04.000000Z', 'BBB', 4.0)
+                    """);
+
+            // sym = 'AAA' keeps rows 1 and 3, price = 4.0 keeps row 4, so the predicate as a whole
+            // keeps rows 1, 3 and 4 and the last two of those carry prices 3.0 and 4.0. The indexed
+            // equality sits under OR rather than as a conjunct, so it does not restrict the scan to
+            // the index and the rewrite must not fire: taking the first two rows of a forward scan
+            // would answer 1.0 and 3.0.
+            assertQuery("""
+                    select price
+                    from trades
+                    where sym = 'AAA' or price = 4.0
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanNotContaining("Encode sort light")
+                    .returns("""
+                            price
+                            3.0
+                            4.0
+                            """);
+
+            // the same equality as a conjunct still qualifies
+            assertQuery("""
+                    select price
+                    from trades
+                    where sym = 'AAA' and price > 0.0
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort light")
+                    .returns("""
+                            price
+                            1.0
+                            3.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLastNOverIndexedScanKeepsStreamingBeyondNegativeLimitBudget() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 2);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table trades (
+                        ts timestamp,
+                        sym symbol index,
+                        price double
+                    ) timestamp(ts) partition by day
+                    """);
+            execute("""
+                    insert into trades values
+                        ('2026-08-01T00:00:01.000000Z', 'AAA', 1.0),
+                        ('2026-08-01T00:00:02.000000Z', 'AAA', 2.0),
+                        ('2026-08-01T00:00:03.000000Z', 'AAA', 3.0),
+                        ('2026-08-01T00:00:04.000000Z', 'AAA', 4.0)
+                    """);
+
+            // within the budget, the rewrite retains and re-sorts the rows
+            assertQuery("""
+                    select price
+                    from trades
+                    where sym = 'AAA'
+                    limit -2
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort light")
+                    .returns("""
+                            price
+                            3.0
+                            4.0
+                            """);
+
+            // beyond it, the sort would materialise more rows than the engine budgets for a
+            // negative limit, so the streaming path has to stay
+            assertQuery("""
+                    select price
+                    from trades
+                    where sym = 'AAA'
+                    limit -3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanNotContaining("Encode sort light")
+                    .returns("""
+                            price
+                            2.0
+                            3.0
+                            4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLastNOverIndexedScanStreamsUnderQueryMemoryLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table trades (
+                        ts timestamp,
+                        sym symbol index,
+                        k long
+                    ) timestamp(ts) partition by day
+                    """);
+            execute("""
+                    insert into trades
+                    select timestamp_sequence(0, 1_000_000), 'AAA', x
+                    from long_sequence(100_000)
+                    """);
+
+            // 100_000 retained rows exceed the default negative limit budget, so the rewrite must
+            // not fire; materialising them would break the query memory limit that the streaming
+            // path stays under.
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile("""
+                            select k
+                            from trades
+                            where sym = 'AAA'
+                            limit -100_000
+                            """, sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                long count = 0;
+                while (cursor.hasNext()) {
+                    count++;
+                }
+                Assert.assertEquals(100_000, count);
+            }
+        });
+    }
+
+    @Test
     public void testLimitDefinesBindVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute(createTableDdl);
@@ -1095,7 +1329,6 @@ public class LimitTest extends AbstractCairoTest {
             assertQuery("y where sym = 'googl' limit -3")
                     .noLeakCheck()
                     .timestamp("timestamp")
-                    .expectSize()
                     .returns("""
                             i\tsym\tprice\ttimestamp
                             -3\tgoogl\t1.0\t2001-01-01T00:00:00.000000Z
