@@ -378,7 +378,9 @@ public final class Unsafe {
             incrMallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            throw CairoException.nonCritical().setOutOfMemory(true)
+            CairoException e =
+                CairoException.nonCritical()
+                    .setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(getRssMemUsed())
                     .put(", size=").putSize(size)
@@ -386,6 +388,9 @@ public final class Unsafe {
                     .put("], original message: ")
                     .put(oom.getMessage())
                     .put("]");
+
+            System.err.println(e.getFlyweightMessage());
+            throw e;
         }
     }
 
