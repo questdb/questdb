@@ -281,6 +281,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
+    public byte getSecurityContextInterfaceId() {
+        return getDelegate().getSecurityContextInterfaceId();
+    }
+
+    @Override
     public SelectFacade getSelectFacade() {
         return getDelegate().getSelectFacade();
     }
