@@ -43,6 +43,9 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -58,6 +61,7 @@ import org.jetbrains.annotations.Nullable;
  * The planner selects only after verifying the compiled children and aggregate functions.
  */
 public final class HashJoinGroupByCandidate {
+    private static final Log LOG = LogFactory.getLog(HashJoinGroupByCandidate.class);
     private final IntList baseColumnIndexes;
     private final int buildIndex;
     private final ExpressionNode buildOnFilter;
@@ -314,6 +318,7 @@ public final class HashJoinGroupByCandidate {
                 try (Function function = parser.parseFunction(expression, analyzer.metadata, executionContext)) {
                     if (function instanceof GroupByFunction) {
                         if (!supportsAggregate(function)) {
+                            logRejectedAggregate(function);
                             return null;
                         }
                         hasAggregate = true;
@@ -467,6 +472,28 @@ public final class HashJoinGroupByCandidate {
         return !hasBarrier(model) && (model.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
                 || model.getSelectModelType() == IQueryModel.SELECT_MODEL_VIRTUAL
                 || model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE);
+    }
+
+    /**
+     * The fused plan falls back to the ordinary plan without a trace in EXPLAIN, so name the aggregate
+     * and the argument types that the registry did not admit. An aggregate that is admitted for other
+     * argument types is the usual cause.
+     */
+    private static void logRejectedAggregate(Function function) {
+        final LogRecord record = LOG.debug().$("fused hash join GROUP BY rejected aggregate [name=").$(function.getName())
+                .$(", class=").$(function.getClass().getName());
+        if (function instanceof UnaryFunction unary) {
+            record.$(", argType=").$(ColumnType.nameOf(unary.getArg().getType()))
+                    .$(", parallelSafe=").$(isParallelSafe(function) && isParallelSafe(unary.getArg()));
+        } else if (function instanceof BinaryFunction binary) {
+            record.$(", leftType=").$(ColumnType.nameOf(binary.getLeft().getType()))
+                    .$(", rightType=").$(ColumnType.nameOf(binary.getRight().getType()))
+                    .$(", parallelSafe=").$(isParallelSafe(function) && isParallelSafe(binary.getLeft())
+                            && isParallelSafe(binary.getRight()));
+        } else {
+            record.$(", parallelSafe=").$(isParallelSafe(function));
+        }
+        record.I$();
     }
 
     /**

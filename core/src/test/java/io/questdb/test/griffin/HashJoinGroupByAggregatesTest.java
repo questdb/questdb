@@ -166,10 +166,10 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
                                 "approx_median(" + side + ".d + 6)", "mode(" + side + ".b)", "mode(" + side + ".d)",
                                 "min(" + side + ".s::STRING)", "max(" + side + ".s::VARCHAR)",
                                 "array_agg(" + side + ".d)",
-                                // Admitted classes over argument types outside their registry entries.
-                                "sum(" + side + ".y)", "avg(" + side + ".y)", "min(" + side + ".y)", "max(" + side + ".y)",
+                                // Admitted classes over argument types outside their registry entries. The
+                                // narrower numeric types are admitted; BOOLEAN, DATE and TIMESTAMP are not.
                                 "avg(" + side + ".b)", "min(" + side + ".b)", "max(" + side + ".b)",
-                                "avg(" + side + ".f)", "count(" + side + ".ts)", "count(" + side + ".i::SHORT)"
+                                "count(" + side + ".ts)", "stddev_pop(" + side + ".t)", "ksum(" + side + ".dt)"
                         }) {
                             assertDifferential("SELECT " + aggregate + from, context, false);
                             assertDifferential("SELECT r.g rg, p.g pg, " + aggregate + from + " ORDER BY rg, pg", context, false);
