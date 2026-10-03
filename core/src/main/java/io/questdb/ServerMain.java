@@ -503,7 +503,7 @@ public class ServerMain implements Closeable {
     }
 
     public void start() {
-        start(false);
+        start(true);
     }
 
     public void start(boolean addShutdownHook) {
