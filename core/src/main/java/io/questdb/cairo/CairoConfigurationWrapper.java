@@ -1110,6 +1110,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlEarliestByRowCount() {
+        return getDelegate().getSqlEarliestByRowCount();
+    }
+
+    @Override
     public int getSqlExpressionPoolCapacity() {
         return getDelegate().getSqlExpressionPoolCapacity();
     }
@@ -1918,8 +1923,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean useWithinLatestByOptimisation() {
-        return getDelegate().useWithinLatestByOptimisation();
+    public boolean useWithinByOptimisation() {
+        return getDelegate().useWithinByOptimisation();
     }
 
     protected CairoConfiguration getDelegate() {

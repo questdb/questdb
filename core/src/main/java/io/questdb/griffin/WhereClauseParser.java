@@ -1461,7 +1461,7 @@ public final class WhereClauseParser implements Mutable {
         final int columnIndex = meta.getColumnIndex(columnName);
         boolean newColumn = true;
 
-        // Note: "preferred" is an unfortunate name, the actual meaning is a "column from a 'LATEST ON' clause".
+        // Note: "preferred" is an unfortunate name, the actual meaning is a "column from a 'LATEST ON' or 'EARLIEST ON' clause".
         // Moreover, it is only populated when "latest on" has a single SYMBOL column.
         // Q: Why does isKeyColumnSuppressed gate index usage here?
         // A: isKeyColumnSuppressed is set whenever no latest-by factory can consume a key intrinsic - a multi-column

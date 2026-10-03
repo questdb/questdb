@@ -137,6 +137,144 @@ void latest_scan_backward(uint64_t keys_memory_addr,
     out_args->rows_size += found_num;
 }
 
+int64_t find_earliest_for_key(int64_t k,
+                              const keys_reader &keys,
+                              uint64_t values_memory_addr,
+                              size_t value_memory_size,
+                              int64_t unindexed_null_count,
+                              int64_t max_value,
+                              int64_t min_value,
+                              int32_t frame_index,
+                              uint32_t vblock_capacity_mask
+) {
+    const auto values_memory = reinterpret_cast<const uint8_t *>(values_memory_addr);
+    if (values_memory == nullptr) {
+        return -1;
+    }
+    const auto vblock_capacity = vblock_capacity_mask + 1;
+    const auto key_count = static_cast<int64_t>(keys.key_count());
+
+    if (k >= key_count) {
+        return -1;
+    }
+
+    // For the un-indexed null prefix, the earliest null is the first row in the frame.
+    // Check this before the indexed block traversal so a key with both indexed and
+    // un-indexed null values picks the absolutely earliest row.
+    if (k == 0 && unindexed_null_count > 0) {
+        int64_t null_row = std::max<int64_t>(0, min_value);
+        if (null_row < unindexed_null_count) {
+            return to_row_id(frame_index, null_row - min_value) + 1;
+        }
+    }
+
+    auto key = keys[k];
+    int64_t value_count = key.value_count;
+    if (value_count > 0) {
+        block<int64_t> head(values_memory, key.first_value_block_offset, vblock_capacity);
+        bool is_head_in_mapped_area = head.offset() + head.memory_size() <= value_memory_size;
+        bool is_inconsistent = !key.is_block_consistent || !is_head_in_mapped_area;
+        if (is_inconsistent) {
+            if (!is_head_in_mapped_area) {
+                return -1;
+            }
+            // Can only trust the first block when inconsistent; traverse forward until we run out
+            // of mapped memory and count full blocks.
+            int64_t block_traversed = 1;
+            block<int64_t> probe = head;
+            while (probe.next_offset()
+                   && probe.next_offset() + probe.memory_size() <= value_memory_size) {
+                probe.move_next();
+                block_traversed += 1;
+            }
+            // Assume blocks are full for the traversed count.
+            value_count = vblock_capacity * block_traversed;
+        }
+
+        // Walk blocks forward, skipping any whose last value is below min_value.
+        auto current_block = head;
+        int64_t remaining = value_count;
+        int64_t stored = 0;
+        while (remaining > 0) {
+            stored = remaining > static_cast<int64_t>(vblock_capacity) - 1
+                     ? static_cast<int64_t>(vblock_capacity)
+                     : remaining;
+            auto hi_in_block = current_block[stored - 1];
+            if (hi_in_block < min_value) {
+                remaining -= stored;
+                if (remaining > 0) {
+                    current_block.move_next();
+                    continue;
+                }
+            }
+            break;
+        }
+
+        if (remaining > 0) {
+            // Locate the first index in current_block holding value >= min_value.
+            int64_t first_idx = 0;
+            if (current_block[0] < min_value) {
+                first_idx = search_in_block(current_block.data(), stored, min_value - 1);
+            }
+            if (first_idx < stored) {
+                int64_t local_row_id = current_block[first_idx];
+                if (local_row_id >= min_value && local_row_id <= max_value) {
+                    return to_row_id(frame_index, local_row_id - min_value) + 1;
+                }
+            }
+        }
+    }
+
+    return -1;
+}
+
+void earliest_scan_forward(uint64_t keys_memory_addr,
+                           size_t keys_memory_size,
+                           uint64_t values_memory_addr,
+                           size_t value_memory_size,
+                           uint64_t args_memory_addr,
+                           int64_t unindexed_null_count,
+                           int64_t max_value,
+                           int64_t min_value,
+                           int32_t frame_index,
+                           uint32_t vblock_capacity_mask
+) {
+    auto keys_memory = reinterpret_cast<const uint8_t *>(keys_memory_addr);
+    auto out_args = reinterpret_cast<out_arguments *>(args_memory_addr);
+
+    keys_reader keys(keys_memory, keys_memory_size);
+
+    auto key_begin = out_args->key_lo + out_args->rows_size;
+    auto key_end = out_args->key_hi;
+
+    auto rows = reinterpret_cast<int64_t *>(out_args->rows_address);
+
+    auto first = rows + key_begin;
+    auto last = rows + key_end;
+
+    auto first_not_found = std::partition(first, last, [&](auto &k) {
+        int64_t row_id = find_earliest_for_key(
+                k,
+                keys,
+                values_memory_addr,
+                value_memory_size,
+                unindexed_null_count,
+                max_value,
+                min_value,
+                frame_index,
+                vblock_capacity_mask
+        );
+        const bool r = row_id > -1;
+        if (r) {
+            k = row_id;
+        }
+        return r;
+    });
+
+    auto found_num = std::distance(first, first_not_found);
+    out_args->rows_size += found_num;
+}
+
 inline int64_t linked_search_lower(const int64_t *indexBase,
                                    const int64_t *dataBase,
                                    int64_t indexLength,

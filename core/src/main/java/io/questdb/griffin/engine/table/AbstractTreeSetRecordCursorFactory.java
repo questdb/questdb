@@ -67,11 +67,24 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
+        this(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts,
+                configuration.getSqlLatestByRowCount(), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+    }
+
+    public AbstractTreeSetRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
+            long rowCount,
+            int memoryTag
+    ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         // keepClosed=true: the backing array is allocated lazily on the first cursor's reopen(),
         // under whatever per-query MemoryTracker is bound at that time, keeping malloc and free
         // charged symmetrically on the per-query counter.
-        this.rows = new DirectLongList(configuration.getSqlLatestByRowCount(), MemoryTag.NATIVE_LATEST_BY_LONG_LIST, true);
+        this.rows = new DirectLongList(rowCount, memoryTag, true);
     }
 
     @Override

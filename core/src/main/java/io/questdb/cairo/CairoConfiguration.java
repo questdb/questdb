@@ -873,6 +873,8 @@ public interface CairoConfiguration {
 
     double getSqlDistinctTimestampLoadFactor();
 
+    long getSqlEarliestByRowCount();
+
     int getSqlExpressionPoolCapacity();
 
     double getSqlFastMapLoadFactor();
@@ -1410,5 +1412,5 @@ public interface CairoConfiguration {
         return new ParquetPartitionDecoder();
     }
 
-    boolean useWithinLatestByOptimisation();
+    boolean useWithinByOptimisation();
 }

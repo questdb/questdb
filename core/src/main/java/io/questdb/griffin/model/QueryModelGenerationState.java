@@ -260,6 +260,7 @@ public final class QueryModelGenerationState implements Mutable {
                 hasSharing |= addColumns(edges, model.getTopDownColumns(), windowArguments);
                 addExpressions(edges, model.getExpressionModels());
                 addExpressions(edges, model.getLatestBy());
+                addExpressions(edges, model.getEarliestBy());
                 addExpressions(edges, model.getOrderBy());
                 addExpressions(edges, model.getOrderByAdvice());
                 addExpressions(edges, model.getGroupBy());
@@ -386,6 +387,7 @@ public final class QueryModelGenerationState implements Mutable {
     private static final class Selection {
         private final ExpressionNode backupWhere;
         private final ExpressionNode constWhere;
+        private final ObjList<ExpressionNode> earliestBy = new ObjList<>();
         private final boolean isSkipped;
         private final ObjList<ExpressionNode> latestBy = new ObjList<>();
         private final ExpressionNode outerJoin;
@@ -402,6 +404,9 @@ public final class QueryModelGenerationState implements Mutable {
             for (int i = 0; i < model.getLatestBy().size(); i++) {
                 latestBy.add(copy(model.getLatestBy().getQuick(i), copies, null));
             }
+            for (int i = 0; i < model.getEarliestBy().size(); i++) {
+                earliestBy.add(copy(model.getEarliestBy().getQuick(i), copies, null));
+            }
         }
 
         private void apply(IQueryModel model, IdentityHashMap<ExpressionNode, ExpressionNode> copies, ObjectPool<ExpressionNode> pool) {
@@ -414,6 +419,10 @@ public final class QueryModelGenerationState implements Mutable {
             model.getLatestBy().clear();
             for (int i = 0; i < latestBy.size(); i++) {
                 model.addLatestBy(copy(latestBy.getQuick(i), copies, pool));
+            }
+            model.getEarliestBy().clear();
+            for (int i = 0; i < earliestBy.size(); i++) {
+                model.addEarliestBy(copy(earliestBy.getQuick(i), copies, pool));
             }
         }
     }
