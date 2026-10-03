@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -33,36 +34,54 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class RoundDoubleFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return "round(DI)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return !isNullScale(args.getQuick(1));
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
         final Function scale = args.getQuick(1);
-        if (scale.isConstant()) {
-            int scaleValue = scale.getInt(null);
-            if (scaleValue != Numbers.INT_NULL) {
-                if (scaleValue == 0) {
-                    return new RoundDoubleZeroScaleFunctionFactory.RoundDoubleZeroScaleFunction(arg);
-                }
-                if (scaleValue > -1 && scaleValue + 2 < Numbers.pow10max) {
-                    return new FuncPosConst(arg, scaleValue);
-                }
-                if (scaleValue < 0 && scaleValue > -Numbers.pow10max) {
-                    return new FuncNegConst(arg, -scaleValue);
-                }
-            }
+        if (isNullScale(scale)) {
+            Misc.free(arg);
             return DoubleConstant.NULL;
         }
+        if (scale.isConstant()) {
+            final int scaleValue = scale.getInt(null);
+            if (scaleValue == 0) {
+                return new RoundDoubleZeroScaleFunctionFactory.RoundDoubleZeroScaleFunction(arg);
+            }
+            return scaleValue > 0 ? new FuncPosConst(arg, scaleValue) : new FuncNegConst(arg, -scaleValue);
+        }
         return new Func(arg, args.getQuick(1));
+    }
+
+    /**
+     * Whether the scale is a constant NULL or out of the supported range, which makes the call a NULL constant.
+     */
+    private static boolean isNullScale(Function scale) {
+        if (!scale.isConstant()) {
+            return false;
+        }
+        final int scaleValue = scale.getInt(null);
+        return scaleValue == Numbers.INT_NULL || (scaleValue > -1 ? scaleValue + 2 >= Numbers.pow10max : scaleValue <= -Numbers.pow10max);
     }
 
     private static class Func extends DoubleFunction implements ArithmeticBinaryFunction {

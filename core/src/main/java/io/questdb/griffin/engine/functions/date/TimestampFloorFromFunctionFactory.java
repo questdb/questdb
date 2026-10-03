@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -41,6 +42,11 @@ import io.questdb.std.datetime.CommonUtils;
  * Takes a stride (i.e. 5d), the timestamp to round, and the offset timestamp.
  */
 public class TimestampFloorFromFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+    }
 
     @Override
     public String getSignature() {

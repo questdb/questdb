@@ -44,9 +44,9 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCursor {
     protected final ObjList<GroupByFunction> groupByFunctions;
     protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
+    protected final ObjList<Function> recordFunctions;
     protected final int timestampIndex;
     private final GroupByAllocator allocator;
-    private final ObjList<Function> recordFunctions;
     protected RecordCursor baseCursor;
     protected Record baseRecord;
     protected SqlExecutionCircuitBreaker circuitBreaker;

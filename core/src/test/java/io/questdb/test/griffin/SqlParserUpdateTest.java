@@ -33,7 +33,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     @Test
     public void testUpdateAmbiguousColumnFails() throws Exception {
         assertSyntaxError(
-                "update tblx set y = y from tbly y where tblx.x = tbly.y and tblx.x > 10",
+                "update tblx set y = y from tbly y where tblx.x = y.y and tblx.x > 10",
                 "update tblx set y = ".length(),
                 "Ambiguous column [name=y]",
                 partitionedModelOf("tblx")
@@ -158,148 +158,202 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
 
     @Test
     public void testUpdateSingleTableEndsSemicolon() throws Exception {
-        assertUpdate(
-                "update tblx set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, t] from tblx timestamp (timestamp) where t = NULL))",
-                "update tblx set tt = tt + 1 WHERE t = NULL;",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .timestamp()
-        );
+        assertQuery("update tblx set tt = tt + 1 WHERE t = NULL;")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, tt TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [tt + 1 AS tt]
+                          Filter
+                            predicate: t = null
+                            Scan
+                              table: tblx
+                              columns: [tt, t]
+                        """);
     }
 
     @Test
     public void testUpdateSingleTableToBindVariable() throws Exception {
-        assertUpdate(
-                "update x set tt = $1 from (select-virtual $1 tt from (x timestamp (timestamp)))",
-                "update x set tt = $1",
-                partitionedModelOf("x")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .timestamp()
-        );
+        assertQuery("update x set tt = $1")
+                .ddl("CREATE TABLE x (t TIMESTAMP, tt TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [$1 AS tt]
+                          Scan
+                            table: x
+                            columns: []
+                        """);
     }
 
     @Test
     public void testUpdateSingleTableToConst() throws Exception {
-        assertUpdate(
-                "update x set tt = 1 from (select-virtual 1 tt from (x timestamp (timestamp)))",
-                "update x set tt = 1",
-                partitionedModelOf("x")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .timestamp()
-        );
+        assertQuery("update x set tt = 1")
+                .ddl("CREATE TABLE x (t TIMESTAMP, tt TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Scan
+                            table: x
+                            columns: []
+                        """);
     }
 
     @Test
     public void testUpdateSingleTableWithAlias() throws Exception {
-        assertUpdate(
-                "update tblx as x set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, t] from tblx x timestamp (timestamp) where t = NULL))",
-                "update tblx x set tt = tt + 1 WHERE x.t = NULL",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .timestamp()
-        );
+        assertQuery("update tblx x set tt = tt + 1 WHERE x.t = NULL")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, tt TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [tt + 1 AS tt]
+                          Filter
+                            predicate: t = null
+                            Scan
+                              table: tblx
+                              columns: [tt, t]
+                        """);
     }
 
     @Test
     public void testUpdateSingleTableWithJoinAndConstFiltering() throws Exception {
-        assertUpdate(
-                "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from tbly y on y = x where x > 10 const-where 100 > 100))",
-                "update tblx set tt = 1 from tbly y where x = y and x > 10 and 100 > 100",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
+        assertQuery("update tblx set tt = 1 from tbly y where x = y and x > 10 and 100 > 100")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, x INT, tt INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY", "CREATE TABLE tbly (t TIMESTAMP, y INT)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Join
+                            Master tblx
+                              Scan
+                                table: tblx
+                                columns: [x]
+                            INNER y
+                              keys: [y.y = tblx.x]
+                              filter: false
+                              Scan
+                                table: tbly
+                                columns: [y]
+                        """);
     }
 
     @Test
     public void testUpdateSingleTableWithJoinAndFiltering() throws Exception {
-        assertUpdate(
-                "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join (select [y, t] from tbly y where t > 100) y on y = x where x > 10))",
-                "update tblx set tt = 1 from tbly y where x = y and x > 10 and y.t > 100",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
+        assertQuery("update tblx set tt = 1 from tbly y where x = y and x > 10 and y.t > 100")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, x INT, tt INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY", "CREATE TABLE tbly (t TIMESTAMP, y INT)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Join
+                            Master tblx
+                              Filter
+                                predicate: tblx.x > 10
+                                Scan
+                                  table: tblx
+                                  columns: [x]
+                            INNER y
+                              keys: [y.y = tblx.x]
+                              Filter
+                                predicate: y.t > 100
+                                Scan
+                                  table: tbly
+                                  columns: [t, y]
+                        """);
     }
 
     @Test
     public void testUpdateSingleTableWithJoinAndNestedSampleBy() throws Exception {
-        assertUpdate(
-                "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from (select-group-by [first(y) y, ts] ts, first(y) y from (select [y, ts] from tbly timestamp (ts)) sample by 1h) y on y = x))",
-                "update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h ALIGN TO FIRST OBSERVATION) y where x = y",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("y", ColumnType.INT)
-                        .timestamp("ts")
-        );
+        assertQuery("update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h ALIGN TO FIRST OBSERVATION) y where x = y")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, x INT, tt INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY", "CREATE TABLE tbly (t TIMESTAMP, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Join
+                            Master tblx
+                              Scan
+                                table: tblx
+                                columns: [x]
+                            INNER y
+                              keys: [y.y = tblx.x]
+                              Project
+                                columns: [y]
+                                SampleBy
+                                  period: 1h
+                                  keys: [ts]
+                                  values: [first(y) AS y]
+                                  Scan
+                                    table: tbly
+                                    columns: [y, ts]
+                        """);
 
-        assertUpdate(
-                "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from (select-group-by [first(y) y, timestamp_floor_utc('1h', ts, null, '00:00', null) ts] timestamp_floor_utc('1h', ts, null, '00:00', null) ts, first(y) y from (select [y, ts] from tbly timestamp (ts) stride 1h) order by ts) y on y = x))",
-                "update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h ALIGN TO CALENDAR) y where x = y",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("y", ColumnType.INT)
-                        .timestamp("ts")
-        );
+        assertQuery("update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h ALIGN TO CALENDAR) y where x = y")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Join
+                            Master tblx
+                              Scan
+                                table: tblx
+                                columns: [x]
+                            INNER y
+                              keys: [y.y = tblx.x]
+                              Sort
+                                keys: [y.ts]
+                                Project
+                                  columns: [ts, y]
+                                  Aggregate
+                                    keys: [timestamp_floor_utc('1h', ts, null, '00:00', null) AS ts]
+                                    values: [first(y) AS y]
+                                    Scan
+                                      table: tbly
+                                      columns: [y, ts]
+                        """);
     }
 
     @Test
     public void testUpdateSingleTableWithJoinInFrom() throws Exception {
-        assertUpdate(
-                "update tblx set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, x] from tblx timestamp (timestamp) join select [y] from tbly y on y = x where x > 10))",
-                "update tblx set tt = tt + 1 from tbly y where x = y and x > 10",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
+        assertQuery("update tblx set tt = tt + 1 from tbly y where x = y and x > 10")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, x INT, tt INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY", "CREATE TABLE tbly (t TIMESTAMP, y INT)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [tblx.tt + 1 AS tt]
+                          Join
+                            Master tblx
+                              Filter
+                                predicate: tblx.x > 10
+                                Scan
+                                  table: tblx
+                                  columns: [x, tt]
+                            INNER y
+                              keys: [y.y = tblx.x]
+                              Scan
+                                table: tbly
+                                columns: [y]
+                        """);
     }
 
     @Test
     public void testUpdateSingleTableWithWhere() throws Exception {
-        assertUpdate(
-                "update x set tt = t from (select-choose t tt from (select [t] from x timestamp (timestamp) where t > '2005-04-02T12:00:00'))",
-                "update x set tt = t where t > '2005-04-02T12:00:00'",
-                partitionedModelOf("x")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .timestamp()
-        );
+        assertQuery("update x set tt = t where t > '2005-04-02T12:00:00'")
+                .ddl("CREATE TABLE x (t TIMESTAMP, tt TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [t AS tt]
+                          Filter
+                            predicate: t > '2005-04-02T12:00:00'::TIMESTAMP
+                            Scan
+                              table: x
+                              columns: [t]
+                        """);
     }
 
     @Test
     public void testUpdateTwoColumnsToConst() throws Exception {
-        assertUpdate(
-                "update x set tt = 1,x = 2 from (select-virtual 1 tt, 2 x from (x timestamp (timestamp)))",
-                "update x set tt = 1, x = 2",
-                partitionedModelOf("x")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .timestamp()
-        );
+        assertQuery("update x set tt = 1, x = 2")
+                .ddl("CREATE TABLE x (t TIMESTAMP, tt TIMESTAMP, x INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt, 2 AS x]
+                          Scan
+                            table: x
+                            columns: []
+                        """);
     }
 
     @Test
@@ -319,28 +373,36 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
 
     @Test
     public void testUpdateWithCrossJoinAndSemicolon() throws Exception {
-        String expected = "update tblx set tt = 1 from (select-virtual 1 tt from (tblx timestamp (timestamp) cross join tbly y))";
-        assertUpdate(
-                expected,
-                "update tblx set tt = 1 from tbly y",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
+        assertQuery("update tblx set tt = 1 from tbly y")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, x INT, tt INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY", "CREATE TABLE tbly (t TIMESTAMP, y INT)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Join
+                            Master tblx
+                              Scan
+                                table: tblx
+                                columns: []
+                            CROSS y
+                              Scan
+                                table: tbly
+                                columns: []
+                        """);
 
-        assertUpdate(
-                expected,
-                "update tblx set tt = 1 from tbly y;",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
+        assertQuery("update tblx set tt = 1 from tbly y;")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Join
+                            Master tblx
+                              Scan
+                                table: tblx
+                                columns: []
+                            CROSS y
+                              Scan
+                                table: tbly
+                                columns: []
+                        """);
     }
 
     @Test
@@ -387,16 +449,24 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
 
     @Test
     public void testUpdateWithJoinAndTableAlias() throws Exception {
-        assertUpdate(
-                "update tblx as xx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx xx timestamp (timestamp) join select [y] from tbly y on y = xx.x where x > 10))",
-                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
+        assertQuery("update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, x INT, tt INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY", "CREATE TABLE tbly (t TIMESTAMP, y INT)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Join
+                            Master xx
+                              Filter
+                                predicate: xx.x > 10
+                                Scan
+                                  table: tblx
+                                  columns: [x]
+                            INNER y
+                              keys: [y.y = xx.x]
+                              Scan
+                                table: tbly
+                                columns: [y]
+                        """);
     }
 
     @Test
@@ -441,16 +511,28 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
 
     @Test
     public void testUpdateWithLimitInJoin() throws Exception {
-        assertUpdate(
-                "update tblx as xx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx xx timestamp (timestamp) join select [y] from (select-choose [y] t, y from (select [y] from tbly) limit 10) y on y = xx.x where x > 10))",
-                "update tblx as xx set tt = 1 from (tbly LIMIT 10) y where xx.x = y and x > 10",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
+        assertQuery("update tblx as xx set tt = 1 from (tbly LIMIT 10) y where xx.x = y and x > 10")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, x INT, tt INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY", "CREATE TABLE tbly (t TIMESTAMP, y INT)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Join
+                            Master xx
+                              Filter
+                                predicate: xx.x > 10
+                                Scan
+                                  table: tblx
+                                  columns: [x]
+                            INNER y
+                              keys: [y.y = xx.x]
+                              Limit
+                                lo: 10
+                                Project
+                                  columns: [y]
+                                  Scan
+                                    table: tbly
+                                    columns: [y]
+                        """);
     }
 
     @Test
@@ -466,26 +548,30 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
 
     @Test
     public void testUpdateWithSemicolon() throws Exception {
-        assertUpdate(
-                "update x set tt = 1 from (select-virtual 1 tt from (x timestamp (timestamp)))",
-                "update x set tt = 1;",
-                partitionedModelOf("x")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .timestamp()
-        );
+        assertQuery("update x set tt = 1;")
+                .ddl("CREATE TABLE x (t TIMESTAMP, tt TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [1 AS tt]
+                          Scan
+                            table: x
+                            columns: []
+                        """);
     }
 
     @Test
     public void testUpdateWithWhereAndSemicolon() throws Exception {
-        assertUpdate(
-                "update tblx as x set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, t] from tblx x timestamp (timestamp) where t = NULL))",
-                "update tblx x set tt = tt + 1 WHERE x.t = NULL;",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .timestamp()
-        );
+        assertQuery("update tblx x set tt = tt + 1 WHERE x.t = NULL;")
+                .ddl("CREATE TABLE tblx (t TIMESTAMP, tt TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [tt + 1 AS tt]
+                          Filter
+                            predicate: t = null
+                            Scan
+                              table: tblx
+                              columns: [tt, t]
+                        """);
     }
 
 

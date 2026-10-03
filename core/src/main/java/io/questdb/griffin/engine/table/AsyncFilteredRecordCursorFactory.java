@@ -62,14 +62,11 @@ import java.io.Closeable;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
-    @TestOnly
-    private static volatile Runnable constructorFailureHookForTesting;
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
     private RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private AsyncFilteredRecordCursor cursor;
     private Function filter;
-    private final ExpressionNode filterExpr;
     private PageFrameSequence<AsyncFilterAtom> frameSequence;
     private Function limitLoFunction;
     private final int limitLoPos;
@@ -87,21 +84,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull ExpressionNode filterExpr,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             int workerCount,
             boolean enablePreTouch
     ) {
         super(base.getMetadata());
-        final Runnable constructorFailureHook = constructorFailureHookForTesting;
-        if (constructorFailureHook != null) {
-            constructorFailureHook.run();
-        }
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
         this.filter = filter;
-        this.filterExpr = filterExpr;
         // A throw part-way through this constructor never returns the factory, so _close() never runs
         // and everything allocated up to that point is unreachable: the cursors hold native records
         // and page frame memory, and a per-worker filter can hold native memory of its own. The
@@ -261,11 +252,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public ExpressionNode getStealFilterExpr() {
-        return filterExpr;
-    }
-
-    @Override
     public TableToken getTableToken() {
         return base.getTableToken();
     }
@@ -291,11 +277,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         // made this factory wrongly report false while its cursor still serviced
         // recordAt(), violating the cursor random-access contract.
         return true;
-    }
-
-    @Override
-    public boolean supportsFilterStealing() {
-        return limitLoFunction == null;
     }
 
     @Override
@@ -351,11 +332,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             RecordFreer negativeLimitCursor
     ) {
         halfClose(frameSequence, cursor, negativeLimitCursor);
-    }
-
-    @TestOnly
-    public static void setConstructorFailureHookForTesting(@Nullable Runnable hook) {
-        constructorFailureHookForTesting = hook;
     }
 
     private static void filter(

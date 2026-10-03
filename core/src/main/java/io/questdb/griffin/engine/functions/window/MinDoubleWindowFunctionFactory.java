@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -49,6 +51,11 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     public static final MaxDoubleWindowFunctionFactory.DoubleComparator LESS_THAN = (a, b) -> Numbers.compare(a, b) < 0;
     public static final String NAME = "min";
     private static final String SIGNATURE = NAME + "(D)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     @Override
     public String getSignature() {
@@ -211,6 +218,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new MaxDoubleWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

@@ -235,6 +235,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long ceilFrom(long timestamp, int timestampType) {
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : from(timestamp, timestampType);
+    }
+
+    @Override
     public long ceilYYYY(long timestamp) {
         return Nanos.ceilYYYY(timestamp);
     }
@@ -254,6 +259,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorFrom(long timestamp, int timestampType) {
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : from(timestamp, timestampType);
     }
 
     @Override

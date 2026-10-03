@@ -42,6 +42,11 @@ import io.questdb.std.ObjList;
 public class YearFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return "year(N)";
     }

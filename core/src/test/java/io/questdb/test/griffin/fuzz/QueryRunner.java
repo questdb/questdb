@@ -827,7 +827,7 @@ public final class QueryRunner {
      * into the async filter (those two factories are the only ones that render it).
      * <p>
      * The optimiser introduces this limit not only for an explicit {@code LIMIT}
-     * but also implicitly: {@code SqlOptimiser.rewriteSingleFirstLastGroupBy}
+     * but also implicitly: {@code TimestampEndpointPass.limitEndpointInputs}
      * rewrites a lone {@code min} / {@code max} / {@code first} / {@code last} over
      * the designated timestamp (e.g. {@code SELECT max(ts) FROM t WHERE ...}) into
      * an {@code ORDER BY ts [DESC] LIMIT 1} scan, whose SQL text carries no
@@ -1297,7 +1297,7 @@ public final class QueryRunner {
         }
         // One side returned an empty result, the other threw an allowlisted
         // cast error. The succeeding side's WHERE was statically
-        // satisfiable-as-empty (e.g. WhereClauseParser folded a contradiction
+        // satisfiable-as-empty (e.g. the planner folded a contradiction
         // like 'c IS NOT NULL AND c IS NULL' to FALSE), so its compiler short
         // -circuited before reaching a constant subtree that contains an
         // out-of-range cast literal. The erroring side's compiler reached

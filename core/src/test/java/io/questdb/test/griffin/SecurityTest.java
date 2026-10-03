@@ -390,7 +390,7 @@ public class SecurityTest extends AbstractCairoTest {
         // access to one harmless column read every other column through a view it creates.
         //
         // The view deliberately carries no WHERE clause. A residual filter makes
-        // SqlCodeGenerator.generateFilter0 open a page-frame cursor at code-generation time,
+        // FilterFactoryGenerator open a page-frame cursor at code-generation time,
         // which authorizes the base read as a side effect - so a filtered view was already
         // covered by accident, and asserting on one would pass with or without the explicit
         // check. Unfiltered is the shape that reached CREATE with no base-read authorization

@@ -41,7 +41,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SubsampleAlgorithm;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -118,7 +117,7 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     private long lastTs;
     @Nullable
     private MemoryTracker memoryTracker;
-    private ObjList<ExpressionNode> orderBy;
+    private ObjList<CharSequence> orderBy;
     // pass1 (count) and pass2 (pass2Ordinal/selIdx) are two separate traversals of the same
     // partition. CachedWindowRecordCursorFactory must replay the SAME WindowSortBuffer order
     // for both passes, or these counters (and the buffer positions stashed in `selected`) desync
@@ -329,7 +328,8 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
             RecordMetadata metadata,
             ArrayColumnTypes chainTypes,
             IntList orderIndices,
-            ObjList<ExpressionNode> orderBy,
+            IntList orderPositions,
+            ObjList<CharSequence> orderBy,
             IntList orderByDirection
     ) throws SqlException {
         // Compile-time half of the ascending-order contract: reject a window ORDER BY that

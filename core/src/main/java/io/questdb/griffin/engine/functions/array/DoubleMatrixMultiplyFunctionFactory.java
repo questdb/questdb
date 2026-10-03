@@ -48,6 +48,11 @@ import io.questdb.std.Transient;
 public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+    }
+
+    @Override
     public String getSignature() {
         return "matmul(D[]D[])";
     }

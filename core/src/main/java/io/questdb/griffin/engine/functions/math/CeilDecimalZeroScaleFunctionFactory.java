@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
@@ -35,6 +36,11 @@ import io.questdb.std.ObjList;
 import java.math.RoundingMode;
 
 public class CeilDecimalZeroScaleFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.decimalRoundedToZeroScale(argTypes.getQuick(0), RoundingMode.CEILING);
+    }
+
     @Override
     public String getSignature() {
         return "ceil(Ξ)";

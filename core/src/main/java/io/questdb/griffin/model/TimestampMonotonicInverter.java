@@ -89,7 +89,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         // best-effort dynamic-range list cleanup only reaches this close(), not the functions it
         // holds. A close() failure on an earlier owner must not abandon the later ones, so free
         // every distinct owner best-effort (hiBound may alias loBound - free it once) and rethrow
-        // the accumulated failure, mirroring the freeBorrowedModels convention.
+        // the accumulated failure.
         Throwable failure = Misc.freeBestEffort(null, head);
         failure = Misc.freeBestEffort(failure, loBound);
         if (hiBound != loBound) {
@@ -190,6 +190,12 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     @Override
     public boolean isRuntimeConstant() {
         return true;
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return head.isStableWithinExecution() && (loBound == null || loBound.isStableWithinExecution())
+                && (hiBound == null || hiBound.isStableWithinExecution());
     }
 
     @Override

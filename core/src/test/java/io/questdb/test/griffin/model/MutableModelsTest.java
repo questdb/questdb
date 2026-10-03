@@ -33,18 +33,15 @@ import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.HorizonJoinContext;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.griffin.model.WithClauseModel;
-import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
@@ -141,7 +138,6 @@ public class MutableModelsTest {
         node.rhs = ExpressionNode.FACTORY.newInstance();
         node.type = ExpressionNode.FUNCTION;
         node.paramCount = 3;
-        node.intrinsicValue = 42;
         node.queryModel = QueryModel.FACTORY.newInstance();
         node.innerPredicate = true;
         node.implemented = true;
@@ -189,23 +185,6 @@ public class MutableModelsTest {
     }
 
     @Test
-    public void testIntrinsicModelClear() {
-        IntrinsicModel model = IntrinsicModel.FACTORY.newInstance();
-        model.keyColumn = "symbol";
-        model.filter = newExpressionNode();
-        model.intrinsicValue = IntrinsicModel.TRUE;
-        model.keySubQuery = QueryModel.FACTORY.newInstance();
-        model.keyExcludedNodes.add(newExpressionNode());
-        // Note: keyValueFuncs and keyExcludedValueFuncs require Function instances
-        // which are harder to create, but setting other fields is sufficient
-        // to verify the clear() method works correctly
-        assertDifferentFromFresh(model, IntrinsicModel.FACTORY.newInstance());
-
-        model.clear();
-        assertFieldsEqual(IntrinsicModel.FACTORY.newInstance(), model);
-    }
-
-    @Test
     public void testJoinContextClear() {
         JoinContext ctx = JoinContext.FACTORY.newInstance();
         ctx.aIndexes.add(1);
@@ -228,7 +207,6 @@ public class MutableModelsTest {
         PivotForColumn col = PivotForColumn.FACTORY.newInstance();
         col.of(newExpressionNode(), false);
         col.addValue(newExpressionNode(), "alias1");
-        col.setInExprAlias("inAlias");
         col.setSelectSubqueryExpr(newExpressionNode());
         assertDifferentFromFresh(col, PivotForColumn.FACTORY.newInstance());
 
@@ -253,50 +231,28 @@ public class MutableModelsTest {
         model.setAlias(newExpressionNode());
         model.setArtificialStar(true);
         model.setTableNameExpr(newExpressionNode());
-        model.setJoinType(IQueryModel.JOIN_LT);
+        model.setJoinType(QueryModel.JOIN_LT);
         model.setJoinCriteria(newExpressionNode());
         model.setModelPosition(42);
         model.setLimit(newExpressionNode(), newExpressionNode());
-        model.setLimitAdvice(newExpressionNode(), newExpressionNode());
         model.setLimitPosition(42);
         model.setTimestamp(newExpressionNode());
-        model.setContext(new JoinContext());
         model.setIsUpdate(true);
-        model.setSelectModelType(IQueryModel.SELECT_MODEL_VIRTUAL);
-        model.setSelectTranslation(true);
-        model.setSetOperationType(IQueryModel.SET_OPERATION_EXCEPT);
+        model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
+        model.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT);
         model.setSampleByOffset(newExpressionNode());
         model.setSampleBy(newExpressionNode(), newExpressionNode());
         model.setSampleByTimezoneName(newExpressionNode());
-        model.setLatestByType(IQueryModel.LATEST_BY_NEW);
-        model.setOrderByAdviceMnemonic(42);
+        model.setLatestByType(QueryModel.LATEST_BY_NEW);
         model.setOrderByPosition(42);
-        IntList jm = model.nextOrderedJoinModels();
-        jm.add(42);
-        model.setOrderedJoinModels(jm);
         model.addBottomUpColumn(newQueryColumn());
-        model.addTopDownColumn(newQueryColumn(), "foobar");
         model.addField(newQueryColumn());
         model.setNestedModel(QueryModel.FACTORY.newInstance());
         model.addJoinModel(QueryModel.FACTORY.newInstance());
         model.addJoinColumn(newExpressionNode());
         model.setWhereClause(newExpressionNode());
-        model.setPostJoinWhereClause(newExpressionNode());
-        model.addParsedWhereNode(newExpressionNode(), true);
-        model.addOrderBy(newExpressionNode(), IQueryModel.ORDER_DIRECTION_DESCENDING);
+        model.addOrderBy(newExpressionNode(), QueryModel.ORDER_DIRECTION_DESCENDING);
         model.addGroupBy(newExpressionNode());
-        ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
-        orderByAdvice.add(newExpressionNode());
-        model.copyOrderByAdvice(orderByAdvice);
-        IntList orderByDirectionAdvice = new IntList();
-        orderByDirectionAdvice.add(42);
-        model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
-        model.setFillValues(new ObjList<>(newExpressionNode()));
-        model.setFillTo(newExpressionNode());
-        model.setFillFrom(newExpressionNode());
-        model.setFillStride(newExpressionNode());
-        model.setAllowPropagationOfOrderByAdvice(false);
-        model.getAliasSequenceMap().put("foobar", 1);
         // Setup HorizonJoinContext
         HorizonJoinContext hjc = model.getHorizonJoinContext();
         hjc.setMode(HorizonJoinContext.MODE_RANGE);
@@ -328,7 +284,7 @@ public class MutableModelsTest {
         column.of("alias", newExpressionNode(), false, 42);
         // WindowColumn fields
         column.getPartitionBy().add(newExpressionNode());
-        column.addOrderBy(newExpressionNode(), IQueryModel.ORDER_DIRECTION_DESCENDING);
+        column.addOrderBy(newExpressionNode(), QueryModel.ORDER_DIRECTION_DESCENDING);
         column.setRowsLoExpr(newExpressionNode(), 10);
         column.setRowsLoExprTimeUnit(WindowExpression.TIME_UNIT_SECOND);
         column.setRowsHiExpr(newExpressionNode(), 20);
@@ -359,8 +315,6 @@ public class MutableModelsTest {
         context.setHiExprTimeUnit(WindowExpression.TIME_UNIT_MINUTE);
         context.setHi(200);
         context.setHiKind(WindowJoinContext.FOLLOWING, 40);
-        context.setDynamicLo(true);
-        context.setDynamicHi(true);
         context.setIncludePrevailing(false);
         context.setParentModel(QueryModel.FACTORY.newInstance());
         assertDifferentFromFresh(context, freshContext);

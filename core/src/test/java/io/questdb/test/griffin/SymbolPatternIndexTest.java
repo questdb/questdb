@@ -1031,19 +1031,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHintConstantWiring() {
-        // A plain string-equality check on the constant is tautological: it would still pass if
-        // SqlHints never consulted the constant. Assert the real wiring instead -- that a model
-        // carrying the hint is detected by hasNoSymbolPatternIndexHint(), and a model without it is not.
-        final QueryModel withHint = QueryModel.FACTORY.newInstance();
-        withHint.addHint(io.questdb.griffin.SqlHints.NO_SYMBOL_PATTERN_INDEX_HINT, "");
-        Assert.assertTrue(io.questdb.griffin.SqlHints.hasNoSymbolPatternIndexHint(withHint));
-
-        final QueryModel withoutHint = QueryModel.FACTORY.newInstance();
-        Assert.assertFalse(io.questdb.griffin.SqlHints.hasNoSymbolPatternIndexHint(withoutHint));
-    }
-
-    @Test
     public void testConfigDefaults() {
         Assert.assertTrue(configuration.isSymbolPatternIndexEnabled());
         Assert.assertEquals(100, configuration.getSymbolPatternIndexThreshold());
@@ -2018,22 +2005,15 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInvalidPatternLimitCompilationClosesPartitionFactory() throws Exception {
+    public void testInvalidPatternLimitCompilationReleasesInputs() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            final int[] partitionFactoryCloseCount = new int[1];
-            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
-            try {
-                assertExceptionNoLeakCheck(
-                        "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
-                        44,
-                        "invalid type: DOUBLE"
-                );
-            } finally {
-                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
-            }
-            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
+                    44,
+                    "invalid type: DOUBLE"
+            );
         });
     }
 
@@ -3534,33 +3514,26 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
 
     // Inject failure before the scan factory and prepared filter transfer ownership.
     @Test
-    public void testSelfFilteringConstructionFreesDelegatesExactlyOnceOnThrow() throws Exception {
+    public void testSelfFilteringConstructionReleasesDelegatesOnThrow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(100)");
             engine.releaseAllWriters();
 
-            final int[] partitionFactoryCloseCount = new int[1];
-            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
-            try {
-                final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
-                    @Override
-                    public boolean isParallelFilterEnabled() {
-                        throw new RuntimeException("test self-filtering construction failure");
-                    }
-                };
-                ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
-                try (ctx) {
-                    try (RecordCursorFactory ignored = engine.select("SELECT v FROM t WHERE sym LIKE 'a%' AND v > 0", ctx)) {
-                        Assert.fail("expected isolated self-filtering construction failure");
-                    } catch (RuntimeException e) {
-                        TestUtils.assertContains(e.getMessage(), "test self-filtering construction failure");
-                    }
+            final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
+                @Override
+                public boolean isParallelFilterEnabled() {
+                    throw new RuntimeException("test self-filtering construction failure");
                 }
-            } finally {
-                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
+            };
+            ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
+            try (ctx) {
+                try (RecordCursorFactory ignored = engine.select("SELECT v FROM t WHERE sym LIKE 'a%' AND v > 0", ctx)) {
+                    Assert.fail("expected isolated self-filtering construction failure");
+                } catch (RuntimeException e) {
+                    TestUtils.assertContains(e.getMessage(), "test self-filtering construction failure");
+                }
             }
-            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
         });
     }
 

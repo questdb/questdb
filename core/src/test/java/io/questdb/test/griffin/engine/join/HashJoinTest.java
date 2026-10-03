@@ -787,7 +787,7 @@ public class HashJoinTest extends AbstractCairoTest {
     @Test
     public void testHashSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
         // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
-        // processJoinContext() sets the bits for a.side = b.side_str on both sides. The projection puts
+        // JoinBinder.bindJoinConditions() sets the bits for a.side = b.side_str on both sides. The projection puts
         // b.side_str at slave column 1, so the stray bit makes the master sink write a.sym (master
         // column 1) as a string while the slave sink writes b.sym as an int.
         assertMemoryLeak(() -> {

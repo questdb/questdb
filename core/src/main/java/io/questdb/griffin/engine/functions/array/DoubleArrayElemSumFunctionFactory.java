@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.array;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DoubleList;
@@ -35,6 +36,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class DoubleArrayElemSumFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.doubleArrayElementwise(argTypes);
+    }
 
     @Override
     public String getSignature() {

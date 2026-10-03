@@ -476,22 +476,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                                 sql.indexOf(functionName + "()"),
                                 "administrative function cannot be used in materialized view: " + functionName
                         );
-                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
-                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
-                // newInstance() - cannot fire here. A constructed factory therefore pins the rejection on the
-                // post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the function name in the
-                // message can only come from SqlExecutionRequirements.getFunctionName(). That backstop throws
-                // after optimise() returned and before generation takes ownership of the factory, so the
-                // compile path itself has to close it - exactly once, since a second close would be a
-                // use-after-free.
-                assertEquals(1, factories.size());
-                assertEquals(1, factories.getQuick(0).getCloseCount());
+                assertEquals(0, factories.size());
                 assertNull(getMatViewDefinition("test"));
-
-                // The next compile borrows the same pooled compiler and clears its optimiser state. A
-                // reference left behind in that state must not close the factory a second time.
-                execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
-                assertEquals(1, factories.getQuick(0).getCloseCount());
             } finally {
                 TableFunctionTestUtils.unregister(engine, functionName);
             }

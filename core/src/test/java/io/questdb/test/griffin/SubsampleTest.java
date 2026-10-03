@@ -1933,7 +1933,7 @@ public class SubsampleTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000040Z\t4\n");
 
             // (e) Unaliased tables qualified by table name, correct order: the qualifier must
-            // resolve through the table-name fallback (collectModelAlias uses tableNameExpr
+            // resolve through the table-name fallback (SqlBinder uses tableNameExpr
             // when no alias is declared).
             assertQuery("""
                     SELECT tsp.ts ts, tsq.ts rt, tsp.x
@@ -1989,7 +1989,7 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testSubsampleJoinUnaliasedTableQualifiedAdversarialOrder() throws Exception {
         // Unaliased tables qualified by table name, adversarial projection order: the qualifier
-        // must resolve through the table-name fallback (collectModelAlias uses tableNameExpr
+        // must resolve through the table-name fallback (SqlBinder uses tableNameExpr
         // when no alias is declared), so tsp.ts keeps the designation even though tsq.ts is
         // projected first.
         assertMemoryLeak(() -> {
@@ -2064,7 +2064,7 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testSubsampleJoinWildcardRenamedDesignatedTimestamp() throws Exception {
         // Wildcard twin of testSubsampleJoinDuplicateTimestampNamesDisambiguated: q.ts claims the
         // output alias ts, so the expansion renames the designated p.ts imported by p.* to ts1.
-        // findVisibleSubsampleTimestamp must resolve designation through the mirrored expansion
+        // SampleByBinder.subsampleTimestamp must resolve designation through the mirrored expansion
         // (not return the raw source name), or sampling silently binds the joined q.ts axis and
         // re-designates it. The projection is identical to the explicit test, so the expected
         // output is byte-identical to its oracle.
@@ -2198,7 +2198,7 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testSubsampleSampleByQualifiedFloorTimestampProjection() throws Exception {
-        // rewriteSampleBy generates the bucket-floor call with a QUALIFIED timestamp argument
+        // SampleByBinder.bindSampleBy generates the bucket-floor call with a QUALIFIED timestamp argument
         // (alias.ts) when the FROM target is aliased; the SUBSAMPLE rewrite must resolve that
         // qualifier against the same aliased model when it carries designation through the
         // floor projection.
@@ -4994,9 +4994,9 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testUniformWildcardOverUserNamedKeepSubsampleColumn() throws Exception {
         // Red test for the helper-alias collision: a legal table column literally named
-        // __keep_subsample must not break SELECT * ... SUBSAMPLE. desugarSubsample picks the keep
+        // __keep_subsample must not break SELECT * ... SUBSAMPLE. SampleByBinder.bindSubsample picks the keep
         // alias against the UNEXPANDED projection (only '*'), so it stays __keep_subsample and
-        // collides with the genuine column when rewriteSelectClause0 expands the wildcard.
+        // collides with the genuine column when SqlBinder expands the wildcard.
         // Oracle: the equivalent explicit projection (green today, pinned in
         // testSubsampleKeepColumnExplicitProjectionControls).
         assertMemoryLeak(() -> {
@@ -5012,7 +5012,7 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testUniformTableDotWildcardOverUserNamedKeepSubsampleColumn() throws Exception {
         // Red test: the table-qualified wildcard (t.*) expands through the same
-        // createSelectColumnsForWildcard path and hits the same __keep_subsample collision.
+        // SqlBinder path and hits the same __keep_subsample collision.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
@@ -5026,7 +5026,7 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testM4WildcardOverUserNamedKeepSubsampleColumn() throws Exception {
         // Red test: the value-inspecting desugar path (m4/minmax/lttb/sdt) shares the
-        // desugarSubsample tail, so the same collision breaks it. m4(x, 2) over 4 monotone values
+        // SampleByBinder.bindSubsample tail, so the same collision breaks it. m4(x, 2) over 4 monotone values
         // keeps the global first and last row (oracle: explicit projection).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -5901,7 +5901,7 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testSdtAggContext() throws Exception {
         // The timestamp survives at the AST level even though the runtime cursor for these shapes
         // (DISTINCT, bare aggregate) loses the designated-timestamp designation - so
-        // isAggregationContext() is what actually gates this, and it is reachable.
+        // the aggregation context is what actually gates this, and it is reachable.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertException(
@@ -5932,10 +5932,10 @@ public class SubsampleTest extends AbstractCairoTest {
     // ------------------------------------------------------------------------------------------
     // F7-DISTINCT-STAR: a bare wildcard projection in an aggregation context (DISTINCT *,
     // DISTINCT t.*, GROUP BY over all keys with *, SELECT *, count()) used to leak the internal
-    // __keep_subsample helper into the outer wildcard (desugarSubsample flipped the keep column's
+    // __keep_subsample helper into the outer wildcard (SampleByBinder.bindSubsample flipped the keep column's
     // includeIntoWildcard for aggregation rebuilds while the outer model still carried a raw '*').
     // The fused row-selecting cursor never writes the helper's narrow-chain slot, so reading the
-    // leaked BOOLEAN tripped the memory-bounds assert (AbstractMemoryCR.addressOf). desugarSubsample
+    // leaked BOOLEAN tripped the memory-bounds assert (AbstractMemoryCR.addressOf). SampleByBinder.bindSubsample
     // now uses the star wiring for every wildcard projection and flips includeIntoWildcard only for
     // explicit aggregation projections. Every test below first asserts its explicit-column oracle,
     // then asserts the wildcard form returns the identical rows with no helper column in the output.
@@ -6062,7 +6062,7 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testDistinctStarWithCountUniform() throws Exception {
         // Corner pin (design review F7 round 1): DISTINCT combined with `*, count()` sets both
-        // the isDistinct and hasGroupByFunc triggers of isAggregationContext at once - a shape
+        // the DISTINCT and aggregate-function triggers of the aggregation context at once - a shape
         // testStarWithCountUniform does not cover. The implicit group-by over all wildcard
         // columns already makes each output row unique, so DISTINCT must not change the rows.
         // Oracle: the explicit-column form, asserted green first.
@@ -6123,9 +6123,8 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testExplicitTimestampOnSubqueryJoinBranchCollidingName() throws Exception {
         // F6 red test (root cause, SUBSAMPLE-free): an explicit TIMESTAMP clause on a subquery
-        // join branch must scope to that branch's projection. Today moveTimestampToChooseModel
-        // hoists it onto the model above the whole join, where the unqualified name collides
-        // with the slave's same-named column and JoinRecordMetadata reports it as not found:
+        // join branch must scope to that branch's projection, not the whole join, where the
+        // unqualified name collides with the slave's same-named column and JoinRecordMetadata reports it as not found:
         // "Invalid column: ts". Oracle: the identical query WITHOUT the clause (asserted first),
         // which must stay equivalent because the subquery already designates ts.
         assertMemoryLeak(() -> {
@@ -6235,7 +6234,7 @@ public class SubsampleTest extends AbstractCairoTest {
         // F6 red test: the colliding-name failure is join-type independent; CROSS JOIN variant.
         // The explicit-projection form compiles today (the projection resolves qualified refs
         // before the join-wide timestamp lookup) - pinned first as a control. The star form
-        // takes the generateSelectChoose(getTimestampIndex) path over the join metadata and
+        // takes the join-wide getTimestampIndex() path over the join metadata and
         // fails. Oracle for the star form: the identical no-clause star query.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -6674,7 +6673,7 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testExplicitTimestampAggregationOverJoinBranch() throws Exception {
         // F6 fix-phase test (obligation d): aggregation directly over the clause-bearing join
-        // (generateSelectGroupBy consumer). Pre-fix: "Invalid column: ts" at position 53.
+        // (AggregateFactoryGenerator consumer). Pre-fix: "Invalid column: ts" at position 53.
         // Post-fix the group-by model receives no hoisted clause. Independent aggregate oracle:
         // plain max over the master table (the ASOF join adds columns, never drops master rows).
         assertMemoryLeak(() -> {
@@ -6856,7 +6855,7 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testExplicitTimestampParenthesizedJoinHeads() throws Exception {
         // F6 fix-phase test (obligation l): select-less parenthesized-join branch heads. By the
-        // time the sink runs, rewriteSelectClause has synthesized a projecting CHOOSE over each
+        // time the sink runs, SqlBinder has synthesized a projecting CHOOSE over each
         // paren-join's full output (with dedup names ts1/ts2), so the sink's wrapper copies the
         // COMPLETE column set and the clause resolves branch-scoped - no column pruning, no scope
         // narrowing. Genuine join-holder heads (no projecting model above the join) route to the
@@ -6909,7 +6908,7 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testExplicitTimestampExplainPins() throws Exception {
         // F6 fix-phase pins (obligation k). Confirmation clause: the entity wrapper is elided by
-        // generateSelectChoose (alias == token for every wrapper column), so the plan is
+        // ProjectionFactoryGenerator (alias == token for every wrapper column), so the plan is
         // byte-equal to the no-clause plan - both asserted with the same string. Re-designation
         // clause: the wrapper survives as one SelectedRecord node over the branch (pinned
         // plan-shape change; the no-clause form of that query collapses the branch into a bare

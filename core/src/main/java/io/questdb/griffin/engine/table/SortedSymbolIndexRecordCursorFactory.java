@@ -72,6 +72,11 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return partitionFrameCursorFactory.isStableWithinExecution();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

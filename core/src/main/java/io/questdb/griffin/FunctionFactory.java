@@ -38,6 +38,19 @@ public interface FunctionFactory {
     }
 
     /**
+     * The type of the function {@link #newInstance} returns for arguments of the given resolved types, known without
+     * building it. It must hold for every argument of these types, constant or not; {@link ColumnType#UNDEFINED}
+     * means only the built function knows its type, e.g. when the type depends on an argument's value. A factory
+     * that {@link #isBoolean() returns booleans} declares BOOLEAN.
+     *
+     * @param argTypes resolved argument types, after implicit casts, in call order
+     * @return the result type, or {@link ColumnType#UNDEFINED} when it is not known statically
+     */
+    default int getResultType(@Transient IntList argTypes) {
+        return isBoolean() ? ColumnType.BOOLEAN : ColumnType.UNDEFINED;
+    }
+
+    /**
      * Function signature in a form of "name(type...)". Name is a literal that does not
      * start with number and contains no control characters, which can be confused with
      * SQL language punctuation. Control characters include but not limited to:
@@ -90,6 +103,31 @@ public interface FunctionFactory {
      */
     default boolean isBoolean() {
         return false;
+    }
+
+    /**
+     * Vets the arguments of a call that has non-constant arguments, so that its construction can wait for code
+     * generation: raises the errors {@link #newInstance} raises for these arguments, in its order, and answers
+     * whether {@link #newInstance} then builds a non-constant function of the {@link #getResultType declared type}
+     * that does not stand in for one of its arguments. Only the values of constant arguments may be read; the others
+     * can be placeholders. The default answers true only when no argument is a constant value, so a call with
+     * constant arguments is constructed while binding.
+     *
+     * @param position      the position of the call in the SQL statement
+     * @param args          the arguments {@link #newInstance} would receive, never modified
+     * @param argPositions  the positions of the arguments in the SQL statement
+     * @param configuration the configuration {@link #newInstance} would receive
+     * @return true when the call can be constructed later with the same outcome
+     * @throws SqlException the error {@link #newInstance} raises for these arguments
+     */
+    default boolean isConstructionDeferrable(int position, @Transient ObjList<Function> args, @Transient IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function arg = args.getQuick(i);
+            if (arg.isConstant() && !(arg instanceof TypeConstant)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -177,7 +215,7 @@ public interface FunctionFactory {
         return true;
     }
 
-    default boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
+    default boolean variadicTypeSupportUndefinedBindVariables(int argCount) {
         return true;
     }
 }

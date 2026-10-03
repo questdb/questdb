@@ -47,6 +47,11 @@ import org.jetbrains.annotations.NotNull;
 public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "min(Ξ)";
     }

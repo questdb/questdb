@@ -84,9 +84,9 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
             this.cursor = new SortedRecordCursor(chain, comparator, rankMaps);
         } catch (Throwable th) {
-            Misc.free(chain);
-            Misc.freeObjList(rankMaps);
-            close();
+            Misc.free(chain, th);
+            Misc.freeObjList(rankMaps, th);
+            Misc.free(this, th);
             throw th;
         }
     }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -40,6 +41,11 @@ import io.questdb.std.ObjList;
 // dereference this column as an array. We do not care, because composite indexes are
 // not yet supported either
 public class IntArrayDereferenceHackFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
     @Override
     public String getSignature() {
         return "[](II)";

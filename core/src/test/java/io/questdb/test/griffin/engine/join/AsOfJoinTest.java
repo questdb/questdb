@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -405,6 +406,118 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq")
                 .noRandomAccess()
                 .returns(expected);
+    }
+
+    @Test
+    public void testAsOfJoinFullFatSharedSlaveSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE master_sv (s STRING, v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        leftTableTimestampType.getTypeName()
+                );
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE slave_sym (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        rightTableTimestampType.getTypeName()
+                );
+                execute(compiler, """
+                        INSERT INTO master_sv VALUES
+                            ('A', 'A', '2024-01-01T10:00:00.000000Z'),
+                            ('B', 'B', '2024-01-01T10:01:00.000000Z'),
+                            ('C', 'C', '2024-01-01T10:02:00.000000Z'),
+                            (NULL, NULL, '2024-01-01T10:03:00.000000Z')
+                        """);
+                execute(compiler, """
+                        INSERT INTO slave_sym VALUES
+                            ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                            ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                            (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
+                        """);
+
+                final String expected = """
+                        s\tv\tsym\tprice
+                        A\tA\tA\t1.0
+                        B\tB\tB\t2.0
+                        C\tC\t\tnull
+                        \t\t\t9.0
+                        """;
+                assertQuery("SELECT m.s, m.v, s.sym, s.price FROM master_sv m ASOF JOIN slave_sym s ON m.s = s.sym AND m.v = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT m.s, m.v, s.sym, s.price FROM master_sv m LT JOIN slave_sym s ON m.s = s.sym AND m.v = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinFullFatSharedSlaveSymbolKeyReversedOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                createSharedSymbolKeyTables(compiler);
+                for (String join : new String[]{"ASOF", "LT"}) {
+                    assertQuery("SELECT m.s, m.v, s.sym, s.price FROM master_sv m " + join + " JOIN slave_sym s ON m.v = s.sym AND m.s = s.sym")
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .noLeakCheck()
+                            .returns("""
+                                    s\tv\tsym\tprice
+                                    A\tA\tA\t1.0
+                                    B\tB\tB\t2.0
+                                    C\tC\t\tnull
+                                    \t\t\t9.0
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSharedSlaveSymbolKeyWithSymbolMasterKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                createSharedSymbolKeyTables(compiler);
+                final String[] conditions = {
+                        "m.y = s.sym AND m.v = s.sym",
+                        "m.v = s.sym AND m.y = s.sym",
+                        "m.y = s.sym AND m.s = s.sym",
+                        "m.s = s.sym AND m.y = s.sym"
+                };
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    for (String join : new String[]{"ASOF", "LT"}) {
+                        for (String condition : conditions) {
+                            assertQuery("SELECT m.y, m.v, s.sym, s.price FROM master_sv m " + join + " JOIN slave_sym s ON " + condition)
+                                    .withCompiler(compiler)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .noLeakCheck()
+                                    .returns("""
+                                            y\tv\tsym\tprice
+                                            A\tA\tA\t1.0
+                                            B\tB\tB\t2.0
+                                            C\tC\t\tnull
+                                            \t\t\t9.0
+                                            """);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -3562,7 +3675,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
         // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
-        // processJoinContext() sets the bits for a.side = b.side_str on both sides. The projection puts
+        // JoinBinder.bindJoinConditions() sets the bits for a.side = b.side_str on both sides. The projection puts
         // b.side_str at slave column 1, so the stray bit makes the master sink write a.sym (master
         // column 1) as a string while the slave sink writes b.sym as an int.
         assertMemoryLeak(() -> {
@@ -6294,7 +6407,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: dyn_master
                                     VirtualRecord
-                                      functions: [ts,sym_str::symbol]
+                                      functions: [sym_str::symbol,ts]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: dyn_slave_src
@@ -6520,6 +6633,30 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:00.000000Z', 'IBM', 'ARCA', 30.0),
                     ('2024-01-01T00:00:01.000000Z', 'AAPL', 'NYSE', 11.0),
                     ('2024-01-01T00:00:04.000000Z', 'MSFT', 'NASDAQ', 21.0)
+                """);
+    }
+
+    private void createSharedSymbolKeyTables(SqlCompiler compiler) throws SqlException {
+        executeWithRewriteTimestamp(
+                "CREATE TABLE master_sv (s STRING, v VARCHAR, y SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                leftTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE slave_sym (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                rightTableTimestampType.getTypeName()
+        );
+        execute(compiler, """
+                INSERT INTO master_sv VALUES
+                    ('A', 'A', 'A', '2024-01-01T10:00:00.000000Z'),
+                    ('B', 'B', 'B', '2024-01-01T10:01:00.000000Z'),
+                    ('C', 'C', 'C', '2024-01-01T10:02:00.000000Z'),
+                    (NULL, NULL, NULL, '2024-01-01T10:03:00.000000Z')
+                """);
+        execute(compiler, """
+                INSERT INTO slave_sym VALUES
+                    ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                    (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
                 """);
     }
 

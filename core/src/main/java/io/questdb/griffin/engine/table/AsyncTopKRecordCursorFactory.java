@@ -129,7 +129,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             this.lo = lo;
             this.workerCount = workerCount;
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -175,6 +175,13 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean implementsLimit() {
         return true;
+    }
+
+    // Ties break on row id, so the kept rows and their order depend only on the filter and the base.
+    @Override
+    public boolean isStableWithinExecution() {
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        return (filter == null || filter.isStableWithinExecution()) && base.isStableWithinExecution();
     }
 
     @Override

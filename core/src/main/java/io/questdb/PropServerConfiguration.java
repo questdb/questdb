@@ -212,7 +212,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
     private final boolean cairoSqlLegacyOperatorPrecedence;
-    private final boolean cairoSqlLegacyUnionColumnPropagation;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
     private final int cairoUnorderedPageFrameReduceQueueCapacity;
@@ -1978,7 +1977,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 );
             }
             this.cairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
-            this.cairoSqlLegacyUnionColumnPropagation = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.sqlTimerShardCount = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_TIMER_SHARDS,
@@ -3719,6 +3717,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
             );
             registerObsolete("cairo.sql.asof.join.fast");
+            registerObsolete("cairo.sql.legacy.union.column.propagation");
             registerObsolete("cairo.sql.orderby.radix.sort.threshold");
             registerObsolete("shared.worker.affinity", PropertyKey.SHARED_NETWORK_WORKER_AFFINITY, PropertyKey.SHARED_QUERY_WORKER_AFFINITY, PropertyKey.SHARED_WRITE_WORKER_AFFINITY);
 
@@ -5672,11 +5671,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isCairoSqlLegacyUnionColumnPropagation() {
-            return cairoSqlLegacyUnionColumnPropagation;
-        }
-
-        @Override
         public boolean isCheckpointRecoveryEnabled() {
             return checkpointRecoveryEnabled;
         }
@@ -5789,14 +5783,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
-        }
-
-        @Override
-        public boolean isSqlDistinctGroupByRewriteEnabled() {
-            // No production property backs this seam: the rewrite is always on in
-            // a running server. Only tests override it (to reach
-            // DistinctTimeSeriesRecordCursorFactory) via a CairoConfiguration subclass.
-            return true;
         }
 
         @Override

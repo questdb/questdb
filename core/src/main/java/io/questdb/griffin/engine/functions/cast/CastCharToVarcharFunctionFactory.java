@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -33,9 +34,15 @@ import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastCharToVarcharFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
 
     @Override
     public String getSignature() {
@@ -56,7 +63,7 @@ public class CastCharToVarcharFunctionFactory implements FunctionFactory {
             if (value == 0) {
                 return VarcharConstant.NULL;
             }
-            return new VarcharConstant(String.valueOf(value));
+            return VarcharConstant.fromValue(new Utf8String(value));
         }
         return new Func(func);
     }

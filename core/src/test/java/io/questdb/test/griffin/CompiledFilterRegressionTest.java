@@ -35,10 +35,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
@@ -53,6 +54,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.jit.JitFilterBinding;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -2413,7 +2415,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // and serializeConstant emits it at I8 instead of at the observed I1 / I2. Without that arm
         // the constant reaches serializeNumber's I1 case, which range-checks the literal against
         // Byte.MIN_VALUE / Byte.MAX_VALUE and throws "byte literal out of range" (I2 throws "short
-        // literal out of range"). That SqlException aborts JIT compilation and SqlCodeGenerator
+        // literal out of range"). That SqlException aborts JIT compilation and FilterFactoryGenerator
         // runs the Java filter, so the filter used to DECLINE and now compiles -
         // assertJitScalarAndVectorMatchJava's "JIT was not enabled for query" assertion is what
         // reddens on a revert of the arm.
@@ -3144,7 +3146,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // What is new here is the strength of the assertion: absolute rows across Java,
         // FORCE_SCALAR and the vectorized engine, together with the hint. FORCE_SCALAR is not a
         // formality - serialize() takes scalarModeDetected from forceScalar, which
-        // SqlCodeGenerator:4650 passes for JIT_MODE_FORCE_SCALAR, and then routes a pure AND / OR
+        // FilterFactoryGenerator.tryGenerateJitFilter() passes for JIT_MODE_FORCE_SCALAR, and then routes a pure AND / OR
         // chain of more than one predicate to serializePredicatesAndSc / serializePredicatesOrSc,
         // so each leg below has already returned its rows through a short-circuiting backend. A
         // later decision to prefer short-circuiting would move the assertExecHint() lines and leave
@@ -6326,7 +6328,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // detector, which serialize() runs only when hasWideLaneConversionSource() proves no
         // conversion can be emitted. That predicate modelled the F4-leaf source and the
         // narrow-leaf-vs-64-bit-operand source, not this third one, so the chain took the
-        // short-circuit path, tripped its own wide-lane guard, and SqlCodeGenerator turned the
+        // short-circuit path, tripped its own wide-lane guard, and FilterFactoryGenerator turned the
         // resulting SqlException into a Java-filter fallback: the rows stayed right and the
         // compiled filter disappeared. assertJitScalarAndVectorMatchJava asserts the compiled
         // filter IS used in both JIT modes, so it pins the fallback itself.
@@ -6956,6 +6958,38 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
         assertQueryNullable(query, ddl);
+    }
+
+    @Test
+    public void testTimestampIntervalInTermsKeepTheirOwnIntervals() throws Exception {
+        // Each interval IN reads only its own interval list, also when two of them share one
+        // predicate, where the second term once intersected the first term's intervals.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT timestamp_sequence('2024-01-01T12:00:00', 86_400_000_000L) t, x::INT v
+                        FROM long_sequence(3)
+                    )
+                    """);
+            final String expected = """
+                    t\tv
+                    2024-01-01T12:00:00.000000Z\t1
+                    2024-01-03T12:00:00.000000Z\t3
+                    """;
+            assertJitScalarAndVectorMatchJava("x WHERE t IN '2024-01-01' OR t IN '2024-01-03'", expected);
+            assertJitScalarAndVectorMatchJava("x WHERE (t IN '2024-01-01') <> (t IN '2024-01-03')", expected);
+            assertJitScalarAndVectorMatchJava(
+                    "x WHERE (t IN '2024-01-01') = (t IN '2024-01-03')",
+                    """
+                            t\tv
+                            2024-01-02T12:00:00.000000Z\t2
+                            """
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "x WHERE v > 0 AND (t IN '2024-01-01') <> (t IN '2024-01-03') AND t IN '2024'",
+                    expected
+            );
+        });
     }
 
     @Test
@@ -8915,10 +8949,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         Unsafe.getUnsafe().putLong(varsAddress, 0L);
     }
 
-    // The self-comparison WhereClauseParser.nodesEqual() recognises, spelled the same way it is:
-    // BOTH sides a LITERAL or a CONSTANT carrying the same token. It is deliberately narrower than
+    // A superset of the self-comparisons ScanFactoryGenerator.foldSelfComparisons() folds: BOTH
+    // sides a LITERAL or a CONSTANT carrying the same token. It is deliberately narrower than
     // "the two subtrees are equal" - "f + 1.0 > f + 1.0" is an OPERATION on both sides and the
-    // parser leaves it in the filter, so rejecting it here would cost a pin for nothing.
+    // planner leaves it in the filter, so rejecting it here would cost a pin for nothing.
     private static boolean isSelfComparison(ExpressionNode node) {
         return node.type == ExpressionNode.OPERATION
                 && node.lhs != null
@@ -8929,8 +8963,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 && isCollapsingComparisonToken(node.token);
     }
 
-    // The operators whose nodesEqual() arm collapses the node: analyzeEquals0, analyzeGreater,
-    // analyzeLess and analyzeNotEquals0.
+    // A superset of the operators foldSelfComparisons() collapses.
     private static boolean isCollapsingComparisonToken(CharSequence token) {
         return Chars.equals(token, "=")
                 || Chars.equals(token, "!=")
@@ -9183,7 +9216,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * vacuous.
      * <p>
      * The serial arm runs the JAVA filter whatever the JIT mode says -
-     * {@code SqlCodeGenerator#generateFilter} only reaches the JIT behind
+     * {@code FilterFactoryGenerator#tryGenerateJitFilter} only reaches the JIT behind
      * {@code executionContext.isParallelFilterEnabled()} - so it pins the oracle itself rather than
      * a fourth backend, and asserts that no compiled filter is in play there.
      */
@@ -9471,10 +9504,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * them, and no plan or cursor surfaces the hint, so this re-runs the serializer over the
      * factory's own metadata and page frame cursor and reads bits 4-5 of the options it returns.
      * <p>
-     * It is a REPLICA of {@code SqlCodeGenerator}, not a call into it. It serializes the RAW parsed
-     * {@code whereExpr}, whereas the code generator serializes {@code model.getWhereClause()} - the
-     * residual {@code WhereClauseParser} leaves after lifting extractable intrinsics out of the
-     * filter ({@code SqlCodeGenerator.java:11987} assigns it, {@code :4555} reads it back). So a
+     * It is a REPLICA of {@code FilterFactoryGenerator#tryGenerateJitFilter}, not a call into it. It
+     * serializes the RAW parsed {@code whereExpr}, whereas the code generator serializes the residual
+     * {@code IntervalExtractor} and {@code SymbolKeyExtractor} leave after lifting extractable
+     * intrinsics out of the filter. So a
      * {@code whereExpr} carrying an extractable intrinsic reports a hint for a filter production
      * never compiles. Measured on {@code m3}:
      * {@code k > '1970-01-01' and l > -(1000 * 1000) and i > 16777216.0} reports SCALAR here, while
@@ -9485,19 +9518,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * answering for it. It screens for the two removals a RAW predicate can be tested for
      * syntactically. The first is a LIFT: a predicate over the designated timestamp becomes an
      * interval scan, and one over an INDEXED column becomes a key scan
-     * ({@code WhereClauseParser#isColumnPreferredOrIndexedAndKeyColumnAllowed}). Naming either
+     * ({@code SymbolKeyExtractor}). Naming either
      * column is the necessary condition for that lift, so the guard rejects on the NAME and errs
-     * towards rejecting: a predicate the parser would have left alone - {@code k * 2 > 5}, say - is
+     * towards rejecting: a predicate the planner would have left alone - {@code k * 2 > 5}, say - is
      * turned away too.
      * <p>
-     * The second is a COLLAPSE, and it is not confined to those columns. {@code nodesEqual} folds a
-     * comparison of a column or constant against an identically spelled one to an intrinsic TRUE or
-     * FALSE on ANY column - in {@code analyzeEquals0}, {@code analyzeGreater}, {@code analyzeLess}
-     * and {@code analyzeNotEquals0} alike - and the code generator then compiles the residual.
+     * The second is a COLLAPSE, and it is not confined to those columns.
+     * {@code ScanFactoryGenerator.foldSelfComparisons()} folds a comparison of a column against itself
+     * to TRUE or FALSE on ANY column, and the code generator then compiles the residual.
      * Measured on {@code m3}: {@code i = i and l > 5} reports EXEC_HINT_MIXED_SIZE_TYPE here, while
      * production compiles {@code 5 < l} and answers EXEC_HINT_SINGLE_SIZE_TYPE.
      * <p>
-     * Those two are what the guard COVERS. They are not a proof that the parser leaves everything
+     * Those two are what the guard COVERS. They are not a proof that the planner leaves everything
      * else in place: it is a large walk, and a shape it starts folding tomorrow would go unnoticed
      * here. When the guard turns a predicate away, pin the shape over a column the table does not
      * carry as its timestamp or index, or assert the rows with
@@ -9505,13 +9537,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * <p>
      * The cursor order is production's: the serializer reads the page frame cursor only through
      * {@code getSymbolTable()} for symbol-constant lookups, so the order cannot reach the hint at
-     * all, but matching {@code SqlCodeGenerator.java:4649} keeps the replica one thing shorter.
+     * all, but matching {@code FilterFactoryGenerator} keeps the replica one thing shorter.
      */
     private void assertExecHint(CharSequence tableName, CharSequence whereExpr, int expectedHint) throws SqlException {
         final ObjList<Function> bindVarFunctions = new ObjList<>();
         final MemoryCARW irMemory = Vm.getCARWInstance(2048, 1, MemoryTag.NATIVE_JIT);
         try (
-                SqlCompiler compiler = engine.getSqlCompiler();
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                 RecordCursorFactory factory = select("SELECT * FROM " + tableName)
         ) {
             queryModel.clear();
@@ -9519,9 +9551,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertNoExtractableIntrinsic(filter, factory.getMetadata(), whereExpr);
             Assert.assertTrue("page frames for: " + tableName, factory.supportsPageFrameCursor());
             try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ANY)) {
+                final FilterPlan bound = JitFilterBinding.bind(compiler, sqlExecutionContext, tableName, whereExpr);
                 final int options = new CompiledFilterIRSerializer()
-                        .of(irMemory, sqlExecutionContext, factory.getMetadata(), cursor, bindVarFunctions)
-                        .serialize(filter, false, false, true);
+                        .of(irMemory, sqlExecutionContext, factory.getMetadata(), bound.getInput().getOutput(), cursor, bindVarFunctions)
+                        .serialize(bound.getPredicate(), false, false, true);
                 Assert.assertEquals("exec hint for: " + whereExpr, expectedHint, (options >> 4) & 0b11);
             }
         } finally {
@@ -9532,7 +9565,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     /**
      * Fails the calling {@link #assertExecHint} when {@code filter} carries something
-     * {@code WhereClauseParser} takes out of it - a column it lifts into an interval or key scan,
+     * the planner takes out of it - a column it lifts into an interval or key scan,
      * or a self-comparison it collapses to an intrinsic value - because production would then
      * compile a SMALLER tree than the helper serializes and the hint the helper reports would be
      * for a filter that never runs. See {@link #assertExecHint} for what these two checks cover,
@@ -9548,7 +9581,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 continue;
             }
             Assert.assertFalse(
-                    "assertExecHint cannot answer for a self-comparison - WhereClauseParser collapses"
+                    "assertExecHint cannot answer for a self-comparison - ScanFactoryGenerator collapses"
                             + " it to an intrinsic value and production compiles the residual: " + whereExpr,
                     isSelfComparison(node)
             );
@@ -9556,12 +9589,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 final int columnIndex = metadata.getColumnIndexQuiet(node.token);
                 if (columnIndex > -1) {
                     Assert.assertFalse(
-                            "assertExecHint cannot answer for the designated timestamp - WhereClauseParser"
+                            "assertExecHint cannot answer for the designated timestamp - IntervalExtractor"
                                     + " lifts it into the interval scan and production compiles the residual: " + whereExpr,
                             columnIndex == metadata.getTimestampIndex()
                     );
                     Assert.assertFalse(
-                            "assertExecHint cannot answer for an indexed column - WhereClauseParser lifts it"
+                            "assertExecHint cannot answer for an indexed column - SymbolKeyExtractor lifts it"
                                     + " into a key scan and production compiles the residual: " + whereExpr,
                             metadata.isColumnIndexed(columnIndex)
                     );

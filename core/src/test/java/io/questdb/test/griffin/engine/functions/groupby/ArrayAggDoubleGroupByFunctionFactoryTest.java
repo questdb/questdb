@@ -762,9 +762,9 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     @Test
     public void testSampleByFillLinearRejectedNonKeyed() throws Exception {
         // Mirror of testSampleByFillValueRejectedNonKeyed for FILL(LINEAR). Both fill
-        // modes route through the same SqlOptimiser.rewriteSampleBy + rewriteSelectClause0
-        // path that propagates fillValues onto groupByModel; either could regress
-        // independently if the LINEAR-specific gate at SqlOptimiser.hasLinearFill changed.
+        // modes route through the same SampleByBinder path that propagates the fill values
+        // onto the aggregate; either could regress independently if the LINEAR-specific
+        // routing changed.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""

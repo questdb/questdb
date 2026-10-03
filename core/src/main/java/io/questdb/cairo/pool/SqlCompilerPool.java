@@ -37,7 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Rnd;
@@ -131,6 +131,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public void close() {
             // revert any debug flags
             setFullFatJoins(false);
+            delegate.freeResourcesInFlight();
             final AbstractMultiTenantPool<C> pool = this.pool;
             if (pool != null && entry != null) {
                 if (pool.returnToPool(this)) {
@@ -156,13 +157,18 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public void freeResourcesInFlight() {
+            delegate.freeResourcesInFlight();
+        }
+
+        @Override
         public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
             return delegate.generateExecutionModel(sqlText, executionContext);
         }
 
         @Override
         public RecordCursorFactory generateSelectWithRetries(
-                IQueryModel queryModel,
+                QueryModel queryModel,
                 @Nullable InsertModel insertModel,
                 SqlExecutionContext executionContext,
                 boolean generateProgressLogger
@@ -236,7 +242,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
+        public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
             return delegate.testParseExpression(expression, model);
         }
 

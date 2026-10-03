@@ -49,7 +49,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -118,6 +117,11 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         SDT_STATE_TYPES.add(ColumnType.LONG);   // pendingIndex
         SDT_STATE_TYPES.add(ColumnType.LONG);   // pendingTs
         SDT_STATE_TYPES.add(ColumnType.DOUBLE); // pendingValue
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override
@@ -204,7 +208,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private final SwingingDoor sd = new SwingingDoor();
         private long appendOffset; // pass1 write cursor (bytes)
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         private long readOffset;   // pass2 read cursor (bytes)
 
         SdtOverWholeResultSetFunction(Function tsArg, Function valueArg, Function compdevArg, double compdev,
@@ -302,7 +306,8 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
                 RecordMetadata metadata,
                 ArrayColumnTypes chainTypes,
                 IntList orderIndices,
-                ObjList<ExpressionNode> orderBy,
+                IntList orderPositions,
+                ObjList<CharSequence> orderBy,
                 IntList orderByDirection
         ) throws SqlException {
             // Reject a descending window ORDER BY on the sorted path; see newInstance for why
@@ -419,7 +424,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private final SwingingDoor scratch = new SwingingDoor();
         private final Function tsArg;
         private long appendOffset; // pass1 write cursor (bytes), monotonic across ALL partitions
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         private long readOffset;   // pass2 read cursor (bytes), monotonic across ALL partitions
 
         SdtOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink,
@@ -493,7 +498,8 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
                 RecordMetadata metadata,
                 ArrayColumnTypes chainTypes,
                 IntList orderIndices,
-                ObjList<ExpressionNode> orderBy,
+                IntList orderPositions,
+                ObjList<CharSequence> orderBy,
                 IntList orderByDirection
         ) throws SqlException {
             // Reject a descending window ORDER BY on the sorted path; see newInstance for why

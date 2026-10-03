@@ -24,32 +24,26 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayDeque;
-
-import static io.questdb.griffin.SqlKeywords.isAndKeyword;
 import static io.questdb.griffin.SqlParser.ZERO_OFFSET;
 
 /**
@@ -58,19 +52,75 @@ import static io.questdb.griffin.SqlParser.ZERO_OFFSET;
  * are reused across query compilation, so making sure that we reset all fields correctly
  * is important.
  */
-public class QueryModel implements IQueryModel {
+public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
+    public static final int JOIN_ASOF = 4;
+    public static final int JOIN_CROSS = 3;
+    public static final int JOIN_CROSS_FULL = 12;
+    public static final int JOIN_CROSS_LEFT = 8;
+    public static final int JOIN_CROSS_RIGHT = 11;
+    public static final int JOIN_FULL_OUTER = 10;
+    public static final int JOIN_HORIZON = 13;
+    public static final int JOIN_INNER = 1;
+    public static final int JOIN_LATERAL_CROSS = 16;
+    public static final int JOIN_LATERAL_INNER = 14;
+    public static final int JOIN_LATERAL_LEFT = 15;
+    public static final int JOIN_LEFT_OUTER = 2;
+    public static final int JOIN_LT = 6;
+    public static final int JOIN_NONE = 0;
+    public static final int JOIN_RIGHT_OUTER = 9;
+    public static final int JOIN_SPLICE = 5;
+    public static final int JOIN_UNNEST = 17;
+    public static final int JOIN_WINDOW = 7;
+    public static final int LATEST_BY_DEPRECATED = 1;
+    public static final int LATEST_BY_NEW = 2;
+    public static final int LATEST_BY_NONE = 0;
+    public static final String NO_ROWID_MARKER = "*!*";
+    public static final int ORDER_DIRECTION_ASCENDING = 0;
+    public static final int ORDER_DIRECTION_DESCENDING = 1;
+    public static final int SELECT_MODEL_CHOOSE = 1;
+    public static final int SELECT_MODEL_CURSOR = 6;
+    public static final int SELECT_MODEL_DISTINCT = 5;
+    public static final int SELECT_MODEL_GROUP_BY = 4;
+    public static final int SELECT_MODEL_HORIZON_JOIN = 9;
+    public static final int SELECT_MODEL_NONE = 0;
+    public static final int SELECT_MODEL_SHOW = 7;
+    public static final int SELECT_MODEL_VIRTUAL = 2;
+    public static final int SELECT_MODEL_WINDOW = 3;
+    public static final int SELECT_MODEL_WINDOW_JOIN = 8;
+    public static final int SET_OPERATION_EXCEPT = 2;
+    public static final int SET_OPERATION_EXCEPT_ALL = 3;
+    public static final int SET_OPERATION_INTERSECT = 4;
+    public static final int SET_OPERATION_INTERSECT_ALL = 5;
+    public static final int SET_OPERATION_UNION = 1;
+    // types of set operations between this and union model
+    public static final int SET_OPERATION_UNION_ALL = 0;
+    public static final int SHOW_COLUMNS = 2;
+    public static final int SHOW_CREATE_DATABASE = 18;
+    public static final int SHOW_CREATE_LIVE_VIEW = 19;
+    public static final int SHOW_CREATE_MAT_VIEW = 15;
+    public static final int SHOW_CREATE_TABLE = 14;
+    public static final int SHOW_CREATE_VIEW = 17;
+    public static final int SHOW_DATE_STYLE = 9;
+    public static final int SHOW_DEFAULT_TRANSACTION_READ_ONLY = 16;
+    public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
+    public static final int SHOW_PARAMETERS = 11;
+    public static final int SHOW_PARTITIONS = 3;
+    public static final int SHOW_SEARCH_PATH = 8;
+    public static final int SHOW_SERVER_VERSION = 12;
+    public static final int SHOW_SERVER_VERSION_NUM = 13;
+    public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
+    public static final int SHOW_TABLES = 1;
+    public static final int SHOW_TIME_ZONE = 10;
+    public static final int SHOW_TRANSACTION = 4;
+    public static final int SHOW_TRANSACTION_ISOLATION_LEVEL = 5;
+    public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
-    // Tracks next sequence number for alias generation to achieve O(1) amortized complexity
-    private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
-    private final LowerCaseCharSequenceIntHashMap columnAliasRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns = new ObjList<>();
-    private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -78,35 +128,22 @@ public class QueryModel implements IQueryModel {
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
     private final HorizonJoinContext horizonJoinContext = new HorizonJoinContext();
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
-    private final ObjList<IQueryModel> joinModels = new ObjList<>();
-    private final ObjList<QueryColumn> lateralCountTemplates = new ObjList<>();
+    private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
-    private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
     private final LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> orderBy = new ObjList<>();
-    private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirection = new IntList();
-    private final IntList orderByDirectionAdvice = new IntList();
-    private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
-    private final IntList orderedJoinModels1 = new IntList();
-    private final IntList orderedJoinModels2 = new IntList();
     private final LowerCaseCharSequenceHashSet overridableDecls = new LowerCaseCharSequenceHashSet();
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
     // column name frequency of 0 corresponds to map value -1
-    // list of "and" concatenated expressions
-    private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
-    private final IntHashSet parsedWhereConstants = new IntHashSet();
     private final ObjList<PivotForColumn> pivotForColumns = new ObjList<>();
     private final ObjList<QueryColumn> pivotGroupByColumns = new ObjList<>();
     private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
-    private final ObjList<QueryModelWrapper> sharedRefs = new ObjList<>();
-    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
-    private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
     private final ObjList<CharSequence> unnestColumnAliases = new ObjList<>();
     private final ObjList<ExpressionNode> unnestExpressions = new ObjList<>();
     private final ObjList<ObjList<CharSequence>> unnestJsonColumnNames = new ObjList<>();
@@ -121,42 +158,20 @@ public class QueryModel implements IQueryModel {
     // be the only fields for these values.
     private ExpressionNode alias;
     // used to block pushing down of order by advice to lower model
-    // this is used for negative limits optimisations
-    private boolean allowPropagationOfOrderByAdvice = true;
     private boolean artificialStar;
     private ExpressionNode asOfJoinTolerance = null;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
-    private ExpressionNode backupWhereClause;
     private boolean cacheable = true;
-    // where clause expressions that do not reference any tables, not necessarily constants
-    private ExpressionNode constWhereClause;
-    private JoinContext context;
     private boolean distinct = false;
     private boolean explicitTimestamp;
-    private ExpressionNode fillFrom;
-    private ExpressionNode fillOffset;
-    private ExpressionNode fillStride;
-    private ExpressionNode fillTimezoneName;
-    private ExpressionNode fillTo;
-    private ObjList<ExpressionNode> fillValues;
-    private boolean forceBackwardScan;
+    private boolean isCommaJoin;
     private boolean isCteModel;
-    private ExpressionNode lateralCountCoalesceGuard;
-    private boolean isLateralCountCoalesceRequired;
-    // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
-    // synthesized alignment columns after wildcard expansion assigns final aliases.
-    private boolean isOuterRefWildcardExcluded;
-    // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
-    // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
-    private boolean isSelectTranslation = false;
     private boolean isUpdateModel;
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
     private int latestByType = LATEST_BY_NONE;
-    private ExpressionNode limitAdviceHi;
-    private ExpressionNode limitAdviceLo;
     private ExpressionNode limitHi;
     private ExpressionNode limitLo;
     // position of the limit clause token
@@ -164,19 +179,14 @@ public class QueryModel implements IQueryModel {
     private long metadataVersion = -1;
     private int modelPosition = 0;
     private int modelType = ExecutionModel.QUERY;
-    private IQueryModel nestedModel;
+    private QueryModel nestedModel;
     private boolean nestedModelIsSubQuery = false;
-    private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
     // position of the order by clause token
     private int orderByPosition;
-    private boolean orderDescendingByDesignatedTimestampOnly;
-    private IntList orderedJoinModels = orderedJoinModels2;
     private ExpressionNode originatingViewNameExpr;
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
-    private ExpressionNode outerJoinExpressionClause;
     private boolean pivotGroupByColumnHasNoAlias = false;
-    private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
     private ExpressionNode sampleByOffset = ZERO_OFFSET;
@@ -185,30 +195,16 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode sampleByUnit;
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
-    private int sharedRefByParentCount = 0;
     private int showCreateDatabaseInclude = ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
     private int showKind = -1;
-    private boolean skipped;
+    private boolean standaloneUnnest;
     private ExpressionNode subsample;
     private int subsamplePosition;
-    private boolean standaloneUnnest;
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
-    private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
-    private int timestampColumnIndex = -1;      // Index of the timestamp column in virtual models (-1 means not set)
-    private CharSequence timestampOffsetAlias;  // The alias name for the transformed timestamp (e.g., "ts")
-    // Timestamp offset information for virtual models where timestamp is computed via dateadd.
-    // Used to enable timestamp predicate pushdown with appropriate offset adjustment.
-    // NOTE: The optimizer intrinsically understands dateadd(char, int, timestamp) and pushes
-    // predicates through it. The offset type must match dateadd's signature (int).
-    // See TimestampAddFunctionFactory for the function definition.
-    private char timestampOffsetUnit;           // 'h', 'd', 'm', 's', etc. (0 means no offset)
-    private int timestampOffsetValue;           // The offset value (inverse, e.g., +1 for dateadd -1)
-    private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
-    private IQueryModel unionModel;
+    private QueryModel unionModel;
     private boolean unnestOrdinality;
-    private IQueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode viewNameExpr;
     private ExpressionNode whereClause;
@@ -217,22 +213,20 @@ public class QueryModel implements IQueryModel {
         joinModels.add(this);
     }
 
-    @Override
+    public static boolean isLateralJoin(int joinType) {
+        return joinType == JOIN_LATERAL_INNER
+                || joinType == JOIN_LATERAL_LEFT
+                || joinType == JOIN_LATERAL_CROSS;
+    }
+
     public void addBottomUpColumn(QueryColumn column) throws SqlException {
         addBottomUpColumn(0, column, false, null);
     }
 
-    @Override
-    public void addBottomUpColumn(QueryColumn column, boolean allowDuplicates) throws SqlException {
-        addBottomUpColumn(0, column, allowDuplicates, null);
-    }
-
-    @Override
     public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates) throws SqlException {
         addBottomUpColumn(position, column, allowDuplicates, null);
     }
 
-    @Override
     public void addBottomUpColumn(
             int position,
             QueryColumn column,
@@ -245,25 +239,17 @@ public class QueryModel implements IQueryModel {
         addBottomUpColumnIfNotExists(column);
     }
 
-    @Override
     public void addBottomUpColumnIfNotExists(QueryColumn column) {
         if (addField(column)) {
             bottomUpColumns.add(column);
         }
     }
 
-    @Override
-    public void addDependency(int index) {
-        dependencies.add(index);
-    }
-
-    @Override
     public void addExpressionModel(ExpressionNode node) {
         assert node.queryModel != null;
         expressionModels.add(node);
     }
 
-    @Override
     public boolean addField(QueryColumn column) {
         final CharSequence alias = column.getAlias();
         final ExpressionNode ast = column.getAst();
@@ -280,112 +266,44 @@ public class QueryModel implements IQueryModel {
         return false;
     }
 
-    @Override
     public void addGroupBy(ExpressionNode node) {
         groupBy.add(node);
     }
 
-    @Override
     public void addHint(CharSequence key, CharSequence value) {
         hintsMap.put(key, value);
     }
 
-    @Override
     public void addJoinColumn(ExpressionNode node) {
         joinColumns.add(node);
     }
 
-    @Override
-    public void addJoinModel(IQueryModel joinModel) {
+    public void addJoinModel(QueryModel joinModel) {
         joinModels.add(joinModel);
         if (joinModel != null && viewNameExpr != null) {
             joinModel.setViewNameExpr(viewNameExpr);
         }
     }
 
-    @Override
-    public void addLateralCountTemplate(QueryColumn template) {
-        lateralCountTemplates.add(template);
-    }
-
-    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         this.latestBy.add(latestBy);
     }
 
-    @Override
-    public boolean addModelAliasIndex(ExpressionNode node, int index) {
-        return modelAliasIndexes.put(node.token, index);
-    }
-
-    @Override
     public void addOrderBy(ExpressionNode node, int direction) {
         orderBy.add(node);
         orderByDirection.add(direction);
     }
 
-    @Override
-    public void addParsedWhereNode(ExpressionNode node, boolean innerPredicate) {
-        node.innerPredicate = innerPredicate;
-        parsedWhere.add(node);
-    }
-
-    @Override
     public void addPivotForColumn(PivotForColumn column) {
         pivotForColumns.add(column);
     }
 
-    @Override
     public void addPivotGroupByColumn(QueryColumn column) {
         pivotGroupByColumns.add(column);
     }
 
-    @Override
     public void addSampleByFill(ExpressionNode sampleByFill) {
         this.sampleByFill.add(sampleByFill);
-    }
-
-    @Override
-    public void addTopDownColumn(QueryColumn column, CharSequence alias) {
-        if (topDownNameSet.add(alias)) {
-            topDownColumns.add(column);
-        }
-    }
-
-    @Override
-    public void addUpdateTableColumnMetadata(int columnType, String columnName) {
-        updateTableColumnTypes.add(columnType);
-        updateTableColumnNames.add(columnName);
-    }
-
-    /**
-     * Determines whether this model allows pushing columns from parent model(s).
-     * If this is a UNION, EXCEPT or INTERSECT or contains a SELECT DISTINCT then it can't be done safely.
-     */
-    @Override
-    public boolean allowsColumnsChange() {
-        if (hasSharedRefs()) {
-            return false;
-        }
-        IQueryModel union = this;
-        while (union != null) {
-            if (union.getSetOperationType() != IQueryModel.SET_OPERATION_UNION_ALL
-                    || union.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT) {
-                return false;
-            }
-            union = union.getUnionModel();
-        }
-        return true;
-    }
-
-    /**
-     * Determines whether this model allows pushing columns to nested models.
-     * If this is a SELECT DISTINCT then we don't push since the parent model contains the necessary columns.
-     */
-    @Override
-    public boolean allowsNestedColumnsChange() {
-        return (nestedModel == null || !nestedModel.hasSharedRefs())
-                && this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
     }
 
     @Override
@@ -397,17 +315,10 @@ public class QueryModel implements IQueryModel {
         clearSampleBy();
         orderBy.clear();
         orderByDirection.clear();
-        orderByAdvice.clear();
-        orderByDirectionAdvice.clear();
         orderByPosition = 0;
-        orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
-        isSelectTranslation = false;
         groupBy.clear();
         dependencies.clear();
-        parsedWhere.clear();
         whereClause = null;
-        backupWhereClause = null;
-        constWhereClause = null;
         nestedModel = null;
         tableNameExpr = null;
         viewNameExpr = null;
@@ -418,33 +329,16 @@ public class QueryModel implements IQueryModel {
         joinCriteria = null;
         joinType = JOIN_NONE;
         joinKeywordPosition = 0;
-        orderedJoinModels1.clear();
-        orderedJoinModels2.clear();
-        parsedWhereConstants.clear();
         columnAliasIndexes.clear();
-        modelAliasIndexes.clear();
-        postJoinWhereClause = null;
-        outerJoinExpressionClause = null;
-        context = null;
-        orderedJoinModels = orderedJoinModels2;
         limitHi = null;
         limitLo = null;
-        limitAdviceHi = null;
-        limitAdviceLo = null;
         limitPosition = 0;
         timestamp = null;
-        timestampOffsetUnit = 0;
-        timestampOffsetValue = 0;
-        timestampSourceColumn = null;
-        timestampOffsetAlias = null;
-        timestampColumnIndex = -1;
-        sqlNodeStack.clear();
         joinColumns.clear();
         withClauseModel.clear();
         namedWindows.clear();
         selectModelType = SELECT_MODEL_NONE;
         columnNameToAliasMap.clear();
-        tableNameFunction = null;
         tableId = -1;
         metadataVersion = -1;
         wildcardColumnNames.clear();
@@ -452,20 +346,14 @@ public class QueryModel implements IQueryModel {
         distinct = false;
         nestedModelIsSubQuery = false;
         unionModel = null;
-        orderHash.clear();
         modelPosition = 0;
         topDownColumns.clear();
-        topDownNameSet.clear();
         aliasToColumnMap.clear();
-        aliasSequenceMap.clear();
         // TODO: replace booleans with an enum-like type: UPDATE/MAT_VIEW/INSERT_AS_SELECT/SELECT
         //  default is SELECT
         isUpdateModel = false;
+        isCommaJoin = false;
         isCteModel = false;
-        isLateralCountCoalesceRequired = false;
-        lateralCountCoalesceGuard = null;
-        isOuterRefWildcardExcluded = false;
-        lateralCountTemplates.clear();
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
@@ -476,7 +364,6 @@ public class QueryModel implements IQueryModel {
         unnestJsonColumnTypes.clear();
         unnestOrdinality = false;
         updateTableColumnNames.clear();
-        updateTableModel = null;
         updateTableToken = null;
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
@@ -486,20 +373,10 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = ZERO_OFFSET;
         sampleByTo = null;
         sampleByFrom = null;
-        fillFrom = null;
-        fillOffset = null;
-        fillTo = null;
-        fillStride = null;
-        fillTimezoneName = null;
-        fillValues = null;
-        skipped = false;
         subsample = null;
         subsamplePosition = 0;
-        allowPropagationOfOrderByAdvice = true;
         decls.clear();
         overridableDecls.clear();
-        orderDescendingByDesignatedTimestampOnly = false;
-        forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
         horizonJoinContext.clear();
@@ -509,30 +386,8 @@ public class QueryModel implements IQueryModel {
         cacheable = true;
         pivotGroupByColumnHasNoAlias = false;
         referencedViews.clear();
-        columnAliasRefCounts.clear();
-        correlatedDepths.clear();
-        Misc.clearObjList(correlatedColumns);
-        sharedRefs.clear();
-        sharedRefByParentCount = 0;
     }
 
-    @Override
-    public void clearColumnMapStructs() {
-        this.aliasToColumnNameMap.clear();
-        this.wildcardColumnNames.clear();
-        this.aliasToColumnMap.clear();
-        this.bottomUpColumns.clear();
-        this.columnAliasIndexes.clear();
-        this.columnNameToAliasMap.clear();
-    }
-
-    @Override
-    public void clearOrderBy() {
-        orderBy.clear();
-        orderByDirection.clear();
-    }
-
-    @Override
     public void clearSampleBy() {
         sampleBy = null;
         sampleByUnit = null;
@@ -543,14 +398,8 @@ public class QueryModel implements IQueryModel {
         sampleByFrom = null;
     }
 
-    @Override
-    public void clearSharedRefs() {
-        sharedRefs.clear();
-    }
-
-    @Override
     public boolean containsJoin() {
-        IQueryModel current = this;
+        QueryModel current = this;
         do {
             if (current.getJoinModels().size() > 1) {
                 return true;
@@ -559,60 +408,10 @@ public class QueryModel implements IQueryModel {
         return false;
     }
 
-    @Override
-    public void copyBottomToTopColumns() {
-        topDownColumns.clear();
-        topDownNameSet.clear();
-        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            QueryColumn column = bottomUpColumns.getQuick(i);
-            addTopDownColumn(column, column.getAlias());
-        }
-    }
-
-    @Override
-    public void copyColumnsFrom(
-            IQueryModel other,
-            ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<ExpressionNode> expressionNodePool
-    ) {
-        clearColumnMapStructs();
-
-        // copy only literal columns and convert functions to literal while copying
-        LowerCaseCharSequenceObjHashMap<QueryColumn> otherMap = other.getAliasToColumnMap();
-        final ObjList<CharSequence> aliases = otherMap.keys();
-        for (int i = 0, n = aliases.size(); i < n; i++) {
-            final CharSequence alias = aliases.getQuick(i);
-            QueryColumn qc = otherMap.get(alias);
-            boolean isGenerated = qc.isGenerated();
-            if (qc.getAst().type != ExpressionNode.LITERAL) {
-                qc = queryColumnPool.next().of(
-                        alias,
-                        expressionNodePool.next().of(
-                                ExpressionNode.LITERAL,
-                                alias,
-                                0,
-                                qc.getAst().position
-                        ),
-                        qc.isIncludeIntoWildcard()
-                );
-                qc.setGenerated(isGenerated);
-            }
-            aliasToColumnMap.put(alias, qc);
-        }
-        ObjList<CharSequence> columnNames = other.getWildcardColumnNames();
-        this.wildcardColumnNames.addAll(columnNames);
-        for (int i = 0, n = columnNames.size(); i < n; i++) {
-            final CharSequence name = columnNames.getQuick(i);
-            this.aliasToColumnNameMap.put(name, name);
-        }
-    }
-
-    @Override
-    public void copyDeclsFrom(IQueryModel model, boolean overrideDeclares) throws SqlException {
+    public void copyDeclsFrom(QueryModel model, boolean overrideDeclares) throws SqlException {
         copyDeclsFrom(model.getDecls(), overrideDeclares);
     }
 
-    @Override
     public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
         if (decls != null && decls.size() > 0) {
             final ObjList<CharSequence> keys = decls.keys();
@@ -636,276 +435,101 @@ public class QueryModel implements IQueryModel {
         }
     }
 
-    @Override
-    public void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
-        // do not copy hints to self
-        if (hintsMap != hints) {
-            this.hintsMap.putAll(hints);
-        }
-    }
-
-    @Override
-    public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
-        this.orderByAdvice.clear();
-        this.orderByAdvice.addAll(orderByAdvice);
-    }
-
-    @Override
-    public void copyOrderByDirectionAdvice(IntList orderByDirection) {
-        this.orderByDirectionAdvice.clear();
-        this.orderByDirectionAdvice.addAll(orderByDirection);
-    }
-
-    @Override
-    public void copySharedRefs(IQueryModel model) {
-        sharedRefs.clear();
-        for (int i = 0, n = model.getSharedRefs().size(); i < n; i++) {
-            QueryModelWrapper wrapper = model.getSharedRefs().getQuick(i);
-            wrapper.setDelegate(this);
-        }
-        sharedRefs.addAll(model.getSharedRefs());
-        model.clearSharedRefs();
-    }
-
-    @Override
-    public void copyUpdateTableMetadata(IQueryModel updateTableModel) {
-        this.updateTableModel = updateTableModel;
+    public void copyUpdateTableMetadata(QueryModel updateTableModel) {
         this.tableId = updateTableModel.getTableId();
         this.metadataVersion = updateTableModel.getMetadataVersion();
     }
 
-    @Override
-    public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
-        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            QueryColumn qc = bottomUpColumns.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, qc.getAst())) {
-                return qc;
-            }
-        }
-        return null;
-    }
-
-    @Override
     public ExpressionNode getAlias() {
         return alias;
     }
 
-    @Override
-    public LowerCaseCharSequenceIntHashMap getAliasSequenceMap() {
-        return aliasSequenceMap;
-    }
-
-    @Override
     public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
         return aliasToColumnMap;
     }
 
-    @Override
-    public LowerCaseCharSequenceObjHashMap<CharSequence> getAliasToColumnNameMap() {
-        return aliasToColumnNameMap;
-    }
-
-    @Override
-    public boolean getAllowPropagationOfOrderByAdvice() {
-        return allowPropagationOfOrderByAdvice;
-    }
-
     @Nullable
-    @Override
     public ExpressionNode getAsOfJoinTolerance() {
         return asOfJoinTolerance;
     }
 
-    @Override
-    public ExpressionNode getBackupWhereClause() {
-        return backupWhereClause;
-    }
-
-    @Override
     public ObjList<QueryColumn> getBottomUpColumns() {
         return bottomUpColumns;
     }
 
-    @Override
-    public int getColumnAliasIndex(CharSequence alias) {
-        return columnAliasIndexes.get(alias);
-    }
-
-    @Override
-    public LowerCaseCharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
-        return columnNameToAliasMap;
-    }
-
-    @Override
     public ObjList<QueryColumn> getColumns() {
         return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
     }
 
-    @Override
-    public ExpressionNode getConstWhereClause() {
-        return constWhereClause;
-    }
-
-    @Override
-    public ObjList<LowerCaseCharSequenceIntHashMap> getCorrelatedColumns() {
-        return correlatedColumns;
-    }
-
-    @Override
     public LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls() {
         return decls;
     }
 
-    @Override
     public IntHashSet getDependencies() {
         return dependencies;
     }
 
-    @Override
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
     }
 
-    @Override
-    public ExpressionNode getFillFrom() {
-        return fillFrom;
-    }
-
-    @Override
-    public ExpressionNode getFillOffset() {
-        return fillOffset;
-    }
-
-    @Override
-    public ExpressionNode getFillStride() {
-        return fillStride;
-    }
-
-    @Override
-    public ExpressionNode getFillTimezoneName() {
-        return fillTimezoneName;
-    }
-
-    @Override
-    public ExpressionNode getFillTo() {
-        return fillTo;
-    }
-
-    @Override
-    public ObjList<ExpressionNode> getFillValues() {
-        return fillValues;
-    }
-
-    @Override
     public ObjList<ExpressionNode> getGroupBy() {
         return groupBy;
     }
 
     @NotNull
-    @Override
     public LowerCaseCharSequenceObjHashMap<CharSequence> getHints() {
         return hintsMap;
     }
 
-    @Override
     public HorizonJoinContext getHorizonJoinContext() {
         return horizonJoinContext;
     }
 
-    @Override
     public ObjList<ExpressionNode> getJoinColumns() {
         return joinColumns;
     }
 
-    @Override
-    public JoinContext getJoinContext() {
-        return context;
-    }
-
-    @Override
     public ExpressionNode getJoinCriteria() {
         return joinCriteria;
     }
 
-    @Override
     public int getJoinKeywordPosition() {
         return joinKeywordPosition;
     }
 
-    @Override
-    public ObjList<IQueryModel> getJoinModels() {
+    public ObjList<QueryModel> getJoinModels() {
         return joinModels;
     }
 
-    @Override
     public int getJoinType() {
         return joinType;
     }
 
-    @Override
-    public ObjList<QueryColumn> getLateralCountTemplates() {
-        return lateralCountTemplates;
-    }
-
-    @Override
     public ObjList<ExpressionNode> getLatestBy() {
         return latestBy;
     }
 
-    @Override
     public int getLatestByType() {
         return latestByType;
     }
 
-    @Override
-    public ExpressionNode getLimitAdviceHi() {
-        return limitAdviceHi;
-    }
-
-    @Override
-    public ExpressionNode getLimitAdviceLo() {
-        return limitAdviceLo;
-    }
-
-    @Override
     public ExpressionNode getLimitHi() {
         return limitHi;
     }
 
-    @Override
     public ExpressionNode getLimitLo() {
         return limitLo;
     }
 
-    @Override
     public int getLimitPosition() {
         return limitPosition;
     }
 
-    @Override
     public long getMetadataVersion() {
         return metadataVersion;
     }
 
-    @Override
-    public int getModelAliasIndex(CharSequence modelAlias, int start, int end) {
-        if (modelAlias.charAt(start) == '"' && modelAlias.charAt(end - 1) == '"') {
-            start++;
-            end--;
-        }
-        int index = modelAliasIndexes.keyIndex(modelAlias, start, end);
-        if (index < 0) {
-            return modelAliasIndexes.valueAt(index);
-        }
-        return -1;
-    }
-
-    @Override
-    public LowerCaseCharSequenceIntHashMap getModelAliasIndexes() {
-        return modelAliasIndexes;
-    }
-
-    @Override
     public int getModelPosition() {
         return modelPosition;
     }
@@ -915,7 +539,6 @@ public class QueryModel implements IQueryModel {
         return modelType;
     }
 
-    @Override
     public CharSequence getName() {
         if (alias != null) {
             return alias.token;
@@ -928,182 +551,103 @@ public class QueryModel implements IQueryModel {
         return null;
     }
 
-    @Override
     public LowerCaseCharSequenceObjHashMap<WindowExpression> getNamedWindows() {
         return namedWindows;
     }
 
-    @Override
-    public IQueryModel getNestedModel() {
+    public QueryModel getNestedModel() {
         return nestedModel;
     }
 
-    @Override
     public ObjList<ExpressionNode> getOrderBy() {
         return orderBy;
     }
 
-    @Override
-    public ObjList<ExpressionNode> getOrderByAdvice() {
-        return orderByAdvice;
-    }
-
-    @Override
-    public int getOrderByAdviceMnemonic() {
-        return orderByAdviceMnemonic;
-    }
-
-    @Override
     public IntList getOrderByDirection() {
         return orderByDirection;
     }
 
-    @Override
-    public IntList getOrderByDirectionAdvice() {
-        return orderByDirectionAdvice;
-    }
-
-    @Override
     public int getOrderByPosition() {
         return orderByPosition;
     }
 
-    @Override
-    public LowerCaseCharSequenceIntHashMap getOrderHash() {
-        return orderHash;
-    }
-
-    @Override
-    public IntList getOrderedJoinModels() {
-        return orderedJoinModels;
-    }
-
-    @Override
     public ExpressionNode getOriginatingViewNameExpr() {
         return originatingViewNameExpr;
     }
 
-    @Override
-    public ExpressionNode getOuterJoinExpressionClause() {
-        return outerJoinExpressionClause;
-    }
-
-    @Override
     public LowerCaseCharSequenceHashSet getOverridableDecls() {
         return overridableDecls;
     }
 
-    @Override
-    public ObjList<ExpressionNode> getParsedWhere() {
-        return parsedWhere;
-    }
-
-    @Override
     public ObjList<PivotForColumn> getPivotForColumns() {
         return pivotForColumns;
     }
 
-    @Override
     public ObjList<QueryColumn> getPivotGroupByColumns() {
         return pivotGroupByColumns;
     }
 
     @Override
-    public ExpressionNode getPostJoinWhereClause() {
-        return postJoinWhereClause;
-    }
-
-    @Override
-    public IQueryModel getQueryModel() {
+    public QueryModel getQueryModel() {
         return this;
     }
 
-    @Override
-    public int getRefCount(CharSequence alias) {
-        return columnAliasRefCounts.get(alias);
-    }
-
-    @Override
     public ObjList<ViewDefinition> getReferencedViews() {
         return referencedViews;
     }
 
-    @Override
     public ExpressionNode getSampleBy() {
         return sampleBy;
     }
 
-    @Override
     public ObjList<ExpressionNode> getSampleByFill() {
         return sampleByFill;
     }
 
-    @Override
     public ExpressionNode getSampleByFrom() {
         return sampleByFrom;
     }
 
-    @Override
     public ExpressionNode getSampleByOffset() {
         return sampleByOffset;
     }
 
-    @Override
     public ExpressionNode getSampleByTimezoneName() {
         return sampleByTimezoneName;
     }
 
-    @Override
     public ExpressionNode getSampleByTo() {
         return sampleByTo;
     }
 
-    @Override
     public ExpressionNode getSampleByUnit() {
         return sampleByUnit;
     }
 
-    @Override
     public int getSelectModelType() {
         return selectModelType;
     }
 
-    @Override
     public int getSetOperationType() {
         return setOperationType;
     }
 
-    @Override
-    public int getSharedRefCount() {
-        return sharedRefs.size() + sharedRefByParentCount;
-    }
-
-    @Override
-    public ObjList<QueryModelWrapper> getSharedRefs() {
-        return sharedRefs;
-    }
-
-    @Override
     public int getShowCreateDatabaseInclude() {
         return showCreateDatabaseInclude;
     }
 
-    @Override
     public int getShowKind() {
         return showKind;
     }
 
-    @Override
     public ExpressionNode getSubsample() {
         return subsample;
     }
 
-    @Override
     public int getSubsamplePosition() {
         return subsamplePosition;
     }
 
-    @Override
     public int getTableId() {
         return tableId;
     }
@@ -1118,67 +662,26 @@ public class QueryModel implements IQueryModel {
         return tableNameExpr;
     }
 
-    @Override
-    public RecordCursorFactory getTableNameFunction() {
-        return tableNameFunction;
-    }
-
-    @Override
     public ExpressionNode getTimestamp() {
         return timestamp;
     }
 
-    @Override
-    public int getTimestampColumnIndex() {
-        return timestampColumnIndex;
-    }
-
-    @Override
-    public CharSequence getTimestampOffsetAlias() {
-        return timestampOffsetAlias;
-    }
-
-    @Override
-    public char getTimestampOffsetUnit() {
-        return timestampOffsetUnit;
-    }
-
-    @Override
-    public int getTimestampOffsetValue() {
-        return timestampOffsetValue;
-    }
-
-    @Override
-    public CharSequence getTimestampSourceColumn() {
-        return timestampSourceColumn;
-    }
-
-    @Override
-    public ObjList<QueryColumn> getTopDownColumns() {
-        return topDownColumns;
-    }
-
-    @Override
-    public IQueryModel getUnionModel() {
+    public QueryModel getUnionModel() {
         return unionModel;
     }
 
-    @Override
     public ObjList<CharSequence> getUnnestColumnAliases() {
         return unnestColumnAliases;
     }
 
-    @Override
     public ObjList<ExpressionNode> getUnnestExpressions() {
         return unnestExpressions;
     }
 
-    @Override
     public ObjList<ObjList<CharSequence>> getUnnestJsonColumnNames() {
         return unnestJsonColumnNames;
     }
 
-    @Override
     public ObjList<IntList> getUnnestJsonColumnTypes() {
         return unnestJsonColumnTypes;
     }
@@ -1188,7 +691,6 @@ public class QueryModel implements IQueryModel {
      * Array sources contribute 1 column each; JSON sources contribute N
      * columns (one per COLUMNS declaration).
      */
-    @Override
     public int getUnnestOutputColumnCount() {
         int total = 0;
         for (int i = 0, n = unnestExpressions.size(); i < n; i++) {
@@ -1201,90 +703,38 @@ public class QueryModel implements IQueryModel {
         return total;
     }
 
-    @Override
     public ObjList<ExpressionNode> getUpdateExpressions() {
         return updateSetColumns;
     }
 
-    @Override
-    public ObjList<CharSequence> getUpdateTableColumnNames() {
-        return updateTableModel != null ? updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
-    }
-
-    @Override
-    public IntList getUpdateTableColumnTypes() {
-        return updateTableModel != null ? updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
-    }
-
-    @Override
-    public IQueryModel getUpdateTableModel() {
-        return updateTableModel;
-    }
-
-    @Override
     public TableToken getUpdateTableToken() {
         return updateTableToken;
     }
 
-    @Override
     public ExpressionNode getViewNameExpr() {
         return viewNameExpr;
     }
 
-    @Override
     public ExpressionNode getWhereClause() {
         return whereClause;
     }
 
-    @Override
-    public ObjList<CharSequence> getWildcardColumnNames() {
-        return wildcardColumnNames;
-    }
-
-    @Override
     public WindowJoinContext getWindowJoinContext() {
         return windowJoinContext;
     }
 
-    @Override
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
         return withClauseModel;
     }
 
-    @Override
     public boolean hasExplicitTimestamp() {
         return timestamp != null && explicitTimestamp;
     }
 
-    @Override
-    public boolean hasSharedRefs() {
-        return sharedRefs.size() > 0;
-    }
-
-    @Override
-    public boolean hasTimestampOffset() {
-        return timestampOffsetUnit != 0;
-    }
-
-    @Override
-    public void incrementColumnRefCount(CharSequence alias, int refCount) {
-        if (columnAliasIndexes.get(alias) > -1) {
-            int keyIndex = columnAliasRefCounts.keyIndex(alias);
-            if (keyIndex < 0) {
-                int old = columnAliasRefCounts.valueAt(keyIndex);
-                columnAliasRefCounts.putAt(keyIndex, alias, old + refCount);
-            } else {
-                columnAliasRefCounts.putAt(keyIndex, alias, refCount);
-            }
-        }
-    }
-
-    @Override
     public boolean isArtificialStar() {
         return artificialStar;
     }
 
-    @Override
     public boolean isCacheable() {
         if (nestedModel != null) {
             return cacheable && nestedModel.isCacheable();
@@ -1292,338 +742,60 @@ public class QueryModel implements IQueryModel {
         return cacheable;
     }
 
-    @Override
-    public boolean isCorrelatedAtDepth(int depth) {
-        if (nestedModel != null) {
-            if (nestedModel.isCorrelatedAtDepth(depth)) {
-                return true;
-            }
-        }
-
-        for (int i = 1, j = joinModels.size(); i < j; i++) {
-            IQueryModel m = joinModels.getQuick(i);
-            if (m != null) {
-                if (m.isCorrelatedAtDepth(depth)) {
-                    return true;
-                }
-            }
-        }
-
-        if (unionModel != null) {
-            if (unionModel.isCorrelatedAtDepth(depth)) {
-                return true;
-            }
-        }
-        return correlatedDepths.keyIndex(depth) < 0;
+    public boolean isCommaJoin() {
+        return isCommaJoin;
     }
 
-    @Override
     public boolean isCteModel() {
         return isCteModel;
     }
 
-    @Override
     public boolean isDistinct() {
         return distinct;
     }
 
-    @Override
     public boolean isExplicitTimestamp() {
         return explicitTimestamp;
     }
 
-    @Override
-    public boolean isForceBackwardScan() {
-        return forceBackwardScan;
-    }
-
-    @Override
-    public ExpressionNode getLateralCountCoalesceGuard() {
-        return lateralCountCoalesceGuard;
-    }
-
-    @Override
-    public boolean isLateralCountCoalesceRequired() {
-        return isLateralCountCoalesceRequired;
-    }
-
-    @Override
     public boolean isNestedModelIsSubQuery() {
         return nestedModelIsSubQuery;
     }
 
-    @Override
-    public boolean isOptimisable() {
-        return true;
-    }
-
-    @Override
-    public boolean isOrderDescendingByDesignatedTimestampOnly() {
-        return orderDescendingByDesignatedTimestampOnly;
-    }
-
-    @Override
-    public boolean isOuterRefWildcardExcluded() {
-        return isOuterRefWildcardExcluded;
-    }
-
-    @Override
-    public boolean isOwnCorrelatedAtDepth(int depth, int flag) {
-        int ki = correlatedDepths.keyIndex(depth);
-        if (ki >= 0) {
-            return false;
-        }
-        return (correlatedDepths.valueAt(ki) & flag) != 0;
-    }
-
-    @Override
     public boolean isPivot() {
         return pivotForColumns.size() > 0;
     }
 
-    @Override
     public boolean isPivotGroupByColumnHasNoAlias() {
         return pivotGroupByColumnHasNoAlias;
     }
 
-    @Override
-    public boolean isSelectTranslation() {
-        return isSelectTranslation;
-    }
-
-    @Override
-    public boolean isSkipped() {
-        return skipped;
-    }
-
-    @Override
     public boolean isStandaloneUnnest() {
         return standaloneUnnest;
     }
 
     @SuppressWarnings("unused")
-    @Override
     public boolean isTemporalJoin() {
         return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
     }
 
-    @Override
-    public boolean isTopDownNameMissing(CharSequence columnName) {
-        return topDownNameSet.excludes(columnName);
-    }
-
-    @Override
     public boolean isUnnestJsonSource(int index) {
         return index < unnestJsonColumnNames.size()
                 && unnestJsonColumnNames.getQuick(index) != null;
     }
 
-    @Override
     public boolean isUnnestOrdinality() {
         return unnestOrdinality;
     }
 
-    @Override
     public boolean isUpdate() {
         return isUpdateModel;
     }
 
-    @Override
-    public void makeCorrelatedAtDepth(int depth, int flags) {
-        int ki = correlatedDepths.keyIndex(depth);
-        if (ki < 0) {
-            correlatedDepths.putAt(ki, depth, correlatedDepths.valueAt(ki) | flags);
-        } else {
-            correlatedDepths.putAt(ki, depth, flags);
-        }
-    }
-
-    /**
-     * The goal of this method is to dismiss the baseModel as
-     * the layer between this and the baseModel is referencing. We do that by copying ASTs from
-     * the baseModel onto the current baseModel and also maintaining all the maps in sync.
-     * <p>
-     * The caller is responsible for checking if baseModel is suitable for the removal. E.g. it does not
-     * contain arithmetic expressions. Although this method does not validate if baseModel has arithmetic.
-     *
-     * @param baseModel baseModel containing columns mapped into the referenced baseModel.
-     */
-    @Override
-    public void mergePartially(IQueryModel baseModel, ObjectPool<QueryColumn> queryColumnPool) {
-        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            QueryColumn thisColumn = bottomUpColumns.getQuick(i);
-            if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
-                QueryColumn thatColumn = baseModel.getAliasToColumnMap().get(thisColumn.getAst().token);
-                // skip if baseModel does not have this column
-                if (thatColumn == null) {
-                    continue;
-                }
-                // We cannot mutate the column on this baseModel, because columns might be shared between
-                // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
-                // `thisColumn` alias should let us lookup, the column's reference
-                QueryColumn col = queryColumnPool.next();
-                col.of(thisColumn.getAlias(), thatColumn.getAst(), thisColumn.isIncludeIntoWildcard());
-                col.setGenerated(thisColumn.isGenerated());
-                bottomUpColumns.setQuick(i, col);
-
-                int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());
-                assert index < 0;
-                final CharSequence immutableAlias = aliasToColumnMap.keyAt(index);
-                aliasToColumnMap.putAt(index, immutableAlias, col);
-                // maintain sync between alias and column name
-                aliasToColumnNameMap.put(immutableAlias, thatColumn.getAst().token);
-            }
-        }
-
-        if (baseModel.getOrderBy().size() > 0) {
-            assert getOrderBy().size() == 0;
-            for (int i = 0, n = baseModel.getOrderBy().size(); i < n; i++) {
-                addOrderBy(baseModel.getOrderBy().getQuick(i), baseModel.getOrderByDirection().getQuick(i));
-            }
-            baseModel.getOrderBy().clear();
-            baseModel.getOrderByDirection().clear();
-        }
-
-        // If baseModel has limits, the outer baseModel must not have different limits.
-        // We are merging models affecting "select" clause and not the row count.
-        if (baseModel.getLimitLo() != null || baseModel.getLimitHi() != null) {
-            limitLo = baseModel.getLimitLo();
-            limitHi = baseModel.getLimitHi();
-            limitPosition = baseModel.getLimitPosition();
-            limitAdviceLo = baseModel.getLimitAdviceLo();
-            limitAdviceHi = baseModel.getLimitAdviceHi();
-        }
-    }
-
-    @Override
-    public void moveGroupByFrom(IQueryModel model) {
-        ObjList<ExpressionNode> thatGroupBy = model.getGroupBy();
-        groupBy.addAll(thatGroupBy);
-        // clear the source
-        thatGroupBy.clear();
-    }
-
-    @Override
-    public void moveJoinAliasFrom(IQueryModel that) {
-        final ExpressionNode alias = that.getAlias();
-        if (alias != null && !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {
-            setAlias(alias);
-            addModelAliasIndex(alias, 0);
-        }
-    }
-
-    @Override
-    public void moveLimitFrom(IQueryModel baseModel) {
-        this.limitLo = baseModel.getLimitLo();
-        this.limitHi = baseModel.getLimitHi();
-        baseModel.setLimit(null, null);
-    }
-
-    @Override
-    public void moveSubsampleFrom(IQueryModel baseModel) {
-        if (baseModel.getSubsample() != null) {
-            this.subsample = baseModel.getSubsample();
-            this.subsamplePosition = baseModel.getSubsamplePosition();
-            baseModel.setSubsample(null, 0);
-        }
-    }
-
-    @Override
-    public void moveOrderByFrom(IQueryModel model) {
-        orderBy.addAll(model.getOrderBy());
-        orderByDirection.addAll(model.getOrderByDirection());
-        model.clearOrderBy();
-    }
-
-    @Override
-    public void moveSampleByFrom(IQueryModel model) {
-        // Donor must not carry fill* state. SqlOptimiser.rewriteSampleBy is the only fill* writer
-        // and clears sampleBy in the same block, so the gate `sampleBy != null` at the caller
-        // (SqlOptimiser.rewriteSelectClause0) is mutually exclusive with fill* being set.
-        assert model.getFillStride() == null
-                && model.getFillOffset() == null
-                && model.getFillTimezoneName() == null
-                && model.getFillFrom() == null
-                && model.getFillTo() == null
-                && model.getFillValues() == null
-                : "moveSampleByFrom donor must not have fill* set";
-        this.sampleBy = model.getSampleBy();
-        this.sampleByUnit = model.getSampleByUnit();
-        this.sampleByFill.clear();
-        this.sampleByFill.addAll(model.getSampleByFill());
-        this.sampleByTimezoneName = model.getSampleByTimezoneName();
-        this.sampleByOffset = model.getSampleByOffset();
-        this.sampleByTo = model.getSampleByTo();
-        this.sampleByFrom = model.getSampleByFrom();
-
-        // clear the source
-        model.clearSampleBy();
-    }
-
-    /**
-     * Optimiser may be attempting to order join clauses several times.
-     * Every time ordering takes place optimiser will keep at most two lists:
-     * one is last known order the other is new order. If new order cost is better
-     * optimiser will replace last known order with new one.
-     * <p>
-     * To facilitate this behaviour the function will always return non-current list.
-     *
-     * @return non-current order list.
-     */
-    @Override
-    public IntList nextOrderedJoinModels() {
-        IntList ordered = orderedJoinModels == orderedJoinModels1 ? orderedJoinModels2 : orderedJoinModels1;
-        ordered.clear();
-        return ordered;
-    }
-
-    /*
-     * Splits "where" clauses into "and" chunks
-     */
-    @Override
-    public ObjList<ExpressionNode> parseWhereClause() {
-        ExpressionNode n = getWhereClause();
-        // pre-order traversal
-        sqlNodeStack.clear();
-        while (!sqlNodeStack.isEmpty() || n != null) {
-            if (n != null) {
-                // a tokenless conjunct (e.g. a sub-query used directly as a boolean predicate)
-                // is not an AND node and must be kept: dropping it here would silently remove
-                // the predicate from the rebuilt WHERE clause instead of letting filter
-                // compilation reject (or evaluate) it
-                if (n.token != null && isAndKeyword(n.token)) {
-                    if (n.rhs != null) {
-                        sqlNodeStack.push(n.rhs);
-                    }
-                    n = n.lhs;
-                } else {
-                    // preserve the predicate's origin: an inner-join ON conjunct pushed onto the
-                    // master model's WHERE must stay distinguishable from a real WHERE predicate
-                    addParsedWhereNode(n, n.innerPredicate);
-                    n = null;
-                }
-            } else {
-                n = sqlNodeStack.poll();
-            }
-        }
-        return getParsedWhere();
-    }
-
-    @Override
     public void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions) {
         final ObjList<CharSequence> keys = viewDefinitions.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final ViewDefinition viewDefinition = viewDefinitions.get(keys.getQuick(i));
-            if (!referencedViews.contains(viewDefinition)) {
-                referencedViews.add(viewDefinition);
-            }
-        }
-    }
-
-    @Override
-    public void recordViews(ObjList<ViewDefinition> viewDefinitions) {
-        for (int i = 0, n = viewDefinitions.size(); i < n; i++) {
-            final ViewDefinition viewDefinition = viewDefinitions.getQuick(i);
             if (!referencedViews.contains(viewDefinition)) {
                 referencedViews.add(viewDefinition);
             }
@@ -1636,7 +808,6 @@ public class QueryModel implements IQueryModel {
      *
      * @param columnIndex of the column to remove. This index is based on bottomUpColumns list.
      */
-    @Override
     public void removeColumn(int columnIndex) {
         CharSequence columnAlias = bottomUpColumns.getQuick(columnIndex).getAlias();
         bottomUpColumns.remove(columnIndex);
@@ -1646,392 +817,172 @@ public class QueryModel implements IQueryModel {
         columnAliasIndexes.remove(columnAlias);
     }
 
-    @Override
-    public void removeDependency(int index) {
-        dependencies.remove(index);
-    }
-
-    @Override
-    public void replaceColumn(int columnIndex, QueryColumn newColumn) {
-        if (topDownColumns.size() > 0) {
-            topDownColumns.setQuick(columnIndex, newColumn);
-        } else {
-            bottomUpColumns.setQuick(columnIndex, newColumn);
-        }
-    }
-
-    @Override
-    public void replaceColumnNameMap(CharSequence alias, CharSequence oldToken, CharSequence newToken) {
-        aliasToColumnNameMap.put(alias, newToken);
-        columnNameToAliasMap.remove(oldToken);
-        columnNameToAliasMap.put(newToken, alias);
-    }
-
-    @Override
-    public void replaceJoinModel(int pos, IQueryModel model) {
-        joinModels.setQuick(pos, model);
-    }
-
-    @Override
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }
 
-    @Override
-    public void setAllowPropagationOfOrderByAdvice(boolean value) {
-        allowPropagationOfOrderByAdvice = value;
-    }
-
-    @Override
     public void setArtificialStar(boolean artificialStar) {
         this.artificialStar = artificialStar;
     }
 
-    @Override
     public void setAsOfJoinTolerance(ExpressionNode asOfJoinTolerance) {
         this.asOfJoinTolerance = asOfJoinTolerance;
     }
 
-    @Override
-    public void setBackupWhereClause(ExpressionNode backupWhereClause) {
-        this.backupWhereClause = backupWhereClause;
-    }
-
-    @Override
     public void setCacheable(boolean b) {
         cacheable = b;
     }
 
-    @Override
-    public void setConstWhereClause(ExpressionNode constWhereClause) {
-        this.constWhereClause = constWhereClause;
-    }
-
-    @Override
-    public void setContext(JoinContext context) {
-        this.context = context;
-    }
-
-    @Override
     public void setDistinct(boolean distinct) {
         this.distinct = distinct;
     }
 
-    @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
         this.explicitTimestamp = explicitTimestamp;
     }
 
-    @Override
-    public void setFillFrom(ExpressionNode fillFrom) {
-        this.fillFrom = fillFrom;
+    public void setIsCommaJoin(boolean isCommaJoin) {
+        this.isCommaJoin = isCommaJoin;
     }
 
-    @Override
-    public void setFillOffset(ExpressionNode fillOffset) {
-        this.fillOffset = fillOffset;
-    }
-
-    @Override
-    public void setFillStride(ExpressionNode fillStride) {
-        this.fillStride = fillStride;
-    }
-
-    @Override
-    public void setFillTimezoneName(ExpressionNode fillTimezoneName) {
-        this.fillTimezoneName = fillTimezoneName;
-    }
-
-    @Override
-    public void setFillTo(ExpressionNode fillTo) {
-        this.fillTo = fillTo;
-    }
-
-    @Override
-    public void setFillValues(ObjList<ExpressionNode> fillValues) {
-        this.fillValues = fillValues;
-    }
-
-    @Override
-    public void setForceBackwardScan(boolean forceBackwardScan) {
-        this.forceBackwardScan = forceBackwardScan;
-    }
-
-    @Override
     public void setIsCteModel(boolean isCteModel) {
         this.isCteModel = isCteModel;
     }
 
-    @Override
     public void setIsUpdate(boolean isUpdate) {
         this.isUpdateModel = isUpdate;
     }
 
-    @Override
     public void setJoinCriteria(ExpressionNode joinCriteria) {
         this.joinCriteria = joinCriteria;
     }
 
-    @Override
     public void setJoinKeywordPosition(int position) {
         this.joinKeywordPosition = position;
     }
 
-    @Override
     public void setJoinType(int joinType) {
         this.joinType = joinType;
     }
 
-    @Override
-    public void setLateralCountCoalesceGuard(ExpressionNode guard) {
-        this.lateralCountCoalesceGuard = guard;
-    }
-
-    @Override
-    public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
-        this.isLateralCountCoalesceRequired = isLateralCountCoalesceRequired;
-    }
-
-    @Override
     public void setLatestByType(int latestByType) {
         this.latestByType = latestByType;
     }
 
-    @Override
     public void setLimit(ExpressionNode lo, ExpressionNode hi) {
         this.limitLo = lo;
         this.limitHi = hi;
     }
 
-    @Override
-    public void setLimitAdvice(ExpressionNode lo, ExpressionNode hi) {
-        this.limitAdviceLo = lo;
-        this.limitAdviceHi = hi;
-    }
-
-    @Override
     public void setLimitPosition(int limitPosition) {
         this.limitPosition = limitPosition;
     }
 
-    @Override
     public void setMetadataVersion(long metadataVersion) {
         this.metadataVersion = metadataVersion;
     }
 
-    @Override
     public void setModelPosition(int modelPosition) {
         this.modelPosition = modelPosition;
     }
 
-    @Override
     public void setModelType(int modelType) {
         this.modelType = modelType;
     }
 
-    @Override
-    public void setNestedModel(IQueryModel nestedModel) {
+    public void setNestedModel(QueryModel nestedModel) {
         this.nestedModel = nestedModel;
         if (nestedModel != null && viewNameExpr != null) {
             nestedModel.setViewNameExpr(viewNameExpr);
         }
     }
 
-    @Override
     public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
         this.nestedModelIsSubQuery = nestedModelIsSubQuery;
     }
 
-    @Override
-    public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
-        this.orderByAdviceMnemonic = orderByAdviceMnemonic;
-    }
-
-    @Override
     public void setOrderByPosition(int orderByPosition) {
         this.orderByPosition = orderByPosition;
     }
 
-    @Override
-    public void setOrderDescendingByDesignatedTimestampOnly(boolean orderDescendingByDesignatedTimestampOnly) {
-        this.orderDescendingByDesignatedTimestampOnly = orderDescendingByDesignatedTimestampOnly;
-    }
-
-    @Override
-    public void setOrderedJoinModels(IntList that) {
-        assert that == orderedJoinModels1 || that == orderedJoinModels2;
-        this.orderedJoinModels = that;
-    }
-
-    @Override
     public void setOriginatingViewNameExpr(ExpressionNode originatingViewNameExpr) {
         this.originatingViewNameExpr = originatingViewNameExpr;
     }
 
-    @Override
-    public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
-        this.outerJoinExpressionClause = outerJoinExpressionClause;
-    }
-
-    @Override
-    public void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded) {
-        this.isOuterRefWildcardExcluded = isOuterRefWildcardExcluded;
-    }
-
-    @Override
     public void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias) {
         this.pivotGroupByColumnHasNoAlias = pivotGroupByColumnHasNoAlias;
     }
 
-    @Override
-    public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
-        this.postJoinWhereClause = postJoinWhereClause;
-    }
-
-    @Override
     public void setSampleBy(ExpressionNode sampleBy) {
         this.sampleBy = sampleBy;
     }
 
-    @Override
     public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
         this.sampleBy = sampleBy;
         this.sampleByUnit = sampleByUnit;
     }
 
-    @Override
-    public void setSampleByFill(ObjList<ExpressionNode> fill) {
-        sampleByFill.clear();
-        if (fill != null) {
-            sampleByFill.addAll(fill);
-        }
-    }
-
-    @Override
     public void setSampleByFromTo(ExpressionNode from, ExpressionNode to) {
         this.sampleByFrom = from;
         this.sampleByTo = to;
     }
 
-    @Override
     public void setSampleByOffset(ExpressionNode sampleByOffset) {
         this.sampleByOffset = sampleByOffset;
     }
 
-    @Override
     public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
         this.sampleByTimezoneName = sampleByTimezoneName;
     }
 
-    @Override
     public void setSelectModelType(int selectModelType) {
         this.selectModelType = selectModelType;
     }
 
-    @Override
-    public void setSelectTranslation(boolean isSelectTranslation) {
-        this.isSelectTranslation = isSelectTranslation;
-    }
-
-    @Override
     public void setSetOperationType(int setOperationType) {
         this.setOperationType = setOperationType;
     }
 
-    public void setSharedRefByParentCount(int sharedRefByParentCount) {
-        this.sharedRefByParentCount = sharedRefByParentCount;
-    }
-
-    @Override
     public void setShowCreateDatabaseInclude(int includeMask) {
         this.showCreateDatabaseInclude = includeMask;
     }
 
-    @Override
     public void setShowKind(int showKind) {
         this.showKind = showKind;
     }
 
-    @Override
+    public void setStandaloneUnnest(boolean standaloneUnnest) {
+        this.standaloneUnnest = standaloneUnnest;
+    }
+
     public void setSubsample(ExpressionNode subsample, int position) {
         this.subsample = subsample;
         this.subsamplePosition = position;
     }
 
-    @Override
-    public void setSkipped(boolean skipped) {
-        this.skipped = skipped;
-    }
-
-    @Override
-    public void setStandaloneUnnest(boolean standaloneUnnest) {
-        this.standaloneUnnest = standaloneUnnest;
-    }
-
-    @Override
     public void setTableId(int id) {
         this.tableId = id;
     }
 
-    @Override
     public void setTableNameExpr(ExpressionNode tableNameExpr) {
         this.tableNameExpr = tableNameExpr;
     }
 
-    @Override
-    public void setTableNameFunction(RecordCursorFactory function) {
-        this.tableNameFunction = function;
-    }
-
-    @Override
     public void setTimestamp(ExpressionNode timestamp) {
         this.timestamp = timestamp;
     }
 
-    @Override
-    public void setTimestampColumnIndex(int index) {
-        this.timestampColumnIndex = index;
-    }
-
-    @Override
-    public void setTimestampOffsetAlias(CharSequence alias) {
-        this.timestampOffsetAlias = alias;
-    }
-
-    @Override
-    public void setTimestampOffsetUnit(char unit) {
-        this.timestampOffsetUnit = unit;
-    }
-
-    @Override
-    public void setTimestampOffsetValue(int value) {
-        this.timestampOffsetValue = value;
-    }
-
-    @Override
-    public void setTimestampSourceColumn(CharSequence col) {
-        this.timestampSourceColumn = col;
-    }
-
-    @Override
-    public void setUnionModel(IQueryModel unionModel) {
+    public void setUnionModel(QueryModel unionModel) {
         this.unionModel = unionModel;
         if (unionModel != null && viewNameExpr != null) {
             unionModel.setViewNameExpr(viewNameExpr);
         }
     }
 
-    @Override
     public void setUnnestOrdinality(boolean unnestOrdinality) {
         this.unnestOrdinality = unnestOrdinality;
     }
 
-    @Override
-    public void setUpdateTableToken(TableToken tableName) {
-        this.updateTableToken = tableName;
-    }
-
-    @Override
     public void setViewNameExpr(ExpressionNode viewNameExpr) {
         this.viewNameExpr = viewNameExpr;
         if (viewNameExpr != null) {
@@ -2047,7 +998,6 @@ public class QueryModel implements IQueryModel {
         }
     }
 
-    @Override
     public void setWhereClause(ExpressionNode whereClause) {
         this.whereClause = whereClause;
     }
@@ -2055,16 +1005,15 @@ public class QueryModel implements IQueryModel {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (modelType == ExecutionModel.QUERY) {
-            toSink0(sink, false, false);
+            toSink0(sink, false);
         } else if (modelType == ExecutionModel.UPDATE) {
             updateToSink(sink);
         }
     }
 
     // returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
-    @Override
-    public void toSink0(CharSink<?> sink, boolean joinSlave, boolean showOrderBy) {
-        if (selectModelType == IQueryModel.SELECT_MODEL_SHOW) {
+    public void toSink0(CharSink<?> sink, boolean showOrderBy) {
+        if (selectModelType == QueryModel.SELECT_MODEL_SHOW) {
             sink.put(getSelectModelTypeText());
         } else {
             final boolean hasColumns = topDownColumns.size() > 0 || bottomUpColumns.size() > 0;
@@ -2086,7 +1035,7 @@ public class QueryModel implements IQueryModel {
                 tableNameExpr.toSink(sink);
             } else if (nestedModel != null) {
                 sink.putAscii('(');
-                nestedModel.toSink0(sink, false, showOrderBy);
+                nestedModel.toSink0(sink, showOrderBy);
                 sink.putAscii(')');
             }
             if (alias != null) {
@@ -2099,17 +1048,6 @@ public class QueryModel implements IQueryModel {
                 sink.putAscii(')');
             }
 
-            // Output timestamp offset info if present (for dateadd-transformed timestamps)
-            if (hasTimestampOffset()) {
-                sink.putAscii(" ts_offset ('");
-                sink.putAscii(timestampOffsetUnit);
-                sink.putAscii("', ");
-                sink.put(timestampOffsetValue);
-                sink.putAscii(", ");
-                sink.put(timestampColumnIndex);
-                sink.putAscii(')');
-            }
-
             if (getLatestByType() == LATEST_BY_DEPRECATED && getLatestBy().size() > 0) {
                 sink.putAscii(" latest by ");
                 for (int i = 0, n = getLatestBy().size(); i < n; i++) {
@@ -2119,246 +1057,11 @@ public class QueryModel implements IQueryModel {
                     getLatestBy().getQuick(i).toSink(sink);
                 }
             }
-
-            if (orderedJoinModels.size() > 1) {
-                for (int i = 0, n = orderedJoinModels.size(); i < n; i++) {
-                    IQueryModel model = joinModels.getQuick(orderedJoinModels.getQuick(i));
-                    if (model != this) {
-                        switch (model.getJoinType()) {
-                            case JOIN_LEFT_OUTER:
-                                sink.putAscii(" left join ");
-                                break;
-                            case JOIN_WINDOW:
-                                sink.putAscii(" window join ");
-                                break;
-                            case JOIN_RIGHT_OUTER:
-                                sink.putAscii(" right join ");
-                                break;
-                            case JOIN_FULL_OUTER:
-                                sink.putAscii(" full join ");
-                                break;
-                            case JOIN_ASOF:
-                                sink.putAscii(" asof join ");
-                                break;
-                            case JOIN_SPLICE:
-                                sink.putAscii(" splice join ");
-                                break;
-                            case JOIN_CROSS:
-                                sink.putAscii(" cross join ");
-                                break;
-                            case JOIN_LT:
-                                sink.putAscii(" lt join ");
-                                break;
-                            case JOIN_HORIZON:
-                                sink.putAscii(" horizon join ");
-                                break;
-                            case JOIN_UNNEST:
-                                sink.putAscii(", unnest(");
-                                for (int k = 0, z = model.getUnnestExpressions().size(); k < z; k++) {
-                                    if (k > 0) {
-                                        sink.putAscii(", ");
-                                    }
-                                    model.getUnnestExpressions().getQuick(k).toSink(sink);
-                                    if (model.isUnnestJsonSource(k)) {
-                                        ObjList<CharSequence> colNames =
-                                                model.getUnnestJsonColumnNames().getQuick(k);
-                                        IntList colTypes =
-                                                model.getUnnestJsonColumnTypes().getQuick(k);
-                                        sink.putAscii(" columns(");
-                                        for (int c = 0, cn = colNames.size(); c < cn; c++) {
-                                            if (c > 0) {
-                                                sink.putAscii(", ");
-                                            }
-                                            sink.put(colNames.getQuick(c));
-                                            sink.putAscii(' ');
-                                            sink.putAscii(ColumnType.nameOf(colTypes.getQuick(c)));
-                                        }
-                                        sink.putAscii(')');
-                                    }
-                                }
-                                sink.putAscii(')');
-                                if (model.isUnnestOrdinality()) {
-                                    sink.putAscii(" with ordinality");
-                                }
-                                aliasToSink(model.getAlias().token, sink);
-                                if (model.getUnnestColumnAliases().size() > 0) {
-                                    sink.putAscii('(');
-                                    for (int k = 0, z = model.getUnnestColumnAliases().size(); k < z; k++) {
-                                        if (k > 0) {
-                                            sink.putAscii(", ");
-                                        }
-                                        sink.put(model.getUnnestColumnAliases().getQuick(k));
-                                    }
-                                    sink.putAscii(')');
-                                }
-                                if (model.getPostJoinWhereClause() != null) {
-                                    sink.putAscii(" post-join-where ");
-                                    model.getPostJoinWhereClause().toSink(sink);
-                                }
-                                continue;
-                            default:
-                                sink.putAscii(" join ");
-                                break;
-                        }
-
-                        if (model.getWhereClause() != null) {
-                            sink.putAscii('(');
-                            model.toSink0(sink, true, showOrderBy);
-                            sink.putAscii(')');
-                            if (model.getAlias() != null) {
-                                aliasToSink(model.getAlias().token, sink);
-                            } else if (model.getTableName() != null) {
-                                aliasToSink(model.getTableName(), sink);
-                            }
-                        } else {
-                            model.toSink0(sink, true, showOrderBy);
-                        }
-
-                        JoinContext jc = model.getJoinContext();
-                        if (jc != null && jc.aIndexes.size() > 0) {
-                            // join clause
-                            sink.putAscii(" on ");
-                            for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
-                                if (k > 0) {
-                                    sink.putAscii(" and ");
-                                }
-                                jc.aNodes.getQuick(k).toSink(sink);
-                                sink.putAscii(" = ");
-                                jc.bNodes.getQuick(k).toSink(sink);
-                            }
-                        }
-
-                        WindowJoinContext wjc = model.getWindowJoinContext();
-                        if (model.getJoinType() == JOIN_WINDOW) {
-                            sink.put(" between ");
-                            if (wjc.getLoExpr() != null) {
-                                wjc.getLoExpr().toSink(sink);
-                                unitToSink(sink, wjc.getLoExprTimeUnit());
-                                switch (wjc.getLoKind()) {
-                                    case WindowJoinContext.PRECEDING:
-                                        sink.putAscii(" preceding");
-                                        break;
-                                    case WindowJoinContext.FOLLOWING:
-                                        sink.putAscii(" following");
-                                        break;
-                                    default:
-                                        sink.putAscii("current row");
-                                        break;
-                                }
-                            } else {
-                                switch (wjc.getLoKind()) {
-                                    case WindowJoinContext.PRECEDING:
-                                        sink.putAscii("unbounded preceding");
-                                        break;
-                                    case WindowJoinContext.FOLLOWING:
-                                        sink.putAscii("unbounded following");
-                                        break;
-                                    default:
-                                        sink.putAscii("current row");
-                                        break;
-                                }
-                            }
-                            sink.putAscii(" and ");
-
-                            if (wjc.getHiExpr() != null) {
-                                wjc.getHiExpr().toSink(sink);
-                                unitToSink(sink, wjc.getHiExprTimeUnit());
-                                switch (wjc.getHiKind()) {
-                                    case WindowJoinContext.PRECEDING:
-                                        sink.putAscii(" preceding");
-                                        break;
-                                    case WindowJoinContext.FOLLOWING:
-                                        sink.putAscii(" following");
-                                        break;
-                                    default:
-                                        sink.putAscii("current row");
-                                        break;
-                                }
-                            } else {
-                                switch (wjc.getHiKind()) {
-                                    case WindowJoinContext.PRECEDING:
-                                        sink.putAscii("unbounded preceding");
-                                        break;
-                                    case WindowJoinContext.FOLLOWING:
-                                        sink.putAscii("unbounded following");
-                                        break;
-                                    default:
-                                        sink.put("current row");
-                                        break;
-                                }
-                            }
-
-                            if (wjc.isIncludePrevailing()) {
-                                sink.putAscii(" include prevailing");
-                            } else {
-                                sink.putAscii(" exclude prevailing");
-                            }
-                        }
-
-                        HorizonJoinContext hjc = model.getHorizonJoinContext();
-                        if (hjc.getMode() != HorizonJoinContext.MODE_NONE) {
-                            if (hjc.getMode() == HorizonJoinContext.MODE_RANGE) {
-                                sink.putAscii(" range from ");
-                                hjc.getRangeFrom().toSink(sink);
-                                sink.putAscii(" to ");
-                                hjc.getRangeTo().toSink(sink);
-                                sink.putAscii(" step ");
-                                hjc.getRangeStep().toSink(sink);
-                            } else if (hjc.getMode() == HorizonJoinContext.MODE_LIST) {
-                                sink.putAscii(" list (");
-                                ObjList<ExpressionNode> offsets = hjc.getListOffsets();
-                                for (int k = 0, z = offsets.size(); k < z; k++) {
-                                    if (k > 0) {
-                                        sink.putAscii(", ");
-                                    }
-                                    offsets.getQuick(k).toSink(sink);
-                                }
-                                sink.putAscii(")");
-                            }
-                            if (hjc.getAlias() != null) {
-                                sink.putAscii(" as ");
-                                hjc.getAlias().toSink(sink);
-                            }
-                        }
-
-                        if (model.getAsOfJoinTolerance() != null) {
-                            assert model.getJoinType() == JOIN_ASOF;
-                            sink.putAscii(" tolerance ");
-                            model.getAsOfJoinTolerance().toSink(sink);
-                        }
-
-                        if (model.getOuterJoinExpressionClause() != null) {
-                            sink.putAscii(" outer-join-expression ");
-                            model.getOuterJoinExpressionClause().toSink(sink);
-                        }
-
-                        if (model.getPostJoinWhereClause() != null) {
-                            sink.putAscii(" post-join-where ");
-                            model.getPostJoinWhereClause().toSink(sink);
-                        }
-                    }
-                }
-            }
         }
 
         if (getWhereClause() != null) {
             sink.putAscii(" where ");
             whereClause.toSink(sink);
-        }
-
-        if (constWhereClause != null) {
-            sink.putAscii(" const-where ");
-            constWhereClause.toSink(sink);
-        }
-
-        if (!joinSlave && postJoinWhereClause != null) {
-            sink.putAscii(" post-join-where ");
-            postJoinWhereClause.toSink(sink);
-        }
-
-        if (!joinSlave && outerJoinExpressionClause != null) {
-            sink.putAscii(" outer-join-expressions ");
-            outerJoinExpressionClause.toSink(sink);
         }
 
         if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {
@@ -2425,43 +1128,6 @@ public class QueryModel implements IQueryModel {
             }
         }
 
-        if (fillValues != null && fillValues.size() > 0) {
-            sink.putAscii(" fill(");
-            for (int i = 0, n = fillValues.size(); i < n; i++) {
-                if (i > 0) {
-                    sink.put(',');
-                }
-                sink.put(fillValues.getQuick(i));
-            }
-            sink.put(')');
-        }
-
-        if (fillFrom != null || fillTo != null) {
-            if (fillFrom != null) {
-                sink.putAscii(" from ");
-                sink.put(fillFrom);
-            }
-            if (fillTo != null) {
-                sink.putAscii(" to ");
-                sink.put(fillTo);
-            }
-        }
-
-        if (fillOffset != null) {
-            sink.putAscii(" offset ");
-            sink.put(fillOffset);
-        }
-
-        if (fillStride != null) {
-            sink.putAscii(" stride ");
-            sink.put(fillStride);
-        }
-
-        if (fillTimezoneName != null) {
-            sink.putAscii(" timezone ");
-            sink.put(fillTimezoneName);
-        }
-
         if (showOrderBy && orderBy.size() > 0) {
             sink.putAscii(" order by ");
             for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -2470,21 +1136,6 @@ public class QueryModel implements IQueryModel {
                 }
                 sink.put(orderBy.get(i));
                 if (orderByDirection.get(i) == 1) {
-                    sink.putAscii(" desc");
-                }
-            }
-        } else if (orderHash.size() > 0 && orderBy.size() > 0) {
-            sink.putAscii(" order by ");
-
-            ObjList<CharSequence> columnNames = orderHash.keys();
-            for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (i > 0) {
-                    sink.putAscii(", ");
-                }
-
-                CharSequence key = columnNames.getQuick(i);
-                sink.put(key);
-                if (orderHash.get(key) == 1) {
                     sink.putAscii(" desc");
                 }
             }
@@ -2502,21 +1153,21 @@ public class QueryModel implements IQueryModel {
         }
 
         if (unionModel != null) {
-            if (setOperationType == IQueryModel.SET_OPERATION_INTERSECT) {
+            if (setOperationType == QueryModel.SET_OPERATION_INTERSECT) {
                 sink.putAscii(" intersect ");
-            } else if (setOperationType == IQueryModel.SET_OPERATION_INTERSECT_ALL) {
+            } else if (setOperationType == QueryModel.SET_OPERATION_INTERSECT_ALL) {
                 sink.putAscii(" intersect all ");
-            } else if (setOperationType == IQueryModel.SET_OPERATION_EXCEPT) {
+            } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT) {
                 sink.putAscii(" except ");
-            } else if (setOperationType == IQueryModel.SET_OPERATION_EXCEPT_ALL) {
+            } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT_ALL) {
                 sink.putAscii(" except all ");
             } else {
                 sink.putAscii(" union ");
-                if (setOperationType == IQueryModel.SET_OPERATION_UNION_ALL) {
+                if (setOperationType == QueryModel.SET_OPERATION_UNION_ALL) {
                     sink.putAscii("all ");
                 }
             }
-            unionModel.toSink0(sink, false, showOrderBy);
+            unionModel.toSink0(sink, showOrderBy);
         }
 
         if (hintsMap.size() > 0) {
@@ -2546,38 +1197,15 @@ public class QueryModel implements IQueryModel {
     // method to make debugging easier
     // not using toString name to prevent debugger from trying to use it on all model variables (because toSink0 can fail).
     @SuppressWarnings("unused")
-    @Override
     public String toString0() {
         StringSink sink = Misc.getThreadLocalSink();
-        this.toSink0(sink, true, true);
+        this.toSink0(sink, true);
         return sink.toString();
     }
 
     @Override
     public CharSequence translateAlias(CharSequence column) {
         return aliasToColumnNameMap.get(column);
-    }
-
-    @Override
-    public void updateColumnAliasIndexes() {
-        columnAliasIndexes.clear();
-        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            columnAliasIndexes.put(wildcardColumnNames.getQuick(i), i);
-        }
-    }
-
-    @Override
-    public boolean windowStopPropagate() {
-        if (selectModelType != SELECT_MODEL_WINDOW) {
-            return false;
-        }
-        for (int i = 0, size = getColumns().size(); i < size; i++) {
-            QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowExpression() && ((WindowExpression) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {

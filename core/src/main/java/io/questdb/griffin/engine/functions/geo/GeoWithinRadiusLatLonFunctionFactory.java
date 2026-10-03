@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.geo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -63,6 +64,11 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
     private static final long INF_BITS = 0x7FF0000000000000L;
     // Approximate meters per degree of latitude (constant everywhere on Earth)
     private static final double METERS_PER_DEG_LAT = 111_320.0;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {

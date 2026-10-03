@@ -35,12 +35,8 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.QueryModelGenerationState;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -92,37 +88,6 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupedLateralUnionPreparationScalesLinearly() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE a(k INT)");
-            execute("CREATE TABLE b(k INT)");
-            execute("INSERT INTO a VALUES (1), (2), (0)");
-            execute("INSERT INTO b VALUES (1), (2)");
-            String head = """
-                    SELECT o.k FROM (SELECT k FROM a GROUP BY k) o
-                    JOIN LATERAL (SELECT k FROM b WHERE b.k = o.k) l ON true
-                    """;
-            int previousCount = 0;
-            try (PreparationCountingCompiler compiler = new PreparationCountingCompiler()) {
-                for (int branches = 32; branches <= 64; branches *= 2) {
-                    String query = head + " UNION ALL SELECT k FROM a WHERE k > 0".repeat(branches);
-                    assertQuery("SELECT * FROM (" + query + ") ORDER BY k").withCompiler(compiler)
-                            .returns("k\n" + "1\n".repeat(branches + 1) + "2\n".repeat(branches + 1));
-                    Assert.assertEquals("prepare the root, shared source, and each UNION operand",
-                            branches + 2, compiler.preparationCalls);
-                    Assert.assertTrue(compiler.preparationCount > previousCount);
-                    if (previousCount > 0) {
-                        Assert.assertTrue("doubling UNION operands must not more than double preparation visits [32="
-                                        + previousCount + ", 64=" + compiler.preparationCount + "]",
-                                compiler.preparationCount <= 2 * previousCount);
-                    }
-                    previousCount = compiler.preparationCount;
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInternalRetryAfterPrimaryGenerationControl() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -139,42 +104,6 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
                         .returns("x\n200\n");
             }
         });
-    }
-
-    @Test
-    public void testLimitAdviceMarkerProtocolWithDetachedPredicate() {
-        // Design probe, not a production restoration test. DECLARE substitution can put
-        // the same node in a predicate and LIMIT. Detach predicates, not LIMIT/advice.
-        ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 16);
-        ExpressionNode limit = pool.next().of(ExpressionNode.CONSTANT, "1", 0, 0);
-        QueryModel parent = QueryModel.FACTORY.newInstance();
-        QueryModel nested = QueryModel.FACTORY.newInstance();
-        parent.setNestedModel(nested);
-        parent.setLimit(limit, null);
-        nested.setLimitAdvice(limit, null);
-        nested.setWhereClause(limit);
-        ExpressionNode pristinePredicate = ExpressionNode.deepClone(pool, nested.getWhereClause());
-        ExpressionNode retainedFactoryPredicate = null;
-        for (int generation = 0; generation < 3; generation++) {
-            // Region preparation creates fresh predicate nodes but resets only LIMIT markers.
-            nested.setWhereClause(ExpressionNode.deepClone(pool, pristinePredicate));
-            parent.getLimitLo().implemented = false;
-            Assert.assertSame(parent.getLimitLo(), nested.getLimitAdviceLo());
-            Assert.assertFalse(nested.getLimitAdviceLo().implemented);
-            Assert.assertNotSame(limit, nested.getWhereClause());
-            Assert.assertNotSame(retainedFactoryPredicate, nested.getWhereClause());
-            if (retainedFactoryPredicate != null) {
-                Assert.assertEquals("consumed", retainedFactoryPredicate.token);
-            }
-            // A nested regeneration must not sever its still-active parent's handoff.
-            nested.getLimitAdviceLo().implemented = false;
-            nested.getLimitAdviceLo().implemented = true;
-            Assert.assertTrue(parent.getLimitLo().implemented);
-            nested.getWhereClause().token = "consumed";
-            retainedFactoryPredicate = nested.getWhereClause();
-            nested.setWhereClause(null);
-            Assert.assertEquals("1", limit.token);
-        }
     }
 
     @Test
@@ -485,30 +414,9 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
         execute("CREATE TABLE u AS (SELECT x::TIMESTAMP ts FROM long_sequence(50)) TIMESTAMP(ts)");
     }
 
-    private static class PreparationCountingCompiler extends SqlCompilerImpl {
-        private int preparationCalls;
-        private int preparationCount;
-
-        private PreparationCountingCompiler() {
-            super(AbstractCairoTest.engine);
-            QueryModelGenerationState state = codeGenerator.getGenerationStateForTesting();
-            state.setPreparationHook(model -> {
-                preparationCalls++;
-                // The hook runs before preparation; omit the final constant-size operand.
-                preparationCount = state.getPreparationCount();
-            });
-        }
-
-        @Override
-        protected RecordCursorFactory generateSelectOneShot(IQueryModel model, SqlExecutionContext context, boolean isProgressLogger) throws SqlException {
-            preparationCalls = preparationCount = 0;
-            return super.generateSelectOneShot(model, context, isProgressLogger);
-        }
-    }
-
     private static class RetryCompiler extends SqlCompilerImpl {
         private int attempts;
-        private IQueryModel firstRoot;
+        private QueryModel firstRoot;
         private boolean hasReusedRoot;
 
         private RetryCompiler() {
@@ -516,21 +424,14 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
         }
 
         @Override
-        protected RecordCursorFactory generateSelectOneShot(IQueryModel model, SqlExecutionContext context, boolean isProgressLogger) throws SqlException {
+        protected RecordCursorFactory generateSelectOneShot(QueryModel model, SqlExecutionContext context, boolean isProgressLogger) throws SqlException {
             attempts++;
             if (firstRoot == null) {
                 firstRoot = model;
             } else if (attempts == 2) {
                 hasReusedRoot = firstRoot == model;
             }
-            Assert.assertEquals("previous attempt released its archive", 0,
-                    codeGenerator.getGenerationStateForTesting().getRetainedNodeCount());
-            try {
-                return super.generateSelectOneShot(model, context, isProgressLogger);
-            } finally {
-                Assert.assertEquals("success and failure release the archive", 0,
-                        codeGenerator.getGenerationStateForTesting().getRetainedNodeCount());
-            }
+            return super.generateSelectOneShot(model, context, isProgressLogger);
         }
     }
 

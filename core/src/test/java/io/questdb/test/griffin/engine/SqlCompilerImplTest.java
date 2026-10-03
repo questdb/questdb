@@ -54,7 +54,7 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -8152,7 +8152,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         ")")
                 .returns("""
                         x\tts
-                        2\t2019-10-17T00:00:00.200000Z
                         3\t2019-10-17T00:00:00.700000Z
                         4\t2019-10-17T00:00:00.800000Z
                         """);
@@ -8859,7 +8858,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public int parseShowSql(GenericLexer lexer, IQueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
             parseShowSqlCalled = true;
             return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }

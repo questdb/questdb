@@ -1320,7 +1320,7 @@ public class AggregateTest extends AbstractCairoTest {
             );
 
             // min(ts) should return the first value (due to optimization)
-            assertQuery("select min(ts) from tab").timestamp("min").expectSize().returns(replaceTimestampSuffix1(
+            assertQuery("select min(ts) from tab").timestamp("min").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
                     """
                             min
                             2024-01-01T00:00:00.000000Z
@@ -1329,7 +1329,7 @@ public class AggregateTest extends AbstractCairoTest {
             ));
 
             // max(ts) should return the last value (due to optimization)
-            assertQuery("select max(ts) from tab").timestampDesc("max").expectSize().returns(replaceTimestampSuffix1(
+            assertQuery("select max(ts) from tab").timestamp("max").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
                     """
                             max
                             2024-01-01T02:46:39.000000Z
@@ -1417,7 +1417,7 @@ public class AggregateTest extends AbstractCairoTest {
             );
 
             // min(ts) should return the first value
-            assertQuery("select min(ts) from tab").timestamp("min").expectSize().returns(replaceTimestampSuffix1(
+            assertQuery("select min(ts) from tab").timestamp("min").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
                     """
                             min
                             2024-01-01T00:00:00.000000Z
@@ -1426,7 +1426,7 @@ public class AggregateTest extends AbstractCairoTest {
             ));
 
             // max(ts) should return the last value
-            assertQuery("select max(ts) from tab").timestampDesc("max").expectSize().returns(replaceTimestampSuffix1(
+            assertQuery("select max(ts) from tab").timestamp("max").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
                     """
                             max
                             2024-01-07T22:39:00.000000Z

@@ -419,8 +419,8 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
     // NULL the run's value is the empty set and the accumulator sits at divider == 0 with
     // firstFuncApplied already true. A following negated NULL bound (`ts != $n`) must subtract
     // from that established empty set and stay empty - it must NOT be mistaken for the first
-    // applied expression and seed [MIN, MAX]. The residual predicate is already removed from the
-    // filter by WhereClauseParser (intrinsicValue = TRUE), so a full-domain seed here returns
+    // applied expression and seed [MIN, MAX]. IntervalExtractor has already removed the residual
+    // predicate from the filter, so a full-domain seed here returns
     // every row of the table for an identically-false predicate.
     @Test
     public void testUnionLeafRunAllNullLeavesFollowingNegatedNullYieldsEmptySet() throws Exception {

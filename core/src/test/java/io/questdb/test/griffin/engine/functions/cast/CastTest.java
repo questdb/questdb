@@ -3925,6 +3925,35 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong256ToDoubleAndFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (a LONG256)");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('0x2a'),
+                        ('0x0100000000000000000000000000000000000000000000000000000000000007'),
+                        (NULL)
+                    """);
+            assertQuery("SELECT a::DOUBLE d, a::FLOAT f FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\tf
+                            42.0\t42.0
+                            7.0\t7.0
+                            null\tnull
+                            """);
+            assertQuery("SELECT 0x2a::LONG256::DOUBLE d, 0x2a::LONG256::FLOAT f, NULL::LONG256::DOUBLE dn, NULL::LONG256::FLOAT fn")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\tf\tdn\tfn
+                            42.0\t42.0\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testLong256ToInt() throws Exception {
         assertQuery("select a from tab")
                 .ddl("create table tab (a int)")

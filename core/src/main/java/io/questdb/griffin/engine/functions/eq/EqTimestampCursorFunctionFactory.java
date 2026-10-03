@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -47,6 +48,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
 public class EqTimestampCursorFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -134,6 +140,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         private final Function rightFunc;
         private final int rightPos;
         private long epoch;
+        private boolean isEpochExact = true;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
@@ -147,7 +154,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            return negated != (isEpochExact && leftFunc.getTimestamp(rec) == epoch);
         }
 
         @Override
@@ -171,13 +178,15 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final CharSequence value = cursor.getRecord().getStrA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = IntervalUtils.parseCeilLiteral(driver, value);
+                        isEpochExact = epoch == IntervalUtils.parseFloorLiteral(driver, value);
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
                     ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     epoch = Numbers.LONG_NULL;
+                    isEpochExact = true;
                 }
             }
         }
@@ -191,6 +200,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             if (that instanceof StrCursorFunc thatF) {
                 thatF.epoch = epoch;
+                thatF.isEpochExact = isEpochExact;
                 thatF.stateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);
@@ -293,6 +303,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         private final Function rightFunc;
         private final int rightPos;
         private long epoch;
+        private boolean isEpochExact = true;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
@@ -306,7 +317,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            return negated != (isEpochExact && leftFunc.getTimestamp(rec) == epoch);
         }
 
         @Override
@@ -330,13 +341,16 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        final CharSequence text = value == null ? null : value.asAsciiCharSequence();
+                        epoch = IntervalUtils.parseCeilLiteral(driver, text);
+                        isEpochExact = epoch == IntervalUtils.parseFloorLiteral(driver, text);
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
                     ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     epoch = Numbers.LONG_NULL;
+                    isEpochExact = true;
                 }
             }
         }
@@ -350,6 +364,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             if (that instanceof VarcharCursorFunc thatF) {
                 thatF.epoch = epoch;
+                thatF.isEpochExact = isEpochExact;
                 thatF.stateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);

@@ -30,6 +30,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.FiberLocal;
@@ -614,6 +615,7 @@ public final class IntervalUtils {
      */
     public static void invert(LongList intervals, int startIndex) {
         long last = Long.MIN_VALUE;
+        boolean hasTail = true;
         int n = intervals.size();
         int writeIndex = startIndex;
         for (int i = startIndex; i < n; i += 2) {
@@ -625,10 +627,10 @@ public final class IntervalUtils {
                 writeIndex += 2;
             }
             last = hi + 1;
+            hasTail = hi != Long.MAX_VALUE;
         }
 
-        // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
-        if (last != Long.MIN_VALUE) {
+        if (hasTail) {
             intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);
             intervals.setQuick(writeIndex, last);
             writeIndex += 2;
@@ -748,6 +750,66 @@ public final class IntervalUtils {
      * @see IntervalOperation
      * @see TimestampDriver
      */
+    /**
+     * Whether a tick expression spells a fraction finer than the driver's precision. Static parsing
+     * resolves such an expression at nanosecond precision and keeps only the values of the driver's
+     * precision inside its intervals.
+     */
+    public static boolean hasSubPrecisionDigits(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim) {
+        if (!ColumnType.isTimestampMicro(timestampDriver.getTimestampType())) {
+            return false;
+        }
+        boolean hasFinerDigit = false;
+        int fractionDigits = -1;
+        int integerDigits = 0;
+        for (int i = lo; i < lim; i++) {
+            final char c = seq.charAt(i);
+            if (c >= '0' && c <= '9') {
+                if (fractionDigits < 0) {
+                    integerDigits++;
+                } else if (++fractionDigits > 6 && c != '0') {
+                    hasFinerDigit = true;
+                }
+            } else {
+                if (c == '-' && integerDigits >= 4 && isBeyondNanoRange(seq, i - integerDigits, i)) {
+                    return false;
+                }
+                fractionDigits = c == '.' ? 0 : -1;
+                integerDigits = 0;
+            }
+        }
+        return hasFinerDigit;
+    }
+
+    /**
+     * The precision a timestamp literal compared with values of the driver's precision is exact at:
+     * the driver's for nanoseconds, otherwise microseconds or, when the literal spells a finer
+     * fraction, nanoseconds.
+     */
+    public static int literalTimestampType(TimestampDriver timestampDriver, CharSequence literal) {
+        return ColumnType.isTimestampNano(timestampDriver.getTimestampType())
+                ? timestampDriver.getTimestampType()
+                : FunctionParser.getAdaptiveTimestampType(literal, ColumnType.TIMESTAMP_MICRO);
+    }
+
+    /**
+     * The first value at the driver's precision that is not before a timestamp literal, which may be
+     * finer than the driver.
+     */
+    public static long parseCeilLiteral(TimestampDriver timestampDriver, CharSequence literal) throws NumericException {
+        final int type = literalTimestampType(timestampDriver, literal);
+        return timestampDriver.ceilFrom(ColumnType.getTimestampDriver(type).parseFloorLiteral(literal), type);
+    }
+
+    /**
+     * The last value at the driver's precision that is not after a timestamp literal, which may be
+     * finer than the driver.
+     */
+    public static long parseFloorLiteral(TimestampDriver timestampDriver, CharSequence literal) throws NumericException {
+        final int type = literalTimestampType(timestampDriver, literal);
+        return timestampDriver.floorFrom(ColumnType.getTimestampDriver(type).parseFloorLiteral(literal), type);
+    }
+
     public static void parseTickExpr(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
@@ -794,6 +856,10 @@ public final class IntervalUtils {
     ) throws SqlException {
         assert configuration.getSqlIntervalMaxIntervalsAfterMerge() > configuration.getSqlIntervalIncrementalMergeThreshold()
                 : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
+        if (applyEncoded && hasSubPrecisionDigits(timestampDriver, seq, lo, lim)) {
+            parseSubPrecisionTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, sink, nowTimestamp);
+            return;
+        }
         // Skip leading whitespace
         int firstNonSpace = lo;
         while (firstNonSpace < lim && Chars.isAsciiWhitespace(seq.charAt(firstNonSpace))) {
@@ -4103,6 +4169,14 @@ public final class IntervalUtils {
         return false;
     }
 
+    private static boolean isBeyondNanoRange(CharSequence seq, int yearLo, int yearHi) {
+        try {
+            return FunctionParser.isBeyondNanoRange(Numbers.parseInt(seq, yearLo, yearHi));
+        } catch (NumericException e) {
+            return true;
+        }
+    }
+
     /**
      * Checks if a date expression ends with "bd" (business days).
      * Used to determine if a range should iterate business days or calendar days.
@@ -4584,6 +4658,34 @@ public final class IntervalUtils {
                 break;
         }
         throw SqlException.$(position, "Invalid day name: ").put(seq, lo, hi);
+    }
+
+    private static void parseSubPrecisionTickExpr(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation,
+            StringSink sink,
+            long nowTimestamp
+    ) throws SqlException {
+        final int outSize = out.size();
+        final TimestampDriver nanos = NanosTimestampDriver.INSTANCE;
+        parseTickExpr(nanos, configuration, seq, lo, lim, position, out, operation, sink, true,
+                nanos.from(nowTimestamp, timestampDriver.getTimestampType()));
+        int write = outSize;
+        for (int read = outSize, n = out.size(); read < n; read += 2) {
+            final long ceil = timestampDriver.ceilFrom(out.getQuick(read), ColumnType.TIMESTAMP_NANO);
+            final long floor = timestampDriver.floorFrom(out.getQuick(read + 1), ColumnType.TIMESTAMP_NANO);
+            if (ceil <= floor) {
+                out.setQuick(write++, ceil);
+                out.setQuick(write++, floor);
+            }
+        }
+        out.setPos(write);
     }
 
     static int append(LongList list, int writePoint, long lo, long hi) {

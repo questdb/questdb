@@ -119,6 +119,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient @Nullable IntList symbolTableSkewIndex
     ) {
         super(metadata);
+        this.base = base;
+        // Keep the functions reachable by _close() while copying the caller's transient list.
+        this.vafList = vafList;
         try {
             this.workerCount = workerCount;
             entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
@@ -129,7 +132,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // ...
             // functions[n].type == columnTypes[n+1]
 
-            this.base = base;
             this.frameAddressCache = new PageFrameAddressCache();
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
@@ -138,8 +140,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // first column is INT or SYMBOL
             pRosti = new long[workerCount];
             final int vafCount = vafList.size();
-            this.vafList = new ObjList<>(vafCount);
-            this.vafList.addAll(vafList);
+            this.vafList = new ObjList<>(vafList);
             raf = configuration.getRostiAllocFacade();
             for (int i = 0; i < workerCount; i++) {
                 long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
@@ -207,7 +208,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 frameMemoryPools.add(new PageFrameMemoryPool(configuration, 0L));
             }
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }

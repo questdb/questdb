@@ -26,16 +26,16 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.Misc;
 
 public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    protected final JoinContext joinContext;
+    protected final Plannable joinContext;
     protected RecordCursorFactory masterFactory;
     protected RecordCursorFactory slaveFactory;
 
-    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, JoinContext joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
+    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, Plannable joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         super(metadata);
         this.joinContext = joinContext;
         this.masterFactory = masterFactory;

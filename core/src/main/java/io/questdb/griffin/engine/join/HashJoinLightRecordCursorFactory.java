@@ -41,10 +41,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -68,17 +68,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink masterSink,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext,
+            Plannable joinContext,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
-                new SymbolTranslatingRecord(configuration, Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
-                        masterSymbolKeyColumnIndices.length) : null;
         try {
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
+                    new SymbolTranslatingRecord(configuration, Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
+                            masterSymbolKeyColumnIndices.length) : null;
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
             this.cursor = new HashJoinRecordCursor(columnSplit, configuration, joinColumnTypes, valueTypes);

@@ -24,71 +24,18 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.window.LttbFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 
 final class SubsampleValidator {
     private SubsampleValidator() {
-    }
-
-    static void validateLttbGapOrThrow(ExpressionNode gapNode) throws SqlException {
-        final CharSequence gapStr = gapNode.token;
-        if (gapNode.type != ExpressionNode.CONSTANT || !Chars.isQuoted(gapStr)) {
-            throw SqlException.$(gapNode.position, "gap threshold must be a string constant such as '1h'");
-        }
-        LttbFunctionFactory.parseGapThresholdMicros(Chars.toString(gapStr, 1, gapStr.length() - 1), gapNode.position);
-    }
-
-    static void validateNumericType(int valueType, int position) throws SqlException {
-        final int valueTag = ColumnType.tagOf(valueType);
-        if (valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
-                && valueTag != ColumnType.INT && valueTag != ColumnType.LONG
-                && valueTag != ColumnType.SHORT && valueTag != ColumnType.BYTE) {
-            throw SqlException.$(position, "numeric column expected, got: ").put(ColumnType.nameOf(valueType));
-        }
-    }
-
-    // Callers own the AST: FunctionParser can reassociate even a successfully parsed constant.
-    static void validatePositionTargetOrThrow(
-            ExpressionNode node,
-            boolean isCadence,
-            FunctionParser functionParser,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        if (node.type == ExpressionNode.LITERAL) {
-            throw SqlException.$(node.position, isCadence ? "stride" : "target point count")
-                    .put(" must be a constant or bind variable");
-        }
-        Function func = null;
-        try {
-            func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            final boolean isConstant = func.isConstant();
-            if (!isConstant && !func.isRuntimeConstant()) {
-                throw SqlException.$(node.position, isCadence ? "stride" : "target point count")
-                        .put(" must be a constant or bind variable");
-            }
-            if (isConstant) {
-                if (ColumnType.isNull(func.getType())) {
-                    throw SqlException.$(node.position, isCadence ? "stride must be set" : "target point count must be set");
-                }
-                final int tag = ColumnType.tagOf(func.getType());
-                if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
-                    throw SqlException.$(node.position, isCadence ? "integer expected for stride" : "integer expected for target point count");
-                }
-                if (isCadence) {
-                    validateStride(func, tag, node.position);
-                } else {
-                    validateTargetPoints(func, tag, node.position);
-                }
-            }
-            // Existing window factories validate runtime constants and binds per execution.
-        } finally {
-            Misc.free(func);
-        }
     }
 
     private static void validateStride(Function targetFunc, int targetType, int position) throws SqlException {
@@ -133,5 +80,169 @@ final class SubsampleValidator {
         if (value > Integer.MAX_VALUE) {
             throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
         }
+    }
+
+    static boolean hasUnresolvableSdtCompdevReference(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {
+        // An independently invalid outer reference preserves SDT's shape error even when
+        // parsing encounters another error first. Inspect only the error path: successful
+        // constant folding can discard binds. Query models have their own metadata scope.
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        final ObjList<ExpressionNode> nodes = new ObjList<>();
+        nodes.add(compdevNode);
+        while (nodes.size() > 0) {
+            final ExpressionNode node = nodes.popLast();
+            if (node == null || node.type == ExpressionNode.QUERY) {
+                continue;
+            }
+            switch (node.paramCount) {
+                case 0 -> {
+                    if (node.type == ExpressionNode.LITERAL) {
+                        return true;
+                    }
+                    if (node.type == ExpressionNode.BIND_VARIABLE) {
+                        if (node.token.charAt(0) == ':') {
+                            if (bindVariableService != null && bindVariableService.getFunction(node.token) == null) {
+                                return true;
+                            }
+                        } else {
+                            try {
+                                if (Numbers.parseInt(node.token, 1, node.token.length()) < 1) {
+                                    return true;
+                                }
+                            } catch (NumericException e) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                case 1 -> nodes.add(node.rhs);
+                case 2 -> {
+                    nodes.add(node.lhs);
+                    nodes.add(node.rhs);
+                }
+                default -> {
+                    for (int i = 0; i < node.paramCount; i++) {
+                        nodes.add(node.args.getQuick(i));
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    static void validateCadenceSeedOrThrow(
+            ExpressionNode node,
+            FunctionParser functionParser,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (node.type == ExpressionNode.LITERAL) {
+            throw SqlException.$(node.position, "seed must be a constant, bind variable, or NULL");
+        }
+        Function function = null;
+        try {
+            function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            validateCadenceSeedOrThrow(function, node.position);
+        } finally {
+            Misc.free(function);
+        }
+    }
+
+    /**
+     * Borrows the function; a NULL seed selects random cadence.
+     */
+    static void validateCadenceSeedOrThrow(Function function, int position) throws SqlException {
+        if (ColumnType.isNull(function.getType())) {
+            return;
+        }
+        final boolean isConstant = function.isConstant();
+        if (!isConstant && !function.isRuntimeConstant()) {
+            throw SqlException.$(position, "seed must be a constant, bind variable, or NULL");
+        }
+        if (isConstant) {
+            final int tag = ColumnType.tagOf(function.getType());
+            if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                throw SqlException.$(position, "integer or NULL expected for seed");
+            }
+        }
+    }
+
+    static void validateLttbGapOrThrow(ExpressionNode gapNode) throws SqlException {
+        final CharSequence gapStr = gapNode.token;
+        if (gapNode.type != ExpressionNode.CONSTANT || !Chars.isQuoted(gapStr)) {
+            throw SqlException.$(gapNode.position, "gap threshold must be a string constant such as '1h'");
+        }
+        LttbFunctionFactory.parseGapThresholdMicros(Chars.toString(gapStr, 1, gapStr.length() - 1), gapNode.position);
+    }
+
+    static void validateNumericType(int valueType, int position) throws SqlException {
+        final int valueTag = ColumnType.tagOf(valueType);
+        if (valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
+                && valueTag != ColumnType.INT && valueTag != ColumnType.LONG
+                && valueTag != ColumnType.SHORT && valueTag != ColumnType.BYTE) {
+            throw SqlException.$(position, "numeric column expected, got: ").put(ColumnType.nameOf(valueType));
+        }
+    }
+
+    // Callers own the AST: FunctionParser can reassociate even a successfully parsed constant.
+    static void validatePositionTargetOrThrow(
+            ExpressionNode node,
+            boolean isCadence,
+            FunctionParser functionParser,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (node.type == ExpressionNode.LITERAL) {
+            throw SqlException.$(node.position, isCadence ? "stride" : "target point count")
+                    .put(" must be a constant or bind variable");
+        }
+        Function func = null;
+        try {
+            func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            validatePositionTargetOrThrow(func, node.position, isCadence);
+        } finally {
+            Misc.free(func);
+        }
+    }
+
+    /**
+     * Borrows the function; runtime values are validated by the window function at each execution.
+     */
+    static void validatePositionTargetOrThrow(Function function, int position, boolean isCadence) throws SqlException {
+        final boolean isConstant = function.isConstant();
+        if (!isConstant && !function.isRuntimeConstant()) {
+            throw SqlException.$(position, isCadence ? "stride" : "target point count")
+                    .put(" must be a constant or bind variable");
+        }
+        if (isConstant) {
+            if (ColumnType.isNull(function.getType())) {
+                throw SqlException.$(position, isCadence ? "stride must be set" : "target point count must be set");
+            }
+            final int tag = ColumnType.tagOf(function.getType());
+            if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                throw SqlException.$(position, isCadence ? "integer expected for stride" : "integer expected for target point count");
+            }
+            if (isCadence) {
+                validateStride(function, tag, position);
+            } else {
+                validateTargetPoints(function, tag, position);
+            }
+        }
+    }
+
+    /**
+     * Borrows the function and retains no executable state.
+     */
+    static void validateSdtCompdev(Function function, int position) throws SqlException {
+        if (function.isConstant()) {
+            final int tag = ColumnType.tagOf(function.getType());
+            if (tag == ColumnType.DOUBLE || tag == ColumnType.FLOAT
+                    || tag == ColumnType.INT || tag == ColumnType.LONG
+                    || tag == ColumnType.SHORT || tag == ColumnType.BYTE) {
+                final double compdev = function.getDouble(null);
+                if (compdev >= 0 && Numbers.isFinite(compdev)) {
+                    return;
+                }
+            }
+        }
+        throw SqlException.$(position, "SUBSAMPLE sdt requires a constant, non-negative finite compdev");
     }
 }

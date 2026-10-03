@@ -27,11 +27,7 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlOptimiser;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -345,20 +341,6 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeneratedColumnWildcardMetadataLifecycle() {
-        QueryColumn column = new QueryColumn().of("generated", null);
-        Assert.assertFalse(column.isGenerated());
-
-        column.setGenerated(true);
-        column.of("renamed", null);
-        Assert.assertTrue(column.isGenerated());
-
-        column.clear();
-        Assert.assertFalse(column.isGenerated());
-        Assert.assertTrue(column.isIncludeIntoWildcard());
-    }
-
-    @Test
     public void testInnerLateralPlainScalarAggregateRuntimeLimitDropsRows() throws Exception {
         assertMemoryLeak(() -> assertPlainScalarAggregateRuntimeLimit(
                 """
@@ -508,7 +490,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             a\tk\tv
                             1\t1\t1
-                            2\t2\t0
+                            2\tnull\tnull
                             """);
 
             assertQuery("""
@@ -533,7 +515,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             a\tk\tv
                             1\t1\t1
-                            2\t2\t0
+                            2\tnull\tnull
                             """);
 
             assertQuery("""
@@ -555,8 +537,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             a\tk\tv
                             1\t1\t1
                             1\t2\t1
-                            2\t1\t0
-                            2\t2\t0
+                            2\tnull\tnull
                             """);
         });
     }
@@ -657,7 +638,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining(
                             "Hash Left Outer Join Light",
-                            "condition: l2.__qdb_outer_ref__1_a=t1.k"
+                            "condition: l2.__qdb_outer_ref__0_k=t1.k"
                     )
                     .withPlanNotContaining("filter: true")
                     .returns("""
@@ -683,7 +664,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining(
                             "Hash Left Outer Join Light",
-                            "condition: l2.__qdb_outer_ref__2_a=__qdb_count_driver__1.__qdb_count_driver__1_a"
+                            "condition: __qdb_outer_ref__0_a=__qdb_outer_ref__0_a"
                     )
                     .withPlanNotContaining("filter: true")
                     .returns("""
@@ -692,6 +673,87 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t2\t1
                             2\t1\t0
                             2\t2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarAggregateConstantTrueOnKeepsEmptyRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 20)");
+
+            final String expected = """
+                    k\ts
+                    1\t30
+                    2\tnull
+                    """;
+            assertQuery("SELECT t1.k, l.s FROM t1 JOIN LATERAL (SELECT sum(v) AS s FROM t2 WHERE t2.k = t1.k) l ON 1 = 1 ORDER BY t1.k")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light")
+                    .returns(expected);
+            assertQuery("SELECT t1.k, l.s FROM t1 JOIN LATERAL (SELECT sum(v) AS s FROM t2 WHERE t2.k = t1.k) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testInnerLateralSameTypeCastOfOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k LONG)");
+            execute("INSERT INTO o VALUES (1), (2), (3)");
+            assertQuery("SELECT o.k, x.c FROM o CROSS JOIN LATERAL (SELECT CAST(o.k AS LONG) c FROM long_sequence(2)) x ORDER BY o.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tc
+                            1\t1
+                            1\t1
+                            2\t2
+                            2\t2
+                            3\t3
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarPivotKeepsEmptyRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT)");
+            execute("INSERT INTO orders VALUES (1), (2)");
+            execute("CREATE TABLE trades (order_id INT, side SYMBOL, qty DOUBLE)");
+            execute("INSERT INTO trades VALUES (1, 'buy', 10.0), (1, 'sell', 20.0)");
+
+            assertQuery("SELECT * FROM (SELECT side, sum(qty) AS total FROM trades WHERE order_id = 2 GROUP BY side) PIVOT (sum(total) FOR side IN ('buy', 'sell'))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            buy\tsell
+                            null\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, t.buy, t.sell
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT side, sum(qty) AS total
+                            FROM trades
+                            WHERE order_id = o.id
+                            GROUP BY side
+                        ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tbuy\tsell
+                            1\t10.0\t20.0
+                            2\tnull\tnull
                             """);
         });
     }
@@ -1149,26 +1211,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Exercises the model-replacement flag transfer directly via a @TestOnly accessor.
-    // The same regression is also covered black-box by the LATERAL-count assertQuery
-    // tests; this pins the unit-level contract of replaceAndTransferDependents.
-    @Test
-    public void testLateralCountModelReplacementLifecycle() {
-        QueryModel oldModel = QueryModel.FACTORY.newInstance();
-        QueryModel newModel = QueryModel.FACTORY.newInstance();
-        oldModel.setLateralCountCoalesceRequired(true);
-        QueryColumn template = new QueryColumn().of("cnt", null);
-        oldModel.addLateralCountTemplate(template);
-
-        Assert.assertSame(newModel, SqlOptimiser.replaceAndTransferDependentsForTesting(oldModel, newModel));
-        Assert.assertTrue(newModel.isLateralCountCoalesceRequired());
-        Assert.assertFalse(oldModel.isLateralCountCoalesceRequired());
-        Assert.assertEquals(1, newModel.getLateralCountTemplates().size());
-        Assert.assertSame(template, newModel.getLateralCountTemplates().getQuick(0));
-        Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
-    }
-
-    // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
+    // QuestDB's negative LIMIT means "last |N| rows", which LateralBinder.bindCorrelatedLimit cannot
     // express (it emits `__lateral_rn <= limit`, a contradiction for N < 0). It used
     // to silently empty the lateral body; it must now be rejected.
     @Test
@@ -1811,7 +1854,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             k\tv
                             1\t4
                             2\t3
-                            3\tnull
+                            3\t2
                             4\tnull
                             """);
 
@@ -1835,6 +1878,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             k\tv
                             1\t4
                             2\t3
+                            3\t2
                             """);
 
             assertQuery("""
@@ -1857,7 +1901,47 @@ public class LateralJoinTest extends AbstractCairoTest {
                             k\tv
                             1\t4
                             2\t3
+                            3\t2
                             """);
+        });
+    }
+
+    @Test
+    public void testLateralScalarCountExpressionOuterColumnLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1, 2), (2, 1), (3, 1), (4, 0)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2), (4)");
+
+            final String bareBody = "SELECT count(*) + 2 AS v FROM t2 WHERE t2.k = t1.k LIMIT t1.n";
+            final String wrappedBody = "SELECT v FROM (SELECT count(*) + 2 AS v FROM t2 WHERE t2.k = t1.k) counted LIMIT t1.n";
+            final String leftExpected = """
+                    k\tv
+                    1\t4
+                    2\t3
+                    3\t2
+                    4\tnull
+                    """;
+            final String crossExpected = """
+                    k\tv
+                    1\t4
+                    2\t3
+                    3\t2
+                    """;
+            assertQuery("SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (" + bareBody + ") l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(leftExpected);
+            assertQuery("SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (" + wrappedBody + ") l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(leftExpected);
+            assertQuery("SELECT t1.k, l.v FROM t1 CROSS JOIN LATERAL (" + bareBody + ") l ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(crossExpected);
+            assertQuery("SELECT t1.k, l.v FROM t1 CROSS JOIN LATERAL (" + wrappedBody + ") l ORDER BY t1.k")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(crossExpected);
         });
     }
 
@@ -3183,13 +3267,12 @@ public class LateralJoinTest extends AbstractCairoTest {
             for (int i = 1; i <= 24; i++) {
                 body.insert(0, "SELECT v" + (i - 1) + " + v" + (i - 1) + " AS v" + i + " FROM (").append(')');
             }
-            // the template budget degrades to uncompensated NULL instead of expanding 2^24 nodes
             assertQuery("SELECT o.id, sub.v24 FROM orders o LEFT JOIN LATERAL (" + body + ") sub ORDER BY o.id")
                     .noLeakCheck()
                     .returns("""
                             id\tv24
                             1\t16777216
-                            2\tnull
+                            2\t0
                             """);
         });
     }
@@ -3221,8 +3304,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Known limitation: compensation does not reach a column referenced only in
-    // ORDER BY, so the unmatched row sorts as NULL (first) instead of as 10.
     @Test
     public void testLeftLateralCountArithmeticOrderByOnlyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
@@ -3254,9 +3335,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             id
-                            3
                             1
                             2
+                            3
                             """);
         });
     }
@@ -4151,6 +4232,83 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralCountCompensationRepeatedCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '1970-01-01T00:00:00.000001Z'),
+                    (1, '1970-01-01T00:00:00.000002Z'),
+                    (2, '1970-01-01T00:00:00.000003Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.later AND NOT sub.later AS never, sub.later OR NOT sub.later AS always, sub.later
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count()::timestamp > (SELECT min(ts) FROM trades) AS later
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tnever\talways\tlater
+                            1\tfalse\ttrue\ttrue
+                            2\tfalse\ttrue\tfalse
+                            3\tfalse\ttrue\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCompensationRepeatedDescriptions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            bindVariableService.setLong("bonus", 10);
+            assertQuery("""
+                    SELECT o.id, sub.v * sub.v + sub.v AS w
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT (count() + :bonus + (2 * 3))::DECIMAL(10, 2) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tw
+                            1\t342.0000
+                            2\t306.0000
+                            3\t272.0000
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftLateralCountDistinctAndApproxCountDistinctOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (k INT)");
@@ -4757,8 +4915,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Window functions have no meaningful zero-on-empty value; template extraction
-    // must reject them and keep the uncompensated NULL on unmatched rows.
     @Test
     public void testLeftLateralWindowFunctionBodyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
@@ -4796,7 +4952,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\twcnt
                             1\t1
                             2\t1
-                            3\tnull
+                            3\t1
                             """);
 
             assertQuery("""
@@ -4818,7 +4974,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\twv
                             1\t3
                             2\t2
-                            3\tnull
+                            3\t1
                             """);
         });
     }
@@ -7632,8 +7788,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // Same shape as testNestedLateralLeftCountSkipLevelQualified, but the
-    // innermost correlated reference to t0.a is unqualified, so the rewriter
-    // must recognize it through its lateralDepth tag.
+    // innermost correlated reference to t0.a is unqualified, so LateralBinder
+    // must resolve it to the right outer scope.
     @Test
     public void testNestedLateralLeftCountSkipLevelUnqualified() throws Exception {
         assertMemoryLeak(() -> {
@@ -8323,51 +8479,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\t200
                             """);
         });
-    }
-
-    @Test
-    public void testOuterRefWildcardExcludedModelLifecycle() {
-        QueryModel model = QueryModel.FACTORY.newInstance();
-        QueryModelWrapper wrapper = new QueryModelWrapper();
-        wrapper.setDelegate(model);
-
-        Assert.assertFalse(model.isLateralCountCoalesceRequired());
-        Assert.assertFalse(model.isOuterRefWildcardExcluded());
-        Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
-        Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
-        model.setLateralCountCoalesceRequired(true);
-        model.setOuterRefWildcardExcluded(true);
-        Assert.assertTrue(model.isLateralCountCoalesceRequired());
-        Assert.assertTrue(model.isOuterRefWildcardExcluded());
-        Assert.assertTrue(wrapper.isLateralCountCoalesceRequired());
-        Assert.assertTrue(wrapper.isOuterRefWildcardExcluded());
-        try {
-            wrapper.setLateralCountCoalesceRequired(false);
-            Assert.fail("QueryModelWrapper must remain read-only");
-        } catch (UnsupportedOperationException ignored) {
-        }
-        try {
-            wrapper.setOuterRefWildcardExcluded(false);
-            Assert.fail("QueryModelWrapper must remain read-only");
-        } catch (UnsupportedOperationException ignored) {
-        }
-
-        QueryColumn template = new QueryColumn().of("cnt", null);
-        try {
-            wrapper.addLateralCountTemplate(template);
-            Assert.fail("QueryModelWrapper must remain read-only");
-        } catch (UnsupportedOperationException ignored) {
-        }
-        model.addLateralCountTemplate(template);
-        Assert.assertEquals(1, model.getLateralCountTemplates().size());
-        Assert.assertSame(template, wrapper.getLateralCountTemplates().getQuick(0));
-
-        model.clear();
-        Assert.assertFalse(model.isLateralCountCoalesceRequired());
-        Assert.assertFalse(model.isOuterRefWildcardExcluded());
-        Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
-        Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
-        Assert.assertEquals(0, wrapper.getLateralCountTemplates().size());
     }
 
     @Test
@@ -9869,7 +9980,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // The join with adjustments is at the SELECT level (above trades),
-            // not at the data source level where terminateHere runs.
+            // not at the data source level.
             assertQuery("""
                     SELECT o.id, sub.qty, sub.adj
                     FROM orders o
@@ -10322,7 +10433,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // PARTITION BY order_id is the same as the correlation column
-            // compensateLatestBy should detect it's already present and skip adding
+            // LateralBinder should detect it's already present and skip adding
             assertQuery("""
                     SELECT o.id, sub.qty
                     FROM orders o
@@ -10512,7 +10623,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // T116: Window function with correlated PARTITION BY inside lateral
-    // Triggers hasCorrelatedExprAtDepth window expression args path
+    // Triggers LateralBinder.hasCorrelatedColumns window expression args path
     @Test
     public void testT116WindowFunctionCorrelatedPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
@@ -10989,7 +11100,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T23: SAMPLE BY (rewritten to GROUP BY), INNER — decorrelation after rewriteSampleBy
+    // T23: SAMPLE BY (rewritten to GROUP BY), INNER — decorrelation after SampleByBinder.bindSampleBy
     @Test
     public void testT23SampleByInner() throws Exception {
         assertMemoryLeak(() -> {
@@ -11471,7 +11582,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28f: SAMPLE BY + LIMIT — combined wrappers: rewriteSampleBy then compensateLimit
+    // T28f: SAMPLE BY + LIMIT — combined wrappers: SampleByBinder.bindSampleBy then LateralBinder.bindCorrelatedLimit
     @Test
     public void testT28fSampleByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
@@ -11512,7 +11623,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28g: ORDER BY with function expression — moveOrderByFunctionsIntoOuterSelect wrapper
+    // T28g: ORDER BY with function expression — OrderBinder wrapper
     @Test
     public void testT28gOrderByFunctionWrapper() throws Exception {
         assertMemoryLeak(() -> {
@@ -11528,7 +11639,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (5, 2, 40.0, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            // ORDER BY abs(qty - 25) triggers moveOrderByFunctionsIntoOuterSelect
+            // ORDER BY abs(qty - 25) triggers OrderBinder
             // which wraps the inner model with a SELECT * wrapper
             assertQuery("""
                     SELECT o.id, t.qty
@@ -11913,7 +12024,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T36: Inner JOIN ON correlation — extractCorrelatedFromInnerJoins
+    // T36: Inner JOIN ON correlation — LateralBinder
     @Test
     public void testT36InnerJoinOnCorrelation() throws Exception {
         assertMemoryLeak(() -> {
@@ -12934,7 +13045,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T58: LIMIT with function ORDER BY — compensateLimit must find LIMIT and ORDER BY
+    // T58: LIMIT with function ORDER BY — LateralBinder.bindCorrelatedLimit must find LIMIT and ORDER BY
     // on different wrapper layers and resolve ORDER BY aliases through intermediate SELECTs
     @Test
     public void testT58LimitWithFunctionOrderBy() throws Exception {
@@ -12956,7 +13067,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 8, '2024-01-01T01:30:00.000000Z')
                     """);
 
-            // ORDER BY abs(val - 5) triggers moveOrderByFunctionsIntoOuterSelect.
+            // ORDER BY abs(val - 5) triggers OrderBinder.
             // Per-group LIMIT 2: for each t1 row, take 2 vals closest to 5.
             assertQuery("""
                     SELECT t1.a, sub.val
@@ -13679,7 +13790,7 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // T64b: Cascading lateral where first lateral has window function — verifies deepClone
     // handles WindowExpression correctly. Without deep clone, the shared model between
-    // orders.jm[1] and the second lateral's outer ref subquery causes rewriteSelectClause0
+    // orders.jm[1] and the second lateral's outer ref subquery causes SqlBinder
     // to corrupt the model on the second processing pass.
     @Test
     public void testT64bCascadingLateralWithWindow() throws Exception {
@@ -14509,6 +14620,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ) t
                     ORDER BY o.id
                     """)
+                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             id\tqty
@@ -15210,7 +15322,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                         """);
     }
 
-    // T88: Unqualified correlated ref — exercises rewriteOuterRefs no-dot fallback
+    // T88: Unqualified correlated ref — exercises LateralBinder no-dot fallback
     @Test
     public void testT88UnqualifiedCorrelatedRef() throws Exception {
         assertMemoryLeak(() -> {
@@ -15291,7 +15403,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T90: LIMIT + offset with GROUP BY (exercises compensateLimit wrapping path)
+    // T90: LIMIT + offset with GROUP BY (exercises LateralBinder.bindCorrelatedLimit wrapping path)
     @Test
     public void testT90LimitOffsetWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
@@ -15338,7 +15450,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T91: Subquery as outer table — exercises createOuterRefBase deepClone path
+    // T91: Subquery as outer table — exercises LateralBinder deepClone path
     @Test
     public void testT91SubqueryOuter() throws Exception {
         assertMemoryLeak(() -> {
@@ -15357,7 +15469,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 30.0, '2024-01-01T02:10:00.000000Z')
                     """);
 
-            // Outer is a subquery (not a bare table) — createOuterRefBase
+            // Outer is a subquery (not a bare table) — LateralBinder
             // takes the nestedModel path and deep-clones it
             assertQuery("""
                     SELECT o.id, sub.total
@@ -15457,7 +15569,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T94: Lateral with DISTINCT + GROUP BY on same query (compensateDistinct + compensateAggregate)
+    // T94: Lateral with DISTINCT + GROUP BY on same query (LateralBinder + LateralBinder.compensateScalarAggregate)
     @Test
     public void testT94DistinctWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
@@ -15816,7 +15928,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // T98b: single source + unqualified WHERE column name
-    // Regression test: canResolveColumnForOuter must resolve unqualified columns
+    // Regression test: LateralBinder must resolve unqualified columns
     @Test
     public void testT98bOuterWhereUnqualifiedColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -15851,21 +15963,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,coalesce(cnt,0)]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: sub.__qdb_outer_ref__0_id=o.id
-                                          filter: true
-                                            Async JIT Filter workers: 1
-                                              filter: status='ACTIVE'
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
-                                            Hash
+                                  functions: [o.id,coalesce(sub.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: sub.__qdb_outer_ref__0_id=o.id
+                                      filter: true
+                                        Async JIT Filter workers: 1
+                                          filter: status='ACTIVE'
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: orders
+                                        Hash
+                                            SelectedRecord
                                                 GroupBy vectorized: false
                                                   keys: [__qdb_outer_ref__0_id]
                                                   values: [count(*)]
-                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Cross Join
                                                             PageFrame
                                                                 Row forward scan
@@ -15920,21 +16032,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,coalesce(cnt,0)]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: sub.__qdb_outer_ref__0_id=o.id
-                                          filter: true
-                                            Async Filter workers: 1
-                                              filter: 1<abs(id)
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
-                                            Hash
+                                  functions: [o.id,coalesce(sub.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: sub.__qdb_outer_ref__0_id=o.id
+                                      filter: true
+                                        Async Filter workers: 1
+                                          filter: 1<abs(id)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: orders
+                                        Hash
+                                            SelectedRecord
                                                 GroupBy vectorized: false
                                                   keys: [__qdb_outer_ref__0_id]
                                                   values: [count(*)]
-                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Cross Join
                                                             PageFrame
                                                                 Row forward scan
@@ -15999,48 +16111,47 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,category,coalesce(cnt,0)]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
-                                          symbolKeyJoin: true
-                                            Hash Join Light
-                                              condition: t2.t1_id=t1.id
-                                                Async JIT Filter workers: 1
-                                                  filter: status='ACTIVE'
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                  functions: [t1.id,t2.category,coalesce(sub.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: sub.__qdb_outer_ref__0_id=t1.id and sub.__qdb_outer_ref__0_category=t2.category
+                                      symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: t2.t1_id=t1.id
+                                            Async JIT Filter workers: 1
+                                              filter: status='ACTIVE'
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
                                             Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                                        Hash
+                                            SelectedRecord
                                                 GroupBy vectorized: false
-                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_category]
                                                   values: [count(*)]
-                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Hash Join Light
-                                                          condition: __qdb_outer_ref__0_category=t3.b
+                                                          condition: __qdb_outer_ref__0_category=b
                                                           symbolKeyJoin: true
                                                             PageFrame
                                                                 Row forward scan
                                                                 Frame forward scan on: t3
                                                             Hash
                                                                 GroupBy vectorized: false
-                                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                                                    SelectedRecord
-                                                                        Hash Join Light
-                                                                          condition: t2.t1_id=t1.id
-                                                                            Async JIT Filter workers: 1
-                                                                              filter: status='ACTIVE'
-                                                                                PageFrame
-                                                                                    Row forward scan
-                                                                                    Frame forward scan on: t1
-                                                                            Hash
-                                                                                PageFrame
-                                                                                    Row forward scan
-                                                                                    Frame forward scan on: t2
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_category]
+                                                                    Hash Join Light
+                                                                      condition: t2.t1_id=t1.id
+                                                                        Async JIT Filter workers: 1
+                                                                          filter: status='ACTIVE'
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t1
+                                                                        Hash
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t2
                             """)
                     .returns("""
                             id\tcategory\tcnt
@@ -16095,34 +16206,34 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,t2_val,coalesce(cnt,0)]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
-                                            Filter filter: t2.val<t1.val
-                                                Hash Join Light
-                                                  condition: t2.t1_id=t1.id
+                                  functions: [t1.id,t2.val,coalesce(sub.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: sub.__qdb_outer_ref__0_id=t1.id and sub.__qdb_outer_ref__0_val1=t2.val
+                                        Filter filter: t2.val<t1.val
+                                            Hash Join Light
+                                              condition: t2.t1_id=t1.id
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
-                                            Hash
+                                                        Frame forward scan on: t2
+                                        Hash
+                                            SelectedRecord
                                                 GroupBy vectorized: false
-                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_val1]
                                                   values: [count(*)]
-                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Hash Join Light
-                                                          condition: __qdb_outer_ref__0_val=t3.b
+                                                          condition: __qdb_outer_ref__0_val1=b
                                                             PageFrame
                                                                 Row forward scan
                                                                 Frame forward scan on: t3
                                                             Hash
                                                                 GroupBy vectorized: false
-                                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                                                    SelectedRecord
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_val1]
+                                                                    Filter filter: t2.val<t1.val
                                                                         Hash Join Light
                                                                           condition: t2.t1_id=t1.id
                                                                             PageFrame
@@ -16182,7 +16293,7 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // T99: correlated ON on join branch (ji > 0, INNER JOIN)
     // The join branch (t3) has correlated ON: t3.order_id = o.id
-    // pushDownOuterRefsForJoinBranch moves it to t3's WHERE
+    // LateralBinder moves it to t3's WHERE
     @Test
     public void testT99CorrelatedOnJoinBranch() throws Exception {
         assertMemoryLeak(() -> {
@@ -16363,7 +16474,6 @@ public class LateralJoinTest extends AbstractCairoTest {
 
         assertQuery(sql)
                 .noLeakCheck()
-                .sizeMayVary()
                 .assertBinds(cases);
     }
 

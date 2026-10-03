@@ -118,6 +118,12 @@ public interface TimestampDriver {
     // returns approximate partition duration in driver unit (nanos/micros)
     long approxPartitionDuration(int partitionBy);
 
+    /**
+     * Converts a timestamp of another type, or a DATE, to the smallest value of the driver's precision
+     * that is not before it; exact when the source is not finer. NULL stays NULL.
+     */
+    long ceilFrom(long timestamp, int timestampType);
+
     long ceilYYYY(long timestamp);
 
     long endOfDay(long start);
@@ -130,6 +136,12 @@ public interface TimestampDriver {
      * @return the adjusted interval
      */
     Interval fixInterval(Interval interval, int intervalType);
+
+    /**
+     * Converts a timestamp of another type, or a DATE, to the largest value of the driver's precision
+     * that is not after it; exact when the source is not finer. NULL stays NULL.
+     */
+    long floorFrom(long timestamp, int timestampType);
 
     long floorYYYY(long timestamp);
 

@@ -38,6 +38,22 @@ import io.questdb.std.Transient;
 public class CaseFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        final int n = argTypes.size();
+        int returnType = -1;
+        for (int i = 1; i < n; i += 2) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i));
+            if (returnType == ColumnType.UNDEFINED) {
+                return ColumnType.UNDEFINED;
+            }
+        }
+        if (n % 2 == 1) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(n - 1));
+        }
+        return CaseCommon.getCaseFunctionType(returnType);
+    }
+
+    @Override
     public String getSignature() {
         return "case(V)";
     }

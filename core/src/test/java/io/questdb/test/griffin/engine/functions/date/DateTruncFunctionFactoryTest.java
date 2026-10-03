@@ -30,6 +30,14 @@ import org.junit.Test;
 public class DateTruncFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testIdentityUnitKeepsNonTimestampArgument() throws Exception {
+        assertTimestamp("SELECT DATE_TRUNC('microsecond', null) as truncated", "null");
+        assertTimestamp("SELECT DATE_TRUNC('microsecond', 7) as truncated", "7");
+        assertTimestamp("SELECT DATE_TRUNC('microsecond', '2020-01-01'::date) as truncated", "2020-01-01T00:00:00.000Z");
+        assertTimestamp("SELECT DATE_TRUNC('nanosecond', 7) as truncated", "1970-01-01T00:00:00.000007Z");
+    }
+
+    @Test
     public void testInvalidKind() throws Exception {
         assertQuery("select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated")
                 .fails(18, "invalid unit 'invalid'");

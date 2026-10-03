@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Mutable;
@@ -57,6 +57,8 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
+    void freeResourcesInFlight();
+
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     /**
@@ -68,7 +70,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     ExpressionNode parseExpression(CharSequence expression) throws SqlException;
 
     RecordCursorFactory generateSelectWithRetries(
-            @Transient IQueryModel queryModel,
+            @Transient QueryModel queryModel,
             @Nullable @Transient InsertModel insertModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
@@ -87,7 +89,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     void setFullFatJoins(boolean fullFatJoins);
 
     @TestOnly
-    ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException;
+    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException;
 
     @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException;

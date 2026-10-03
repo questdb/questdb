@@ -411,6 +411,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @AfterClass
     public static void tearDownStatic() {
         staticOverrides.reset();
+        inputRoot = null;
+        inputWorkRoot = null;
         forEachNode(QuestDBTestNode::closeCairo);
         circuitBreaker = Misc.free(circuitBreaker);
         nodes.clear();

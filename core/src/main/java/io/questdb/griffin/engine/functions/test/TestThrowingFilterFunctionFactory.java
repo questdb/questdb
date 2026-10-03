@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -58,6 +59,11 @@ public class TestThrowingFilterFunctionFactory implements FunctionFactory {
         CONSTRUCT_COUNT.set(0);
         CLOSE_COUNT.set(0);
         throwOnCall = throwOnCallNumber;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override

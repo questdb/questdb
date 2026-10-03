@@ -1641,7 +1641,7 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyQueryNestedProjectionPreservesDictionaryEncoding() throws Exception {
         // Nested virtual projections: the outer factory's base is another VRCF, not the
         // underlying reader. The per-column parquet encoding must ride through both levels
-        // of generateSelectVirtualWithSubQuery.
+        // of ProjectionFactoryGenerator.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE dict_nested_src (

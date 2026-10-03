@@ -236,6 +236,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long ceilFrom(long timestamp, int timestampType) {
+        if (ColumnType.isTimestampNano(timestampType) && timestamp != Numbers.LONG_NULL) {
+            return -Math.floorDiv(-timestamp, Micros.MICRO_NANOS);
+        }
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : timestamp;
+    }
+
+    @Override
     public long ceilYYYY(long timestamp) {
         return Micros.ceilYYYY(timestamp);
     }
@@ -255,6 +263,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorFrom(long timestamp, int timestampType) {
+        if (ColumnType.isTimestampNano(timestampType) && timestamp != Numbers.LONG_NULL) {
+            return Math.floorDiv(timestamp, Micros.MICRO_NANOS);
+        }
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : timestamp;
     }
 
     @Override

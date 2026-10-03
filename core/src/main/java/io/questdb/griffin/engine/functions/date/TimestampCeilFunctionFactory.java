@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
@@ -44,8 +45,22 @@ import io.questdb.std.datetime.CommonUtils;
 
 public class TimestampCeilFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+    }
+
+    @Override
     public String getSignature() {
         return "timestamp_ceil(sN)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final char c = args.getQuick(0).getChar(null);
+        return switch (c) {
+            case 'd', 'M', 'y', 'w', 'h', 'm', 's', 'T', 'U', 'n' -> true;
+            default -> throw invalidUnit(c, argPositions.getQuick(0));
+        };
     }
 
     @Override
@@ -65,11 +80,15 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             case 'U':
             case 'n':
                 return new TimestampCeilFunction(args.getQuick(1), c, ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(args.getQuick(1).getType()), ColumnType.TIMESTAMP_MICRO));
-            case 0:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(c).put('\'');
+                throw invalidUnit(c, argPositions.getQuick(0));
         }
+    }
+
+    private static SqlException invalidUnit(char unit, int position) {
+        return unit == 0
+                ? SqlException.position(position).put("invalid unit 'null'")
+                : SqlException.position(position).put("invalid unit '").put(unit).put('\'');
     }
 
     static class TimestampCeilFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {

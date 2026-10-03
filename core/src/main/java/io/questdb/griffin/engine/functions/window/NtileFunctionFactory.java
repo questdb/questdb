@@ -46,7 +46,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
@@ -68,6 +67,11 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
     // LONG signature so both INT literals (auto-widened) and LONG literals resolve; the value is
     // validated to fit in a positive int below.
     private static final String SIGNATURE = NAME + "(L)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
 
     @Override
     public String getSignature() {
@@ -166,7 +170,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         private final int bucketCount;
         private int columnIndex;
         private long count = 1;
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         private long totalRows;
 
         public NtileFunction(int bucketCount) {
@@ -188,7 +192,8 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
-                                         ObjList<ExpressionNode> orderBy,
+                                         IntList orderPositions,
+                                         ObjList<CharSequence> orderBy,
                                          IntList orderByDirection) throws SqlException {
             this.orderBy = orderBy;
         }
@@ -257,7 +262,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
         private int columnIndex;
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
 
         public NtileOverPartitionFunction(
                 int bucketCount,
@@ -309,7 +314,8 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
-                                         ObjList<ExpressionNode> orderBy,
+                                         IntList orderPositions,
+                                         ObjList<CharSequence> orderBy,
                                          IntList orderByDirection) throws SqlException {
             this.orderBy = orderBy;
         }

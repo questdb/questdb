@@ -278,7 +278,7 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidLoTypeFreesParsedFunction() throws Exception {
-        // toLimitFunction() parses the LIMIT expression before validating it, so a rejected
+        // OrderBinder.bindLimit() parses the LIMIT expression before validating it, so a rejected
         // expression that owns native memory leaked it: an ARRAY constant holds a DirectArray, and
         // neither the type coercion nor the explicit type check freed the parsed function. The
         // callers cannot free it either - they never receive it.
@@ -1627,7 +1627,7 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testTopKDoesNotPeelExtraNullColumnSpliceOrderByNullColumn() throws Exception {
         // ORDER BY a column that exists only in the spliced layer. Pre-fix this hit
-        // AssertionError: index out of bounds, 3 >= 3 from buildAsyncTopKOverStolenFilter
+        // AssertionError: index out of bounds, 3 >= 3 from SortFactoryGenerator
         // because the gate translated the projected index against the unwrapped master metadata.
         // Post-fix the splice is the page-frame leaf, baseMetadata covers the null column, and
         // top-K runs to completion (all rows tie on NULL — comparator stability picks any 3).

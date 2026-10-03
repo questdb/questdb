@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -45,6 +46,11 @@ import io.questdb.std.Transient;
 
 public class DoubleArrayDivFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "/";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.doubleArrayBroadcast(argTypes.getQuick(0), argTypes.getQuick(1));
+    }
 
     @Override
     public String getSignature() {

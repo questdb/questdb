@@ -113,11 +113,6 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
         return isAscending ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
     }
 
-    @Nullable
-    public IntList getSymbolUnionColumns() {
-        return symbolUnionColumns;
-    }
-
     @Override
     public boolean isNonDeterministic() {
         for (int i = 0, n = sourceFactories.size(); i < n; i++) {

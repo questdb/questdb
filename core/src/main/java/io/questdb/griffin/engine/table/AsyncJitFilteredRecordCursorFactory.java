@@ -68,7 +68,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final SCSequence collectSubSeq = new SCSequence();
-    private final ExpressionNode filterExpr;
     private Function limitLoFunction;
     private final int limitLoPos;
     private final int maxNegativeLimit;
@@ -96,7 +95,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull ExpressionNode filterExpr,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             int workerCount,
@@ -109,7 +107,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.compiledFilter = compiledFilter;
         this.compiledCountOnlyFilter = compiledCountOnlyFilter;
         this.filter = filter;
-        this.filterExpr = filterExpr;
         this.bindVarFunctions = bindVarFunctions;
         // A throw part-way through this constructor never returns the factory, so _close() never runs
         // and everything allocated up to that point is unreachable: the bind variable memory is
@@ -297,11 +294,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public ExpressionNode getStealFilterExpr() {
-        return filterExpr;
-    }
-
-    @Override
     public TableToken getTableToken() {
         return base.getTableToken();
     }
@@ -322,11 +314,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
-    }
-
-    @Override
-    public boolean supportsFilterStealing() {
-        return limitLoFunction == null;
     }
 
     @Override

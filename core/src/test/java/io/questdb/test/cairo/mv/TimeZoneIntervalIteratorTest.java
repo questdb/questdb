@@ -102,10 +102,11 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
                 1
         );
 
-        Assert.assertEquals(offset, iterator.getMinTimestamp());
+        // the first row (0) falls into the bucket that starts a day before the offset
+        Assert.assertEquals(offset - timestampDriver.fromDays(1), iterator.getMinTimestamp());
         Assert.assertEquals(offset + timestampDriver.fromDays(7), iterator.getMaxTimestamp());
 
-        for (int i = 0; i < 7; i++) {
+        for (int i = -1; i < 7; i++) {
             Assert.assertTrue(iterator.next());
             Assert.assertEquals(offset + timestampDriver.fromDays(i), iterator.getTimestampLo());
             Assert.assertEquals(offset + timestampDriver.fromDays(i + 1), iterator.getTimestampHi());

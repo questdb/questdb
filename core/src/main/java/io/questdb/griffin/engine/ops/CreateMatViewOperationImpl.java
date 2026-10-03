@@ -48,8 +48,8 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -194,6 +194,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public byte getIndexType(int index) {
+        return createTableOperation.getIndexType(index);
+    }
+
+    @Override
     public MatViewDefinition getMatViewDefinition() {
         return viewDefinition;
     }
@@ -314,11 +319,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public byte getIndexType(int index) {
-        return createTableOperation.getIndexType(index);
-    }
-
-    @Override
     public boolean isMatView() {
         return true;
     }
@@ -343,7 +343,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void validateAndUpdateMetadataFromModel(
             @NotNull SqlExecutionContext sqlExecutionContext,
             @NotNull FunctionFactoryCache functionFactoryCache,
-            @NotNull IQueryModel queryModel
+            @NotNull QueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -417,6 +417,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
             intervalExpr = sampleBy.token;
             intervalPos = sampleBy.position;
+            if (timestamp == null && isSelectSampleBy(queryModel, sampleBy)) {
+                // SAMPLE BY buckets the base designated timestamp, which the view must select.
+                final String tsName = sampleByTimestampName(sqlExecutionContext, baseTableToken);
+                if (tsName != null && createColumnModelMap.get(tsName) == null && !isColumnSelected(columns, tsName)) {
+                    throw SqlException.position(selectTextPosition)
+                            .put("TIMESTAMP column does not exist or not present in select list [name=")
+                            .put(tsName).put(']');
+                }
+            }
         }
 
         // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY).
@@ -541,7 +550,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     private static void copyBaseTableSymbolColumnCapacity(
             @Nullable ExpressionNode columnNode,
-            @Nullable IQueryModel queryModel,
+            @Nullable QueryModel queryModel,
             @NotNull CreateTableColumnModel columnModel,
             @NotNull CharSequence baseTableName,
             @NotNull TableMetadata baseTableMetadata
@@ -582,23 +591,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
-    private static ExpressionNode findSampleByNode(IQueryModel model) {
+    private static ExpressionNode findSampleByNode(QueryModel model) {
         while (model != null) {
-            if (SqlUtil.isNotPlainSelectModel(model)) {
-                break;
-            }
-
             final ExpressionNode sampleBy = model.getSampleBy();
             if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
                 return sampleBy;
             }
-
+            if (SqlUtil.isNotPlainSelectModel(model)) {
+                break;
+            }
             model = model.getNestedModel();
         }
         return null;
     }
 
-    private static QueryColumn findTimestampFloorColumn(IQueryModel model) {
+    private static QueryColumn findTimestampFloorColumn(QueryModel model) {
         while (model != null) {
             if (SqlUtil.isNotPlainSelectModel(model)) {
                 break;
@@ -617,7 +624,39 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
-    private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, IQueryModel queryModel) {
+    private static boolean isColumnSelected(ObjList<QueryColumn> columns, CharSequence name) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast == null || ast.type != ExpressionNode.LITERAL) {
+                continue;
+            }
+            final CharSequence token = ast.token;
+            final int dot = Chars.indexOfLastUnquoted(token, '.');
+            final CharSequence column = dot < 0 ? token : token.subSequence(dot + 1, token.length());
+            if (Chars.equals(column, '*') || Chars.equalsIgnoreCase(GenericLexer.unquote(column), name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the SAMPLE BY buckets the base table directly, rather than a joined source or a sub-query.
+     */
+    private static boolean isSelectSampleBy(QueryModel model, ExpressionNode sampleBy) {
+        while (model != null && model.getJoinModels().size() <= 1) {
+            if (model.getSampleBy() == sampleBy) {
+                return model.getTableNameExpr() != null;
+            }
+            if (model.isNestedModelIsSubQuery()) {
+                return false;
+            }
+            model = model.getNestedModel();
+        }
+        return false;
+    }
+
+    private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, QueryModel queryModel) {
         final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
         if (dotIndex > -1) {
             if (Chars.equalsIgnoreCase(queryModel.getName(), columnNode.token, 0, dotIndex)) {
@@ -629,7 +668,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
-    private boolean hasNoAggregates(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel, int columnIndex) {
+    private static String sampleByTimestampName(SqlExecutionContext sqlExecutionContext, TableToken baseTableToken) {
+        try (TableMetadata metadata = sqlExecutionContext.getCairoEngine().getTableMetadata(baseTableToken)) {
+            final int index = metadata.getTimestampIndex();
+            return index < 0 ? null : Chars.toString(metadata.getColumnName(index));
+        }
+    }
+
+    private boolean hasNoAggregates(FunctionFactoryCache functionFactoryCache, QueryModel queryModel, int columnIndex) {
         tmpColumnIndexes.clear();
         tmpColumnIndexes.add(columnIndex);
 

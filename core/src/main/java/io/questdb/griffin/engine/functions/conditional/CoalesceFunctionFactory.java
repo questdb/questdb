@@ -67,6 +67,22 @@ import static io.questdb.cairo.ColumnType.*;
 public class CoalesceFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        int returnType = -1;
+        for (int i = 0, n = argTypes.size(); i < n; i++) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i));
+            if (returnType == ColumnType.UNDEFINED) {
+                return ColumnType.UNDEFINED;
+            }
+        }
+        return switch (tagOf(returnType)) {
+            case STRING, SYMBOL -> STRING;
+            case BOOLEAN, SHORT, BYTE, CHAR -> isNull(argTypes.getQuick(0)) ? returnType : argTypes.getQuick(0);
+            default -> returnType;
+        };
+    }
+
+    @Override
     public String getSignature() {
         return "coalesce(V)";
     }

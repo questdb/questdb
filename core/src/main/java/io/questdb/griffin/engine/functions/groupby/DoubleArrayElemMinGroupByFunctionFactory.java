@@ -39,6 +39,11 @@ import org.jetbrains.annotations.NotNull;
 public class DoubleArrayElemMinGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "array_elem_min(D[])";
     }

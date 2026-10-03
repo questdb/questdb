@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -49,7 +50,7 @@ import io.questdb.std.datetime.CommonUtils;
  * Factory for the dateadd function: dateadd(char period, int stride, timestamp).
  *
  * <p><b>IMPORTANT - Optimizer Integration:</b></p>
- * <p>The SqlOptimiser intrinsically understands this function and pushes timestamp predicates
+ * <p>The planner intrinsically understands this function and pushes timestamp predicates
  * through it when the timestamp column is wrapped in dateadd. For example:</p>
  * <pre>
  *   SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts FROM t) WHERE ts > '2022-01-01'
@@ -60,16 +61,16 @@ import io.questdb.std.datetime.CommonUtils;
  * <p><b>If this function's signature changes, the optimizer must be updated accordingly.</b></p>
  * <p>Specifically, the following components depend on this function's signature:</p>
  * <ul>
- *   <li>{@code SqlOptimiser.detectTimestampOffset()} - extracts offset info from dateadd</li>
- *   <li>{@code SqlOptimiser.isDateaddTimestampExpression()} - pattern matching</li>
- *   <li>{@code QueryModel.timestampOffsetValue} - stores the stride as int</li>
- *   <li>{@code WhereClauseParser.analyzeAndOffset()} - applies offset during interval extraction</li>
+ *   <li>{@code FilterPushdownPass} - pushes predicates through projected dateadd offsets</li>
+ *   <li>{@code IntervalExtractor} - applies the offset during interval extraction</li>
  * </ul>
- *
- * @see io.questdb.griffin.SqlOptimiser
- * @see io.questdb.griffin.model.QueryModel
  */
 public class TimestampAddFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(2));
+    }
 
     @Override
     public String getSignature() {
@@ -77,30 +78,54 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final Function periodFunc = args.getQuick(0);
+        if (periodFunc.isConstant()) {
+            addMethod(periodFunc.getChar(null), timestampType(args.getQuick(2)), argPositions.getQuick(0));
+            if (args.getQuick(1).isConstant()) {
+                constantStride(args.getQuick(1), argPositions.getQuick(1));
+            }
+        }
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function periodFunc = args.getQuick(0);
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
-        int stride;
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
+        int timestampType = timestampType(timestampFunc);
 
         if (periodFunc.isConstant()) {
             char period = periodFunc.getChar(null);
-            TimestampDriver.TimestampAddMethod periodAddFunc = ColumnType.getTimestampDriver(timestampType).getAddMethod(period);
-            if (periodAddFunc == null) {
-                throw SqlException.$(argPositions.getQuick(0), "invalid time period [unit=").put(period).put(']');
-            }
-
+            TimestampDriver.TimestampAddMethod periodAddFunc = addMethod(period, timestampType, argPositions.getQuick(0));
             if (strideFunc.isConstant()) {
-                if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
-                    return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc, timestampType);
-                } else {
-                    throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
-                }
+                final int stride = constantStride(strideFunc, argPositions.getQuick(1));
+                return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc, timestampType);
             }
             return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc, timestampType);
         }
         return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc, timestampType);
+    }
+
+    private static TimestampDriver.TimestampAddMethod addMethod(char period, int timestampType, int position) throws SqlException {
+        final TimestampDriver.TimestampAddMethod periodAddFunc = ColumnType.getTimestampDriver(timestampType).getAddMethod(period);
+        if (periodAddFunc == null) {
+            throw SqlException.$(position, "invalid time period [unit=").put(period).put(']');
+        }
+        return periodAddFunc;
+    }
+
+    private static int constantStride(Function strideFunc, int position) throws SqlException {
+        final int stride = strideFunc.getInt(null);
+        if (stride == Numbers.INT_NULL) {
+            throw SqlException.$(position, "`null` is not a valid stride");
+        }
+        return stride;
+    }
+
+    private static int timestampType(Function timestampFunc) {
+        return ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
     }
 
     private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {

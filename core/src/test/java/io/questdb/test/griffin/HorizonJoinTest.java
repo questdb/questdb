@@ -1252,7 +1252,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinNonKeyedConstantWhereFalse() throws Exception {
         // A non-keyed HORIZON JOIN aggregate with a compile-time constant-FALSE WHERE must still emit
         // exactly one row with null aggregates, just like a plain non-keyed aggregate over empty input.
-        // On HEAD without the fix the constant-fold path in generateJoins replaced the whole HORIZON
+        // On HEAD without the fix the constant-fold path in JoinFactoryGenerator replaced the whole HORIZON
         // JOIN factory with an EmptyTableRecordCursorFactory and dropped the mandatory single row, so
         // it returned 0 rows. The runtime-constant (bind-variable) variant stays a runtime no-op and
         // returned the single row, so the query fuzzer's bind pass flagged the divergence.
@@ -2064,17 +2064,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "RANGE FROM 0s TO 1s STEP 1s AS h")
                     .noLeakCheck()
-                    .assertsPlan("VirtualRecord\n" +
-                            "  functions: [sec_off,avg,avg1]\n" +
-                            "    " + getHorizonJoinPlanType() + " offsets: 2\n" +
-                            "      keys: [sec_off]\n" +
-                            "      values: [avg(p.bid),avg(p.ask)]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trades\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n");
+                    .assertsPlan(getHorizonJoinPlanType() + " offsets: 2\n" +
+                            "  keys: [sec_off]\n" +
+                            "  values: [avg(p.bid),avg(p.ask)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n");
         });
     }
 
@@ -2127,8 +2125,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinRuntimeConstantWhere() throws Exception {
         // A runtime-constant WHERE term (e.g. a bind variable behind a cast, as the query fuzzer's
-        // bind-variant oracle produces) references no columns, so the optimiser routes it through
-        // mergeConstIntoPostJoinWhereClause. It must land on the master model rather than the
+        // bind-variant oracle produces) references no columns, so it becomes a join constant
+        // filter. It must land on the master source rather than the
         // synthetic offset pseudo-table, which rejects any WHERE clause. The compile-time-constant
         // literal variant (true IS NOT NULL) folds away and never exercised this path; the
         // bind-variant did, and tripped "WHERE clause of HORIZON JOIN can only reference left-hand
@@ -3643,17 +3641,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     .expectSize()
                     .withPlan("Encode sort light\n" +
                             "  keys: [sec_offs]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [sec_offs,avg]\n" +
-                            "        " + getHorizonJoinPlanType() + " offsets: 3\n" +
-                            "          keys: [sec_offs]\n" +
-                            "          values: [avg(p.price)]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: trades\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: prices\n")
+                            "    " + getHorizonJoinPlanType() + " offsets: 3\n" +
+                            "      keys: [sec_offs]\n" +
+                            "      values: [avg(p.price)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n")
                     .returns("""
                             sec_offs\tavg
                             0\t20.0
@@ -5314,7 +5310,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     @Test
     public void testMultiHorizonJoinHorizonTimestamp() throws Exception {
-        // Verifies that h.timestamp resolves correctly via buildMultiHorizonColumnMappings.
+        // Verifies that h.timestamp resolves correctly through TemporalJoinBinder.bindHorizonJoin.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
@@ -7047,8 +7043,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     /**
      * Creates orders (master) with SYMBOL sym and region, prices with SYMBOL sym and STRING region,
      * and mids with SYMBOL sym. HORIZON JOIN compares t.sym = p.sym as int symbol keys and
-     * t.region = p.region as strings. Both generateHorizonJoinFactory() and
-     * generateMultiHorizonJoinFactory() keep one asOfWriteSymbolAsString BitSet for master and slave
+     * t.region = p.region as strings. AggregateFactoryGenerator keeps one
+     * asOfWriteSymbolAsString BitSet for master and slave
      * column indexes, so the region bit of one side can land on the index of the other side's sym
      * column. That side then writes sym as a string while the other side writes it as an int.
      */

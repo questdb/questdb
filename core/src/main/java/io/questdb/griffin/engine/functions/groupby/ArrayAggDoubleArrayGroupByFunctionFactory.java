@@ -37,6 +37,11 @@ import io.questdb.std.Transient;
 public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+    }
+
+    @Override
     public String getSignature() {
         return "array_agg(D[])";
     }

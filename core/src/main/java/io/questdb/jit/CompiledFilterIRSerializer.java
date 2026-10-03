@@ -25,8 +25,10 @@ package io.questdb.jit;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -35,8 +37,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.CharacterStore;
+import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.GeoHashUtil;
-import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -45,13 +49,17 @@ import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.plan.logical.BindVariableExpression;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.Chars;
 import io.questdb.std.DoubleList;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
-import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Mutable;
@@ -60,9 +68,15 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -76,7 +90,7 @@ import java.util.Arrays;
  * | int    | int     | long    |
  * </pre>
  */
-public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+public class CompiledFilterIRSerializer implements Mutable {
     public static final int ADD = 14; // a + b
     public static final int AND = 6; // a && b
     public static final int AND_SC = 18; // short-circuit AND: if false, jump to label[payload] (0 = next_row)
@@ -120,6 +134,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int VARCHAR_HEADER_TYPE = 9;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+    // Operand kinds kind() reports for a bound node, named after the parser shapes they replace.
+    private static final int BIND_VARIABLE = 1;
+    private static final int CONSTANT = 2;
     private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
@@ -129,17 +146,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // cannot collide with the rounded image of an int column value, and one of this magnitude or
     // greater can. See isNarrowIntCmpWideningConst.
     private static final double FLOAT_EXACT_INT_LIMIT = 16777216.0;
+    private static final int FUNCTION = 3;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
+    private static final int LITERAL = 4;
     // Maximum number of labels supported by the backend (must match LabelArray::MAX_LABELS in x86.h)
     private static final int MAX_LABELS = 8;
     // What hasUnharmonisedOperandWidths() adds to the type code of a narrow-int IMM before it
-    // pushes it, so isUnharmonisedPairing() can tell an immediate from a column read of the same
+    // pushes it, so isWideLaneUnharmonisedPairing() can tell an immediate from a column read of the same
     // width. Type codes run 0 (I1_TYPE) to 9 (VARCHAR_HEADER_TYPE), so 16 collides with none of
     // them and stays clear of UNDEFINED_CODE (-1) as well. See isWideLaneUnharmonisedPairing.
     private static final int NARROW_IMM_WIDTH_OFFSET = 16;
     // Absent-key marker for the arithmetic type caches. UNDEFINED_CODE is a cacheable answer, so it
     // cannot double as the miss value.
     private static final int NOT_CACHED = Integer.MIN_VALUE;
+    private static final int OPERATION = 5;
     // Predicate priority for short-circuit evaluation. Every priority getPredicatePriority() returns
     // falls in [0, PRIORITY_COUNT), which is what lets sortPredicates() order a chain by counting
     // occurrences per priority instead of comparing.
@@ -155,6 +175,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int PRIORITY_OTHER_NEQ = 6;
     private static final int PRIORITY_SYM_EQ = 3;
     private static final int PRIORITY_SYM_NEQ = 7;
+    private static final int SET_OPERATION = 6;
     // Node kinds hasWideLaneConversionSource() looks for. See hasWideLaneSourceNode().
     private static final int WIDE_LANE_SOURCE_DOUBLE_CONST_ARITH = 4;
     private static final int WIDE_LANE_SOURCE_FLOAT_LEAF = 0;
@@ -167,23 +188,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // re-parses the same constant tokens. The tree does not mutate during serialize(), so the answer
     // is stable, and the entry stays valid for every predicate of the same filter, so clear() is the
     // only reset point - onNodeDescended() deliberately does NOT clear it (see both).
-    private final ObjIntHashMap<ExpressionNode> arithExprTypeCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final ObjIntHashMap<BoundExpression> arithExprTypeCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Memoizes pure-constant long arithmetic folds for the current predicate. Zero records a failed
     // fold; positive values are one-based indexes into constantArithFoldValues.
-    private final ObjIntHashMap<ExpressionNode> constantArithFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final ObjIntHashMap<BoundExpression> constantArithFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     private final LongList constantArithFoldValues = new LongList();
     // Memoizes tryFoldConstantArithFloat() for the current predicate. 0 marks a subtree that is
     // not a pure-constant arithmetic one; positive values are one-based indexes into
     // constantFloatFoldValues. Without it descend() re-walks each subtree at every node it
     // contains, which is quadratic in the length of a constant chain. See arithExprTypeCache.
-    private final ObjIntHashMap<ExpressionNode> constantFloatFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final ObjIntHashMap<BoundExpression> constantFloatFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     private final DoubleList constantFloatFoldValues = new DoubleList();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
-    private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
-    // Scratch keys for discardBackfillNodesFrom(). LongObjHashMap offers no bulk removal, and
-    // removeAt() re-hashes the entries below the freed slot, so the walk collects every doomed
-    // offset before it removes any of them.
-    private final LongList backfillDiscardOffsets = new LongList();
+    private final LongObjHashMap<BoundExpression> backfillNodes = new LongObjHashMap<>();
+    private final CharacterStore characterStore;
+    // Borrowed from the generator for two leaf windows that never nest: the doomed offsets of
+    // discardBackfillNodesFrom() (LongObjHashMap offers no bulk removal, and removeAt() re-hashes
+    // the entries below the freed slot, so the walk collects every offset before it removes any)
+    // and the parsed intervals of serializeInTimestampRange(). Each window clears it first.
+    private final LongList longScratch;
     // The bindVarFunctions slot each bind variable node already took, so that a re-traversal of the
     // SAME node reuses it rather than appending a duplicate. serializeCharOrdering() and
     // serializeIPv4Ordering() re-traverse each operand four and up to six times respectively, so
@@ -195,22 +218,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Compared by identity, like the mark sets below. rewindOrderingOperands() is the ONLY place
     // that truncates bindVarFunctions, and it clears this map alongside: a memoized slot above the
     // watermark would otherwise point past the end of the vars block the backend reads.
-    private final ObjIntHashMap<ExpressionNode> bindVarIndexes = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final ObjIntHashMap<BoundExpression> bindVarIndexes = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // The token each literal constant of the current filter reads as, rendered once by
+    // hasJitShape() before serialization starts. Text rather than value because the token
+    // classifiers below decide widths from the spelling (suffix, decimal point, magnitude).
+    private final ObjObjHashMap<BoundExpression, CharSequence> constantTokens = new ObjObjHashMap<>();
     // List to collect predicates from AND chains for reordering
-    private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
+    private final ObjList<BoundExpression> collectedPredicates = new ObjList<>();
     // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
-    private final ObjIntHashMap<ExpressionNode> containsFloatCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final ObjIntHashMap<BoundExpression> containsFloatCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Memoizes containsNarrowIntegerValue() for the current predicate. See arithExprTypeCache.
-    private final ObjIntHashMap<ExpressionNode> containsNarrowIntCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final ObjIntHashMap<BoundExpression> containsNarrowIntCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Leaf nodes (column / bind variable / constant) a comparison or IN pairing must sign-extend
     // to i64 for the current predicate. Holds node references, compared by identity.
     // See markWidthSemantics.
-    private final ObjHashSet<ExpressionNode> i64WidenLeaves = new ObjHashSet<>();
+    private final ObjHashSet<BoundExpression> i64WidenLeaves = new ObjHashSet<>();
     // Untyped NULL elements of an IN whose key reads at INT width. The type observer sees the
     // predicate's narrowest column, so a BYTE operand under an INT-width key (abyte + 1) would type
     // the NULL at I1 and serializeNull declines - BYTE has no sentinel - taking the whole filter
     // off the JIT. The key's own width is what the pairing compares at. Compared by identity.
-    private final ObjHashSet<ExpressionNode> intWidthNullElements = new ObjHashSet<>();
+    private final ObjHashSet<BoundExpression> intWidthNullElements = new ObjHashSet<>();
     // CONSTANTS that must reach the backend at 8 bytes rather than at the width the predicate-wide
     // type observer reports. Three kinds: an integer constant a 64-bit comparison, IN pairing or
     // arithmetic node reads at I8 because the peer is 8 bytes wide; an untyped NULL element of an
@@ -225,27 +252,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // hasWidthChangingI64WidenConstant() for the one hazard it does carry, and
     // markCmpOperandWidenedToI64 for the three members that hazard is not asked about. Compared by
     // identity.
-    private final ObjHashSet<ExpressionNode> i64WidenConstants = new ObjHashSet<>();
+    private final ObjHashSet<BoundExpression> i64WidenConstants = new ObjHashSet<>();
     // PURE-CONSTANT narrow integer arithmetic subtrees that a 64-bit peer reads, which descend()
     // collapses into a single I8 IMM instead of emitting the operations at INT width. See
     // markFoldedI64ConstArith. Compared by identity.
-    private final ObjHashSet<ExpressionNode> i64FoldedArithRoots = new ObjHashSet<>();
+    private final ObjHashSet<BoundExpression> i64FoldedArithRoots = new ObjHashSet<>();
     // NARROW integer arithmetic subtree ROOTS whose RESULT a comparison against a FLOAT operand
     // must sign-extend to i64. Distinct from i64WidenLeaves: the SX_I64 goes AFTER the subtree's
     // own operator, so the operations still run - and wrap - at their own narrow width and only
     // the wrapped result widens. See markIntCmpFloatOperand. Compared by identity.
-    private final ObjHashSet<ExpressionNode> i64WidenArithRoots = new ObjHashSet<>();
+    private final ObjHashSet<BoundExpression> i64WidenArithRoots = new ObjHashSet<>();
     // The subset of i64WidenArithRoots visit() actually emitted an SX_I64 for. descend() has
     // several routes that skip a node (a constant fold, an IN element the pairing can never
     // match), so a mark that never reaches visit() would silently leave the (i32, f32) pairing
     // this fix exists to remove. visit() compares the two sets when it leaves the predicate and
     // declines JIT compilation rather than emit an unwidened pairing. Compared by identity.
-    private final ObjHashSet<ExpressionNode> emittedI64WidenArithRoots = new ObjHashSet<>();
+    private final ObjHashSet<BoundExpression> emittedI64WidenArithRoots = new ObjHashSet<>();
     // Integer CONSTANT operands of a NARROW arithmetic node. The predicate-wide type observer types
     // every constant at the widest column it saw, so a coexisting LONG operand elsewhere in the
     // predicate would emit the 2 in `i32 * 2` as an I8 immediate and promote the product to
     // int64_mul, which does not wrap where MulInt#getInt does. Compared by identity.
-    private final ObjHashSet<ExpressionNode> narrowKeptConstants = new ObjHashSet<>();
+    private final ObjHashSet<BoundExpression> narrowKeptConstants = new ObjHashSet<>();
     private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
     // Rewind watermarks for the CHAR / IPv4 ordering expansions, kept as a stack: descend() pushes
     // the append offset and the bind variable count it sees at an ordering node, and visit() pops
@@ -262,30 +289,40 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // cross-check is what makes a mismatch between the push condition and serializeOperator's
     // dispatch fail CLOSED: rewinding to a stale (or absent) watermark would hand the native
     // compiler a truncated stream, and its value stack underflows rather than reporting an error.
-    private final IntList orderingRewindBindVarSizes = new IntList();
-    private final ObjList<ExpressionNode> orderingRewindNodes = new ObjList<>();
+    private final IntList orderingRewindBindVarSizes;
+    private final ObjList<BoundExpression> orderingRewindNodes = new ObjList<>();
     private final LongList orderingRewindOffsets = new LongList();
     private final PredicateContext predicateContext = new PredicateContext();
     // Memoizes requiresWideLaneArithmetic() for the current predicate. See arithExprTypeCache.
-    private final ObjIntHashMap<ExpressionNode> requiresWideLaneArithCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final ObjIntHashMap<BoundExpression> requiresWideLaneArithCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Scratch state for sortPredicates(), reused across filters so ordering a chain allocates nothing
     // on the compile path: the priority of each predicate (getPredicatePriority walks the subtree, so
     // it is computed once per predicate rather than once per comparison), the per-priority bucket
     // offsets, and the reordered chain the sort writes back.
-    private final IntList predicatePriorities = new IntList();
-    private final IntList predicatePriorityOffsets = new IntList();
+    private final IntList predicatePriorities;
+    private final IntList predicatePriorityOffsets;
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
-    private final StringSink sink = new StringSink();
-    private final ObjList<ExpressionNode> sortedPredicates = new ObjList<>();
-    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
+    private final StringSink sink;
+    private final ObjList<BoundExpression> sortedPredicates = new ObjList<>();
     // Operand type codes of the IR walks in hasUnharmonisedOperandWidths() and
     // ensureOnlyVarSizeHeaderChecks(), mirroring the value stack the backend builds while it emits
     // the same stream. Deliberately NOT an IntStack: IntStack spells an absent entry as -1, which
     // is UNDEFINED_CODE itself, so it hands a pushed UNDEFINED back without removing it and the
     // walk's depth drifts from the backend's on every comparison mask. See popType().
-    private final IntList typeStack = new IntList();
+    private final IntList typeStack;
     private ObjList<Function> bindVarFunctions;
-    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
+    private final Visitor irEmitter = new Visitor() {
+        @Override
+        public boolean descend(BoundExpression node) throws SqlException {
+            return CompiledFilterIRSerializer.this.descend(node);
+        }
+
+        @Override
+        public void visit(BoundExpression node) throws SqlException {
+            CompiledFilterIRSerializer.this.visit(node);
+        }
+    };
+    private final LongObjHashMap.LongObjConsumer<BoundExpression> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
@@ -305,20 +342,50 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // The comparison findColumnFreeComparison found in the current predicate, or null. Recorded
     // when the predicate is entered and judged when it is LEFT, because the verdict needs
     // predicateContext.columnType and that is only settled once every column has been visited -
-    // PostOrderTreeTraversalAlgo descends node.rhs first, so a comparison written on the left of
+    // traverse() descends the right operand first, so a comparison written on the left of
     // the predicate is descended before the column on its right has typed anything. See visit().
-    private ExpressionNode columnFreeComparisonNode;
+    private BoundExpression columnFreeComparisonNode;
     // The operand markIntCmpFloatOperand found on the INT side of a comparison against an F4
     // operand and could not sign-extend. descend() turns it into the SqlException that declines
     // JIT compilation for the whole filter. See markIntCmpFloatOperand.
-    private ExpressionNode unwidenableIntCmpFloatNode;
+    private BoundExpression unwidenableIntCmpFloatNode;
     private MemoryCARW memory;
+    private OutputSchema input;
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
+
+    /**
+     * The scratch lists are borrowed from the generator: serialize() is a leaf window (it never
+     * binds, optimises or generates), and every owner's own window has closed by the time a
+     * filter is compiled.
+     */
+    public CompiledFilterIRSerializer(
+            CharacterStore characterStore,
+            StringSink sink,
+            IntList typeStack,
+            IntList orderingRewindBindVarSizes,
+            IntList predicatePriorities,
+            IntList predicatePriorityOffsets,
+            LongList longScratch
+    ) {
+        this.characterStore = characterStore;
+        this.sink = sink;
+        this.typeStack = typeStack;
+        this.orderingRewindBindVarSizes = orderingRewindBindVarSizes;
+        this.predicatePriorities = predicatePriorities;
+        this.predicatePriorityOffsets = predicatePriorityOffsets;
+        this.longScratch = longScratch;
+    }
+
+    @TestOnly
+    public CompiledFilterIRSerializer() {
+        this(new CharacterStore(64, 16), new StringSink(), new IntList(), new IntList(), new IntList(), new IntList(), new LongList());
+    }
 
     @Override
     public void clear() {
         memory = null;
+        input = null;
         metadata = null;
         pageFrameCursor = null;
         forceScalarMode = false;
@@ -330,14 +397,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         unwidenableIntCmpFloatNode = null;
         predicateContext.clear();
         backfillNodes.clear();
-        backfillDiscardOffsets.clear();
+        longScratch.clear();
         orderingRewindBindVarSizes.clear();
         orderingRewindNodes.clear();
         orderingRewindOffsets.clear();
         bindVarIndexes.clear();
         collectedPredicates.clear();
-        // The memo caches below are keyed by ExpressionNode identity and live for a whole filter, so
-        // this is their ONLY reset point - the node pool can hand the same objects to the next
+        constantTokens.clear();
+        // The memo caches below are keyed by BoundExpression identity and live for a whole filter, so
+        // this is their ONLY reset point - the plan pools can hand the same objects to the next
         // filter, where the cached answers would no longer describe the same subtree. The mark sets
         // after them are per-predicate state that onNodeDescended also resets before use.
         arithExprTypeCache.clear();
@@ -357,14 +425,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         narrowKeptConstants.clear();
     }
 
-    @Override
-    public boolean descend(ExpressionNode node) throws SqlException {
-        if (node.token == null) {
-            throw SqlException.position(node.position)
-                    .put("non-null token expected: ")
-                    .put(node.token);
-        }
-
+    private boolean descend(BoundExpression node) throws SqlException {
         if (predicateContext.inOperationNode != null && !predicateContext.currentInSerialization) {
             return false;
         }
@@ -376,10 +437,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // cannot harmonise. Decline the whole filter here, where descend() can still throw, rather
         // than emit an (i32, f32) pairing whose comparison neither backend performs at f64.
         if (unwidenableIntCmpFloatNode != null) {
-            final ExpressionNode declined = unwidenableIntCmpFloatNode;
+            final BoundExpression declined = unwidenableIntCmpFloatNode;
             unwidenableIntCmpFloatNode = null;
-            throw SqlException.position(declined.position)
-                    .put("unsupported int-width expression vs float operand: ").put(declined.token);
+            throw SqlException.position(declined.getPosition())
+                    .put("unsupported int-width expression vs float operand: ").put(token(declined));
         }
 
         // A pure-constant NARROW integer arithmetic subtree that a 64-bit peer reads. The Java
@@ -390,7 +451,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // one for every `long_col > <int literal chain>`. See markFoldedI64ConstArith for which
         // subtrees qualify; this runs before the block below so a fold root that also overflows INT
         // emits at 8 bytes rather than at 4.
-        if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION
+        if (predicateContext.isActive() && kind(node) == OPERATION
                 && i64FoldedArithRoots.contains(node)) {
             try {
                 final long i8Imm = foldConstantArithWidthAware(node);
@@ -409,7 +470,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // follows its DECLARED type, exactly as FunctionParser#functionToConstant0 folds it: a
         // pure-INT subtree is an IntConstant holding the wrap, and only a genuine LONG operand
         // (arithExprType == I8) makes the subtree LONG and keeps the full value.
-        if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION) {
+        if (predicateContext.isActive() && kind(node) == OPERATION) {
             try {
                 long longVal = tryFoldConstantArith(node);
                 if ((int) longVal != longVal) {
@@ -469,13 +530,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // floatConstantTypeCode does not know the 'd' suffix createConstant accepts. A leaf no
         // classifier recognises leaves the node UNDEFINED rather than F4/F8, so UNDEFINED has to
         // decline too: there is no evidence the backend would land on the value the parser folds.
-        if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+        if (predicateContext.isActive() && kind(node) == OPERATION && isArithmeticOperation(node)) {
             final int arithType = arithExprType(node);
             if (arithType != I1_TYPE && arithType != I2_TYPE && arithType != I4_TYPE && arithType != I8_TYPE) {
                 try {
                     if (!Numbers.isFinite(tryFoldConstantArithFloat(node))) {
-                        throw SqlException.position(node.position)
-                                .put("non-finite constant arithmetic: ").put(node.token);
+                        throw SqlException.position(node.getPosition())
+                                .put("non-finite constant arithmetic: ").put(token(node));
                     }
                 } catch (NumericException notConstant) {
                     // Not a pure-constant arithmetic subtree at all; descend normally.
@@ -484,16 +545,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // Look ahead for negative const
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
-            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
-            if (nextNode != null && nextNode.paramCount == 0 && nextNode.type == ExpressionNode.CONSTANT) {
-                // Store negation node for later backfilling. The stub skips visit(), so the
-                // predicate records the operator here: a CHAR or IPv4 predicate declines it at
-                // exit, ahead of the backfill (see visit()).
-                predicateContext.markUnaryMinus(node);
-                serializeConstantStub(node);
-                return false;
-            }
+        if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), "-")
+                && kind(rhs(node)) == CONSTANT) {
+            // Store negation node for later backfilling. The stub skips visit(), so the
+            // predicate records the operator here: a CHAR or IPv4 predicate declines it at
+            // exit, ahead of the backfill (see visit()).
+            predicateContext.markUnaryMinus(node);
+            serializeConstantStub(node);
+            return false;
         }
 
         // Record where this ordering node's own IR begins. serializeCharOrdering() /
@@ -513,46 +572,213 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             MemoryCARW memory,
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
+            OutputSchema input,
             PageFrameCursor pageFrameCursor,
             ObjList<Function> bindVarFunctions
     ) {
         this.memory = memory;
         this.executionContext = executionContext;
         this.metadata = metadata;
+        this.input = input;
         this.pageFrameCursor = pageFrameCursor;
         this.bindVarFunctions = bindVarFunctions;
         return this;
     }
 
-    private boolean isWideLaneEligible(ExpressionNode node) {
+    private int columnIndex(BoundExpression node) {
+        return node instanceof ColumnExpression column ? input.getColumnIndexById(column.getColumnId()) : -1;
+    }
+
+    private @Nullable CharSequence constantToken(ConstantExpression constant) {
+        if (constant.isUnparsedTimestamp()) {
+            return null;
+        }
+        final int type = constant.getDataType();
+        final long longValue = constant.getLongValue();
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.NULL -> "null";
+            case ColumnType.BOOLEAN -> Boolean.toString(longValue != 0);
+            case ColumnType.INT -> longValue == Numbers.INT_NULL ? "null" : numberToken((int) longValue, (char) 0);
+            case ColumnType.LONG -> longValue == Numbers.LONG_NULL ? "null" : numberToken(longValue, 'L');
+            case ColumnType.DOUBLE -> {
+                final double value = constant.getDoubleValue();
+                if (!Double.isFinite(value)) {
+                    yield null;
+                }
+                final CharacterStoreEntry token = characterStore.newEntry();
+                token.put(value);
+                yield token.toImmutable();
+            }
+            case ColumnType.FLOAT -> {
+                final float value = constant.getFloatValue();
+                if (!Float.isFinite(value)) {
+                    yield null;
+                }
+                final CharacterStoreEntry token = characterStore.newEntry();
+                token.put(value).put('f');
+                yield token.toImmutable();
+            }
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> {
+                if (longValue == GeoHashes.NULL) {
+                    yield "null";
+                }
+                final CharacterStoreEntry token = characterStore.newEntry();
+                token.put("##");
+                for (int i = ColumnType.getGeoHashBits(type) - 1; i >= 0; i--) {
+                    token.put((longValue >>> i & 1) == 0 ? '0' : '1');
+                }
+                yield token.toImmutable();
+            }
+            case ColumnType.CHAR -> {
+                if (longValue == 0) {
+                    yield null;
+                }
+                sink.clear();
+                sink.put((char) longValue);
+                yield quoted(sink);
+            }
+            case ColumnType.STRING -> constant.getStrValue() == null ? "null" : quoted(constant.getStrValue());
+            case ColumnType.VARCHAR ->
+                    constant.getVarcharValue() == null ? "null" : quoted(utf16(constant.getVarcharValue()));
+            case ColumnType.DATE -> {
+                if (longValue == Numbers.LONG_NULL) {
+                    yield "null";
+                }
+                sink.clear();
+                DateFormatUtils.appendDateTime(sink, longValue);
+                yield quoted(sink);
+            }
+            case ColumnType.TIMESTAMP -> constant.getTimestampText() != null ? quoted(constant.getTimestampText())
+                    : longValue == Numbers.LONG_NULL ? "null" : numberToken(longValue, 'L');
+            default -> null;
+        };
+    }
+
+    /**
+     * Mirrors the shapes a plain SQL literal expresses and renders the token of every literal
+     * constant on the way; the backend has no opcode for anything else.
+     */
+    private boolean hasJitShape(BoundExpression expression) {
+        if (expression instanceof ColumnExpression column) {
+            final int index = input.getColumnIndexById(column.getColumnId());
+            return column.isDirectReference() && index >= 0
+                    && metadata.getColumnIndexQuiet(metadata.getColumnName(index)) == index;
+        }
+        if (expression instanceof ConstantExpression constant) {
+            if (constant.getSource() != null) {
+                return hasJitShape(constant.getSource());
+            }
+            final CharSequence token = constant.isLiteral() ? constantToken(constant) : null;
+            if (token == null) {
+                return false;
+            }
+            constantTokens.put(constant, token);
+            return true;
+        }
+        if (expression instanceof BindVariableExpression parameter) {
+            return parameter.isDirectReference();
+        }
+        if (!(expression instanceof FunctionExpression call)) {
+            return false;
+        }
+        final String name = call.getName();
+        final int count = call.getArgumentCount();
+        if (isIntervalIn(call)) {
+            final ConstantExpression interval = (ConstantExpression) call.argumentAt(1);
+            final CharSequence intervalText = ColumnType.isVarchar(interval.getDataType())
+                    ? (interval.getVarcharValue() == null ? null : utf16(interval.getVarcharValue())) : interval.getStrValue();
+            if (intervalText == null) {
+                return false;
+            }
+            constantTokens.put(interval, quoted(intervalText));
+            return hasJitShape(call.argumentAt(0));
+        }
+        if (count >= 2 && !hasJitCompatibleTimestampConstants(call)) {
+            return false;
+        }
+        final boolean isUnary = count == 1 && ("-".equals(name) || SqlKeywords.isNotKeyword(name));
+        if (!isUnary && (count != 2 || !isJitOperator(name)) && (count < 2 || !SqlKeywords.isInKeyword(name))) {
+            return false;
+        }
+        for (int i = 0; i < count; i++) {
+            if (!hasJitShape(call.argumentAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private CharSequence numberToken(long value, char suffix) {
+        final CharacterStoreEntry token = characterStore.newEntry();
+        token.put(value);
+        if (suffix != 0) {
+            token.put(suffix);
+        }
+        return token.toImmutable();
+    }
+
+    private CharSequence quoted(CharSequence value) {
+        final CharacterStoreEntry token = characterStore.newEntry();
+        token.put('\'');
+        for (int i = 0, n = value.length(); i < n; i++) {
+            final char c = value.charAt(i);
+            if (c == '\'') {
+                token.put('\'');
+            }
+            token.put(c);
+        }
+        token.put('\'');
+        return token.toImmutable();
+    }
+
+    private CharSequence token(BoundExpression node) {
+        if (node instanceof FunctionExpression) {
+            return operator(node);
+        }
+        if (node instanceof ColumnExpression) {
+            return metadata.getColumnName(columnIndex(node));
+        }
+        if (node instanceof BindVariableExpression parameter) {
+            return parameter.getName();
+        }
+        return constantTokens.get(node);
+    }
+
+    private CharSequence utf16(Utf8Sequence value) {
+        sink.clear();
+        Utf8s.utf8ToUtf16(value, sink);
+        return sink;
+    }
+
+    private boolean isWideLaneEligible(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.OPERATION
-                && (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token))) {
-            return isWideLaneEligible(node.lhs) && isWideLaneEligible(node.rhs);
+        if (kind(node) == OPERATION
+                && (SqlKeywords.isAndKeyword(operator(node)) || SqlKeywords.isOrKeyword(operator(node)))) {
+            return isWideLaneEligible(lhs(node)) && isWideLaneEligible(rhs(node));
         }
-        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isNotKeyword(node.token)) {
-            return isWideLaneEligible(node.rhs != null ? node.rhs : node.lhs);
+        if (kind(node) == OPERATION && SqlKeywords.isNotKeyword(operator(node))) {
+            return isWideLaneEligible(rhs(node));
         }
-        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
+        if (kind(node) == FUNCTION && SqlKeywords.isInKeyword(operator(node))) {
             return isWideLaneInEligible(node);
         }
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 2 && isComparisonToken(node.token)) {
-            if (isWideLaneIntegerExpression(node.lhs) && isWideLaneIntegerExpression(node.rhs)) {
+        if (kind(node) == OPERATION && paramCount(node) == 2 && isComparisonToken(token(node))) {
+            if (isWideLaneIntegerExpression(lhs(node)) && isWideLaneIntegerExpression(rhs(node))) {
                 return true;
             }
-            if (isWideLaneIntCmpFloatConstPair(node.lhs, node.rhs)
-                    || isWideLaneIntCmpFloatConstPair(node.rhs, node.lhs)) {
+            if (isWideLaneIntCmpFloatConstPair(lhs(node), rhs(node))
+                    || isWideLaneIntCmpFloatConstPair(rhs(node), lhs(node))) {
                 return true;
             }
-            if (isWideLaneIntCmpFloatLeafPair(node.lhs, node.rhs)
-                    || isWideLaneIntCmpFloatLeafPair(node.rhs, node.lhs)) {
+            if (isWideLaneIntCmpFloatLeafPair(lhs(node), rhs(node))
+                    || isWideLaneIntCmpFloatLeafPair(rhs(node), lhs(node))) {
                 return true;
             }
-            return isWideLaneFloatComparisonOperand(node.lhs)
-                    && isWideLaneFloatComparisonOperand(node.rhs)
-                    && (containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs));
+            return isWideLaneFloatComparisonOperand(lhs(node))
+                    && isWideLaneFloatComparisonOperand(rhs(node))
+                    && (containsFloatExpression(lhs(node)) || containsFloatExpression(rhs(node)));
         }
         return false;
     }
@@ -570,9 +796,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * explicitly. An arithmetic subtree is excluded too: it is not sign-extended at all (it has to
      * keep wrapping at i32), so only its constant widens and the pairing stays (i32, f64).
      */
-    private boolean isWideLaneIntCmpFloatConstPair(ExpressionNode leaf, ExpressionNode constNode) {
+    private boolean isWideLaneIntCmpFloatConstPair(BoundExpression leaf, BoundExpression constNode) {
         return leaf != null
-                && (leaf.type == ExpressionNode.LITERAL || leaf.type == ExpressionNode.BIND_VARIABLE)
+                && (kind(leaf) == LITERAL || kind(leaf) == BIND_VARIABLE)
                 && arithExprType(leaf) == I4_TYPE
                 && isNarrowIntCmpWideningConst(constNode);
     }
@@ -604,84 +830,83 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Pinned by {@code CompiledFilterIRSerializerTest#testIntCmpFloatColumnWidensIntToI64} and
      * {@code CompiledFilterRegressionTest#testIntCmpFloatColumnWideLaneMatchesJavaFilter}.
      */
-    private boolean isWideLaneIntCmpFloatLeafPair(ExpressionNode intSide, ExpressionNode floatSide) {
+    private boolean isWideLaneIntCmpFloatLeafPair(BoundExpression intSide, BoundExpression floatSide) {
         return isFloatLeaf(floatSide)
                 && isNarrowIntLeaf(intSide)
                 && arithExprType(intSide) == I4_TYPE
                 && isGenuineIntegerLeaf(intSide);
     }
 
-    private boolean isWideLaneFloatComparisonOperand(ExpressionNode node) {
+    private boolean isWideLaneFloatComparisonOperand(BoundExpression node) {
         return isWideLaneFloatExpression(node) || isWideLaneNumericConstant(node);
     }
 
-    private boolean isWideLaneFloatExpression(ExpressionNode node) {
+    private boolean isWideLaneFloatExpression(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+        if (kind(node) == LITERAL || kind(node) == BIND_VARIABLE) {
             final int type = arithExprType(node);
             return type == F4_TYPE || type == F8_TYPE;
         }
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            return isWideLaneFloatExpression(node.rhs != null ? node.rhs : node.lhs);
+        if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            return isWideLaneFloatExpression(rhs(node));
         }
-        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
-            return isWideLaneFloatArithmeticOperand(node.lhs)
-                    && isWideLaneFloatArithmeticOperand(node.rhs)
-                    && (containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs));
+        if (kind(node) == OPERATION && isArithmeticOperation(node)) {
+            return isWideLaneFloatArithmeticOperand(lhs(node))
+                    && isWideLaneFloatArithmeticOperand(rhs(node))
+                    && (containsFloatExpression(lhs(node)) || containsFloatExpression(rhs(node)));
         }
         return false;
     }
 
-    private boolean isWideLaneFloatArithmeticOperand(ExpressionNode node) {
+    private boolean isWideLaneFloatArithmeticOperand(BoundExpression node) {
         return isWideLaneFloatExpression(node) || isWideLaneNumericConstant(node);
     }
 
-    private boolean isWideLaneInEligible(ExpressionNode node) {
-        final ObjList<ExpressionNode> args = node.args;
-        final ExpressionNode key = args.size() > 0 ? args.getLast() : node.lhs;
+    private boolean isWideLaneInEligible(BoundExpression node) {
+        final BoundExpression key = argCount(node) > 0 ? inKey(node) : lhs(node);
         if (isWideLaneIntegerExpression(key)) {
-            if (args.size() > 0) {
-                for (int i = 0, n = args.size() - 1; i < n; i++) {
-                    if (!isWideLaneIntegerInElement(args.getQuick(i))) {
+            if (argCount(node) > 0) {
+                for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                    if (!isWideLaneIntegerInElement(argAt(node, i))) {
                         return false;
                     }
                 }
                 return true;
             }
-            return isWideLaneIntegerInElement(node.rhs);
+            return isWideLaneIntegerInElement(rhs(node));
         }
         if (isWideLaneFloatExpression(key)) {
-            if (args.size() > 0) {
-                for (int i = 0, n = args.size() - 1; i < n; i++) {
-                    if (!isWideLaneFloatInElement(args.getQuick(i))) {
+            if (argCount(node) > 0) {
+                for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                    if (!isWideLaneFloatInElement(argAt(node, i))) {
                         return false;
                     }
                 }
                 return true;
             }
-            return isWideLaneFloatInElement(node.rhs);
+            return isWideLaneFloatInElement(rhs(node));
         }
         return false;
     }
 
-    private boolean isWideLaneIntegerExpression(ExpressionNode node) {
+    private boolean isWideLaneIntegerExpression(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+        if (kind(node) == LITERAL || kind(node) == BIND_VARIABLE) {
             final int type = arithExprType(node);
             return (type == I4_TYPE || type == I8_TYPE) && isGenuineIntegerLeaf(node);
         }
-        if (node.type == ExpressionNode.CONSTANT) {
+        if (kind(node) == CONSTANT) {
             return isIntegerConstant(node);
         }
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            return isWideLaneIntegerExpression(node.rhs != null ? node.rhs : node.lhs);
+        if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            return isWideLaneIntegerExpression(rhs(node));
         }
-        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
-            return isWideLaneIntegerExpression(node.lhs) && isWideLaneIntegerExpression(node.rhs);
+        if (kind(node) == OPERATION && isArithmeticOperation(node)) {
+            return isWideLaneIntegerExpression(lhs(node)) && isWideLaneIntegerExpression(rhs(node));
         }
         return false;
     }
@@ -690,16 +915,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // SYMBOL, IPv4 and the GEO types share an I4 / I8 arithmetic code but do not compare as plain
     // integer lanes; SQL type checking already rejects such comparisons, so this only backstops
     // the wide-lane eligibility check defensively, mirroring isWidthSensitiveInKey.
-    private boolean isGenuineIntegerLeaf(ExpressionNode node) {
+    private boolean isGenuineIntegerLeaf(BoundExpression node) {
         final int typeTag;
-        if (node.type == ExpressionNode.LITERAL) {
-            final int index = metadata.getColumnIndexQuiet(node.token);
+        if (kind(node) == LITERAL) {
+            final int index = columnIndex(node);
             if (index == -1) {
                 return false;
             }
             typeTag = ColumnType.tagOf(metadata.getColumnType(index));
-        } else if (node.type == ExpressionNode.BIND_VARIABLE) {
-            final Function fn = lookupBindVariable(node.token);
+        } else if (kind(node) == BIND_VARIABLE) {
+            final Function fn = lookupBindVariable(token(node));
             if (fn == null) {
                 return false;
             }
@@ -713,37 +938,37 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 || typeTag == ColumnType.TIMESTAMP;
     }
 
-    private boolean isWideLaneIntegerInElement(ExpressionNode node) {
+    private boolean isWideLaneIntegerInElement(BoundExpression node) {
         return isWideLaneIntegerExpression(node) || isNullConstant(node);
     }
 
-    private boolean isWideLaneFloatInElement(ExpressionNode node) {
+    private boolean isWideLaneFloatInElement(BoundExpression node) {
         return isWideLaneNumericConstant(node) || isNullConstant(node);
     }
 
-    private boolean isWideLaneNumericConstant(ExpressionNode node) {
+    private boolean isWideLaneNumericConstant(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            return isWideLaneNumericConstant(node.rhs != null ? node.rhs : node.lhs);
+        if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            return isWideLaneNumericConstant(rhs(node));
         }
         final int type = arithExprType(node);
-        return node.type == ExpressionNode.CONSTANT
+        return kind(node) == CONSTANT
                 && (type == I4_TYPE || type == I8_TYPE || type == F4_TYPE || type == F8_TYPE);
     }
 
-    private boolean isIntegerConstant(ExpressionNode node) {
-        if (node != null && node.type == ExpressionNode.OPERATION
-                && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            return isIntegerConstant(node.rhs != null ? node.rhs : node.lhs);
+    private boolean isIntegerConstant(BoundExpression node) {
+        if (node != null && kind(node) == OPERATION
+                && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            return isIntegerConstant(rhs(node));
         }
         return node != null
-                && node.type == ExpressionNode.CONSTANT
+                && kind(node) == CONSTANT
                 && (arithExprType(node) == I4_TYPE || arithExprType(node) == I8_TYPE);
     }
 
-    private boolean containsFloatExpression(ExpressionNode node) {
+    private boolean containsFloatExpression(BoundExpression node) {
         if (node == null) {
             return false;
         }
@@ -756,43 +981,42 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return hasFloatExpression;
     }
 
-    private boolean containsFloatExpression0(ExpressionNode node) {
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+    private boolean containsFloatExpression0(BoundExpression node) {
+        if (kind(node) == LITERAL || kind(node) == BIND_VARIABLE) {
             final int type = arithExprType(node);
             return type == F4_TYPE || type == F8_TYPE;
         }
-        return containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs);
+        return containsFloatExpression(lhs(node)) || containsFloatExpression(rhs(node));
     }
 
-    private boolean requiresWideLane(ExpressionNode node) {
+    private boolean requiresWideLane(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
-            return requiresWideLane(node.lhs) || requiresWideLane(node.rhs);
+        if (SqlKeywords.isAndKeyword(operator(node)) || SqlKeywords.isOrKeyword(operator(node))) {
+            return requiresWideLane(lhs(node)) || requiresWideLane(rhs(node));
         }
-        if (SqlKeywords.isNotKeyword(node.token)) {
-            return requiresWideLane(node.rhs != null ? node.rhs : node.lhs);
+        if (SqlKeywords.isNotKeyword(operator(node))) {
+            return requiresWideLane(rhs(node));
         }
-        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
-            final ObjList<ExpressionNode> args = node.args;
-            final ExpressionNode key = args.size() > 0 ? args.getLast() : node.lhs;
-            if (args.size() > 0) {
-                for (int i = 0, n = args.size() - 1; i < n; i++) {
-                    if (requiresWideLanePair(key, args.getQuick(i))) {
+        if (kind(node) == FUNCTION && SqlKeywords.isInKeyword(operator(node))) {
+            final BoundExpression key = argCount(node) > 0 ? inKey(node) : lhs(node);
+            if (argCount(node) > 0) {
+                for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                    if (requiresWideLanePair(key, argAt(node, i))) {
                         return true;
                     }
                 }
                 return false;
             }
-            return requiresWideLanePair(key, node.rhs);
+            return requiresWideLanePair(key, rhs(node));
         }
-        return requiresWideLanePair(node.lhs, node.rhs)
-                || requiresWideLaneArithmetic(node.lhs)
-                || requiresWideLaneArithmetic(node.rhs);
+        return requiresWideLanePair(lhs(node), rhs(node))
+                || requiresWideLaneArithmetic(lhs(node))
+                || requiresWideLaneArithmetic(rhs(node));
     }
 
-    private boolean requiresWideLaneArithmetic(ExpressionNode node) {
+    private boolean requiresWideLaneArithmetic(BoundExpression node) {
         if (node == null) {
             return false;
         }
@@ -805,23 +1029,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return isWideLaneArithmeticRequired;
     }
 
-    private boolean requiresWideLaneArithmetic0(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+    private boolean requiresWideLaneArithmetic0(BoundExpression node) {
+        if (kind(node) == OPERATION && isArithmeticOperation(node)) {
             if (arithExprType(node) == I8_TYPE && containsNarrowIntegerValue(node)) {
                 return true;
             }
             if (isNarrowLaneDoubleConstArith(node)) {
                 return true;
             }
-            return requiresWideLaneArithmetic(node.lhs) || requiresWideLaneArithmetic(node.rhs);
+            return requiresWideLaneArithmetic(lhs(node)) || requiresWideLaneArithmetic(rhs(node));
         }
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            return requiresWideLaneArithmetic(node.rhs != null ? node.rhs : node.lhs);
+        if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            return requiresWideLaneArithmetic(rhs(node));
         }
         return false;
     }
 
-    private boolean requiresWideLanePair(ExpressionNode lhs, ExpressionNode rhs) {
+    private boolean requiresWideLanePair(BoundExpression lhs, BoundExpression rhs) {
         // NOTE: this accepts F8 as well as F4, while the widening is only ever EMITTED for F4
         // (isFloatLeaf). The asymmetry used to cost two separate things, and only the first of them
         // is settled here. It no longer costs AND_SC / OR_SC short-circuiting or predicate
@@ -863,7 +1087,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 || requiresWideLaneArithmetic(rhs);
     }
 
-    private boolean containsNarrowIntegerValue(ExpressionNode node) {
+    private boolean containsNarrowIntegerValue(BoundExpression node) {
         if (node == null) {
             return false;
         }
@@ -876,17 +1100,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return hasNarrowIntegerValue;
     }
 
-    private boolean containsNarrowIntegerValue0(ExpressionNode node) {
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+    private boolean containsNarrowIntegerValue0(BoundExpression node) {
+        if (kind(node) == LITERAL || kind(node) == BIND_VARIABLE) {
             return arithExprType(node) == I4_TYPE;
         }
-        return containsNarrowIntegerValue(node.lhs) || containsNarrowIntegerValue(node.rhs);
+        return containsNarrowIntegerValue(lhs(node)) || containsNarrowIntegerValue(rhs(node));
     }
 
     /**
      * Writes IR of the filter described by the given expression tree to memory.
      *
-     * @param node        filter expression tree's root node.
+     * @param predicate   bound filter predicate.
      * @param forceScalar set use only scalar instruction set execution hint in the returned options.
      * @param debug       set enable the debug flag in the returned options.
      * @param nullChecks  a flag for JIT, allowing or disallowing generation of null check
@@ -906,7 +1130,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * </ul>
      * @throws SqlException thrown when IR serialization failed.
      */
-    public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+    public int serialize(BoundExpression predicate, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+        constantTokens.clear();
+        if (!hasJitShape(predicate)) {
+            throw SqlException.position(predicate.getPosition()).put("unsupported JIT filter expression");
+        }
+        final BoundExpression node = resolve(predicate);
         // Reset the per-element IN-key width override: the serializer instance is reused across
         // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
         hasEmittedWideLaneConversion = false;
@@ -970,7 +1199,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // halves of the trade.
         if (!scalarModeDetected && (!isWideLaneMode || !hasWideLaneConversionSource(node))) {
             scalarModeDetector.clear();
-            traverseAlgo.traverse(node, scalarModeDetector);
+            traverse(node, scalarModeDetector);
             scalarModeDetected = scalarModeDetector.hasMixedSizes();
         }
 
@@ -994,7 +1223,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // Not a pure AND/OR chain or SIMD mode possible, use normal serialization
-        traverseAlgo.traverse(node, this);
+        traverse(node, irEmitter);
         putOperator(RET);
 
         ensureOnlyVarSizeHeaderChecks();
@@ -1003,28 +1232,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return options;
     }
 
-    @Override
-    public void visit(ExpressionNode node) throws SqlException {
-        int argCount = node.paramCount;
+    private void visit(BoundExpression node) throws SqlException {
+        int argCount = paramCount(node);
         if (argCount == 0) {
-            switch (node.type) {
-                case ExpressionNode.LITERAL:
-                    serializeColumn(node, node.position, node.token);
-                    break;
-                case ExpressionNode.BIND_VARIABLE:
-                    serializeBindVariable(node);
-                    break;
-                case ExpressionNode.CONSTANT:
-                    // Write stub values to be backfilled later
-                    serializeConstantStub(node);
-                    break;
-                default:
-                    throw SqlException.position(node.position)
-                            .put("unsupported token: ")
-                            .put(node.token);
+            switch (kind(node)) {
+                case LITERAL -> serializeColumn(node, node.getPosition(), token(node));
+                case BIND_VARIABLE -> serializeBindVariable(node);
+                // Write stub values to be backfilled later
+                default -> serializeConstantStub(node);
             }
         } else {
-            serializeOperator(node, argCount, node.type);
+            serializeOperator(node, argCount, kind(node));
             maybeEmitI64ArithRootWidening(node);
             // Pairs with the push at the end of descend(). serializeCharOrdering() /
             // serializeIPv4Ordering() only READ the top of the stack, so the pop belongs here,
@@ -1081,16 +1299,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final boolean hasUnaryMinus = predicateContext.unaryMinusNode != null;
             if ((predicateContext.hasArithmeticOperations || hasUnaryMinus)
                     && (predicateColumnTypeTag == ColumnType.IPv4 || predicateColumnTypeTag == ColumnType.CHAR)) {
-                final ExpressionNode operatorNode = predicateContext.arithmeticNode != null
+                final BoundExpression operatorNode = predicateContext.arithmeticNode != null
                         ? predicateContext.arithmeticNode
                         : predicateContext.unaryMinusNode;
                 if (operatorNode != null) {
-                    throw SqlException.position(operatorNode.position)
-                            .put("operator: ").put(operatorNode.token)
+                    throw SqlException.position(operatorNode.getPosition())
+                            .put("operator: ").put(token(operatorNode))
                             .put(" is not supported for ").put(ColumnType.nameOf(predicateColumnTypeTag))
                             .put(" type");
                 }
-                throw SqlException.position(node.position)
+                throw SqlException.position(node.getPosition())
                         .put("arithmetic is not supported for ").put(ColumnType.nameOf(predicateColumnTypeTag))
                         .put(" type");
             }
@@ -1153,9 +1371,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (columnFreeComparisonNode != null
                     && predicateContext.columnType != ColumnType.UNDEFINED
                     && !isNumeric(ColumnType.tagOf(predicateContext.columnType))) {
-                throw SqlException.position(columnFreeComparisonNode.position)
+                throw SqlException.position(columnFreeComparisonNode.getPosition())
                         .put("comparison without a column operand: ")
-                        .put(columnFreeComparisonNode.token);
+                        .put(token(columnFreeComparisonNode));
             }
 
             // Fail closed on a widening mark that never reached maybeEmitI64ArithRootWidening.
@@ -1165,8 +1383,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // match) and the comparison would reach the backend as the (i32, f32) pairing this
             // fix removes. Decline the filter instead - the Java filter is always correct.
             if (emittedI64WidenArithRoots.size() < i64WidenArithRoots.size()) {
-                throw SqlException.position(node.position)
-                        .put("unwidened int-width expression vs float operand: ").put(node.token);
+                throw SqlException.position(node.getPosition())
+                        .put("unwidened int-width expression vs float operand: ").put(token(node));
             }
 
             // Force scalar mode if the predicate has byte or short arithmetic operations.
@@ -1187,7 +1405,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             //
             // Its suppression cannot be decided HERE, though. "The filter will not run the
             // four-lane loop" is only knowable once the whole tree has been traversed, and
-            // PostOrderTreeTraversalAlgo descends node.rhs first, so the conjunct written LAST is
+            // traverse() descends the right operand first, so the conjunct written LAST is
             // serialized FIRST: reading hasEmittedWideLaneConversion mid-traversal made the chosen
             // execution mode depend on the order the conjuncts were written in, a four-rows-per-
             // iteration swing from reordering a WHERE clause. Accumulate the answer per filter and
@@ -1241,6 +1459,168 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    private static BoundExpression argAt(BoundExpression node, int index) {
+        final FunctionExpression call = (FunctionExpression) node;
+        return resolve(call.argumentAt(index < call.getArgumentCount() - 1 ? index + 1 : 0));
+    }
+
+    private static int argCount(BoundExpression node) {
+        return node instanceof FunctionExpression call && call.getArgumentCount() > 2 ? call.getArgumentCount() : 0;
+    }
+
+    /**
+     * A timestamp constant is serialized at the precision of the operand it meets; text the binder
+     * could not convert to that operand's type stays with the Java comparison.
+     */
+    private static boolean hasJitCompatibleTimestampConstants(FunctionExpression call) {
+        int timestampType = ColumnType.UNDEFINED;
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            final BoundExpression argument = call.argumentAt(i);
+            if (!(argument instanceof ConstantExpression) && ColumnType.isTimestamp(argument.getDataType())) {
+                timestampType = argument.getDataType();
+                break;
+            }
+        }
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            if (call.argumentAt(i) instanceof ConstantExpression constant) {
+                if (constant.isUnparsedTimestamp()) {
+                    return false;
+                }
+                if (timestampType == ColumnType.UNDEFINED) {
+                    if (ColumnType.isTimestamp(constant.getDataType())) {
+                        return false;
+                    }
+                    continue;
+                }
+                final int type = constant.getDataType();
+                if (ColumnType.isVarcharOrString(type) && (!"in".equals(call.getName()) || call.getArgumentCount() == 1
+                        || call.getArgumentCount() > 2 && !isJitTimestampText(constant, timestampType))) {
+                    return false;
+                }
+                if (ColumnType.isTimestamp(type) && type != timestampType && (constant.getTimestampText() == null
+                        || FunctionParser.getAdaptiveTimestampType(constant.getTimestampText(), timestampType) != timestampType
+                        || !isTimestampConvertible(constant.getLongValue(), type, timestampType))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static BoundExpression inKey(BoundExpression node) {
+        return argAt(node, argCount(node) - 1);
+    }
+
+    /**
+     * {@code ts IN '<interval>'}: the right operand is the interval text itself, never re-read
+     * through a folded source.
+     */
+    private static boolean isIntervalIn(FunctionExpression call) {
+        return call.getArgumentCount() == 2 && SqlKeywords.isInKeyword(call.getName())
+                && !(call.argumentAt(0) instanceof ConstantExpression)
+                && ColumnType.isTimestamp(call.argumentAt(0).getDataType())
+                && call.argumentAt(1) instanceof ConstantExpression interval && interval.isLiteral()
+                && ColumnType.isVarcharOrString(interval.getDataType());
+    }
+
+    private static boolean isJitOperator(String name) {
+        return switch (name) {
+            case "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "and", "or" -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isJitTimestampText(ConstantExpression constant, int timestampType) {
+        final CharSequence text = constant.getDataType() == ColumnType.VARCHAR
+                ? constant.getVarcharValue() == null ? null : constant.getVarcharValue().asAsciiCharSequence()
+                : constant.getStrValue();
+        if (text == null || FunctionParser.getAdaptiveTimestampType(text, timestampType) != timestampType) {
+            return false;
+        }
+        try {
+            ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(text);
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
+    private static boolean isTimestampConvertible(long value, int fromType, int toType) {
+        try {
+            ColumnType.getTimestampDriver(toType).from(value, fromType);
+            return true;
+        } catch (ImplicitCastException e) {
+            return false;
+        }
+    }
+
+    private static int kind(BoundExpression node) {
+        if (node instanceof FunctionExpression call) {
+            if (!SqlKeywords.isInKeyword(call.getName())) {
+                return OPERATION;
+            }
+            return call.isSetOperation() || isIntervalIn(call) ? SET_OPERATION : FUNCTION;
+        }
+        if (node instanceof ColumnExpression) {
+            return LITERAL;
+        }
+        return node instanceof BindVariableExpression ? BIND_VARIABLE : CONSTANT;
+    }
+
+    private static BoundExpression lhs(BoundExpression node) {
+        return node instanceof FunctionExpression call && call.getArgumentCount() == 2 ? resolve(call.argumentAt(0)) : null;
+    }
+
+    private static int paramCount(BoundExpression node) {
+        return node instanceof FunctionExpression call ? call.getArgumentCount() : 0;
+    }
+
+    /**
+     * The operator a call node applies, or an empty name for any other node, so a column whose
+     * name spells an operator never reads as one.
+     */
+    private static CharSequence operator(BoundExpression node) {
+        if (node instanceof FunctionExpression call) {
+            return "<>".equals(call.getName()) ? "!=" : call.getName();
+        }
+        return "";
+    }
+
+    private static BoundExpression resolve(BoundExpression node) {
+        return node instanceof ConstantExpression constant && constant.getSource() != null ? constant.getSource() : node;
+    }
+
+    private static BoundExpression rhs(BoundExpression node) {
+        if (!(node instanceof FunctionExpression call)) {
+            return null;
+        }
+        return switch (call.getArgumentCount()) {
+            case 1 -> resolve(call.argumentAt(0));
+            case 2 -> isIntervalIn(call) ? call.argumentAt(1) : resolve(call.argumentAt(1));
+            default -> null;
+        };
+    }
+
+    /**
+     * Post-order walk that visits the right operand before the left one, the order the IR
+     * operands take on the backend's value stack.
+     */
+    private static void traverse(BoundExpression node, Visitor visitor) throws SqlException {
+        if (node == null || !visitor.descend(node)) {
+            return;
+        }
+        traverse(rhs(node), visitor);
+        final int paramCount = paramCount(node);
+        if (paramCount < 3) {
+            traverse(lhs(node), visitor);
+        } else {
+            for (int i = 0; i < paramCount; i++) {
+                traverse(argAt(node, i), visitor);
+            }
+        }
+        visitor.visit(node);
+    }
+
     private static byte bindVariableTypeCode(int columnTypeTag) {
         return switch (columnTypeTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
@@ -1254,25 +1634,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
             default -> UNDEFINED_CODE;
         };
-    }
-
-    /**
-     * The value of {@code operand} when it is a quoted CHAR literal the literal-specialised
-     * ordering forms can pick a shape from, and {@link Numbers#CHAR_NULL} otherwise: for a column,
-     * a bind variable, an arithmetic subtree, an unquoted number, and for the NULL literal itself,
-     * whose zero is neither positive nor negative and so has no shape of its own. The value only
-     * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
-     * route of {@link #serializeConstant}, so it is typed exactly as the general expansion types it.
-     */
-    private static char charOrderingLiteral(ExpressionNode operand) {
-        if (operand.type != ExpressionNode.CONSTANT) {
-            return Numbers.CHAR_NULL;
-        }
-        final CharSequence token = operand.token;
-        if (token.length() != 3 || !Chars.isQuoted(token)) {
-            return Numbers.CHAR_NULL;
-        }
-        return token.charAt(1);
     }
 
     private static int columnTypeCode(int columnTypeTag) {
@@ -1332,119 +1693,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Returns the first comparison - or {@code IN} pairing - in the subtree that reads no column at
-     * all, or {@code null} when every one of them reads at least one. See {@link #visit} for what
-     * that decides and why.
-     */
-    private static ExpressionNode findColumnFreeComparison(ExpressionNode node) {
-        if (node == null) {
-            return null;
-        }
-        if (node.paramCount > 0
-                && ((node.paramCount == 2 && isComparisonToken(node.token))
-                || SqlKeywords.isInKeyword(node.token))
-                && !hasColumnOperand(node)) {
-            return node;
-        }
-        ExpressionNode found = findColumnFreeComparison(node.lhs);
-        if (found != null) {
-            return found;
-        }
-        found = findColumnFreeComparison(node.rhs);
-        if (found != null) {
-            return found;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            found = findColumnFreeComparison(node.args.getQuick(i));
-            if (found != null) {
-                return found;
-            }
-        }
-        return null;
-    }
-
-    /**
      * Reports whether the subtree reads a COLUMN. Constants and bind variables deliberately do not
      * count: a constant takes its type from {@link PredicateContext#columnType} and a STRING bind
      * variable takes its symbol table from {@link PredicateContext#symbolColumnIndex}, both of
      * which the columns of the WHOLE predicate set, so neither is evidence about the node it sits
      * under.
      */
-    private static boolean hasColumnOperand(ExpressionNode node) {
+    private static boolean hasColumnOperand(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.LITERAL) {
+        if (kind(node) == LITERAL) {
             return true;
         }
-        if (hasColumnOperand(node.lhs) || hasColumnOperand(node.rhs)) {
+        if (hasColumnOperand(lhs(node)) || hasColumnOperand(rhs(node))) {
             return true;
         }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasColumnOperand(node.args.getQuick(i))) {
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            if (hasColumnOperand(argAt(node, i))) {
                 return true;
             }
         }
         return false;
-    }
-
-    /**
-     * Reports whether the subtree holds a comparison - or an {@code IN} pairing - other than
-     * {@code except}. Identity, not equality: the traversal has to skip that one node and count
-     * every other, including a structurally identical sibling.
-     */
-    private static boolean hasOtherComparison(ExpressionNode node, ExpressionNode except) {
-        if (node == null) {
-            return false;
-        }
-        if (node != except
-                && node.paramCount > 0
-                && ((node.paramCount == 2 && isComparisonToken(node.token))
-                || SqlKeywords.isInKeyword(node.token))) {
-            return true;
-        }
-        if (hasOtherComparison(node.lhs, except) || hasOtherComparison(node.rhs, except)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasOtherComparison(node.args.getQuick(i), except)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * The value of {@code operand} when it is a quoted IPv4 literal the literal-specialised
-     * ordering forms can pick a shape from, and {@link Numbers#IPv4_NULL} otherwise: for a column,
-     * a bind variable, an unquoted keyword, a quoted 'null', a malformed address, and for
-     * '0.0.0.0' itself, which is the NULL sentinel and has no sign class of its own. The value only
-     * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
-     * route of {@link #serializeConstant}, which is also where a malformed address declines.
-     */
-    private static int ipv4OrderingLiteral(ExpressionNode operand) {
-        if (operand.type != ExpressionNode.CONSTANT) {
-            return Numbers.IPv4_NULL;
-        }
-        final CharSequence token = operand.token;
-        final int len = token.length();
-        if (len < 3 || !Chars.isQuoted(token)) {
-            return Numbers.IPv4_NULL;
-        }
-        try {
-            return Numbers.parseIPv4_0(token, 1, len - 1);
-        } catch (NumericException e) {
-            return Numbers.IPv4_NULL;
-        }
-    }
-
-    private static boolean isArithmeticOperation(ExpressionNode node) {
-        final CharSequence token = node.token;
-        if (node.paramCount < 2) {
-            return false;
-        }
-        return Chars.equals(token, '+') || Chars.equals(token, '-')
-                || Chars.equals(token, '*') || Chars.equals(token, '/');
     }
 
     // A binary numeric comparison operator: the shapes where a narrow-int leaf and
@@ -1463,10 +1733,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
-    private static boolean isNullConstant(ExpressionNode node) {
-        return node != null && node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
-    }
-
     // Stands for PredicateType.NUMERIC
     private static boolean isNumeric(int columnTypeTag) {
         return switch (columnTypeTag) {
@@ -1476,80 +1742,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
-    /**
-     * A binary {@code <}, {@code <=}, {@code >} or {@code >=} node, i.e. the only shape
-     * {@link #serializeOperator} can route into {@link #serializeCharOrdering} or
-     * {@link #serializeIPv4Ordering}. {@link #descend} and {@link #visit} push and pop the rewind
-     * watermark under this condition, so it has to admit exactly the nodes whose visit reaches
-     * those two branches - see {@link #orderingRewindOffsets}.
-     */
-    private static boolean isOrderingComparison(ExpressionNode node) {
-        if (node.paramCount != 2) {
-            return false;
-        }
-        final CharSequence token = node.token;
-        return Chars.equals(token, "<") || Chars.equals(token, "<=")
-                || Chars.equals(token, ">") || Chars.equals(token, ">=");
-    }
-
     private static boolean isReservedConstantKeyword(CharSequence token) {
         return SqlKeywords.isNullKeyword(token)
                 || SqlKeywords.isTrueKeyword(token)
                 || SqlKeywords.isFalseKeyword(token);
     }
 
-    private static boolean isTopLevelOperation(ExpressionNode node) {
-        final CharSequence token = node.token;
-        if (SqlKeywords.isNotKeyword(token)) {
-            return true;
-        }
-        if (node.paramCount < 2) {
-            return false;
-        }
-        if (SqlKeywords.isInKeyword(token)) {
-            return true;
-        }
-        if (Chars.equals(token, "=")) {
-            return true;
-        }
-        if (Chars.equals(token, "<>") || Chars.equals(token, "!=")) {
-            return true;
-        }
-        if (Chars.equals(token, "<")) {
-            return true;
-        }
-        if (Chars.equals(token, "<=")) {
-            return true;
-        }
-        if (Chars.equals(token, ">")) {
-            return true;
-        }
-        return Chars.equals(token, ">=");
-    }
-
     private static boolean isVarSizeType(int type) {
         return type == STRING_HEADER_TYPE || type == BINARY_HEADER_TYPE || type == VARCHAR_HEADER_TYPE;
-    }
-
-    // A leaf operand the IR emits as a single value: a column, bind variable,
-    // numeric constant, or the unary-minus node descend() stubs for a negative
-    // numeric literal.
-    private static boolean isWidenableLeaf(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        switch (node.type) {
-            case ExpressionNode.LITERAL:
-            case ExpressionNode.BIND_VARIABLE:
-            case ExpressionNode.CONSTANT:
-                return true;
-            case ExpressionNode.OPERATION:
-                if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-                    ExpressionNode operand = node.rhs != null ? node.rhs : node.lhs;
-                    return operand != null && operand.type == ExpressionNode.CONSTANT;
-                }
-        }
-        return false;
     }
 
     /**
@@ -1675,7 +1875,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     // Adds a leaf / constant node to the i64-widen set. The set dedups by node identity: the same
     // node can be reached by more than one marker pass.
-    private void addI64WidenLeaf(ExpressionNode node) {
+    private void addI64WidenLeaf(BoundExpression node) {
         i64WidenLeaves.add(node);
     }
 
@@ -1687,7 +1887,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * so {@link #markWidthSemantics} can find the LONG-width subtrees whose
      * narrow operands the Java filter reads at 64 bits.
      */
-    private int arithExprType(ExpressionNode node) {
+    private int arithExprType(BoundExpression node) {
         if (node == null) {
             return UNDEFINED_CODE;
         }
@@ -1700,41 +1900,41 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return typeCode;
     }
 
-    private int arithExprType0(ExpressionNode node) {
-        switch (node.type) {
-            case ExpressionNode.LITERAL: {
-                int index = metadata.getColumnIndexQuiet(node.token);
+    private int arithExprType0(BoundExpression node) {
+        switch (kind(node)) {
+            case LITERAL: {
+                int index = columnIndex(node);
                 if (index == -1) {
                     return UNDEFINED_CODE;
                 }
                 return columnTypeCode(ColumnType.tagOf(metadata.getColumnType(index)));
             }
-            case ExpressionNode.BIND_VARIABLE: {
-                Function bindFunction = lookupBindVariable(node.token);
+            case BIND_VARIABLE: {
+                Function bindFunction = lookupBindVariable(token(node));
                 return bindFunction != null
                         ? bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()))
                         : UNDEFINED_CODE;
             }
-            case ExpressionNode.CONSTANT: {
-                int typeCode = floatConstantTypeCode(node.token);
+            case CONSTANT: {
+                int typeCode = floatConstantTypeCode(token(node));
                 if (typeCode != UNDEFINED_CODE) {
                     return typeCode;
                 }
-                typeCode = longConstantTypeCode(node.token);
+                typeCode = longConstantTypeCode(token(node));
                 if (typeCode != UNDEFINED_CODE) {
                     return typeCode;
                 }
                 // Plain int literal stays I4; non-numeric tokens are not arithmetic.
                 try {
-                    Numbers.parseInt(node.token);
+                    Numbers.parseInt(token(node));
                     return I4_TYPE;
                 } catch (NumericException notInt) {
                     return UNDEFINED_CODE;
                 }
             }
-            case ExpressionNode.OPERATION: {
-                if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-                    return arithExprType(node.rhs != null ? node.rhs : node.lhs);
+            case OPERATION: {
+                if (paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+                    return arithExprType(rhs(node));
                 }
                 if (!isArithmeticOperation(node)) {
                     return UNDEFINED_CODE;
@@ -1742,7 +1942,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // Promotion only: an INT arithmetic subtree stays I4 however large its
                 // mathematical result, because it wraps mod 2^32 at runtime and its constant fold
                 // is an IntConstant. Only a genuine 64-bit operand promotes it to I8.
-                return promoteArithType(arithExprType(node.lhs), arithExprType(node.rhs));
+                return promoteArithType(arithExprType(lhs(node)), arithExprType(rhs(node)));
             }
             default:
                 return UNDEFINED_CODE;
@@ -1785,56 +1985,38 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Runs under {@code -ea} only, so it costs nothing in production.
      */
     private boolean areWideLaneWidthsHarmonised(int options) {
-        return ((options >> 4) & 3) != EXEC_HINT_WIDE_LANE || !hasUnharmonisedOperandWidths(true);
+        return ((options >> 4) & 3) != EXEC_HINT_WIDE_LANE || !hasUnharmonisedOperandWidths();
     }
 
     /**
      * Walks the finished IR stream and reports whether any binary operator pairs two operands the
-     * vectorized backend will not harmonise for the loop named by {@code isWideLane}.
+     * four-lane loop will not harmonise.
      * <p>
      * {@code avx2::emit_bin_op} types the instruction it emits from the LEFT operand alone, after
      * {@code avx2::convert()} has had its chance to promote one side. Every conversion
      * {@code convert()} performs that changes a lane width - {@code sx_i64}, {@code cvt_itod},
      * {@code cvt_ftod}, {@code cvt_ltod} - produces exactly four results, so each is correct at
-     * four lanes and only at four lanes. {@code convert()} gates those arms on the loop's LANE
-     * COUNT, which {@code compiler.cpp} derives from the observed width, so a mixed-width pairing
-     * harmonises on an eight-byte lane and declines the filter on every narrower one.
+     * four lanes and only at four lanes. Two narrow-with-i64 pairings still count there: an i8 or
+     * i16 operand, which {@code convert()} has no arm for at any lane count, and a narrow-int
+     * IMMEDIATE, which counts because the FRONTEND owns which width the Java filter reads at and an
+     * immediate has no width of its own. A narrow COLUMN read does not count - the backend's
+     * {@code sx_i64} is the designed load path for it, and it carries the same value at either
+     * width. See {@link #isWideLaneUnharmonisedPairing}.
      * <p>
-     * The two callers ask different questions of the same walk:
-     * <ul>
-     * <li>{@code isWideLane} - the four-lane loop, where {@code convert()} does promote an i32.
-     * Two narrow-with-i64 pairings still count: an i8 or i16 operand, which {@code convert()} has
-     * no arm for at any lane count, and a narrow-int IMMEDIATE, which counts because the FRONTEND
-     * owns which width the Java filter reads at and an immediate has no width of its own. A narrow
-     * COLUMN read does not count - the backend's {@code sx_i64} is the designed load path for it,
-     * and it carries the same value at either width. This half runs under an assert. See
-     * {@link #isWideLaneUnharmonisedPairing}.</li>
-     * <li>otherwise - the single-size loop at a lane narrower than eight bytes, where the backend
-     * declines rather than promotes and the filter would fall back to the Java one. Any byte-width
-     * mismatch counts. {@link #getExecHint} demotes such a filter to {@link #EXEC_HINT_SCALAR}
-     * instead, whose {@code x86::convert()} carries the complete table, so the filter keeps a
-     * compiled backend. {@code getExecHint} skips this half for an eight-byte lane, where the
-     * backend now converts and the filter keeps its four rows per iteration. No SUPPORTED SQL
-     * reaches this demotion, but the shape it catches is not hypothetical: an {@code IN} list
-     * pairing a FLOAT element with an out-of-INT-range one demotes here, and what keeps it out of
-     * a user's query is {@code InLongFunctionFactory}'s element type check rather than any
-     * invariant of this file. That arm's comment carries the mechanism.</li>
-     * </ul>
      * A var-size header needs no exclusion here. {@code ensureOnlyVarSizeHeaderChecks} lets it
      * reach a binary operator only as an {@code IS [NOT] NULL} check, {@code serializeNull} spells
      * that sentinel as an I8 immediate for STRING, BINARY and VARCHAR alike, and every var-size
-     * header type observes as eight bytes, so the pairing is same-width on both halves of this
-     * walk and neither half reports it.
+     * header type observes as eight bytes, so the pairing is same-width and the walk does not
+     * report it.
      */
-    private boolean hasUnharmonisedOperandWidths(boolean isWideLane) {
+    private boolean hasUnharmonisedOperandWidths() {
         // Operator instructions pad their options field with zero, and I1_TYPE is zero, so the
         // stack has to carry widths derived from the opcode rather than the encoded field.
         // UNDEFINED_CODE marks a value whose width is not a lane width (a comparison mask, or a
         // type this check does not reason about); pairings involving one are skipped.
         //
-        // The walk stops at the append offset rather than at the mapped size: getExecHint() asks
-        // this question from the short-circuit paths, which have not emitted their RET yet, and
-        // everything past the append offset is uninitialised.
+        // The walk stops at the append offset rather than at the mapped size: everything past
+        // the append offset is uninitialised or a previous filter's IR.
         typeStack.clear();
         for (long offset = 0, n = memory.getAppendOffset(); offset < n; offset += INSTRUCTION_SIZE) {
             final int opCode = memory.getInt(offset);
@@ -1848,8 +2030,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case IMM: {
                     // A narrow-int immediate rides with NARROW_IMM_WIDTH_OFFSET added to its type
                     // code, so isWideLaneUnharmonisedPairing() can separate it from a column read
-                    // of the same width. Only the wide-lane half reads the marker; laneTypeCode()
-                    // strips it everywhere a width is what the walk needs.
+                    // of the same width. laneTypeCode() strips it everywhere a width is what the
+                    // walk needs.
                     final int typeCode = memory.getInt(offset + Integer.BYTES);
                     pushType(isNarrowIntTypeCode(typeCode) ? typeCode + NARROW_IMM_WIDTH_OFFSET : typeCode);
                     break;
@@ -1871,19 +2053,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     popType();
                     pushType(UNDEFINED_CODE);
                     break;
-                case AND_SC:
-                case OR_SC:
-                    // A short-circuit opcode is UNARY and yields nothing: x86::emit_code and its
-                    // aarch64 twin handle opcodes::And_Sc / Or_Sc with a bare values.pop() and
-                    // append nothing back, branching on the value they popped. Anything pushed
-                    // before it stays live for the instructions that follow, so popping the AND /
-                    // OR arity here would consume an operand the backend still holds and shift
-                    // every later pairing by one.
-                    popType();
-                    break;
-                case BEGIN_SC:
-                case END_SC:
-                    break;
                 case EQ:
                 case NE:
                 case LT:
@@ -1896,7 +2065,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case DIV: {
                     final int lhsType = popType();
                     final int rhsType = popType();
-                    if (isUnharmonisedPairing(lhsType, rhsType, isWideLane)) {
+                    if (isWideLaneUnharmonisedPairing(lhsType, rhsType)
+                            || isWideLaneUnharmonisedPairing(rhsType, lhsType)) {
                         return true;
                     }
                     final boolean isComparison = opCode == EQ || opCode == NE || opCode == LT
@@ -1941,15 +2111,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@code CompiledFilterIRSerializerTest#testLongFloatArithUnderNarrowIntImmediateStaysWideLane}
      * pins the IR and the hint.
      * <p>
-     * The correction is width-neutral: {@code I8_TYPE} and {@code F8_TYPE} both measure eight bytes
-     * in {@code TypesObserver.typeSizeBytes}, so the single-size half of
-     * {@link #hasUnharmonisedOperandWidths} - the one {@link #getExecHint} reads to demote a filter
-     * to {@link #EXEC_HINT_SCALAR} - sees exactly the widths it saw before and no filter changes
-     * the loop it runs on.
-     * <p>
      * An i8 or i16 operand needs no arm here. convert() carries no case for either width, so such a
-     * pairing declines and the filter falls back to the Java one whatever this returns; the width
-     * {@code Math.max} leaves behind is what the single-size half reads for it.
+     * pairing declines and the filter falls back to the Java one whatever this returns.
      */
     private static int arithResultTypeCode(int lhsEntry, int rhsEntry) {
         final int lhs = laneTypeCode(lhsEntry);
@@ -1958,25 +2121,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return F8_TYPE;
         }
         return Math.max(lhs, rhs);
-    }
-
-    /**
-     * Reports whether the vectorized loop named by {@code isWideLane} leaves this operand pairing
-     * unharmonised. See {@link #hasUnharmonisedOperandWidths} for what each loop promotes and why
-     * a var-size header pairs safely at either width.
-     */
-    private static boolean isUnharmonisedPairing(int lhsType, int rhsType, boolean isWideLane) {
-        if (isWideLane) {
-            return isWideLaneUnharmonisedPairing(lhsType, rhsType)
-                    || isWideLaneUnharmonisedPairing(rhsType, lhsType);
-        }
-        // The single-size half asks only about byte widths, so the immediate marker comes off
-        // first: typeSizeBytes() answers 0 for a marked code, and a zero size means "skip", which
-        // would take every narrow immediate out of this half's reach.
-        final int lhsSize = TypesObserver.typeSizeBytes(laneTypeCode(lhsType));
-        final int rhsSize = TypesObserver.typeSizeBytes(laneTypeCode(rhsType));
-        // A zero size is UNDEFINED_CODE - a comparison mask, or a value this walk stopped tracking.
-        return lhsSize != 0 && rhsSize != 0 && lhsSize != rhsSize;
     }
 
     /**
@@ -2027,7 +2171,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * spells an absent entry as -1 too and returns that from {@code pop()} WITHOUT removing the
      * element, so a pushed UNDEFINED stays on the stack for good and the walk's depth drifts from
      * the backend's by one on every comparison mask. A drifted stack pairs a live operand against
-     * a stale mask, and {@link #isUnharmonisedPairing} skips a mask, so the drift can only hide a
+     * a stale mask, and {@link #isWideLaneUnharmonisedPairing} skips a mask, so the drift can only hide a
      * mixed-width pairing - never invent one.
      */
     private int popType() {
@@ -2044,18 +2188,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         typeStack.add(typeCode);
     }
 
-    private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
-        int position = node.position;
-        CharSequence token = node.token;
+    private void backfillConstant(long offset, final BoundExpression node) throws SqlException {
+        int position = node.getPosition();
+        CharSequence token = token(node);
         boolean isNegated = false;
         // Check for the negation case
-        if (node.type == ExpressionNode.OPERATION) {
-            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
-            if (nextNode != null) {
-                position = nextNode.position;
-                token = nextNode.token;
-                isNegated = true;
-            }
+        if (kind(node) == OPERATION) {
+            final BoundExpression operand = rhs(node);
+            position = operand.getPosition();
+            token = token(operand);
+            isNegated = true;
         }
 
         serializeConstant(offset, position, token, isNegated,
@@ -2063,46 +2205,46 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 narrowKeptConstants.contains(node), intWidthNullElements.contains(node));
     }
 
-    private void backfillNode(long key, ExpressionNode value) {
+    private void backfillNode(long key, BoundExpression value) {
         try {
-            switch (value.type) {
-                case ExpressionNode.CONSTANT:
-                case ExpressionNode.OPERATION: // constant negation case
+            switch (kind(value)) {
+                case CONSTANT:
+                case OPERATION: // constant negation case
                     backfillConstant(key, value);
                     break;
-                case ExpressionNode.BIND_VARIABLE:
+                case BIND_VARIABLE:
                     backfillSymbolBindVariable(key, value);
                     break;
                 default:
-                    throw SqlException.position(value.position)
+                    throw SqlException.position(value.getPosition())
                             .put("unexpected backfill token: ")
-                            .put(value.token);
+                            .put(token(value));
             }
         } catch (SqlException e) {
             throw new SqlWrapperException(e);
         }
     }
 
-    private void backfillSymbolBindVariable(long offset, final ExpressionNode node) throws SqlException {
+    private void backfillSymbolBindVariable(long offset, final BoundExpression node) throws SqlException {
         if (predicateContext.symbolColumnIndex == -1) {
-            throw SqlException.position(node.position)
+            throw SqlException.position(node.getPosition())
                     .put("symbol column index is missing for bind variable: ")
-                    .put(node.token);
+                    .put(token(node));
         }
 
-        Function varFunction = getBindVariableFunction(node.position, node.token);
+        Function varFunction = getBindVariableFunction(node.getPosition(), token(node));
 
         final int columnType = varFunction.getType();
         // Treat string bind variable to be of the symbol type
         if (columnType != ColumnType.STRING) {
-            throw SqlException.position(node.position)
+            throw SqlException.position(node.getPosition())
                     .put("unexpected symbol bind variable type: ")
                     .put(ColumnType.nameOf(columnType));
         }
 
         int typeCode = bindVariableTypeCode(ColumnType.tagOf(columnType));
         if (typeCode == UNDEFINED_CODE) {
-            throw SqlException.position(node.position)
+            throw SqlException.position(node.getPosition())
                     .put("unsupported bind variable type: ")
                     .put(ColumnType.nameOf(columnType));
         }
@@ -2114,15 +2256,34 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * The value of {@code operand} when it is a quoted CHAR literal the literal-specialised
+     * ordering forms can pick a shape from, and {@link Numbers#CHAR_NULL} otherwise: for a column,
+     * a bind variable, an arithmetic subtree, an unquoted number, and for the NULL literal itself,
+     * whose zero is neither positive nor negative and so has no shape of its own. The value only
+     * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
+     * route of {@link #serializeConstant}, so it is typed exactly as the general expansion types it.
+     */
+    private char charOrderingLiteral(BoundExpression operand) {
+        if (kind(operand) != CONSTANT) {
+            return Numbers.CHAR_NULL;
+        }
+        final CharSequence token = token(operand);
+        if (token.length() != 3 || !Chars.isQuoted(token)) {
+            return Numbers.CHAR_NULL;
+        }
+        return token.charAt(1);
+    }
+
+    /**
      * Collects all predicates from an AND chain into the provided list.
      */
-    private void collectAndPredicates(ExpressionNode node, ObjList<ExpressionNode> predicates) {
+    private void collectAndPredicates(BoundExpression node, ObjList<BoundExpression> predicates) {
         if (node == null) {
             return;
         }
-        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isAndKeyword(node.token)) {
-            collectAndPredicates(node.lhs, predicates);
-            collectAndPredicates(node.rhs, predicates);
+        if (kind(node) == OPERATION && SqlKeywords.isAndKeyword(operator(node))) {
+            collectAndPredicates(lhs(node), predicates);
+            collectAndPredicates(rhs(node), predicates);
         } else {
             predicates.add(node);
         }
@@ -2131,13 +2292,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Collects all predicates from an OR chain into the provided list.
      */
-    private void collectOrPredicates(ExpressionNode node, ObjList<ExpressionNode> predicates) {
+    private void collectOrPredicates(BoundExpression node, ObjList<BoundExpression> predicates) {
         if (node == null) {
             return;
         }
-        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isOrKeyword(node.token)) {
-            collectOrPredicates(node.lhs, predicates);
-            collectOrPredicates(node.rhs, predicates);
+        if (kind(node) == OPERATION && SqlKeywords.isOrKeyword(operator(node))) {
+            collectOrPredicates(lhs(node), predicates);
+            collectOrPredicates(rhs(node), predicates);
         } else {
             predicates.add(node);
         }
@@ -2148,7 +2309,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@link #sortPredicates(ObjList, boolean)} reads a pre-computed int per predicate instead of
      * re-walking its subtree.
      */
-    private void computePredicatePriorities(ObjList<ExpressionNode> predicates) {
+    private void computePredicatePriorities(ObjList<BoundExpression> predicates) {
         predicatePriorities.clear();
         for (int i = 0, n = predicates.size(); i < n; i++) {
             final int priority = getPredicatePriority(predicates.getQuick(i));
@@ -2169,16 +2330,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * the deferred {@code true} stub whose backfill is what declines JIT for the shape.
      */
     private void discardBackfillNodesFrom(long offset) {
-        backfillDiscardOffsets.clear();
+        final LongList doomedOffsets = longScratch;
+        doomedOffsets.clear();
         final long[] offsets = backfillNodes.keys();
         for (int i = 0, n = offsets.length; i < n; i++) {
             // An empty slot holds the map's -1 no-entry key, which is below any append offset.
             if (offsets[i] >= offset) {
-                backfillDiscardOffsets.add(offsets[i]);
+                doomedOffsets.add(offsets[i]);
             }
         }
-        for (int i = 0, n = backfillDiscardOffsets.size(); i < n; i++) {
-            backfillNodes.remove(backfillDiscardOffsets.getQuick(i));
+        for (int i = 0, n = doomedOffsets.size(); i < n; i++) {
+            backfillNodes.remove(doomedOffsets.getQuick(i));
         }
     }
 
@@ -2188,19 +2350,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * rejection here loses the filter its compiled backend and {@code SqlCodeGenerator} falls back
      * to the Java one.
      * <p>
-     * The walk stops at the append offset rather than at the mapped size, for the reason
-     * {@link #hasUnharmonisedOperandWidths} carries: {@code SqlCodeGenerator} serializes every JIT
-     * filter of a session into ONE buffer and hands it back with {@code truncate()}, which resets
-     * the append offset without zeroing, so everything past that offset is the PREVIOUS filter's
-     * IR and a buffer nothing has written yet holds whatever {@code malloc()} left there. All
-     * three callers run this immediately after {@code putOperator(RET)} and the walk returns at
-     * that {@code RET} - which sits one instruction inside the append offset - before it can reach
-     * a stale byte, so the two bounds answer alike at HEAD. The append offset is what keeps that a
-     * property of the METHOD rather than of its callers: a caller that asks the question before
-     * emitting its {@code RET} - the shape {@link #getExecHint} already has in
-     * {@link #serializePredicatesAndSc} and {@link #serializePredicatesOrSc} - would otherwise read
-     * the previous filter's tail and reject the current filter for a pairing it never emitted, or
-     * for a stub it never wrote.
+     * The walk stops at the append offset rather than at the mapped size: {@code SqlCodeGenerator}
+     * serializes every JIT filter of a session into ONE buffer and hands it back with
+     * {@code truncate()}, which resets the append offset without zeroing, so everything past that
+     * offset is the PREVIOUS filter's IR and a buffer nothing has written yet holds whatever
+     * {@code malloc()} left there. All three callers run this immediately after
+     * {@code putOperator(RET)} and the walk returns at that {@code RET} - which sits one
+     * instruction inside the append offset - before it can reach a stale byte, so the two bounds
+     * answer alike. The append offset is what keeps that a property of the METHOD rather than of
+     * its callers: a caller that asked the question before emitting its {@code RET} would
+     * otherwise read the previous filter's tail and reject the current filter for a pairing it
+     * never emitted, or for a stub it never wrote.
      */
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
         typeStack.clear();
@@ -2248,25 +2408,57 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * Returns the first comparison - or {@code IN} pairing - in the subtree that reads no column at
+     * all, or {@code null} when every one of them reads at least one. See {@link #visit} for what
+     * that decides and why.
+     */
+    private BoundExpression findColumnFreeComparison(BoundExpression node) {
+        if (node == null) {
+            return null;
+        }
+        if (paramCount(node) > 0
+                && ((paramCount(node) == 2 && isComparisonToken(token(node)))
+                || SqlKeywords.isInKeyword(operator(node)))
+                && !hasColumnOperand(node)) {
+            return node;
+        }
+        BoundExpression found = findColumnFreeComparison(lhs(node));
+        if (found != null) {
+            return found;
+        }
+        found = findColumnFreeComparison(rhs(node));
+        if (found != null) {
+            return found;
+        }
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            found = findColumnFreeComparison(argAt(node, i));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Finds the column type involved in an operation.
      * Returns UNDEFINED if no column is found.
      */
-    private int findOperandColumnType(ExpressionNode node) {
+    private int findOperandColumnType(BoundExpression node) {
         if (node == null) {
             return ColumnType.UNDEFINED;
         }
-        if (node.type == ExpressionNode.LITERAL) {
-            int index = metadata.getColumnIndexQuiet(node.token);
+        if (kind(node) == LITERAL) {
+            int index = columnIndex(node);
             if (index != -1) {
                 return ColumnType.tagOf(metadata.getColumnType(index));
             }
         }
         // Recursively search children
-        int leftType = findOperandColumnType(node.lhs);
+        int leftType = findOperandColumnType(lhs(node));
         if (leftType != ColumnType.UNDEFINED) {
             return leftType;
         }
-        return findOperandColumnType(node.rhs);
+        return findOperandColumnType(rhs(node));
     }
 
     /**
@@ -2278,31 +2470,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * rejects: the Java filter reads such a literal as a FLOAT constant and still promotes it to
      * double, so it needs the same widening analysis as its unsuffixed twin.
      */
-    private double floatCmpConstValue(ExpressionNode node) {
-        final ExpressionNode constNode;
+    private double floatCmpConstValue(BoundExpression node) {
+        final BoundExpression constNode;
         final boolean isNegated;
-        if (node.type == ExpressionNode.CONSTANT) {
+        if (kind(node) == CONSTANT) {
             constNode = node;
             isNegated = false;
-        } else if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            constNode = node.rhs != null ? node.rhs : node.lhs;
+        } else if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            constNode = rhs(node);
             isNegated = true;
         } else {
             return Double.NaN;
         }
-        if (constNode == null || constNode.type != ExpressionNode.CONSTANT
-                || constNode.token == null || isReservedConstantKeyword(constNode.token)) {
+        if (constNode == null || kind(constNode) != CONSTANT
+                || token(constNode) == null || isReservedConstantKeyword(token(constNode))) {
             return Double.NaN;
         }
         double d;
         try {
-            d = Numbers.parseLong(constNode.token);
+            d = Numbers.parseLong(token(constNode));
         } catch (NumericException notLong) {
             try {
-                d = Numbers.parseDouble(constNode.token);
+                d = Numbers.parseDouble(token(constNode));
             } catch (NumericException notDouble) {
                 try {
-                    d = Numbers.parseFloat(constNode.token);
+                    d = Numbers.parseFloat(token(constNode));
                 } catch (NumericException notNumeric) {
                     return Double.NaN;
                 }
@@ -2320,7 +2512,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * form), so a plain promote seeded from the null operands would stay
      * UNDEFINED and read a LONG-width fold as a wrapped I4.
      */
-    private int foldCmpType(int cmpType, ExpressionNode operand) {
+    private int foldCmpType(int cmpType, BoundExpression operand) {
         int operandType = arithExprType(operand);
         if (operandType == UNDEFINED_CODE) {
             return cmpType;
@@ -2347,7 +2539,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@code Numbers.intToLong} maps {@code INT_NULL} onto {@code LONG_NULL}, so a narrow
      * sub-subtree that collapses onto its sentinel still poisons the enclosing fold to NULL.
      */
-    private long foldConstantArithWidthAware(ExpressionNode node) throws NumericException {
+    private long foldConstantArithWidthAware(BoundExpression node) throws NumericException {
         if (node == null) {
             throw NumericException.INSTANCE;
         }
@@ -2356,14 +2548,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (isNarrowIntTypeCode(arithExprType(node))) {
             return Numbers.intToLong(tryFoldConstantArithI4(node));
         }
-        if (node.type == ExpressionNode.CONSTANT) {
-            return Numbers.parseLong(node.token);
+        if (kind(node) == CONSTANT) {
+            return Numbers.parseLong(token(node));
         }
-        if (node.type != ExpressionNode.OPERATION) {
+        if (kind(node) != OPERATION) {
             throw NumericException.INSTANCE;
         }
-        if (Chars.equals(node.token, '-') && node.lhs == null) {
-            long operand = foldConstantArithWidthAware(node.rhs);
+        if (Chars.equals(operator(node), '-') && lhs(node) == null) {
+            long operand = foldConstantArithWidthAware(rhs(node));
             return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
         }
         // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
@@ -2373,18 +2565,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (!isArithmeticOperation(node)) {
             throw NumericException.INSTANCE;
         }
-        long left = foldConstantArithWidthAware(node.lhs);
-        long right = foldConstantArithWidthAware(node.rhs);
+        long left = foldConstantArithWidthAware(lhs(node));
+        long right = foldConstantArithWidthAware(rhs(node));
         if (left == Numbers.LONG_NULL || right == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        if (Chars.equals(node.token, '+')) {
+        if (Chars.equals(operator(node), '+')) {
             return left + right;
         }
-        if (Chars.equals(node.token, '-')) {
+        if (Chars.equals(operator(node), '-')) {
             return left - right;
         }
-        if (Chars.equals(node.token, '*')) {
+        if (Chars.equals(operator(node), '*')) {
             return left * right;
         }
         // isArithmeticOperation() above leaves only '/' here, and the tail re-checks rather than
@@ -2392,7 +2584,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // added to it - QuestDB does have a '%' - would otherwise reach this division. An assert
         // would catch that under -ea only, and every production JVM runs without it. Declining costs
         // nothing: descend() emits the subtree as per-op IR instead.
-        if (!Chars.equals(node.token, '/')) {
+        if (!Chars.equals(operator(node), '/')) {
             throw NumericException.INSTANCE;
         }
         if (right == 0L) {
@@ -2455,88 +2647,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // never count a widened immediate, so a filter holding one must stay off them. This is
             // the deferred half of visit()'s scalar force - see hasWidthChangingI64WidenConstant().
             if (!hasPendingWidthChangingI64Constant) {
-                if (typesObserver.hasMixedSizes()) {
-                    return EXEC_HINT_MIXED_SIZE_TYPE;
-                }
-                // The single-size loop takes its lane count from the observed width:
-                // compiler.cpp computes step = 256 / (maxSize() * 8), so an eight-byte lane runs
-                // four lanes and avx2::convert() harmonises every mixed-width pairing there -
-                // sx_i64, cvt_itod, cvt_ftod and cvt_ltod all produce exactly four results. A
-                // narrower lane runs eight or more, where those conversions cannot reach past the
-                // low 128 bits, so convert() declines the filter and it falls back to the JAVA
-                // filter. Demoting to the JIT scalar backend first is the cheaper destination and
-                // the earlier decision, so ask the IR only for those widths.
-                //
-                // The observer counts columns and bind variables, so it reports a single size for
-                // a filter that also carries a NARROW arithmetic subtree - a pure-constant INT
-                // chain the width-aware fold declined, say - and the mismatch exists only in the
-                // emitted IR. See hasUnharmonisedOperandWidths().
-                //
-                // No SUPPORTED SQL reaches the demotion, but it is not unreachable by
-                // construction and the difference is the reason the walk stays.
-                // `1 in (afloat, 5_000_000_000)` serializes to
-                // (i64 5000000000)(i64 1)(=)(f32 afloat)(i64 1)(=)(||) against a four-byte
-                // observation and arrives here with every gate above it false, so this arm is all
-                // that stands between its (f32, i64) pairing and an eight-lane loop. What keeps
-                // that filter out of a user's query is InLongFunctionFactory.newInstance: the
-                // in(LV) signature admits NULL / TIMESTAMP / LONG / INT / SHORT / BYTE / STRING /
-                // SYMBOL / VARCHAR / UNDEFINED elements and throws "cannot compare LONG with type
-                // FLOAT" for a FLOAT one. That is a type check in another subsystem, with no
-                // stated relationship to these width rules, so the population here is empty by
-                // accident rather than by construction.
-                // CompiledFilterIRSerializerTest#testExecHintDemotesUnharmonisedWidthsToScalar
-                // pins the shape through serialize(), the entry point that skips that check.
-                //
-                // Three routes intercept a mixed-width pairing before it reaches the walk:
-                // - an emitted SX_I64 sets hasEmittedWideLaneConversion at emission time, so the
-                //   filter either takes the WIDE_LANE arm above or carries the forceScalarMode
-                //   that visit()'s i64WidenLeaves gate sets;
-                // - markDoubleWidthConst and markWidthSemanticsOperand widen a CONSTANT with no
-                //   SX_I64 and set hasI64WidenArithConstant beside the widening, so
-                //   hasWidthChangingI64WidenConstant() reports it and the
-                //   hasPendingWidthChangingI64Constant gate around this block resolves it to
-                //   SCALAR;
-                // - every other operand carries the observed width, or the serializer observes it
-                //   as it emits: markFoldedI4Imm / markFoldedI8Imm observe the immediate their
-                //   fold collapses a subtree to, serializeNumber emits strictly at the width
-                //   serializeConstant hands it, a CHAR / UUID / TIMESTAMP / DATE literal needs the
-                //   column of that same width to be in the predicate at all, and
-                //   putNeverMatchingInPairing emits BOTH halves of its pairing at I4. One- and
-                //   two-byte arithmetic never arrives either - visit()'s hasArithmeticOperations
-                //   forcer sends it to SCALAR first.
-                // The FLOAT shape above is the one producer known to escape all three.
-                // markCmpOperandWidenedToI64 widens BOTH halves of a 64-bit pairing and leaves the
-                // consequence to the peer: a narrow-int leaf takes the SX_I64 of the first route,
-                // an integer constant only joins i64WidenConstants - deliberately without
-                // hasI64WidenArithConstant, see the note there - and a peer that is neither goes
-                // to forceScalarOnUnharmonisedNarrowArith, which returns at once for a node that
-                // is not an OPERATION. A bare FLOAT column is therefore marked by nothing.
-                //
-                // What a miss costs depends on the caller. Here it costs throughput, not rows:
-                // avx2::convert declines every pairing it cannot harmonise for the lane count in
-                // force - the (i32, f64) arm at jit/avx2.h:680-686 and, for a pairing that reaches
-                // no arm at all, the terminal lhs.dtype() != rhs.dtype() decline it falls through
-                // to - and decline_filter makes compileFunction discard the function, after which
-                // SqlCodeGenerator runs the Java filter. That holds for EVERY pairing, an i128 left
-                // operand included: convert()'s i128 arm breaks out into that terminal decline
-                // rather than handing the pairing back unharmonised.
-                // On the short-circuit paths a miss costs the compiled filter outright:
-                // serializePredicatesAndSc / serializePredicatesOrSc throw "expected scalar
-                // compilation mode" when this method answers SINGLE_SIZE or WIDE_LANE, so a
-                // demotion is what keeps such a filter compiled at all. Those callers do reach
-                // this walk with a uniform observer - serialize() takes them for a pure AND / OR
-                // chain whose COLUMN sizes are mixed, and putNeverMatchingInPairing's fold can
-                // then elide the very column that made them mixed, which is how
-                // `anint = 1 and abyte in (null)` gets here observing I4 alone. (Their other
-                // entry, forceScalar, returns SCALAR at the top of this method.)
-                //
-                // The price is one pass over the emitted IR, behind the cheap maxSize() test that
-                // already short-circuits it, on a compile path that also runs asmjit codegen
-                // through JNI.
-                if (typesObserver.maxSize() != 8 && hasUnharmonisedOperandWidths(false)) {
-                    return EXEC_HINT_SCALAR;
-                }
-                return EXEC_HINT_SINGLE_SIZE_TYPE;
+                return typesObserver.hasMixedSizes() ? EXEC_HINT_MIXED_SIZE_TYPE : EXEC_HINT_SINGLE_SIZE_TYPE;
             }
         }
         return EXEC_HINT_SCALAR;
@@ -2564,15 +2675,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Lower value = higher priority (evaluated first).
      * Priority: uuid eq > long eq > ... > others > ... > long neq > uuid neq
      */
-    private int getPredicatePriority(ExpressionNode node) {
-        if (node == null || node.type != ExpressionNode.OPERATION) {
+    private int getPredicatePriority(BoundExpression node) {
+        if (node == null || kind(node) != OPERATION) {
             return PRIORITY_OTHER;
         }
         // Check if it's an equality operation
-        if (Chars.equals(node.token, '=')) {
+        if (Chars.equals(operator(node), '=')) {
             // Find the column type involved in this equality
             return getPredicatePriority0(node, PRIORITY_I16_EQ, PRIORITY_I8_EQ, PRIORITY_I4_EQ, PRIORITY_SYM_EQ, PRIORITY_OTHER_EQ);
-        } else if (Chars.equals(node.token, "<>") || Chars.equals(node.token, "!=")) {
+        } else if (Chars.equals(operator(node), "<>") || Chars.equals(operator(node), "!=")) {
             // Find the column type involved in this inequality
             return getPredicatePriority0(node, PRIORITY_I16_NEQ, PRIORITY_I8_NEQ, PRIORITY_I4_NEQ, PRIORITY_SYM_NEQ, PRIORITY_OTHER_NEQ);
         }
@@ -2580,7 +2691,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private int getPredicatePriority0(
-            ExpressionNode node,
+            BoundExpression node,
             int priorityI16Neq,
             int priorityI8Neq,
             int priorityI4Neq,
@@ -2620,28 +2731,54 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * emitted lets a short-circuit opcode reach the wide-lane guard, so the narrowing only removes
      * answers the marker itself cannot produce: the pairing test below is the marker's own.
      */
-    private boolean hasNarrowIntCmpWideningConstPair(ExpressionNode node) {
+    private boolean hasNarrowIntCmpWideningConstPair(BoundExpression node) {
         if (node == null) {
             return false;
         }
         // The two node shapes markNarrowConstCmpWidenNode hands to markNarrowConstCmpWidenPair: a
         // binary comparison, and the single-value IN form, which keeps key and element in lhs / rhs.
-        final boolean isPairShape = (node.type == ExpressionNode.OPERATION
-                && node.paramCount == 2
-                && isComparisonToken(node.token))
-                || (node.type == ExpressionNode.FUNCTION
-                && SqlKeywords.isInKeyword(node.token)
-                && node.args.size() == 0);
+        final boolean isPairShape = (kind(node) == OPERATION
+                && paramCount(node) == 2
+                && isComparisonToken(token(node)))
+                || (kind(node) == FUNCTION
+                && SqlKeywords.isInKeyword(operator(node))
+                && argCount(node) == 0);
         if (isPairShape
-                && ((isNarrowIntLeaf(node.lhs) && isNarrowIntCmpWideningConst(node.rhs))
-                || (isNarrowIntLeaf(node.rhs) && isNarrowIntCmpWideningConst(node.lhs)))) {
+                && ((isNarrowIntLeaf(lhs(node)) && isNarrowIntCmpWideningConst(rhs(node)))
+                || (isNarrowIntLeaf(rhs(node)) && isNarrowIntCmpWideningConst(lhs(node))))) {
             return true;
         }
-        if (hasNarrowIntCmpWideningConstPair(node.lhs) || hasNarrowIntCmpWideningConstPair(node.rhs)) {
+        if (hasNarrowIntCmpWideningConstPair(lhs(node)) || hasNarrowIntCmpWideningConstPair(rhs(node))) {
             return true;
         }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasNarrowIntCmpWideningConstPair(node.args.getQuick(i))) {
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            if (hasNarrowIntCmpWideningConstPair(argAt(node, i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reports whether the subtree holds a comparison - or an {@code IN} pairing - other than
+     * {@code except}. Identity, not equality: the traversal has to skip that one node and count
+     * every other, including a structurally identical sibling.
+     */
+    private boolean hasOtherComparison(BoundExpression node, BoundExpression except) {
+        if (node == null) {
+            return false;
+        }
+        if (node != except
+                && paramCount(node) > 0
+                && ((paramCount(node) == 2 && isComparisonToken(token(node)))
+                || SqlKeywords.isInKeyword(operator(node)))) {
+            return true;
+        }
+        if (hasOtherComparison(lhs(node), except) || hasOtherComparison(rhs(node), except)) {
+            return true;
+        }
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            if (hasOtherComparison(argAt(node, i), except)) {
                 return true;
             }
         }
@@ -2675,13 +2812,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@link #serializePredicatesOrSc} declines JIT compilation rather than letting a short-circuit
      * opcode reach the four-lane backend, which cannot branch per lane.
      */
-    private boolean hasWideLaneConversionSource(ExpressionNode node) {
+    private boolean hasWideLaneConversionSource(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.OPERATION
-                && (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token))) {
-            return hasWideLaneConversionSource(node.lhs) || hasWideLaneConversionSource(node.rhs);
+        if (kind(node) == OPERATION
+                && (SqlKeywords.isAndKeyword(operator(node)) || SqlKeywords.isOrKeyword(operator(node)))) {
+            return hasWideLaneConversionSource(lhs(node)) || hasWideLaneConversionSource(rhs(node));
         }
         // Within one predicate these are the conversion sources. markFloatCmpConst fires for
         // an F4 leaf against a constant that no 32-bit float reproduces; maybeEmitI64Widening
@@ -2734,22 +2871,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@code false} for the filter, and {@link #serialize}'s gate short-circuits on
      * {@code isWideLaneMode} before it asks this question.
      */
-    private boolean hasIntCmpFloatLeafPair(ExpressionNode node) {
+    private boolean hasIntCmpFloatLeafPair(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.OPERATION
-                && node.paramCount == 2
-                && isComparisonToken(node.token)
-                && (isWideLaneIntCmpFloatLeafPair(node.lhs, node.rhs)
-                || isWideLaneIntCmpFloatLeafPair(node.rhs, node.lhs))) {
+        if (kind(node) == OPERATION
+                && paramCount(node) == 2
+                && isComparisonToken(token(node))
+                && (isWideLaneIntCmpFloatLeafPair(lhs(node), rhs(node))
+                || isWideLaneIntCmpFloatLeafPair(rhs(node), lhs(node)))) {
             return true;
         }
-        if (hasIntCmpFloatLeafPair(node.lhs) || hasIntCmpFloatLeafPair(node.rhs)) {
+        if (hasIntCmpFloatLeafPair(lhs(node)) || hasIntCmpFloatLeafPair(rhs(node))) {
             return true;
         }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasIntCmpFloatLeafPair(node.args.getQuick(i))) {
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            if (hasIntCmpFloatLeafPair(argAt(node, i))) {
                 return true;
             }
         }
@@ -2760,7 +2897,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Reports whether a subtree holds a node of the given {@code WIDE_LANE_SOURCE_*} kind, walking
      * both operands and the {@code args} of an n-ary node such as IN.
      */
-    private boolean hasWideLaneSourceNode(ExpressionNode node, int kind) {
+    private boolean hasWideLaneSourceNode(BoundExpression node, int kind) {
         if (node == null) {
             return false;
         }
@@ -2783,11 +2920,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (isMatch) {
             return true;
         }
-        if (hasWideLaneSourceNode(node.lhs, kind) || hasWideLaneSourceNode(node.rhs, kind)) {
+        if (hasWideLaneSourceNode(lhs(node), kind) || hasWideLaneSourceNode(rhs(node), kind)) {
             return true;
         }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasWideLaneSourceNode(node.args.getQuick(i), kind)) {
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            if (hasWideLaneSourceNode(argAt(node, i), kind)) {
                 return true;
             }
         }
@@ -2839,11 +2976,44 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return constantTypeCode != I8_TYPE && constantTypeCode != F8_TYPE;
     }
 
-    private boolean isBooleanColumn(ExpressionNode node) {
-        if (node.type != ExpressionNode.LITERAL) {
+    /**
+     * The value of {@code operand} when it is a quoted IPv4 literal the literal-specialised
+     * ordering forms can pick a shape from, and {@link Numbers#IPv4_NULL} otherwise: for a column,
+     * a bind variable, an unquoted keyword, a quoted 'null', a malformed address, and for
+     * '0.0.0.0' itself, which is the NULL sentinel and has no sign class of its own. The value only
+     * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
+     * route of {@link #serializeConstant}, which is also where a malformed address declines.
+     */
+    private int ipv4OrderingLiteral(BoundExpression operand) {
+        if (kind(operand) != CONSTANT) {
+            return Numbers.IPv4_NULL;
+        }
+        final CharSequence token = token(operand);
+        final int len = token.length();
+        if (len < 3 || !Chars.isQuoted(token)) {
+            return Numbers.IPv4_NULL;
+        }
+        try {
+            return Numbers.parseIPv4_0(token, 1, len - 1);
+        } catch (NumericException e) {
+            return Numbers.IPv4_NULL;
+        }
+    }
+
+    private boolean isArithmeticOperation(BoundExpression node) {
+        final CharSequence token = operator(node);
+        if (paramCount(node) < 2) {
             return false;
         }
-        int index = metadata.getColumnIndexQuiet(node.token);
+        return Chars.equals(token, '+') || Chars.equals(token, '-')
+                || Chars.equals(token, '*') || Chars.equals(token, '/');
+    }
+
+    private boolean isBooleanColumn(BoundExpression node) {
+        if (kind(node) != LITERAL) {
+            return false;
+        }
+        int index = columnIndex(node);
         if (index == -1) {
             return false;
         }
@@ -2866,7 +3036,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * a row whose value is not the one asked for. An integer literal is no safer above 2^24
      * ({@code (float) 16777217} is 16777216).
      */
-    private boolean isFloatInexactConst(ExpressionNode node) {
+    private boolean isFloatInexactConst(BoundExpression node) {
         if (node == null) {
             return false;
         }
@@ -2887,8 +3057,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // is an OPERATION and still slips through, but such a predicate has no column at all, so
     // serializeConstant rejects it and the JIT declines the filter.) DOUBLE (F8) already compares
     // exactly, so it is intentionally excluded too.
-    private boolean isFloatLeaf(ExpressionNode node) {
-        if (node == null || node.type == ExpressionNode.CONSTANT) {
+    private boolean isFloatLeaf(BoundExpression node) {
+        if (node == null || kind(node) == CONSTANT) {
             return false;
         }
         return arithExprType(node) == F4_TYPE;
@@ -2901,7 +3071,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * integer literal (the original rule - {@code (float) 5_000_000_001} is 5_000_000_000), and any other
      * literal with no exact float, fractional or not (see {@link #isFloatInexactConst}).
      */
-    private boolean isFloatWideningConst(ExpressionNode node) {
+    private boolean isFloatWideningConst(BoundExpression node) {
         return (isIntegerConst(node) && arithExprType(node) == I8_TYPE) || isFloatInexactConst(node);
     }
 
@@ -2920,14 +3090,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * computation, not merely a rounded bound: {@code 16777216.0f + 1.0f} is {@code 16777216.0f}
      * while {@code (double) 16777216.0f + 1.0} is {@code 16777217.0}.
      */
-    private boolean isDoubleConst(ExpressionNode node) {
+    private boolean isDoubleConst(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            return isDoubleConst(node.rhs != null ? node.rhs : node.lhs);
+        if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            return isDoubleConst(rhs(node));
         }
-        return node.type == ExpressionNode.CONSTANT && floatConstantTypeCode(node.token) == F8_TYPE;
+        return kind(node) == CONSTANT && floatConstantTypeCode(token(node)) == F8_TYPE;
     }
 
     /**
@@ -2940,9 +3110,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * A bare or negated CONSTANT is excluded - it is the bound, not the operand it is compared
      * against - and so is a DOUBLE column or bind variable, which is not an OPERATION.
      */
-    private boolean isDoubleWidthArithOperand(ExpressionNode node) {
+    private boolean isDoubleWidthArithOperand(BoundExpression node) {
         return node != null
-                && node.type == ExpressionNode.OPERATION
+                && kind(node) == OPERATION
                 && !isDoubleConst(node)
                 && arithExprType(node) == F8_TYPE;
     }
@@ -2990,14 +3160,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * separate change SYMBOL is still deferred for; the {@code (i64, f32)} pairing no longer
      * carries that deferral - {@link #isWideLaneIntCmpFloatLeafPair} admits it.
      */
-    private boolean isNarrowLaneDoubleConstArith(ExpressionNode node) {
-        if (node == null || node.type != ExpressionNode.OPERATION || !isArithmeticOperation(node)) {
+    private boolean isNarrowLaneDoubleConstArith(BoundExpression node) {
+        if (node == null || kind(node) != OPERATION || !isArithmeticOperation(node)) {
             return false;
         }
         if (arithExprType(node) != F8_TYPE) {
             return false;
         }
-        if (!isDoubleConst(node.lhs) && !isDoubleConst(node.rhs)) {
+        if (!isDoubleConst(lhs(node)) && !isDoubleConst(rhs(node))) {
             return false;
         }
         return !hasEightByteLeaf(node);
@@ -3009,19 +3179,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * point of {@link #isNarrowLaneDoubleConstArith} is the width a DOUBLE literal carries that the
      * observer cannot report.
      */
-    private boolean hasEightByteLeaf(ExpressionNode node) {
+    private boolean hasEightByteLeaf(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+        if (kind(node) == LITERAL || kind(node) == BIND_VARIABLE) {
             final int type = arithExprType(node);
             return type == I8_TYPE || type == F8_TYPE;
         }
-        if (hasEightByteLeaf(node.lhs) || hasEightByteLeaf(node.rhs)) {
+        if (hasEightByteLeaf(lhs(node)) || hasEightByteLeaf(rhs(node))) {
             return true;
         }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasEightByteLeaf(node.args.getQuick(i))) {
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            if (hasEightByteLeaf(argAt(node, i))) {
                 return true;
             }
         }
@@ -3029,15 +3199,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     // Reference (not value) membership: the same node objects are marked and serialized.
-    private boolean isI64WidenLeaf(ExpressionNode node) {
+    private boolean isI64WidenLeaf(BoundExpression node) {
         return i64WidenLeaves.contains(node);
     }
 
     // Reference (not value) membership: the same node objects are marked and serialized.
     private boolean isInTimestampPredicate() throws SqlException {
         // visit inOperationNode to get an expression type
-        predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
-        predicateContext.onNodeVisited(predicateContext.inOperationNode.lhs);
+        predicateContext.onNodeVisited(rhs(predicateContext.inOperationNode));
+        predicateContext.onNodeVisited(lhs(predicateContext.inOperationNode));
 
         // check predicate type is timestamp
         return ColumnType.isTimestamp(predicateContext.columnType);
@@ -3045,19 +3215,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     // A bare or unary-minus-wrapped integer CONSTANT node (I4- or I8-typed). Returns
     // false for float, keyword, and non-numeric constants, and for columns.
-    private boolean isIntegerConst(ExpressionNode node) {
+    private boolean isIntegerConst(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        final ExpressionNode constNode;
-        if (node.type == ExpressionNode.CONSTANT) {
+        final BoundExpression constNode;
+        if (kind(node) == CONSTANT) {
             constNode = node;
-        } else if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            constNode = node.rhs != null ? node.rhs : node.lhs;
+        } else if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            constNode = rhs(node);
         } else {
             return false;
         }
-        if (constNode == null || constNode.type != ExpressionNode.CONSTANT) {
+        if (constNode == null || kind(constNode) != CONSTANT) {
             return false;
         }
         final int t = arithExprType(node);
@@ -3089,7 +3259,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * immediate and both paths compare at integer width. The out-of-INT-range ones are widened by
      * {@link #markNarrowConstCmpWidenPair}'s I8 arms instead.
      */
-    private boolean isNarrowIntCmpWideningConst(ExpressionNode node) {
+    private boolean isNarrowIntCmpWideningConst(BoundExpression node) {
         if (node == null || isIntegerConst(node)) {
             return false;
         }
@@ -3120,8 +3290,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     // A narrow-int (BYTE / SHORT / INT) column or bind-variable leaf. Sign-extending
     // one to i64 is value-preserving (no arithmetic to wrap).
-    private boolean isNarrowIntLeaf(ExpressionNode node) {
-        if (node == null || (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.BIND_VARIABLE)) {
+    private boolean isNarrowIntLeaf(BoundExpression node) {
+        if (node == null || (kind(node) != LITERAL && kind(node) != BIND_VARIABLE)) {
             return false;
         }
         final int t = arithExprType(node);
@@ -3133,17 +3303,59 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * Reports whether every pairing of a plain IN list folds to a never-matching comparison, see
+     * {@link #neverMatchingInPairingWidth}.
+     */
+    private boolean isNeverMatchingIn(BoundExpression node) {
+        if (kind(node) != FUNCTION || !SqlKeywords.isInKeyword(operator(node))) {
+            return false;
+        }
+        final int argCount = argCount(node);
+        final BoundExpression key = argCount > 0 ? inKey(node) : lhs(node);
+        final boolean isWidthSensitiveKey = isWidthSensitiveInKey(key);
+        if (argCount < 3) {
+            return neverMatchingInPairingWidth(rhs(node), key, isWidthSensitiveKey) != UNDEFINED_CODE;
+        }
+        for (int i = 0, n = argCount - 1; i < n; i++) {
+            if (neverMatchingInPairingWidth(argAt(node, i), key, isWidthSensitiveKey) == UNDEFINED_CODE) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isNullConstant(BoundExpression node) {
+        return node != null && kind(node) == CONSTANT && SqlKeywords.isNullKeyword(token(node));
+    }
+
+    /**
+     * A binary {@code <}, {@code <=}, {@code >} or {@code >=} node, i.e. the only shape
+     * {@link #serializeOperator} can route into {@link #serializeCharOrdering} or
+     * {@link #serializeIPv4Ordering}. {@link #descend} and {@link #visit} push and pop the rewind
+     * watermark under this condition, so it has to admit exactly the nodes whose visit reaches
+     * those two branches - see {@link #orderingRewindOffsets}.
+     */
+    private boolean isOrderingComparison(BoundExpression node) {
+        if (paramCount(node) != 2) {
+            return false;
+        }
+        final CharSequence token = operator(node);
+        return Chars.equals(token, "<") || Chars.equals(token, "<=")
+                || Chars.equals(token, ">") || Chars.equals(token, ">=");
+    }
+
+    /**
      * Checks if the expression tree is a pure AND chain (no OR at top level).
      */
-    private boolean isPureAndChain(ExpressionNode node) {
+    private boolean isPureAndChain(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.OPERATION) {
-            if (SqlKeywords.isAndKeyword(node.token)) {
-                return isPureAndChain(node.lhs) && isPureAndChain(node.rhs);
+        if (kind(node) == OPERATION) {
+            if (SqlKeywords.isAndKeyword(operator(node))) {
+                return isPureAndChain(lhs(node)) && isPureAndChain(rhs(node));
             }
-            return !SqlKeywords.isOrKeyword(node.token);
+            return !SqlKeywords.isOrKeyword(operator(node));
         }
         // Leaf predicate or non-OR operation
         return true;
@@ -3152,31 +3364,60 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Checks if the expression tree is a pure OR chain (no AND at top level).
      */
-    private boolean isPureOrChain(ExpressionNode node) {
+    private boolean isPureOrChain(BoundExpression node) {
         if (node == null) {
             return false;
         }
-        if (node.type == ExpressionNode.OPERATION) {
-            if (SqlKeywords.isOrKeyword(node.token)) {
-                return isPureOrChain(node.lhs) && isPureOrChain(node.rhs);
+        if (kind(node) == OPERATION) {
+            if (SqlKeywords.isOrKeyword(operator(node))) {
+                return isPureOrChain(lhs(node)) && isPureOrChain(rhs(node));
             }
-            return !SqlKeywords.isAndKeyword(node.token);
+            return !SqlKeywords.isAndKeyword(operator(node));
         }
         // Leaf predicate or non-AND operation
         return true;
     }
 
-    private boolean isTopLevelBooleanColumn(ExpressionNode node) {
-        if (node.type == ExpressionNode.LITERAL && isBooleanColumn(node)) {
+    private boolean isTopLevelBooleanColumn(BoundExpression node) {
+        if (kind(node) == LITERAL && isBooleanColumn(node)) {
             return true;
         }
         // Lookahead for "not boolean_column" case
-        final CharSequence token = node.token;
+        final CharSequence token = operator(node);
         if (SqlKeywords.isNotKeyword(token)) {
-            ExpressionNode columnNode = node.lhs != null ? node.lhs : node.rhs;
+            BoundExpression columnNode = rhs(node);
             return columnNode != null && isBooleanColumn(columnNode);
         }
         return false;
+    }
+
+    private boolean isTopLevelOperation(BoundExpression node) {
+        final CharSequence token = operator(node);
+        if (SqlKeywords.isNotKeyword(token)) {
+            return true;
+        }
+        if (paramCount(node) < 2) {
+            return false;
+        }
+        if (SqlKeywords.isInKeyword(token)) {
+            return true;
+        }
+        if (Chars.equals(token, "=")) {
+            return true;
+        }
+        if (Chars.equals(token, "<>") || Chars.equals(token, "!=")) {
+            return true;
+        }
+        if (Chars.equals(token, "<")) {
+            return true;
+        }
+        if (Chars.equals(token, "<=")) {
+            return true;
+        }
+        if (Chars.equals(token, ">")) {
+            return true;
+        }
+        return Chars.equals(token, ">=");
     }
 
     /**
@@ -3196,11 +3437,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * plain LITERAL / BIND_VARIABLE key is checked against its real column type tag,
      * since {@code columnTypeCode} alone cannot tell an INT column from a SYMBOL one.
      */
-    private boolean isWidthSensitiveInKey(ExpressionNode inKey) {
+    private boolean isWidthSensitiveInKey(BoundExpression inKey) {
         if (inKey == null) {
             return false;
         }
-        if (inKey.type == ExpressionNode.OPERATION || inKey.type == ExpressionNode.CONSTANT) {
+        if (kind(inKey) == OPERATION || kind(inKey) == CONSTANT) {
             // A numeric CONSTANT key needs the override for the same reason an arithmetic one does,
             // and for one more: serializeUntypedNumber emits it at I8 as soon as anything else in
             // the predicate is I8, so "0 IN (i32, i64)" put an i64 key against the i32 element while
@@ -3211,14 +3452,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return t == I1_TYPE || t == I2_TYPE || t == I4_TYPE;
         }
         final int typeTag;
-        if (inKey.type == ExpressionNode.LITERAL) {
-            final int index = metadata.getColumnIndexQuiet(inKey.token);
+        if (kind(inKey) == LITERAL) {
+            final int index = columnIndex(inKey);
             if (index == -1) {
                 return false;
             }
             typeTag = ColumnType.tagOf(metadata.getColumnType(index));
-        } else if (inKey.type == ExpressionNode.BIND_VARIABLE) {
-            final Function fn = lookupBindVariable(inKey.token);
+        } else if (kind(inKey) == BIND_VARIABLE) {
+            final Function fn = lookupBindVariable(token(inKey));
             if (fn == null) {
                 return false;
             }
@@ -3266,7 +3507,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * anyway. (The parquet pruner cannot widen its stats slot, so it folds the tolerance into the
      * bound instead - see ParquetRowGroupFilter#tryPutFloatFromDouble.)
      */
-    private void markFloatCmpConst(ExpressionNode constNode) {
+    private void markFloatCmpConst(BoundExpression constNode) {
         addI64WidenLeaf(constNode);
         if (isWideLaneMode) {
             hasEmittedWideLaneConversion = true;
@@ -3300,7 +3541,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * it: its lanes are eight bytes wide whatever the observed columns are, and
      * {@code avx2::convert} carries (f32, f64) and (i32, f64) there.
      */
-    private void markDoubleWidthConst(ExpressionNode constNode) {
+    private void markDoubleWidthConst(BoundExpression constNode) {
         i64WidenConstants.add(constNode);
         hasI64WidenArithConstant = true;
     }
@@ -3325,7 +3566,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * i32 - so {@link #maybeWidenCmpConstOperand} widens only the constant for that shape and
      * leans on exactly that scalar gate.
      */
-    private void markNarrowIntCmpFloatConst(ExpressionNode narrowLeaf, ExpressionNode constNode) {
+    private void markNarrowIntCmpFloatConst(BoundExpression narrowLeaf, BoundExpression constNode) {
         addI64WidenLeaf(narrowLeaf);
         markFloatCmpConst(constNode);
     }
@@ -3421,7 +3662,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@code IntFunction#getFloat}), which is exactly what {@code cvt_itof} does inside an
      * arithmetic node. Only the comparison itself runs at a different width in the two engines.
      */
-    private void markIntCmpFloatOperand(ExpressionNode intSide, ExpressionNode floatSide) {
+    private void markIntCmpFloatOperand(BoundExpression intSide, BoundExpression floatSide) {
         if (intSide == null || !isFloatLeaf(floatSide) || isIntegerConst(intSide)) {
             return;
         }
@@ -3487,7 +3728,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * cheap. A fold error (a zero divisor) also reports {@code false}, which is the conservative
      * answer: such a subtree keeps its per-operation IR and does reach {@code visit()}.
      */
-    private boolean isConstantArithSubtree(ExpressionNode node) {
+    private boolean isConstantArithSubtree(BoundExpression node) {
         try {
             tryFoldConstantArith(node);
             return true;
@@ -3514,48 +3755,48 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * answers INT_NULL for a zero divisor, so a divisor that can be zero puts the sentinel's 2^31
      * back into range.
      */
-    private long intCmpFloatMagnitudeBound(ExpressionNode node) {
+    private long intCmpFloatMagnitudeBound(BoundExpression node) {
         if (node == null) {
             return Long.MAX_VALUE;
         }
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+        if (kind(node) == LITERAL || kind(node) == BIND_VARIABLE) {
             return switch (arithExprType(node)) {
                 case I1_TYPE -> 128L;
                 case I2_TYPE -> 32_768L;
                 default -> Long.MAX_VALUE;
             };
         }
-        if (node.type == ExpressionNode.CONSTANT) {
+        if (kind(node) == CONSTANT) {
             return constantMagnitudeBound(node);
         }
-        if (node.type != ExpressionNode.OPERATION) {
+        if (kind(node) != OPERATION) {
             return Long.MAX_VALUE;
         }
-        if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            return intCmpFloatMagnitudeBound(node.rhs != null ? node.rhs : node.lhs);
+        if (paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            return intCmpFloatMagnitudeBound(rhs(node));
         }
-        if (node.paramCount != 2) {
+        if (paramCount(node) != 2) {
             return Long.MAX_VALUE;
         }
-        final long lhs = intCmpFloatMagnitudeBound(node.lhs);
+        final long lhs = intCmpFloatMagnitudeBound(lhs(node));
         if (lhs > (long) FLOAT_EXACT_INT_LIMIT) {
             return Long.MAX_VALUE;
         }
-        if (Chars.equals(node.token, '/')) {
+        if (Chars.equals(operator(node), '/')) {
             // Integer division never grows the magnitude, but only a non-zero constant divisor
             // rules out the INT_NULL a zero divisor produces.
-            final long divisor = constantMagnitudeBound(node.rhs);
+            final long divisor = constantMagnitudeBound(rhs(node));
             return divisor >= 1 && divisor != Long.MAX_VALUE ? lhs : Long.MAX_VALUE;
         }
-        final long rhs = intCmpFloatMagnitudeBound(node.rhs);
+        final long rhs = intCmpFloatMagnitudeBound(rhs(node));
         if (rhs > (long) FLOAT_EXACT_INT_LIMIT) {
             return Long.MAX_VALUE;
         }
         // Both operands are at most 2^24 here, so neither sum nor product can overflow a long.
-        if (Chars.equals(node.token, '+') || Chars.equals(node.token, '-')) {
+        if (Chars.equals(operator(node), '+') || Chars.equals(operator(node), '-')) {
             return lhs + rhs;
         }
-        if (Chars.equals(node.token, '*')) {
+        if (Chars.equals(operator(node), '*')) {
             return lhs * rhs;
         }
         return Long.MAX_VALUE;
@@ -3563,44 +3804,44 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     // The absolute value of an integer CONSTANT (bare or unary-minus wrapped), or
     // Long.MAX_VALUE when the token is not one. See intCmpFloatMagnitudeBound.
-    private long constantMagnitudeBound(ExpressionNode node) {
+    private long constantMagnitudeBound(BoundExpression node) {
         if (node == null) {
             return Long.MAX_VALUE;
         }
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            return constantMagnitudeBound(node.rhs != null ? node.rhs : node.lhs);
+        if (kind(node) == OPERATION && paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
+            return constantMagnitudeBound(rhs(node));
         }
-        if (node.type != ExpressionNode.CONSTANT || node.token == null || isReservedConstantKeyword(node.token)) {
+        if (kind(node) != CONSTANT || token(node) == null || isReservedConstantKeyword(token(node))) {
             return Long.MAX_VALUE;
         }
         try {
-            final long value = Numbers.parseLong(node.token);
+            final long value = Numbers.parseLong(token(node));
             return value == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(value);
         } catch (NumericException notLong) {
             return Long.MAX_VALUE;
         }
     }
 
-    private void markWidthSemantics(ExpressionNode node, WidthCtx w) {
+    private void markWidthSemantics(BoundExpression node, WidthCtx w) {
         if (node == null) {
             return;
         }
         final boolean isFloatActive = w.isFloatActive;
         final boolean isFloatUnderLong = w.isFloatUnderLong;
         markNarrowConstCmpWidenNode(node);
-        final boolean isIn = node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token);
-        if (node.type != ExpressionNode.OPERATION && !isIn) {
+        final boolean isIn = kind(node) == FUNCTION && SqlKeywords.isInKeyword(operator(node));
+        if (kind(node) != OPERATION && !isIn) {
             return;
         }
 
-        final boolean isUnaryMinus = node.paramCount == 1 && Chars.equals(node.token, '-');
+        final boolean isUnaryMinus = paramCount(node) == 1 && Chars.equals(operator(node), '-');
         if (isArithmeticOperation(node) || isUnaryMinus) {
             final boolean isFloatLong = isFloatActive
                     && (isFloatUnderLong || arithExprType(node) == I8_TYPE);
             final WidthCtx childCtx = new WidthCtx(isFloatActive, isFloatLong);
             final int exprType = arithExprType(node);
             if (isUnaryMinus) {
-                markWidthSemanticsOperand(node.rhs != null ? node.rhs : node.lhs, exprType, childCtx);
+                markWidthSemanticsOperand(rhs(node), exprType, childCtx);
             } else {
                 // A DOUBLE-width arithmetic node has to COMPUTE at f64, not merely compare there.
                 // Its DOUBLE literal operands are the only 8-byte source the observer cannot see,
@@ -3609,17 +3850,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // wraps is not an arithmetic operand at all, so marking it would drop a filter
                 // such as "afloat > -1.5" onto the scalar backend for nothing.
                 if (exprType == F8_TYPE) {
-                    markDoubleWidthArithConstOperand(node, node.lhs);
-                    markDoubleWidthArithConstOperand(node, node.rhs);
+                    markDoubleWidthArithConstOperand(node, lhs(node));
+                    markDoubleWidthArithConstOperand(node, rhs(node));
                 }
-                markWidthSemanticsOperand(node.lhs, exprType, childCtx);
-                markWidthSemanticsOperand(node.rhs, exprType, childCtx);
+                markWidthSemanticsOperand(lhs(node), exprType, childCtx);
+                markWidthSemanticsOperand(rhs(node), exprType, childCtx);
             }
             return;
         }
 
-        if (isIn && node.args.size() > 0) {
-            final ExpressionNode key = node.args.getLast();
+        if (isIn && argCount(node) > 0) {
+            final BoundExpression key = inKey(node);
             final int keyType = arithExprType(key);
             // `k IN (e0, e1, ...)` re-serializes the key once per element, but the key is ONE node
             // and carries one emitted width, so a single 64-bit pairing pulls the whole list to
@@ -3627,8 +3868,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // reads the key through getLong() and a narrow-int element through
             // Numbers.intToLong(getInt()), so sign-extending either is value preserving.
             boolean hasLongPairing = false;
-            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                if (foldCmpType(keyType, node.args.getQuick(i)) == I8_TYPE) {
+            for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                if (foldCmpType(keyType, argAt(node, i)) == I8_TYPE) {
                     hasLongPairing = true;
                     break;
                 }
@@ -3636,8 +3877,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (hasLongPairing) {
                 markCmpOperandWidenedToI64(key);
             }
-            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                final ExpressionNode element = node.args.getQuick(i);
+            for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                final BoundExpression element = argAt(node, i);
                 // A NULL element follows the width the LIST settled on. While the list stays at
                 // INT width that is the key's I4 (INT_NULL); once a 64-bit pairing lifts the key to
                 // i64 it is LONG_NULL at I8 - which is what the Java filter compares against, since
@@ -3665,15 +3906,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
-        int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
-        cmpType = foldCmpType(cmpType, node.rhs);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            cmpType = foldCmpType(cmpType, node.args.getQuick(i));
+        int cmpType = foldCmpType(UNDEFINED_CODE, lhs(node));
+        cmpType = foldCmpType(cmpType, rhs(node));
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            cmpType = foldCmpType(cmpType, argAt(node, i));
         }
         final boolean isCmpLong = cmpType == I8_TYPE;
         // The two-operand IN form (single element, key and element in lhs / rhs) reaches here
         // instead of the args loop above and needs the same harmonisation.
-        if (isCmpLong && node.paramCount == 2 && (isComparisonToken(node.token) || isIn)) {
+        if (isCmpLong && paramCount(node) == 2 && (isComparisonToken(token(node)) || isIn)) {
             // A bare narrow-int leaf (column / bind variable) compared at long width against
             // a LONG operand must sign-extend to i64, so the four-lane AVX2 path compares it
             // at 64-bit width: the LONG operand loads at full width and cmp_* dispatches on a
@@ -3687,8 +3928,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // widening either is exact. A narrow LEAF sign-extends (IntColumn#getLong), and an
             // integer CONSTANT has to follow it: the type observer sees columns only, so an
             // all-INT-column predicate would emit it at I4 against the peer's i64 lanes.
-            markCmpOperandWidenedToI64(node.lhs);
-            markCmpOperandWidenedToI64(node.rhs);
+            markCmpOperandWidenedToI64(lhs(node));
+            markCmpOperandWidenedToI64(rhs(node));
         }
         // Not gated on isFloatActive: an out-of-INT-range constant compared against a narrow
         // arithmetic subtree has to widen whatever else the predicate contains. markNarrowConstCmp-
@@ -3698,24 +3939,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // depend on whether the host has AVX2. maybeWidenCmpConstOperand carries its own predicate -
         // an integer CONSTANT of I8 type against an OPERATION with a narrow arithExprType - so it
         // is safe to ask unconditionally.
-        if (node.paramCount == 2 && isComparisonToken(node.token)) {
-            maybeWidenCmpConstOperand(node.lhs, node.rhs);
-            maybeWidenCmpConstOperand(node.rhs, node.lhs);
+        if (paramCount(node) == 2 && isComparisonToken(token(node))) {
+            maybeWidenCmpConstOperand(lhs(node), rhs(node));
+            maybeWidenCmpConstOperand(rhs(node), lhs(node));
         }
         // An INT-width integer expression against a FLOAT operand compares at f32 in both
         // backends and at f64 in the Java filter. The single-value IN form spells the same
         // pairing with key and element in lhs / rhs, so it takes the same rule.
-        if (node.paramCount == 2 && (isComparisonToken(node.token) || isIn)) {
-            markIntCmpFloatOperand(node.lhs, node.rhs);
-            markIntCmpFloatOperand(node.rhs, node.lhs);
+        if (paramCount(node) == 2 && (isComparisonToken(token(node)) || isIn)) {
+            markIntCmpFloatOperand(lhs(node), rhs(node));
+            markIntCmpFloatOperand(rhs(node), lhs(node));
         }
         // The single-value IN form keeps its key / element in lhs / rhs, so it needs the same
         // key-width NULL rule the args loop above applies. See intWidthNullElements.
-        if (isIn && node.paramCount == 2) {
-            final ExpressionNode nullElement = isNullConstant(node.rhs) ? node.rhs
-                    : isNullConstant(node.lhs) ? node.lhs : null;
+        if (isIn && paramCount(node) == 2) {
+            final BoundExpression nullElement = isNullConstant(rhs(node)) ? rhs(node)
+                    : isNullConstant(lhs(node)) ? lhs(node) : null;
             if (nullElement != null) {
-                final int keyWidth = arithExprType(nullElement == node.rhs ? node.lhs : node.rhs);
+                final int keyWidth = arithExprType(nullElement == rhs(node) ? lhs(node) : rhs(node));
                 if (keyWidth == I8_TYPE) {
                     // No hasI64WidenArithConstant here either - see markCmpOperandWidenedToI64.
                     i64WidenConstants.add(nullElement);
@@ -3725,10 +3966,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
         final WidthCtx cmpCtx = new WidthCtx(isFloatActive, isCmpLong);
-        markWidthSemantics(node.lhs, cmpCtx);
-        markWidthSemantics(node.rhs, cmpCtx);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            markWidthSemantics(node.args.getQuick(i), cmpCtx);
+        markWidthSemantics(lhs(node), cmpCtx);
+        markWidthSemantics(rhs(node), cmpCtx);
+        for (int i = 0, n = argCount(node); i < n; i++) {
+            markWidthSemantics(argAt(node, i), cmpCtx);
         }
     }
 
@@ -3737,7 +3978,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * leaf and an integer constant both sign-extend, and a narrow arithmetic subtree drops the
      * predicate to the scalar backend, whose {@code convert()} carries the i32-against-i64 pairing.
      */
-    private void markCmpOperandWidenedToI64(ExpressionNode node) {
+    private void markCmpOperandWidenedToI64(BoundExpression node) {
         if (isNarrowIntLeaf(node)) {
             addI64WidenLeaf(node);
             return;
@@ -3761,20 +4002,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // three changed no execution hint. The widening only ever happens for a pairing that
             // settled at 64 bits, so the predicate holding it either observes 8 bytes itself or
             // carries the SX_I64 of a narrow-int peer, which settles the hint above the
-            // pending-constant gate - the FLOAT peer below being the exception.
-            //
-            // That FLOAT peer is the one that carries nothing: it is neither a narrow-int leaf nor
-            // an integer constant, and forceScalarOnUnharmonisedNarrowArith below returns at once
-            // for a node that is not an OPERATION, so `1 in (afloat, 5_000_000_000)` emits an
-            // (f32, i64) pairing that no marker reports. getExecHint's unharmonised-width walk
-            // catches that one and answers it correctly (SCALAR) rather than merely noticing it,
-            // which is why the omission stands.
-            //
-            // Anyone who wants the flag here instead has to add `hasI64WidenArithConstant = true;`
-            // beside all three i64WidenConstants.add calls. That asks a different question - the
-            // flag measures the widened immediate against the predicate's own observed width,
-            // while the walk measures emitted operands against each other - so it would demote
-            // some filters this walk passes. The sweep above found none of them.
+            // pending-constant gate. A FLOAT peer would carry nothing - it is neither a narrow-int
+            // leaf nor an integer constant - but the binder never hands one over: an integer IN
+            // key rejects a FLOAT element (`1 in (afloat, 5_000_000_000)` fails in
+            // InLongFunctionFactory with "cannot compare LONG with type FLOAT").
             i64WidenConstants.add(node);
             return;
         }
@@ -3807,11 +4038,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@link #markFoldedI64ConstArith} collapses it to the single 8-byte immediate the Java
      * filter's own constant fold produces, so no narrow operand reaches the backend at all.
      */
-    private void forceScalarOnUnharmonisedNarrowArith(ExpressionNode node) {
-        if (node == null || node.type != ExpressionNode.OPERATION) {
+    private void forceScalarOnUnharmonisedNarrowArith(BoundExpression node) {
+        if (node == null || kind(node) != OPERATION) {
             return;
         }
-        final boolean isUnaryMinus = node.paramCount == 1 && Chars.equals(node.token, '-');
+        final boolean isUnaryMinus = paramCount(node) == 1 && Chars.equals(operator(node), '-');
         if (!isArithmeticOperation(node) && !isUnaryMinus) {
             return;
         }
@@ -3852,7 +4083,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * carries INT_NULL to LONG_NULL, so the current path is correct, and moving a sentinel-valued
      * immediate onto a vector loop is not a change this fold needs to make to restore throughput.
      */
-    private boolean markFoldedI64ConstArith(ExpressionNode node) {
+    private boolean markFoldedI64ConstArith(BoundExpression node) {
         final long imm;
         try {
             imm = foldConstantArithWidthAware(node);
@@ -3875,7 +4106,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * whether the mark also announces a wide-lane conversion - see
      * {@link #isNarrowLaneDoubleConstArith}.
      */
-    private void markDoubleWidthArithConstOperand(ExpressionNode parent, ExpressionNode child) {
+    private void markDoubleWidthArithConstOperand(BoundExpression parent, BoundExpression child) {
         if (isDoubleConst(child)) {
             markDoubleWidthConst(child);
             // The widened IMM meets four-byte lanes, so the four-lane loop has to promote the peer
@@ -3890,7 +4121,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void markWidthSemanticsOperand(ExpressionNode child, int parentType, WidthCtx w) {
+    private void markWidthSemanticsOperand(BoundExpression child, int parentType, WidthCtx w) {
         final boolean isFloatActive = w.isFloatActive;
         final boolean isFloatUnderLong = w.isFloatUnderLong;
         if (parentType == I1_TYPE || parentType == I2_TYPE || parentType == I4_TYPE) {
@@ -3913,7 +4144,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // pairing stays mixed-width and has to run scalar, exactly as at a comparison boundary.
             if (isNarrowIntLeaf(child)) {
                 addI64WidenLeaf(child);
-            } else if (child != null && child.type == ExpressionNode.CONSTANT
+            } else if (child != null && kind(child) == CONSTANT
                     && isNarrowIntTypeCode(arithExprType(child))) {
                 // A narrow integer CONSTANT operand of the same node reaches the backend the same
                 // way, and needs the same promotion for a different reason: the Java filter folds
@@ -3994,25 +4225,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * compares both operands at double width. See {@link #isFloatLeaf}. DOUBLE columns
      * already compare exactly and are left vectorized.
      */
-    private void markNarrowConstCmpWidenNode(ExpressionNode node) {
+    private void markNarrowConstCmpWidenNode(BoundExpression node) {
         if (node == null) {
             return;
         }
-        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
-            if (node.args.size() > 0) {
-                final ExpressionNode key = node.args.getLast();
+        if (kind(node) == FUNCTION && SqlKeywords.isInKeyword(operator(node))) {
+            if (argCount(node) > 0) {
+                final BoundExpression key = inKey(node);
                 if (isNarrowIntLeaf(key)) {
                     boolean hasOutOfRange = false;
-                    for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                        if (isIntegerConst(node.args.getQuick(i)) && arithExprType(node.args.getQuick(i)) == I8_TYPE) {
+                    for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                        if (isIntegerConst(argAt(node, i)) && arithExprType(argAt(node, i)) == I8_TYPE) {
                             hasOutOfRange = true;
                             break;
                         }
                     }
                     if (hasOutOfRange) {
                         addI64WidenLeaf(key);
-                        for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                            final ExpressionNode element = node.args.getQuick(i);
+                        for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                            final BoundExpression element = argAt(node, i);
                             if (isIntegerConst(element)) {
                                 addI64WidenLeaf(element);
                             }
@@ -4026,8 +4257,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // double - four-lane AVX2 promotes the float key alongside it. The
                     // single-value form keeps key / element in lhs / rhs and takes the pair path
                     // below, which routes to the same rule via markFloatCmpConst.
-                    for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                        final ExpressionNode element = node.args.getQuick(i);
+                    for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                        final BoundExpression element = argAt(node, i);
                         if (isFloatWideningConst(element)) {
                             markFloatCmpConst(element);
                         }
@@ -4035,8 +4266,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 } else if (isDoubleWidthArithOperand(key)) {
                     // IN over a DOUBLE-width arithmetic key is the same OR of equalities, and the
                     // key is invisible to the F4 rule above. See markDoubleWidthConst.
-                    for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                        final ExpressionNode element = node.args.getQuick(i);
+                    for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                        final BoundExpression element = argAt(node, i);
                         if (isFloatWideningConst(element)) {
                             markDoubleWidthConst(element);
                         }
@@ -4044,31 +4275,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
                 // An out-of-INT-range constant element against a narrow ARITHMETIC key needs the
                 // same compensation the comparison arm gets, or it types down to a lossy F4.
-                for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                    maybeWidenCmpConstOperand(node.args.getQuick(i), key);
+                for (int i = 0, n = argCount(node) - 1; i < n; i++) {
+                    maybeWidenCmpConstOperand(argAt(node, i), key);
                 }
             } else {
                 markNarrowConstCmpWidenPair(node);
                 // The single-value form keeps key / element in lhs / rhs, so it needs the
                 // arithmetic-operand compensation the comparison arm gets: an out-of-INT-range
                 // constant against a narrow arithmetic key types down to a lossy F4 otherwise.
-                maybeWidenCmpConstOperand(node.lhs, node.rhs);
-                maybeWidenCmpConstOperand(node.rhs, node.lhs);
+                maybeWidenCmpConstOperand(lhs(node), rhs(node));
+                maybeWidenCmpConstOperand(rhs(node), lhs(node));
             }
             return;
         }
-        if (node.type == ExpressionNode.OPERATION
-                && node.paramCount == 2
-                && isComparisonToken(node.token)) {
+        if (kind(node) == OPERATION
+                && paramCount(node) == 2
+                && isComparisonToken(token(node))) {
             markNarrowConstCmpWidenPair(node);
         }
     }
 
-    private void markNarrowConstCmpWidenPair(ExpressionNode cmp) {
-        final ExpressionNode a = cmp.lhs;
-        final ExpressionNode b = cmp.rhs;
-        final ExpressionNode narrowLeaf;
-        final ExpressionNode constNode;
+    private void markNarrowConstCmpWidenPair(BoundExpression cmp) {
+        final BoundExpression a = lhs(cmp);
+        final BoundExpression b = rhs(cmp);
+        final BoundExpression narrowLeaf;
+        final BoundExpression constNode;
         if (isNarrowIntLeaf(a) && isIntegerConst(b)) {
             narrowLeaf = a;
             constNode = b;
@@ -4144,7 +4375,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * fails closed rather than wrong: {@code avx2::sx_i64} ({@code jit/avx2.h:533-555}) sign-extends
      * an i32 operand and calls {@code decline_filter} for anything else.
      */
-    private void maybeEmitI64ArithRootWidening(ExpressionNode node) {
+    private void maybeEmitI64ArithRootWidening(BoundExpression node) {
         if (!i64WidenArithRoots.contains(node)) {
             return;
         }
@@ -4166,7 +4397,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * would be to f32 rather than f64, {@link #maybeEmitI64ArithRootWidening} sign-extends the
      * subtree's RESULT instead, after its operator, so the wrap is preserved.
      */
-    private void maybeEmitI64Widening(ExpressionNode node, int typeCode) {
+    private void maybeEmitI64Widening(BoundExpression node, int typeCode) {
         if (typeCode != I1_TYPE && typeCode != I2_TYPE && typeCode != I4_TYPE) {
             return;
         }
@@ -4207,20 +4438,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * too - sign-extending the subtree would stop it wrapping at i32, which is the one thing an INT
      * expression must keep doing.
      */
-    private void maybeWidenCmpConstOperand(ExpressionNode constNode, ExpressionNode other) {
+    private void maybeWidenCmpConstOperand(BoundExpression constNode, BoundExpression other) {
         if (constNode == null) {
             return;
         }
         // The integer arm keeps its CONSTANT-only shape. The floating-point one carries its own
         // guard - floatCmpConstValue accepts a bare or unary-minus-wrapped CONSTANT and nothing
         // else - so a negated bound (-i < -16777216.0) reaches it without relaxing that shape.
-        final boolean isWideningConst = (constNode.type == ExpressionNode.CONSTANT
+        final boolean isWideningConst = (kind(constNode) == CONSTANT
                 && isIntegerConst(constNode) && arithExprType(constNode) == I8_TYPE)
                 || isNarrowIntCmpWideningConst(constNode);
         if (!isWideningConst) {
             return;
         }
-        if (other == null || other.type != ExpressionNode.OPERATION) {
+        if (other == null || kind(other) != OPERATION) {
             return;
         }
         final int otherType = arithExprType(other);
@@ -4265,13 +4496,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * observed - and it does not need to be: the fold is an all-zero FULL register, which reads the
      * same at every lane width.
      */
-    private int neverMatchingInPairingWidth(ExpressionNode element, ExpressionNode key, boolean isWidthSensitiveKey) {
+    private int neverMatchingInPairingWidth(BoundExpression element, BoundExpression key, boolean isWidthSensitiveKey) {
         // isWidthSensitiveKey is serializeIn's cached isWidthSensitiveInKey(key), so a non-null key
         // is implied whenever it is true.
         if (!isNullConstant(element) || !isWidthSensitiveKey) {
             return UNDEFINED_CODE;
         }
-        if (key.type == ExpressionNode.CONSTANT) {
+        if (kind(key) == CONSTANT) {
             return I4_TYPE;
         }
         final int keyArithType = arithExprType(key);
@@ -4375,10 +4606,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * foreign offset, which reaches the native compiler as a stream whose value stack underflows -
      * a JVM abort rather than an error. The Java filter is always correct, so decline instead.
      */
-    private void rewindOrderingOperands(ExpressionNode node) throws SqlException {
+    private void rewindOrderingOperands(BoundExpression node) throws SqlException {
         if (orderingRewindNodes.size() == 0 || orderingRewindNodes.getLast() != node) {
-            throw SqlException.position(node.position)
-                    .put("no rewind watermark for ordering operator: ").put(node.token);
+            throw SqlException.position(node.getPosition())
+                    .put("no rewind watermark for ordering operator: ").put(token(node));
         }
         final long offset = orderingRewindOffsets.getLast();
         memory.jumpTo(offset);
@@ -4391,7 +4622,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         discardBackfillNodesFrom(offset);
     }
 
-    private void serializeBindVariable(final ExpressionNode node) throws SqlException {
+    private void serializeBindVariable(final BoundExpression node) throws SqlException {
         if (predicateContext.isActive()) {
             final int memoizedIndex = bindVarIndexes.get(node);
             if (memoizedIndex != NOT_CACHED) {
@@ -4413,7 +4644,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return;
             }
 
-            Function varFunction = getBindVariableFunction(node.position, node.token);
+            Function varFunction = getBindVariableFunction(node.getPosition(), token(node));
 
             final int columnType = varFunction.getType();
             // Treat string bind variable to be of the symbol type
@@ -4429,7 +4660,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnTypeTag = ColumnType.tagOf(columnType);
             int typeCode = bindVariableTypeCode(columnTypeTag);
             if (typeCode == UNDEFINED_CODE) {
-                throw SqlException.position(node.position)
+                throw SqlException.position(node.getPosition())
                         .put("unsupported bind variable type: ")
                         .put(ColumnType.nameOf(columnTypeTag));
             }
@@ -4440,19 +4671,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             putOperand(VAR, typeCode, index);
             maybeEmitI64Widening(node, typeCode);
         } else {
-            throw SqlException.position(node.position)
+            throw SqlException.position(node.getPosition())
                     .put("bind variable outside of predicate: ")
-                    .put(node.token);
+                    .put(token(node));
         }
     }
 
-    private void serializeColumn(ExpressionNode node, int position, final CharSequence token) throws SqlException {
+    private void serializeColumn(BoundExpression node, int position, final CharSequence token) throws SqlException {
         if (predicateContext.isActive()) {
-            final int index = metadata.getColumnIndexQuiet(token);
-            if (index == -1) {
-                throw SqlException.invalidColumn(position, token);
-            }
-
+            final int index = columnIndex(node);
             final int columnType = metadata.getColumnType(index);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             int typeCode = columnTypeCode(columnTypeTag);
@@ -4519,16 +4746,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         if (Chars.isQuoted(token)) {
             if (ColumnType.isTimestamp(predicateContext.columnType)) {
+                // The IR compares raw I8 values at the column's precision, so it takes only a
+                // literal that precision represents exactly.
+                final TimestampDriver driver = ColumnType.getTimestampDriver(predicateContext.columnType);
+                final CharSequence literal = GenericLexer.unquote(token);
+                final long value;
                 try {
-                    putOperand(
-                            offset,
-                            IMM,
-                            I8_TYPE,
-                            ColumnType.getTimestampDriver(predicateContext.columnType).parseQuotedLiteral(token)
-                    );
+                    value = IntervalUtils.parseCeilLiteral(driver, literal);
+                    if (value != IntervalUtils.parseFloorLiteral(driver, literal)) {
+                        throw SqlException.position(position).put("unsupported mixed-precision timestamp constant: ").put(token);
+                    }
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }
+                putOperand(offset, IMM, I8_TYPE, value);
                 return;
             } else if (predicateContext.columnType == ColumnType.DATE) {
                 try {
@@ -4665,15 +4896,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeConstantStub(final ExpressionNode node) throws SqlException {
+    private void serializeConstantStub(final BoundExpression node) throws SqlException {
         if (predicateContext.isActive()) {
             long offset = memory.getAppendOffset();
             backfillNodes.put(offset, node);
             putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
         } else {
-            throw SqlException.position(node.position)
+            throw SqlException.position(node.getPosition())
                     .put("constant outside of predicate: ")
-                    .put(node.token);
+                    .put(token(node));
         }
     }
 
@@ -4703,20 +4934,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeIn() throws SqlException {
         predicateContext.currentInSerialization = true;
 
-        final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
-
         // A multi-value IN list keeps its operands as [elements..., key]; the single-value form
         // keeps its key / element in lhs / rhs (args empty). The key is read once per row at one
         // width - the Java InLong path reads it through getLong(), which for a narrow key is an
         // exact sign extension - so the only classification left is for a NULL element against a
         // BYTE / SHORT key, whose pairing can never match. See neverMatchingInPairingWidth.
-        final ExpressionNode inKey = args.size() > 0 ? args.getLast() : predicateContext.inOperationNode.lhs;
+        final BoundExpression inKey = argCount(predicateContext.inOperationNode) > 0 ? inKey(predicateContext.inOperationNode) : lhs(predicateContext.inOperationNode);
         final boolean isWidthSensitiveKey = isWidthSensitiveInKey(inKey);
 
-        if (args.size() > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
-            throw SqlException.$(args.getQuick(0).position, "exceeded JIT IN list threshold [threshold=")
+        if (argCount(predicateContext.inOperationNode) > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
+            throw SqlException.$(argAt(predicateContext.inOperationNode, 0).getPosition(), "exceeded JIT IN list threshold [threshold=")
                     .put(executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold())
-                    .put(", actual=").put(args.size()).put(']');
+                    .put(", actual=").put(argCount(predicateContext.inOperationNode)).put(']');
         }
 
         // Short-circuit mode: only use when IN() is the root of the predicate (top-level) AND
@@ -4725,15 +4954,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // back to boolean ORs because AND_SC(0) would incorrectly skip the row.
         final boolean isTopLevelIn = predicateContext.inOperationNode == predicateContext.rootNode;
         if (predicateContext.shortCircuitMode == PredicateContext.SC_AND && isTopLevelIn) {
-            if (args.size() < 3) {
+            if (argCount(predicateContext.inOperationNode) < 3) {
                 // Single value: short-circuit, unrolled version of the below loop
                 // Two values: short-circuit, unrolled version of the below loop
-                final int scNeverMatchingWidth = neverMatchingInPairingWidth(predicateContext.inOperationNode.rhs, inKey, isWidthSensitiveKey);
+                final int scNeverMatchingWidth = neverMatchingInPairingWidth(rhs(predicateContext.inOperationNode), inKey, isWidthSensitiveKey);
                 if (scNeverMatchingWidth != UNDEFINED_CODE) {
                     putNeverMatchingInPairing(scNeverMatchingWidth);
                 } else {
-                    traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-                    traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+                    traverse(rhs(predicateContext.inOperationNode), irEmitter);
+                    traverse(lhs(predicateContext.inOperationNode), irEmitter);
                     putOperator(EQ);
                 }
                 putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
@@ -4743,13 +4972,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // Label 1 = store_row (accept row) - reserved by backend
                 // Label 2 = success (at least one IN match)
                 putOperatorWithLabel(BEGIN_SC, 2); // create success label
-                for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
-                    final int neverMatchingWidth = neverMatchingInPairingWidth(args.get(i), inKey, isWidthSensitiveKey);
+                for (int i = 0, n = argCount(predicateContext.inOperationNode) - 1; i < n; i++) {
+                    final int neverMatchingWidth = neverMatchingInPairingWidth(argAt(predicateContext.inOperationNode, i), inKey, isWidthSensitiveKey);
                     if (neverMatchingWidth != UNDEFINED_CODE) {
                         putNeverMatchingInPairing(neverMatchingWidth);
                     } else {
-                        traverseAlgo.traverse(args.get(i), this);
-                        traverseAlgo.traverse(args.getLast(), this);
+                        traverse(argAt(predicateContext.inOperationNode, i), irEmitter);
+                        traverse(inKey(predicateContext.inOperationNode), irEmitter);
                         putOperator(EQ);
                     }
                     if (i < n - 1) {
@@ -4767,25 +4996,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // Non-short-circuit mode: use traditional boolean ORs
-        if (args.size() < 3) {
-            final int singleNeverMatchingWidth = neverMatchingInPairingWidth(predicateContext.inOperationNode.rhs, inKey, isWidthSensitiveKey);
+        if (argCount(predicateContext.inOperationNode) < 3) {
+            final int singleNeverMatchingWidth = neverMatchingInPairingWidth(rhs(predicateContext.inOperationNode), inKey, isWidthSensitiveKey);
             if (singleNeverMatchingWidth != UNDEFINED_CODE) {
                 putNeverMatchingInPairing(singleNeverMatchingWidth);
             } else {
-                traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-                traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+                traverse(rhs(predicateContext.inOperationNode), irEmitter);
+                traverse(lhs(predicateContext.inOperationNode), irEmitter);
                 putOperator(EQ);
             }
         }
 
         int orCount = -1;
-        for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
-            final int neverMatchingWidth = neverMatchingInPairingWidth(args.get(i), inKey, isWidthSensitiveKey);
+        for (int i = 0, n = argCount(predicateContext.inOperationNode) - 1; i < n; i++) {
+            final int neverMatchingWidth = neverMatchingInPairingWidth(argAt(predicateContext.inOperationNode, i), inKey, isWidthSensitiveKey);
             if (neverMatchingWidth != UNDEFINED_CODE) {
                 putNeverMatchingInPairing(neverMatchingWidth);
             } else {
-                traverseAlgo.traverse(args.get(i), this);
-                traverseAlgo.traverse(args.getLast(), this);
+                traverse(argAt(predicateContext.inOperationNode, i), irEmitter);
+                traverse(inKey(predicateContext.inOperationNode), irEmitter);
                 putOperator(EQ);
             }
             orCount++;
@@ -4799,10 +5028,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeInTimestampRange(int position) throws SqlException {
         predicateContext.currentInSerialization = true;
 
-        final CharSequence token = predicateContext.inOperationNode.rhs.token;
+        final CharSequence token = token(rhs(predicateContext.inOperationNode));
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
-        final LongList intervals = predicateContext.inIntervals;
+        final LongList intervals = longScratch;
+        intervals.clear();
         IntervalUtils.parseTickExprAndIntersect(
                 ColumnType.getTimestampDriver(predicateContext.columnType),
                 executionContext.getCairoEngine().getConfiguration(),
@@ -4813,17 +5043,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 true
         );
 
-        final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
+        final BoundExpression lhs = lhs(predicateContext.inOperationNode);
+        if (intervals.size() == 0) {
+            // An empty interval set keeps no row; the inverted range [1, 0] matches nothing.
+            intervals.add(1L, 0L);
+        }
 
         int orCount = -1;
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
             long lo = IntervalUtils.decodeIntervalLo(intervals, i);
             long hi = IntervalUtils.decodeIntervalHi(intervals, i);
             putOperand(IMM, I8_TYPE, lo);
-            traverseAlgo.traverse(lhs, this);
+            traverse(lhs, irEmitter);
             putOperator(GE);
             putOperand(IMM, I8_TYPE, hi);
-            traverseAlgo.traverse(lhs, this);
+            traverse(lhs, irEmitter);
             putOperator(LE);
             putOperator(AND);
             orCount++;
@@ -4971,11 +5205,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeCharOrdering(ExpressionNode node, int opcode) throws SqlException {
-        ExpressionNode left = node.lhs;
-        ExpressionNode right = node.rhs;
+    private void serializeCharOrdering(BoundExpression node, int opcode) throws SqlException {
+        BoundExpression left = lhs(node);
+        BoundExpression right = rhs(node);
         if (opcode == GT || opcode == GE) {
-            ExpressionNode swap = left;
+            BoundExpression swap = left;
             left = right;
             right = swap;
         }
@@ -5013,8 +5247,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         serializeCharSignTest(left, LT);
         serializeCharSignTest(right, LT);
         putOperator(EQ);
-        traverseAlgo.traverse(right, this);
-        traverseAlgo.traverse(left, this);
+        traverse(right, irEmitter);
+        traverse(left, irEmitter);
         putOperator(opcode == LE || opcode == GE ? LE : LT);
         putOperator(AND);
         putOperator(OR);
@@ -5030,8 +5264,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * both shapes without a term of their own.
      */
     private void serializeCharOrderingAboveLiteral(
-            ExpressionNode operand,
-            ExpressionNode literal,
+            BoundExpression operand,
+            BoundExpression literal,
             boolean isLiteralNegative,
             boolean isNonStrict
     ) throws SqlException {
@@ -5051,8 +5285,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * comparisons check no null sentinel, so the sign test reads the lane as is.
      */
     private void serializeCharOrderingBelowLiteral(
-            ExpressionNode operand,
-            ExpressionNode literal,
+            BoundExpression operand,
+            BoundExpression literal,
             boolean isLiteralNegative,
             boolean isNonStrict
     ) throws SqlException {
@@ -5061,38 +5295,38 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperator(isLiteralNegative ? OR : AND);
     }
 
-    private void serializeCharSignTest(ExpressionNode operand, int opcode) throws SqlException {
+    private void serializeCharSignTest(BoundExpression operand, int opcode) throws SqlException {
         putOperand(IMM, I2_TYPE, Numbers.CHAR_NULL);
-        traverseAlgo.traverse(operand, this);
+        traverse(operand, irEmitter);
         putOperator(opcode);
     }
 
-    private void serializeIPv4MinTest(ExpressionNode operand) throws SqlException {
+    private void serializeIPv4MinTest(BoundExpression operand) throws SqlException {
         // The valid IPv4 value 128.0.0.0 is INT_MIN, which the native i32 order comparisons treat
         // as the INT null sentinel; EQ compares the raw lane.
         putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
-        traverseAlgo.traverse(operand, this);
+        traverse(operand, irEmitter);
         putOperator(EQ);
     }
 
-    private void serializeIPv4NegativeTest(ExpressionNode operand) throws SqlException {
+    private void serializeIPv4NegativeTest(BoundExpression operand) throws SqlException {
         putOperand(IMM, I4_TYPE, Numbers.IPv4_NULL);
-        traverseAlgo.traverse(operand, this);
+        traverse(operand, irEmitter);
         putOperator(LT);
 
         // Native i32 order comparisons treat INT_MIN as the INT null sentinel,
         // but it represents the valid IPv4 value 128.0.0.0.
         putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
-        traverseAlgo.traverse(operand, this);
+        traverse(operand, irEmitter);
         putOperator(EQ);
         putOperator(OR);
     }
 
-    private void serializeIPv4Ordering(ExpressionNode node, int opcode) throws SqlException {
-        ExpressionNode left = node.lhs;
-        ExpressionNode right = node.rhs;
+    private void serializeIPv4Ordering(BoundExpression node, int opcode) throws SqlException {
+        BoundExpression left = lhs(node);
+        BoundExpression right = rhs(node);
         if (opcode == GT || opcode == GE) {
-            ExpressionNode swap = left;
+            BoundExpression swap = left;
             left = right;
             right = swap;
         }
@@ -5133,8 +5367,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Numbers.lessThanIPv4() admits equality for non-strict ordering,
         // including the case where both operands are IPv4 NULL.
         if (opcode == LE || opcode == GE) {
-            traverseAlgo.traverse(right, this);
-            traverseAlgo.traverse(left, this);
+            traverse(right, irEmitter);
+            traverse(left, irEmitter);
             putOperator(EQ);
             putOperator(OR);
         }
@@ -5152,8 +5386,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * </ul>
      */
     private void serializeIPv4OrderingAboveLiteral(
-            ExpressionNode operand,
-            ExpressionNode literal,
+            BoundExpression operand,
+            BoundExpression literal,
             int literalValue,
             boolean isNonStrict
     ) throws SqlException {
@@ -5191,8 +5425,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * that is itself negative, so NULL rows drop out of every shape without a term of their own.
      */
     private void serializeIPv4OrderingBelowLiteral(
-            ExpressionNode operand,
-            ExpressionNode literal,
+            BoundExpression operand,
+            BoundExpression literal,
             int literalValue,
             boolean isNonStrict
     ) throws SqlException {
@@ -5213,45 +5447,45 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeIPv4SignedLess(ExpressionNode left, ExpressionNode right) throws SqlException {
+    private void serializeIPv4SignedLess(BoundExpression left, BoundExpression right) throws SqlException {
         // Repair the native null-check mask for the valid INT_MIN IPv4 value.
         putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
-        traverseAlgo.traverse(left, this);
+        traverse(left, irEmitter);
         putOperator(EQ);
         putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
-        traverseAlgo.traverse(right, this);
+        traverse(right, irEmitter);
         putOperator(NE);
         putOperator(AND);
 
-        traverseAlgo.traverse(right, this);
-        traverseAlgo.traverse(left, this);
+        traverse(right, irEmitter);
+        traverse(left, irEmitter);
         putOperator(LT);
         putOperator(OR);
     }
 
-    private void serializeIPv4ZeroTest(ExpressionNode operand, int opcode) throws SqlException {
+    private void serializeIPv4ZeroTest(BoundExpression operand, int opcode) throws SqlException {
         putOperand(IMM, I4_TYPE, Numbers.IPv4_NULL);
-        traverseAlgo.traverse(operand, this);
+        traverse(operand, irEmitter);
         putOperator(opcode);
     }
 
-    private void serializeLiteralCompare(ExpressionNode operand, ExpressionNode literal, int opcode) throws SqlException {
+    private void serializeLiteralCompare(BoundExpression operand, BoundExpression literal, int opcode) throws SqlException {
         // Emits `operand <opcode> literal`. The backends pop the left operand first, so the
         // last-pushed value is the left operand: the literal (right operand) goes in first and
         // the operand goes in last, the way the general expansions order theirs.
-        traverseAlgo.traverse(literal, this);
-        traverseAlgo.traverse(operand, this);
+        traverse(literal, irEmitter);
+        traverse(operand, irEmitter);
         putOperator(opcode);
     }
 
-    private void serializeOperator(ExpressionNode node, int argCount, int type) throws SqlException {
-        final int position = node.position;
-        final CharSequence token = node.token;
+    private void serializeOperator(BoundExpression node, int argCount, int type) throws SqlException {
+        final int position = node.getPosition();
+        final CharSequence token = operator(node);
         if (SqlKeywords.isInKeyword(token)) {
-            if (type == ExpressionNode.FUNCTION) {
+            if (type == FUNCTION) {
                 serializeIn();
                 return;
-            } else if (type == ExpressionNode.SET_OPERATION && isInTimestampPredicate()) {
+            } else if (type == SET_OPERATION && isInTimestampPredicate()) {
                 serializeInTimestampRange(position);
                 return;
             }
@@ -5329,17 +5563,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (Chars.equals(token, "+")) {
-            if (argCount == 2) {
-                putOperator(ADD);
-            } // ignore unary
+            putOperator(ADD);
             return;
         }
         if (Chars.equals(token, "-")) {
-            if (argCount == 2) {
-                putOperator(SUB);
-            } else if (argCount == 1) {
-                putOperator(NEG);
-            }
+            putOperator(argCount == 2 ? SUB : NEG);
             return;
         }
         if (Chars.equals(token, "*")) {
@@ -5358,7 +5586,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Must be used only in scalar compilation mode.
      */
     private int serializePredicatesAndSc(
-            @NotNull ObjList<ExpressionNode> predicates,
+            @NotNull ObjList<BoundExpression> predicates,
             boolean forceScalar,
             boolean debug,
             boolean nullChecks
@@ -5371,7 +5599,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         try {
             // Serialize all predicates in the priority order with short-circuit ANDs
             for (int i = 0; i < n; i++) {
-                traverseAlgo.traverse(predicates.getQuick(i), this);
+                traverse(predicates.getQuick(i), irEmitter);
                 if (i != n - 1) {
                     // Only emit AND_SC if the predicate didn't handle its own short-circuit exit.
                     // IN() with short-circuit mode emits its own AND_SC(0), so we skip it here.
@@ -5407,7 +5635,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Must be used only in scalar compilation mode.
      */
     private int serializePredicatesOrSc(
-            @NotNull ObjList<ExpressionNode> predicates,
+            @NotNull ObjList<BoundExpression> predicates,
             boolean forceScalar,
             boolean debug,
             boolean nullChecks
@@ -5420,7 +5648,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         try {
             // Serialize all predicates in the inverted priority order with short-circuit ORs
             for (int i = 0; i < n; i++) {
-                traverseAlgo.traverse(predicates.getQuick(i), this);
+                traverse(predicates.getQuick(i), irEmitter);
                 if (i != n - 1) {
                     putOperatorWithLabel(OR_SC, 1); // label 1 = store_row (accept row on true)
                 }
@@ -5518,7 +5746,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // Unknown symbol constant case. Create a fake bind variable function to handle it.
-        final SymbolConstant function = SymbolConstant.newInstance(symbol);
+        final SymbolConstant function = SymbolConstant.fromValue(symbol);
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 
@@ -5582,7 +5810,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * would change which predicate the backend short-circuits on. The scratch lists are fields, so
      * ordering a chain allocates nothing.
      */
-    private void sortPredicates(ObjList<ExpressionNode> predicates, boolean isInverted) {
+    private void sortPredicates(ObjList<BoundExpression> predicates, boolean isInverted) {
         final int n = predicates.size();
         computePredicatePriorities(predicates);
 
@@ -5631,7 +5859,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * want the Java filter's fold behavior compare {@code (int) longVal}
      * against {@code longVal} and treat a mismatch as a fold root.
      */
-    private long tryFoldConstantArith(ExpressionNode node) throws NumericException {
+    private long tryFoldConstantArith(BoundExpression node) throws NumericException {
         if (node == null) {
             throw NumericException.INSTANCE;
         }
@@ -5653,20 +5881,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private long tryFoldConstantArith0(ExpressionNode node) throws NumericException {
+    private long tryFoldConstantArith0(BoundExpression node) throws NumericException {
         if (node == null) {
             throw NumericException.INSTANCE;
         }
-        if (node.type == ExpressionNode.CONSTANT) {
-            return Numbers.parseLong(node.token);
+        if (kind(node) == CONSTANT) {
+            return Numbers.parseLong(token(node));
         }
-        if (node.type != ExpressionNode.OPERATION) {
+        if (kind(node) != OPERATION) {
             throw NumericException.INSTANCE;
         }
         // Unary minus: parser builds OPERATION "-" with rhs only. NegLong#getLong
         // propagates LONG_NULL instead of negating the sentinel.
-        if (Chars.equals(node.token, '-') && node.lhs == null) {
-            long operand = tryFoldConstantArith(node.rhs);
+        if (Chars.equals(operator(node), '-') && lhs(node) == null) {
+            long operand = tryFoldConstantArith(rhs(node));
             return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
         }
         // Reject a non-arithmetic token BEFORE folding either child, exactly as the
@@ -5677,8 +5905,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (!isArithmeticOperation(node)) {
             throw NumericException.INSTANCE;
         }
-        long left = tryFoldConstantArith(node.lhs);
-        long right = tryFoldConstantArith(node.rhs);
+        long left = tryFoldConstantArith(lhs(node));
+        long right = tryFoldConstantArith(rhs(node));
         // MulLong / AddLong / SubLong / DivLong#getLong return LONG_NULL when
         // either operand is Long.MIN_VALUE (the LONG null sentinel), so an inner
         // product that lands exactly on -2^63 poisons the rest of the fold to
@@ -5689,17 +5917,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (left == Numbers.LONG_NULL || right == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        if (Chars.equals(node.token, '+')) {
+        if (Chars.equals(operator(node), '+')) {
             return left + right;
         }
-        if (Chars.equals(node.token, '-')) {
+        if (Chars.equals(operator(node), '-')) {
             return left - right;
         }
-        if (Chars.equals(node.token, '*')) {
+        if (Chars.equals(operator(node), '*')) {
             return left * right;
         }
         // isArithmeticOperation() above leaves only '/' here; see foldConstantArithWidthAware.
-        if (!Chars.equals(node.token, '/')) {
+        if (!Chars.equals(operator(node), '/')) {
             throw NumericException.INSTANCE;
         }
         if (right == 0L) {
@@ -5735,7 +5963,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      *                is exact for {@code + - * /}: double carries more than twice the
      *                significand bits a float needs, so no double rounding error survives.
      */
-    private double tryFoldConstantArithFloat(ExpressionNode node) throws NumericException {
+    private double tryFoldConstantArithFloat(BoundExpression node) throws NumericException {
         if (node == null) {
             throw NumericException.INSTANCE;
         }
@@ -5757,43 +5985,43 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private double tryFoldConstantArithFloat0(ExpressionNode node) throws NumericException {
+    private double tryFoldConstantArithFloat0(BoundExpression node) throws NumericException {
         // Each node narrows at its OWN width, which is what the parser does: it builds a
         // FloatConstant for an all-FLOAT operation and a DoubleConstant as soon as one operand is
         // DOUBLE, so (3.4e38f + 3.4e38f) * 1.0 overflows to NULL inside the float add even though
         // the enclosing multiply is evaluated at double width.
         final boolean isFloat = arithExprType(node) == F4_TYPE;
-        if (node.type == ExpressionNode.CONSTANT) {
+        if (kind(node) == CONSTANT) {
             // A leaf no parser accepts (a quoted literal, true/false, a geo hash, a type
             // constant) folds to NULL rather than throwing: the subtree IS a constant one, so
             // declining the filter is the honest answer - see descend().
             double leaf;
             try {
-                leaf = parseFoldLeaf(node.token);
+                leaf = parseFoldLeaf(token(node));
             } catch (NumericException notNumeric) {
                 leaf = Double.NaN;
             }
             return normalizeConstantFold(leaf, isFloat);
         }
-        if (node.type != ExpressionNode.OPERATION) {
+        if (kind(node) != OPERATION) {
             throw NumericException.INSTANCE;
         }
         // Unary minus: parser builds OPERATION "-" with rhs only.
-        if (Chars.equals(node.token, '-') && node.lhs == null) {
-            return normalizeConstantFold(-tryFoldConstantArithFloat(node.rhs), isFloat);
+        if (Chars.equals(operator(node), '-') && lhs(node) == null) {
+            return normalizeConstantFold(-tryFoldConstantArithFloat(rhs(node)), isFloat);
         }
         if (!isArithmeticOperation(node)) {
             throw NumericException.INSTANCE;
         }
-        final double left = tryFoldConstantArithFloat(node.lhs);
-        final double right = tryFoldConstantArithFloat(node.rhs);
-        if (Chars.equals(node.token, '+')) {
+        final double left = tryFoldConstantArithFloat(lhs(node));
+        final double right = tryFoldConstantArithFloat(rhs(node));
+        if (Chars.equals(operator(node), '+')) {
             return normalizeConstantFold(left + right, isFloat);
         }
-        if (Chars.equals(node.token, '-')) {
+        if (Chars.equals(operator(node), '-')) {
             return normalizeConstantFold(left - right, isFloat);
         }
-        if (Chars.equals(node.token, '*')) {
+        if (Chars.equals(operator(node), '*')) {
             return normalizeConstantFold(left * right, isFloat);
         }
         return normalizeConstantFold(left / right, isFloat);
@@ -5810,33 +6038,33 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@link #tryFoldConstantArith} (plus an int-width division by zero), so the
      * caller cleanly falls back to descending the subtree as per-op IR.
      */
-    private int tryFoldConstantArithI4(ExpressionNode node) throws NumericException {
+    private int tryFoldConstantArithI4(BoundExpression node) throws NumericException {
         if (node == null) {
             throw NumericException.INSTANCE;
         }
-        if (node.type == ExpressionNode.CONSTANT) {
+        if (kind(node) == CONSTANT) {
             // A leaf constant here is always in INT range: an out-of-INT leaf routes
             // to the I8/widen branch instead of the I4 fold. parseInt throws on an
             // out-of-range token rather than silently truncating a LONG-range literal,
             // so if that invariant is ever violated the caller cleanly falls back to
             // descending the subtree as per-op IR.
-            return Numbers.parseInt(node.token);
+            return Numbers.parseInt(token(node));
         }
-        if (node.type != ExpressionNode.OPERATION) {
+        if (kind(node) != OPERATION) {
             throw NumericException.INSTANCE;
         }
         // Unary minus: parser builds OPERATION "-" with rhs only. NegInt#getInt
         // propagates INT_NULL instead of negating the sentinel.
-        if (Chars.equals(node.token, '-') && node.lhs == null) {
-            int operand = tryFoldConstantArithI4(node.rhs);
+        if (Chars.equals(operator(node), '-') && lhs(node) == null) {
+            int operand = tryFoldConstantArithI4(rhs(node));
             return operand == Numbers.INT_NULL ? Numbers.INT_NULL : -operand;
         }
         // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
         if (!isArithmeticOperation(node)) {
             throw NumericException.INSTANCE;
         }
-        int left = tryFoldConstantArithI4(node.lhs);
-        int right = tryFoldConstantArithI4(node.rhs);
+        int left = tryFoldConstantArithI4(lhs(node));
+        int right = tryFoldConstantArithI4(rhs(node));
         // MulInt / AddInt / SubInt / DivInt#getInt return INT_NULL when either
         // operand is INT_NULL, so an inner product that wraps exactly onto the
         // -2^31 sentinel poisons the rest of the fold to NULL instead of feeding
@@ -5845,23 +6073,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
             return Numbers.INT_NULL;
         }
-        if (Chars.equals(node.token, '+')) {
+        if (Chars.equals(operator(node), '+')) {
             return left + right;
         }
-        if (Chars.equals(node.token, '-')) {
+        if (Chars.equals(operator(node), '-')) {
             return left - right;
         }
-        if (Chars.equals(node.token, '*')) {
+        if (Chars.equals(operator(node), '*')) {
             return left * right;
         }
         // isArithmeticOperation() above leaves only '/' here; see foldConstantArithWidthAware.
-        if (!Chars.equals(node.token, '/')) {
+        if (!Chars.equals(operator(node), '/')) {
             throw NumericException.INSTANCE;
         }
         if (right == 0) {
             throw NumericException.INSTANCE;
         }
         return left / right;
+    }
+
+    private interface Visitor {
+        boolean descend(BoundExpression node) throws SqlException;
+
+        void visit(BoundExpression node) throws SqlException;
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -6022,7 +6256,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * int32 width and wraps modulo 2^32 on overflow. Widening the constant alone would let the JIT
      * preserve the full long product and diverge.
      */
-    private class NarrowI64WidenDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+    private class NarrowI64WidenDetector implements Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();
 
         @Override
@@ -6031,26 +6265,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         @Override
-        public boolean descend(ExpressionNode node) {
+        public boolean descend(BoundExpression node) {
             return true;
         }
 
         @Override
-        public void visit(ExpressionNode node) {
-            switch (node.type) {
-                case ExpressionNode.LITERAL: {
-                    int columnIndex = metadata.getColumnIndexQuiet(node.token);
+        public void visit(BoundExpression node) {
+            switch (kind(node)) {
+                case LITERAL: {
+                    int columnIndex = columnIndex(node);
                     if (columnIndex != -1) {
                         typesObserver.observe(columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex))));
                     }
                     break;
                 }
-                case ExpressionNode.BIND_VARIABLE: {
+                case BIND_VARIABLE: {
                     // An unbound or UNDEFINED-typed bind variable is safe to skip here because
                     // serializeBindVariable consults the same BindVariableService in the same
                     // serialize() call and throws on either condition, aborting JIT compile and
                     // falling back to the Java filter.
-                    Function bindFunction = lookupBindVariable(node.token);
+                    Function bindFunction = lookupBindVariable(token(node));
                     if (bindFunction != null) {
                         int typeCode = bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()));
                         if (typeCode != UNDEFINED_CODE) {
@@ -6059,10 +6293,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     }
                     break;
                 }
-                case ExpressionNode.CONSTANT: {
+                case CONSTANT: {
                     // Observe FLOAT / DOUBLE numeric constants so a predicate whose only float
                     // source is a literal (e.g. c7 + 0.5) reports one.
-                    int typeCode = floatConstantTypeCode(node.token);
+                    int typeCode = floatConstantTypeCode(token(node));
                     if (typeCode != UNDEFINED_CODE) {
                         typesObserver.observe(typeCode);
                     }
@@ -6101,18 +6335,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final TypesObserver globalTypesObserver = new TypesObserver();
         final TypesObserver localTypesObserver = new TypesObserver();
-        private final LongList inIntervals = new LongList();
         int columnType;
         // The first arithmetic operation the predicate holds, for the IPv4 / CHAR decline's
         // message. Null when the predicate has none, or only a pure-constant subtree descend()
         // folded.
-        ExpressionNode arithmeticNode;
+        BoundExpression arithmeticNode;
         boolean hasArithmeticOperations;
         // The first unary minus the predicate holds, whether visited or stubbed by descend() over
         // a constant. Consulted by the IPv4 / CHAR decline only: isArithmeticOperation() skips a
         // unary minus, and hasArithmeticOperations must stay false for it so that a numeric
         // `-abyte > afloat` keeps the vectorised backend (see forceScalarMode in visit()).
-        ExpressionNode unaryMinusNode;
+        BoundExpression unaryMinusNode;
         // True when the predicate has at least one FLOAT / DOUBLE column,
         // bind variable, or numeric constant. Captured up front by
         // NarrowI64WidenDetector so other code paths (e.g. constant
@@ -6126,8 +6359,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
         private boolean currentInSerialization = false;
         private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
-        private ExpressionNode inOperationNode = null;
-        private ExpressionNode rootNode;
+        private BoundExpression inOperationNode = null;
+        private BoundExpression rootNode;
 
         @Override
         public void clear() {
@@ -6139,7 +6372,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return rootNode != null;
         }
 
-        public void onNodeDescended(final ExpressionNode node) {
+        public void onNodeDescended(final BoundExpression node) {
             if (rootNode == null) {
                 boolean topLevelOperation = isTopLevelOperation(node);
                 boolean topLevelBooleanColumn = isTopLevelBooleanColumn(node);
@@ -6200,7 +6433,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // objects to a LATER filter, and clear() already covers that boundary.
                     try {
                         narrowI64WidenDetector.clear();
-                        traverseAlgo.traverse(node, narrowI64WidenDetector);
+                        traverse(node, narrowI64WidenDetector);
                         hasFloatInPredicate = narrowI64WidenDetector.hasFloat();
                     } catch (SqlException ignore) {
                         // Detector does not throw; defensive only.
@@ -6215,12 +6448,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
             }
 
-            if (SqlKeywords.isInKeyword(node.token)) {
+            if (SqlKeywords.isInKeyword(operator(node))) {
                 inOperationNode = node;
             }
         }
 
-        public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
+        public boolean onNodeVisited(final BoundExpression node) throws SqlException {
             boolean predicateLeft = false;
             if (node == rootNode) {
                 // We left the predicate.
@@ -6233,14 +6466,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 currentInSerialization = false;
             }
 
-            switch (node.type) {
-                case ExpressionNode.LITERAL:
+            switch (kind(node)) {
+                case LITERAL:
                     handleColumn(node);
                     break;
-                case ExpressionNode.BIND_VARIABLE:
+                case BIND_VARIABLE:
                     handleBindVariable(node);
                     break;
-                case ExpressionNode.OPERATION:
+                case OPERATION:
                     handleOperation(node);
                     break;
             }
@@ -6248,8 +6481,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return predicateLeft;
         }
 
-        private void handleBindVariable(ExpressionNode node) throws SqlException {
-            Function varFunction = getBindVariableFunction(node.position, node.token);
+        private void handleBindVariable(BoundExpression node) throws SqlException {
+            Function varFunction = getBindVariableFunction(node.getPosition(), token(node));
             // We treat bind variables as columns here for the sake of simplicity
             final int columnType = varFunction.getType();
             int columnTypeTag = ColumnType.tagOf(columnType);
@@ -6258,48 +6491,45 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 columnTypeTag = ColumnType.SYMBOL;
             }
 
-            updateType(node.position, columnType == ColumnType.STRING ? ColumnType.SYMBOL : columnType);
+            updateType(node.getPosition(), columnType == ColumnType.STRING ? ColumnType.SYMBOL : columnType);
             int code = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(code);
             globalTypesObserver.observe(code);
         }
 
-        private void handleColumn(ExpressionNode node) throws SqlException {
-            final int columnIndex = metadata.getColumnIndexQuiet(node.token);
-            if (columnIndex == -1) {
-                throw SqlException.invalidColumn(node.position, node.token);
-            }
+        private void handleColumn(BoundExpression node) throws SqlException {
+            final int columnIndex = columnIndex(node);
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
                 if (symbolColumnIndex != -1 && symbolColumnIndex != columnIndex) {
-                    throw SqlException.position(node.position)
+                    throw SqlException.position(node.getPosition())
                             .put("operators on different symbol columns are not supported by JIT: ")
-                            .put(node.token);
+                            .put(token(node));
                 }
                 symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 
-            updateType(node.position, columnType);
+            updateType(node.getPosition(), columnType);
 
             int typeCode = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(typeCode);
             globalTypesObserver.observe(typeCode);
         }
 
-        private void handleOperation(ExpressionNode node) {
+        private void handleOperation(BoundExpression node) {
             if (isArithmeticOperation(node)) {
                 hasArithmeticOperations = true;
                 if (arithmeticNode == null) {
                     arithmeticNode = node;
                 }
-            } else if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            } else if (paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
                 markUnaryMinus(node);
             }
         }
 
-        private void markUnaryMinus(ExpressionNode node) {
+        private void markUnaryMinus(BoundExpression node) {
             if (unaryMinusNode == null) {
                 unaryMinusNode = node;
             }
@@ -6319,7 +6549,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             currentInSerialization = false;
             handledShortCircuitExit = false;
             inOperationNode = null;
-            inIntervals.clear();
             // Note: shortCircuitMode is NOT reset here; it's managed by serializePredicates*Sc methods
         }
 
@@ -6449,7 +6678,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Scalar mode is guaranteed when columns of different sizes are found (mixed sizes),
      * which sets exec_hint to EXEC_HINT_MIXED_SIZE_TYPE, forcing the scalar code path.
      */
-    private class ScalarModeDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+    private class ScalarModeDetector implements Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();
 
         @Override
@@ -6458,14 +6687,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         @Override
-        public boolean descend(ExpressionNode node) {
-            return true; // Always descend
+        public boolean descend(BoundExpression node) {
+            // serializeIn() folds such an IN without reading its key, so the key's width never
+            // reaches the emitted stream
+            return !isNeverMatchingIn(node);
         }
 
         @Override
-        public void visit(ExpressionNode node) {
-            if (node.type == ExpressionNode.LITERAL) {
-                int columnIndex = metadata.getColumnIndexQuiet(node.token);
+        public void visit(BoundExpression node) {
+            if (kind(node) == LITERAL) {
+                int columnIndex = columnIndex(node);
                 if (columnIndex != -1) {
                     int columnType = metadata.getColumnType(columnIndex);
                     int typeCode = columnTypeCode(ColumnType.tagOf(columnType));

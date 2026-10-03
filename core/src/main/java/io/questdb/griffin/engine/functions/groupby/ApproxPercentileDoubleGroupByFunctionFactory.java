@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -50,6 +51,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
         if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
             throw SqlException.$(percentilePos, "percentile must be a constant or runtime constant");
         }
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
     }
 
     @Override

@@ -40,12 +40,16 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     private final String value;
 
     public StrConstant(CharSequence value) {
+        this(value, true);
+    }
+
+    private StrConstant(CharSequence value, boolean isSqlLiteral) {
         if (value == null) {
             this.value = null;
             this.utf8Value = null;
             this.length = TableUtils.NULL_LEN;
         } else {
-            if (Chars.startsWith(value, '\'')) {
+            if (isSqlLiteral && Chars.startsWith(value, '\'')) {
                 this.value = Chars.toString(value, 1, value.length() - 1, value.charAt(0));
             } else {
                 this.value = Chars.toString(value);
@@ -53,6 +57,13 @@ public class StrConstant extends StrFunction implements ConstantFunction {
             this.utf8Value = new Utf8String(this.value);
             this.length = this.value.length();
         }
+    }
+
+    /**
+     * Creates a constant from an already decoded value, without SQL unquoting.
+     */
+    public static StrConstant fromValue(CharSequence value) {
+        return value != null ? new StrConstant(value, false) : NULL;
     }
 
     public static StrConstant newInstance(CharSequence value) {

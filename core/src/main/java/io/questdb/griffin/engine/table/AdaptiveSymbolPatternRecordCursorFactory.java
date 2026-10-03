@@ -87,16 +87,6 @@ import java.util.concurrent.atomic.AtomicLong;
  *       re-bound bind variable cannot make them disagree.</li>
  * </ul>
  * <p>
- * Self-filtering mode also advertises FILTER STEALING, because being the top-level operator with
- * no page frames is exactly what a parallel parent cannot work with. A parent that needs page
- * frames - parallel GROUP BY, SAMPLE BY, async top-K - admits a child through either
- * {@code supportsPageFrameCursor()} or {@code supportsFilterStealing()}, and self-filtering mode
- * answered false to both, so the parent silently fell back to its serial operator EVEN WHEN the
- * per-open estimate would have picked the parallel scan. Measured with four workers over 10M rows
- * and a pattern matching 10% of them, that cost 28.982 ms against 8.644 ms for a keyed GROUP BY and
- * 34.802 ms against 8.962 ms for a SAMPLE BY. See {@link #supportsFilterStealing()} and
- * {@link #halfClose()} for what a steal costs in return.
- * <p>
  * The conservative policy opens an index delegate only after a bounded estimate proves that the
  * matching index entries cover at most a fixed share of the selected rows. The share is route
  * dependent and fixed at construction from {@code coveringDelegate != null}: 1/50 (2%) for the
@@ -295,7 +285,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
 
     /**
      * The scan delegate's own base - a bare page-frame factory - in self-filtering mode, and null in
-     * wrapped mode, which does not offer filter stealing. See {@link #supportsFilterStealing()}.
+     * wrapped mode.
      */
     @Override
     public RecordCursorFactory getBaseFactory() {
@@ -309,9 +299,9 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
 
     // The next three answer null today, whichever mode this factory is in: in wrapped mode the guard
     // returns null, and in self-filtering mode the scan delegate is always the
-    // AsyncFilteredRecordCursorFactory built by tryGenerateSymbolPatternIndex, which overrides none of
+    // AsyncFilteredRecordCursorFactory built by ScanFactoryGenerator.generateSymbolPatternIndex, which overrides none of
     // them and so falls through to the interface defaults. They stay because a stealing parent reads
-    // this whole group together with getFilter() - see SqlCodeGenerator's parallel-aggregate steal -
+    // this whole group together with getFilter() - see AggregateFactoryGenerator's parallel-aggregate steal -
     // so it is a contract unit that must keep delegating if the scan delegate ever stops being async.
 
     @Override
@@ -417,11 +407,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
-    public @Nullable ExpressionNode getStealFilterExpr() {
-        return indexRouteFilterCursor != null ? scanDelegate.getStealFilterExpr() : null;
-    }
-
-    @Override
     public TableToken getTableToken() {
         return dfcFactory.getTableToken();
     }
@@ -468,6 +453,17 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    public boolean isSelfFiltering() {
+        return indexRouteFilterCursor != null;
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return patternFilter.isStableWithinExecution() && indexDelegate.isStableWithinExecution()
+                && (coveringDelegate == null || coveringDelegate.isStableWithinExecution())
+                && scanDelegate.isStableWithinExecution() && dfcFactory.isStableWithinExecution();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         // Same reasoning as getScanDirection(): the answer must hold for every delegate the runtime
@@ -479,27 +475,12 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
-    public boolean supportsFilterStealing() {
-        // Self-filtering mode only, where this factory is the top-level operator and supplies no page
-        // frames. Wrapped mode needs no answer here: it already supplies frames, so its parent admits
-        // it directly and steals from the async filter above it instead.
-        //
-        // The claim a true makes is that this factory is a filter over getBaseFactory(). That holds
-        // for the scan route verbatim, and it is the route the estimate picks for every pattern the
-        // index route would lose on. It does NOT hold for the index route, which the steal discards
-        // outright -- see halfClose(). The alternative is what shipped before: no parent can
-        // parallelise over a symbol-pattern filter at all, on any pattern.
-        return indexRouteFilterCursor != null && scanDelegate.supportsFilterStealing();
-    }
-
-    @Override
     public boolean supportsPageFrameCursor() {
         // True exactly in wrapped mode. getPageFrameCursor() opens only the covering delegate or the
         // scan delegate, and both supply page frames, so the answer holds for every route it can take.
         // In self-filtering mode the answer must stay false for a second, stronger reason: the scan
         // delegate is then an async-filtered factory, so exposing frames upward would either hand the
         // caller a factory that has no frames or, in an earlier link of the chain, unfiltered rows.
-        // A parallel parent reaches the scan plan through supportsFilterStealing() instead.
         return coveringDelegate != null;
     }
 
@@ -897,6 +878,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         @Override
         public TableToken getTableToken() {
             return delegate.getTableToken();
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return delegate.isStableWithinExecution();
         }
 
         @Override

@@ -51,6 +51,11 @@ public class DoubleArraySortFunctionFactory implements FunctionFactory {
     private static final int INITIAL_BUFFER_SIZE = 64;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";
     }

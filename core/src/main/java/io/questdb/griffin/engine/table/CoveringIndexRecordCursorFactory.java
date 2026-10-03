@@ -180,12 +180,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
-        // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
-        // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
+        // Defensive copy. The caller passes a POOLED ObjList owned by the compiler.
         // SqlCompilers are pooled and shared across threads/connections, so when another
-        // thread borrows the same compiler and recompiles, models.next() -> IntrinsicModel.clear()
-        // -> keyValueFuncs.clear() nulls the backing array (Arrays.fill BEFORE pos=0). A concurrent
-        // getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
+        // thread borrows the same compiler and recompiles, clearing that list nulls the backing
+        // array (Arrays.fill BEFORE pos=0). A concurrent getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
         // slot in Function.init(...), producing the intermittent NPE in issue #7294. We keep our own
         // list of the same Function instances -- which this factory owns and frees in close() (the
         // pooled model only clears references, never frees) -- to decouple from the model's lifecycle.
@@ -599,6 +597,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // generator elides an ORDER BY ts on whatever we answer here, before either delegate
         // runs. Advertise no ordering rather than the one only half of the pair keeps.
         return SCAN_DIRECTION_OTHER;
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        if (symbolFunction != null && !symbolFunction.isStableWithinExecution()
+                || latestByFilter != null && !latestByFilter.isStableWithinExecution()) {
+            return false;
+        }
+        if (keyValueFuncs != null) {
+            for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+                if (!keyValueFuncs.getQuick(i).isStableWithinExecution()) {
+                    return false;
+                }
+            }
+        }
+        return dfcFactory.isStableWithinExecution() && (backup == null || backup.isStableWithinExecution());
     }
 
     @Override

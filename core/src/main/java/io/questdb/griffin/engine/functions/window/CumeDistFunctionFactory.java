@@ -53,7 +53,6 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
@@ -79,6 +78,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
     // count, deferredStartOffset, deferredSize, deferredCapacity. See the static initializer below.
     private static final ArrayColumnTypes CUME_DIST_COLUMN_TYPES;
     private static final String SIGNATURE = NAME + "()";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     @Override
     public String getSignature() {
@@ -164,7 +168,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         private long count = 1;
         private long deferredSize;
         private long lastRecordOffset;
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         private long prevRank;
         private long rank;
         private ObjList<DirectIntList> rankMaps;
@@ -208,11 +212,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
-                                         ObjList<ExpressionNode> orderBy,
+                                         IntList orderPositions,
+                                         ObjList<CharSequence> orderBy,
                                          IntList orderByDirection) throws SqlException {
-            IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
-            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
-            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
+            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
             this.orderBy = orderBy;
         }
 
@@ -415,7 +419,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         private final RecordSink partitionBySink;
         private int columnIndex;
         private Map map;
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
 
@@ -485,9 +489,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
-                                         ObjList<ExpressionNode> orderBy,
+                                         IntList orderPositions,
+                                         ObjList<CharSequence> orderBy,
                                          IntList orderByDirection) throws SqlException {
-            IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
             try {
                 // Lazy: start the map closed so reopen() allocates it under the per-query
                 // tracker the cursor binds, symmetric with the free at cursor close.
@@ -498,8 +502,8 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                         false,
                         false
                 );
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
-                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
             } catch (Throwable t) {
                 map = Misc.free(map);
                 throw t;

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoRecordSampleByCursor {
@@ -81,5 +82,26 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
     @Override
     public Record getRecord() {
         return record;
+    }
+
+    /**
+     * Returns a record that reads the current row through this cursor's functions or,
+     * once active B, through gap-row functions over the same row: per column, the
+     * function of column {@code gapColumns[col]}, or {@code gapConstants[col]} where
+     * that is -1.
+     */
+    public SampleByFillRecord newFillRecord(IntList gapColumns, ObjList<Function> gapConstants) {
+        final ObjList<Function> gapFunctions = new ObjList<>(gapColumns.size());
+        for (int col = 0, n = gapColumns.size(); col < n; col++) {
+            final int srcCol = gapColumns.getQuick(col);
+            gapFunctions.add(srcCol >= 0 ? recordFunctions.getQuick(srcCol) : gapConstants.getQuick(col));
+        }
+        final SampleByFillRecord fillRecord = new SampleByFillRecord(recordFunctions, gapFunctions);
+        fillRecord.of(record.getBaseRecord());
+        return fillRecord;
+    }
+
+    public void setGapTimestamp(long timestamp) {
+        sampleLocalEpoch = timestamp + tzOffset;
     }
 }

@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -2360,9 +2360,9 @@ public class ExpressionParser {
                 }
                 tok = SqlUtil.fetchNext(lexer);
 
-                int direction = IQueryModel.ORDER_DIRECTION_ASCENDING;
+                int direction = QueryModel.ORDER_DIRECTION_ASCENDING;
                 if (tok != null && SqlKeywords.isDescKeyword(tok)) {
-                    direction = IQueryModel.ORDER_DIRECTION_DESCENDING;
+                    direction = QueryModel.ORDER_DIRECTION_DESCENDING;
                     tok = SqlUtil.fetchNext(lexer);
                 } else if (tok != null && SqlKeywords.isAscKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
@@ -2559,6 +2559,7 @@ public class ExpressionParser {
         nonLiteralBranches.add(BRANCH_LAMBDA);
         nonLiteralBranches.add(BRANCH_ARRAY_TYPE_QUALIFIER_END);
         nonLiteralBranches.add(BRANCH_DECIMAL);
+        nonLiteralBranches.add(BRANCH_GEOHASH);
 
         caseKeywords.put("when", IDX_WHEN);
         caseKeywords.put("then", IDX_THEN);

@@ -24,15 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.std.str.Sinkable;
-import org.junit.Assert;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
+public class FilterPushdownIntoUnionTest extends AbstractCairoTest {
 
     @Test
     public void testFilterPushdownBlockedByLatestOnInUnionBranch() throws Exception {
@@ -210,381 +205,461 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testPushDownTimestampFilterThroughUnion() throws SqlException {
-        assertQuery(
-                "select-choose ts from (" +
-                        /**/ "select-choose [ts1 ts] ts1 ts from (" +
-                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
-                        /**/ ") union select-choose [ts2 ts] ts2 ts from (" +
-                        /**/   "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
-                        /**/ ")" +
-                        ")",
-                "select ts from (select ts1 ts from t1 union select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
-                modelOf("t1").timestamp("ts1"),
-                modelOf("t2").timestamp("ts2")
-        );
+    public void testPushDownTimestampFilterThroughUnion() throws Exception {
+        assertQuery("SELECT ts FROM (SELECT ts1 ts FROM t1 UNION SELECT ts2 ts FROM t2) WHERE ts IN '2025-12-01T01;2h'")
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP) TIMESTAMP(ts2)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts]
+                          Union
+                            Project
+                              columns: [ts1 AS ts]
+                              Filter
+                                predicate: in(ts1, '2025-12-01T01;2h')
+                                Scan
+                                  table: t1
+                                  columns: [ts1]
+                            Project
+                              columns: [ts2 AS ts]
+                              Filter
+                                predicate: in(ts2, '2025-12-01T01;2h')
+                                Scan
+                                  table: t2
+                                  columns: [ts2]
+                        """);
     }
 
     @Test
-    public void testPushDownTimestampFilterThroughUnionAll() throws SqlException {
-        assertQuery(
-                "select-choose ts from (" +
-                        /**/ "select-choose [ts1 ts] ts1 ts from (" +
-                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
-                        /**/ ") union all select-choose [ts2 ts] ts2 ts from (" +
-                        /**/   "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
-                        /**/ ")" +
-                        ")",
-                "select ts from (select ts1 ts from t1 union all select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
-                modelOf("t1").timestamp("ts1"),
-                modelOf("t2").timestamp("ts2")
-        );
+    public void testPushDownTimestampFilterThroughUnionAll() throws Exception {
+        assertQuery("SELECT ts FROM (SELECT ts1 ts FROM t1 UNION ALL SELECT ts2 ts FROM t2) WHERE ts IN '2025-12-01T01;2h'")
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP) TIMESTAMP(ts2)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts]
+                          Union All
+                            Project
+                              columns: [ts1 AS ts]
+                              Filter
+                                predicate: in(ts1, '2025-12-01T01;2h')
+                                Scan
+                                  table: t1
+                                  columns: [ts1]
+                            Project
+                              columns: [ts2 AS ts]
+                              Filter
+                                predicate: in(ts2, '2025-12-01T01;2h')
+                                Scan
+                                  table: t2
+                                  columns: [ts2]
+                        """);
     }
 
     @Test
-    public void testPushDownTimestampFilterThroughUnionAllCte() throws SqlException {
-        // Two separate CTEs combined with UNION ALL in the main query.
-        // The timestamp filter must be pushed into both CTE branches.
-        createModelsAndRun(
-                () -> {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        // First verify that a single CTE wrapping the whole UNION works
-                        // (structurally identical to the nested subquery form)
-                        sink.clear();
-                        ExecutionModel singleCteModel = compiler.generateExecutionModel(
-                                "WITH u AS (SELECT ts1 ts FROM t1 UNION ALL SELECT ts2 ts FROM t2) " +
-                                        "SELECT ts FROM u WHERE ts in '2025-12-01T01;2h'",
-                                sqlExecutionContext);
-                        ((Sinkable) singleCteModel).toSink(sink);
-                        String singleCtePlan = sink.toString();
-
-                        Assert.assertTrue(
-                                "single CTE: timestamp filter not pushed into first branch: " + singleCtePlan,
-                                singleCtePlan.contains("where ts1 in '2025-12-01T01;2h'"));
-                        Assert.assertTrue(
-                                "single CTE: timestamp filter not pushed into second branch: " + singleCtePlan,
-                                singleCtePlan.contains("where ts2 in '2025-12-01T01;2h'"));
-
-                        // Now verify that two separate CTEs combined with UNION ALL also push down
-                        sink.clear();
-                        ExecutionModel twoCteModel = compiler.generateExecutionModel(
-                                "WITH l AS (SELECT ts1 ts FROM t1), " +
-                                        "r AS (SELECT ts2 ts FROM t2) " +
-                                        "SELECT ts FROM (l UNION ALL r) " +
-                                        "WHERE ts in '2025-12-01T01;2h'",
-                                sqlExecutionContext);
-                        ((Sinkable) twoCteModel).toSink(sink);
-                        String twoCtePlan = sink.toString();
-
-                        Assert.assertTrue(
-                                "two CTEs: timestamp filter not pushed into first CTE branch: " + twoCtePlan,
-                                twoCtePlan.contains("where ts1 in '2025-12-01T01;2h'"));
-                        Assert.assertTrue(
-                                "two CTEs: timestamp filter not pushed into second CTE branch: " + twoCtePlan,
-                                twoCtePlan.contains("where ts2 in '2025-12-01T01;2h'"));
-                    }
-                },
-                modelOf("t1").timestamp("ts1"),
-                modelOf("t2").timestamp("ts2")
-        );
+    public void testPushDownTimestampFilterThroughUnionAllCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (ts1 TIMESTAMP) TIMESTAMP(ts1)");
+            execute("CREATE TABLE t2 (ts2 TIMESTAMP) TIMESTAMP(ts2)");
+            assertQuery("""
+                    WITH u AS (SELECT ts1 ts FROM t1 UNION ALL SELECT ts2 ts FROM t2)
+                    SELECT ts FROM u WHERE ts IN '2025-12-01T01;2h'
+                    """)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts]
+                              Union All
+                                Project
+                                  columns: [ts1 AS ts]
+                                  Filter
+                                    predicate: in(ts1, '2025-12-01T01;2h')
+                                    Scan
+                                      table: t1
+                                      columns: [ts1]
+                                Project
+                                  columns: [ts2 AS ts]
+                                  Filter
+                                    predicate: in(ts2, '2025-12-01T01;2h')
+                                    Scan
+                                      table: t2
+                                      columns: [ts2]
+                            """);
+            assertQuery("""
+                    WITH l AS (SELECT ts1 ts FROM t1),
+                    r AS (SELECT ts2 ts FROM t2)
+                    SELECT ts FROM (l UNION ALL r)
+                    WHERE ts IN '2025-12-01T01;2h'
+                    """)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts]
+                              Union All
+                                Project
+                                  columns: [ts1 AS ts]
+                                  Filter
+                                    predicate: in(ts1, '2025-12-01T01;2h')
+                                    Scan
+                                      table: t1
+                                      columns: [ts1]
+                                Project
+                                  columns: [ts2 AS ts]
+                                  Filter
+                                    predicate: in(ts2, '2025-12-01T01;2h')
+                                    Scan
+                                      table: t2
+                                      columns: [ts2]
+                            """);
+        });
     }
 
     @Test
-    public void testPushDownTimestampFilterThroughUnionAllMismatchedAliases() throws SqlException {
-        // The "ts" alias maps to the TIMESTAMP column in branch 1 (position 1),
-        // but to the SYMBOL column in branch 2 (position 2). The filter should be
-        // remapped by position so that branch 2 filters on ts2 (the TIMESTAMP at
-        // position 1), not on sym2 which carries the "ts" alias.
-        assertQuery(
-                "select-choose ts from (" +
-                        /**/ "select-choose [ts1 ts] name1, ts1 ts, sym1 from (" +
-                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
-                        /**/ ") union all select-choose [ts2] name2, ts2, sym2 ts from (" +
-                        /**/   "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
-                        /**/ ")" +
-                        ")",
-                """
-                        SELECT ts FROM (
-                            SELECT name1, ts1 ts, sym1 FROM t1
-                            UNION ALL
-                            SELECT name2, ts2, sym2 ts FROM t2
-                        ) WHERE ts IN '2025-12-01T01;2h'
-                        """,
-                modelOf("t1").col("name1", ColumnType.VARCHAR).timestamp("ts1").col("sym1", ColumnType.SYMBOL),
-                modelOf("t2").col("name2", ColumnType.VARCHAR).timestamp("ts2").col("sym2", ColumnType.SYMBOL)
-        );
+    public void testPushDownTimestampFilterThroughUnionAllMismatchedAliases() throws Exception {
+        assertQuery("""
+                SELECT ts FROM (
+                    SELECT name1, ts1 ts, sym1 FROM t1
+                    UNION ALL
+                    SELECT name2, ts2, sym2 ts FROM t2
+                ) WHERE ts IN '2025-12-01T01;2h'
+                """)
+                .ddl("CREATE TABLE t1 (name1 VARCHAR, ts1 TIMESTAMP, sym1 SYMBOL) TIMESTAMP(ts1)", "CREATE TABLE t2 (name2 VARCHAR, ts2 TIMESTAMP, sym2 SYMBOL) TIMESTAMP(ts2)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts]
+                          Union All
+                            Project
+                              columns: [ts1 AS ts]
+                              Filter
+                                predicate: in(ts1, '2025-12-01T01;2h')
+                                Scan
+                                  table: t1
+                                  columns: [ts1]
+                            Project
+                              columns: [ts2]
+                              Filter
+                                predicate: in(ts2, '2025-12-01T01;2h')
+                                Scan
+                                  table: t2
+                                  columns: [ts2]
+                        """);
     }
 
     @Test
-    public void testPushDownTimestampFilterThroughUnionAllNonPushableBranch() throws SqlException {
-        // One branch aliases the column to a non-literal expression (ts2+1).
-        // The filter is pushed to both branches (since the parent's alias map sees it as a literal),
-        // but on the non-literal branch it stays at the select-virtual level and cannot be pushed further.
-        assertQuery(
-                "select-choose ts from (" +
-                        /**/ "select-choose [ts1 ts] ts1 ts from (" +
-                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
-                        /**/ ") union all select-virtual [ts2 + 1 ts] ts2 + 1 ts from (" +
-                        /**/   "select [ts2] from t2 timestamp (ts2)" +
-                        /**/ ") where ts in '2025-12-01T01;2h'" +
-                        ")",
-                "select ts from (select ts1 ts from t1 union all select ts2+1 ts from t2) where ts in '2025-12-01T01;2h'",
-                modelOf("t1").timestamp("ts1"),
-                modelOf("t2").timestamp("ts2")
-        );
+    public void testPushDownTimestampFilterThroughUnionAllNonPushableBranch() throws Exception {
+        assertQuery("SELECT ts FROM (SELECT ts1 ts FROM t1 UNION ALL SELECT ts2 + 1 ts FROM t2) WHERE ts IN '2025-12-01T01;2h'")
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP) TIMESTAMP(ts2)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts]
+                          Union All
+                            Project
+                              columns: [ts1 AS ts]
+                              Filter
+                                predicate: in(ts1, '2025-12-01T01;2h')
+                                Scan
+                                  table: t1
+                                  columns: [ts1]
+                            Filter
+                              predicate: in(ts, '2025-12-01T01;2h')
+                              Project
+                                columns: [ts2 + 1 AS ts]
+                                Scan
+                                  table: t2
+                                  columns: [ts2]
+                        """);
     }
 
     @Test
-    public void testPushDownTimestampFilterThroughUnionAllThreeBranches() throws SqlException {
-        assertQuery(
-                "select-choose ts from (" +
-                        /**/ "select-choose [ts1 ts] ts1 ts from (" +
-                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
-                        /**/ ") union all select-choose [ts2 ts] ts2 ts from (" +
-                        /**/   "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
-                        /**/ ") union all select-choose [ts3 ts] ts3 ts from (" +
-                        /**/   "select [ts3] from t3 timestamp (ts3) where ts3 in '2025-12-01T01;2h'" +
-                        /**/ ")" +
-                        ")",
-                "select ts from (select ts1 ts from t1 union all select ts2 ts from t2 union all select ts3 ts from t3) where ts in '2025-12-01T01;2h'",
-                modelOf("t1").timestamp("ts1"),
-                modelOf("t2").timestamp("ts2"),
-                modelOf("t3").timestamp("ts3")
-        );
+    public void testPushDownTimestampFilterThroughUnionAllThreeBranches() throws Exception {
+        assertQuery("SELECT ts FROM (SELECT ts1 ts FROM t1 UNION ALL SELECT ts2 ts FROM t2 UNION ALL SELECT ts3 ts FROM t3) WHERE ts IN '2025-12-01T01;2h'")
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP) TIMESTAMP(ts2)", "CREATE TABLE t3 (ts3 TIMESTAMP) TIMESTAMP(ts3)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts]
+                          Union All
+                            Union All
+                              Project
+                                columns: [ts1 AS ts]
+                                Filter
+                                  predicate: in(ts1, '2025-12-01T01;2h')
+                                  Scan
+                                    table: t1
+                                    columns: [ts1]
+                              Project
+                                columns: [ts2 AS ts]
+                                Filter
+                                  predicate: in(ts2, '2025-12-01T01;2h')
+                                  Scan
+                                    table: t2
+                                    columns: [ts2]
+                            Project
+                              columns: [ts3 AS ts]
+                              Filter
+                                predicate: in(ts3, '2025-12-01T01;2h')
+                                Scan
+                                  table: t3
+                                  columns: [ts3]
+                        """);
     }
 
     @Test
-    public void testPushFilterThroughUnionAllExprInAllBranches() throws SqlException {
-        // Non-timestamp filter is not pushed into union branches.
-        assertQuery(
-                "select-choose c from (" +
-                        /**/ "select [c] from (" +
-                        /**/   "select-virtual [x + y c] x + y c from (" +
-                        /**/     "select [y, x] from t1" +
-                        /**/   ") union all select-virtual [x + y c] x + y c from (" +
-                        /**/     "select [y, x] from t2" +
-                        /**/   ")" +
-                        /**/ ") _xQdbA1 where c > 5" +
-                        ")",
-                "select c from (select x + y c from t1 union all select x + y c from t2) where c > 5",
-                modelOf("t1").col("x", ColumnType.INT).col("y", ColumnType.INT),
-                modelOf("t2").col("x", ColumnType.INT).col("y", ColumnType.INT)
-        );
+    public void testPushFilterThroughUnionAllExprInAllBranches() throws Exception {
+        assertQuery("SELECT c FROM (SELECT x + y c FROM t1 UNION ALL SELECT x + y c FROM t2) WHERE c > 5")
+                .ddl("CREATE TABLE t1 (x INT, y INT)", "CREATE TABLE t2 (x INT, y INT)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [c]
+                          Filter
+                            predicate: c > 5
+                            Union All
+                              Project
+                                columns: [x + y AS c]
+                                Scan
+                                  table: t1
+                                  columns: [x, y]
+                              Project
+                                columns: [x + y AS c]
+                                Scan
+                                  table: t2
+                                  columns: [x, y]
+                        """);
     }
 
     @Test
-    public void testPushFilterThroughUnionAllMixedPushability() throws SqlException {
-        // Two filters: ts is the designated timestamp (pushed into branches for partition pruning),
-        // c is a non-timestamp expression (stays at parent level only).
-        assertQuery(
-                "select-choose ts, c from (" +
-                        /**/ "select [ts, c] from (" +
-                        /**/   "select-virtual [x + y c, ts] ts, x + y c from (" +
-                        /**/     "select-choose [y, x, ts1 ts] ts1 ts, y, x from (" +
-                        /**/       "select [y, x, ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
-                        /**/     ")" +
-                        /**/   ")" +
-                        /**/   " union all select-virtual [x + y c, ts] ts, x + y c from (" +
-                        /**/     "select-choose [y, x, ts2 ts] ts2 ts, y, x from (" +
-                        /**/       "select [y, x, ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
-                        /**/     ")" +
-                        /**/   ")" +
-                        /**/ ") _xQdbA1 where c > 5" +
-                        ")",
-                "select ts, c from (select ts1 ts, x + y c from t1 union all select ts2 ts, x + y c from t2) where ts in '2025-12-01T01;2h' and c > 5",
-                modelOf("t1").timestamp("ts1").col("x", ColumnType.INT).col("y", ColumnType.INT),
-                modelOf("t2").timestamp("ts2").col("x", ColumnType.INT).col("y", ColumnType.INT)
-        );
+    public void testPushFilterThroughUnionAllMixedPushability() throws Exception {
+        assertQuery("SELECT ts, c FROM (SELECT ts1 ts, x + y c FROM t1 UNION ALL SELECT ts2 ts, x + y c FROM t2) WHERE ts IN '2025-12-01T01;2h' AND c > 5")
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP, x INT, y INT) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP, x INT, y INT) TIMESTAMP(ts2)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts, c]
+                          Filter
+                            predicate: c > 5
+                            Union All
+                              Project
+                                columns: [ts1 AS ts, x + y AS c]
+                                Filter
+                                  predicate: in(ts1, '2025-12-01T01;2h')
+                                  Scan
+                                    table: t1
+                                    columns: [ts1, x, y]
+                              Project
+                                columns: [ts2 AS ts, x + y AS c]
+                                Filter
+                                  predicate: in(ts2, '2025-12-01T01;2h')
+                                  Scan
+                                    table: t2
+                                    columns: [ts2, x, y]
+                        """);
     }
 
     @Test
-    public void testPushFilterThroughUnionAllPartialPushdownToBranch1of2() throws SqlException {
-        // SAMPLE BY on the second branch blocks pushdown into that branch.
-        // Filter is pushed into the first branch; parent filter must be retained.
-        createModelsAndRun(
-                () -> {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        sink.clear();
-                        ExecutionModel model = compiler.generateExecutionModel(
-                                """
-                                        SELECT ts, x FROM (
-                                            SELECT ts1 ts, x1 x FROM t1
-                                            UNION ALL
-                                            SELECT ts2 ts, sum(x2) x FROM t2 SAMPLE BY 1h
-                                        ) WHERE ts IN '2025-12-01T01;30m'
-                                        """,
-                                sqlExecutionContext);
-                        ((Sinkable) model).toSink(sink);
-                        String plan = sink.toString();
-
-                        Assert.assertTrue(
-                                "first branch must have timestamp filter pushed: " + plan,
-                                plan.contains("where ts1 in '2025-12-01T01;30m'"));
-                        Assert.assertFalse(
-                                "SAMPLE BY branch must NOT have timestamp filter pushed: " + plan,
-                                plan.contains("where ts2 in '2025-12-01T01;30m'"));
-                        Assert.assertTrue(
-                                "parent filter must be retained for partial pushdown: " + plan,
-                                plan.contains("where ts in '2025-12-01T01;30m'"));
-                    }
-                },
-                modelOf("t1").timestamp("ts1").col("x1", ColumnType.DOUBLE),
-                modelOf("t2").timestamp("ts2").col("x2", ColumnType.DOUBLE)
-        );
+    public void testPushFilterThroughUnionAllPartialPushdownToBranch1of2() throws Exception {
+        assertQuery("""
+                SELECT ts, x FROM (
+                    SELECT ts1 ts, x1 x FROM t1
+                    UNION ALL
+                    SELECT ts2 ts, sum(x2) x FROM t2 SAMPLE BY 1h
+                ) WHERE ts IN '2025-12-01T01;30m'
+                """)
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP, x1 DOUBLE) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP, x2 DOUBLE) TIMESTAMP(ts2)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts, x]
+                          Union All
+                            Project
+                              columns: [ts1 AS ts, x1 AS x]
+                              Filter
+                                predicate: in(ts1, '2025-12-01T01;30m')
+                                Scan
+                                  table: t1
+                                  columns: [ts1, x1]
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, x]
+                                Filter
+                                  predicate: in(ts, '2025-12-01T01;30m')
+                                  Aggregate
+                                    keys: [timestamp_floor_utc('1h', ts2, null, '00:00', null) AS ts]
+                                    values: [sum(x2) AS x]
+                                    Scan
+                                      table: t2
+                                      columns: [ts2, x2]
+                        """);
     }
 
     @Test
-    public void testPushFilterThroughUnionAllPartialPushdownToBranch2of2() throws SqlException {
-        // One branch has SAMPLE BY which blocks timestamp filter pushdown.
-        // Filter is pushed into the other branch; parent filter must be retained.
-        createModelsAndRun(
-                () -> {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        sink.clear();
-                        ExecutionModel model = compiler.generateExecutionModel(
-                                """
-                                        SELECT ts, x FROM (
-                                            SELECT ts1 ts, sum(x1) x FROM t1 SAMPLE BY 1h
-                                            UNION ALL
-                                            SELECT ts2 ts, x2 x FROM t2
-                                        ) WHERE ts IN '2025-12-01T01;30m'
-                                        """,
-                                sqlExecutionContext);
-                        ((Sinkable) model).toSink(sink);
-                        String plan = sink.toString();
-
-                        Assert.assertFalse(
-                                "SAMPLE BY branch must NOT have timestamp filter pushed: " + plan,
-                                plan.contains("where ts1 in '2025-12-01T01;30m'"));
-                        Assert.assertTrue(
-                                "second branch must have timestamp filter pushed: " + plan,
-                                plan.contains("where ts2 in '2025-12-01T01;30m'"));
-                        Assert.assertTrue(
-                                "parent filter must be retained for partial pushdown: " + plan,
-                                plan.contains("where ts in '2025-12-01T01;30m'"));
-                    }
-                },
-                modelOf("t1").timestamp("ts1").col("x1", ColumnType.DOUBLE),
-                modelOf("t2").timestamp("ts2").col("x2", ColumnType.DOUBLE)
-        );
+    public void testPushFilterThroughUnionAllPartialPushdownToBranch2of2() throws Exception {
+        assertQuery("""
+                SELECT ts, x FROM (
+                    SELECT ts1 ts, sum(x1) x FROM t1 SAMPLE BY 1h
+                    UNION ALL
+                    SELECT ts2 ts, x2 x FROM t2
+                ) WHERE ts IN '2025-12-01T01;30m'
+                """)
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP, x1 DOUBLE) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP, x2 DOUBLE) TIMESTAMP(ts2)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts, x]
+                          Union All
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, x]
+                                Filter
+                                  predicate: in(ts, '2025-12-01T01;30m')
+                                  Aggregate
+                                    keys: [timestamp_floor_utc('1h', ts1, null, '00:00', null) AS ts]
+                                    values: [sum(x1) AS x]
+                                    Scan
+                                      table: t1
+                                      columns: [ts1, x1]
+                            Project
+                              columns: [ts2 AS ts, x2 AS x]
+                              Filter
+                                predicate: in(ts2, '2025-12-01T01;30m')
+                                Scan
+                                  table: t2
+                                  columns: [ts2, x2]
+                        """);
     }
 
     @Test
-    public void testPushFilterThroughUnionAllPartialPushdownToBranches1and2of3() throws SqlException {
-        // SAMPLE BY on the third of three branches blocks pushdown into that branch.
-        // Filter is pushed into branches 1 and 2; parent filter must be retained.
-        createModelsAndRun(
-                () -> {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        sink.clear();
-                        ExecutionModel model = compiler.generateExecutionModel(
-                                """
-                                        SELECT ts, x FROM (
-                                            SELECT ts1 ts, x1 x FROM t1
-                                            UNION ALL
-                                            SELECT ts2 ts, x2 x FROM t2
-                                            UNION ALL
-                                            SELECT ts3 ts, sum(x3) x FROM t3 SAMPLE BY 1h
-                                        ) WHERE ts IN '2025-12-01T01;30m'
-                                        """,
-                                sqlExecutionContext);
-                        ((Sinkable) model).toSink(sink);
-                        String plan = sink.toString();
-
-                        Assert.assertTrue(
-                                "first branch must have timestamp filter pushed: " + plan,
-                                plan.contains("where ts1 in '2025-12-01T01;30m'"));
-                        Assert.assertTrue(
-                                "second branch must have timestamp filter pushed: " + plan,
-                                plan.contains("where ts2 in '2025-12-01T01;30m'"));
-                        Assert.assertFalse(
-                                "SAMPLE BY branch must NOT have timestamp filter pushed: " + plan,
-                                plan.contains("where ts3 in '2025-12-01T01;30m'"));
-                        Assert.assertTrue(
-                                "parent filter must be retained for partial pushdown: " + plan,
-                                plan.contains("where ts in '2025-12-01T01;30m'"));
-                    }
-                },
-                modelOf("t1").timestamp("ts1").col("x1", ColumnType.DOUBLE),
-                modelOf("t2").timestamp("ts2").col("x2", ColumnType.DOUBLE),
-                modelOf("t3").timestamp("ts3").col("x3", ColumnType.DOUBLE)
-        );
+    public void testPushFilterThroughUnionAllPartialPushdownToBranches1and2of3() throws Exception {
+        assertQuery("""
+                SELECT ts, x FROM (
+                    SELECT ts1 ts, x1 x FROM t1
+                    UNION ALL
+                    SELECT ts2 ts, x2 x FROM t2
+                    UNION ALL
+                    SELECT ts3 ts, sum(x3) x FROM t3 SAMPLE BY 1h
+                ) WHERE ts IN '2025-12-01T01;30m'
+                """)
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP, x1 DOUBLE) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP, x2 DOUBLE) TIMESTAMP(ts2)", "CREATE TABLE t3 (ts3 TIMESTAMP, x3 DOUBLE) TIMESTAMP(ts3)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts, x]
+                          Union All
+                            Union All
+                              Project
+                                columns: [ts1 AS ts, x1 AS x]
+                                Filter
+                                  predicate: in(ts1, '2025-12-01T01;30m')
+                                  Scan
+                                    table: t1
+                                    columns: [ts1, x1]
+                              Project
+                                columns: [ts2 AS ts, x2 AS x]
+                                Filter
+                                  predicate: in(ts2, '2025-12-01T01;30m')
+                                  Scan
+                                    table: t2
+                                    columns: [ts2, x2]
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, x]
+                                Filter
+                                  predicate: in(ts, '2025-12-01T01;30m')
+                                  Aggregate
+                                    keys: [timestamp_floor_utc('1h', ts3, null, '00:00', null) AS ts]
+                                    values: [sum(x3) AS x]
+                                    Scan
+                                      table: t3
+                                      columns: [ts3, x3]
+                        """);
     }
 
     @Test
-    public void testPushFilterThroughUnionAllPartialPushdownToBranches1and3of3() throws SqlException {
-        // SAMPLE BY on the second of three branches blocks pushdown into that branch.
-        // Filter is pushed into branches 1 and 3; parent filter must be retained.
-        createModelsAndRun(
-                () -> {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        sink.clear();
-                        ExecutionModel model = compiler.generateExecutionModel(
-                                """
-                                        SELECT ts, x FROM (
-                                            SELECT ts1 ts, x1 x FROM t1
-                                            UNION ALL
-                                            SELECT ts2 ts, sum(x2) x FROM t2 SAMPLE BY 1h
-                                            UNION ALL
-                                            SELECT ts3 ts, x3 x FROM t3
-                                        ) WHERE ts IN '2025-12-01T01;30m'
-                                        """,
-                                sqlExecutionContext);
-                        ((Sinkable) model).toSink(sink);
-                        String plan = sink.toString();
-
-                        Assert.assertTrue(
-                                "first branch must have timestamp filter pushed: " + plan,
-                                plan.contains("where ts1 in '2025-12-01T01;30m'"));
-                        Assert.assertFalse(
-                                "SAMPLE BY branch must NOT have timestamp filter pushed: " + plan,
-                                plan.contains("where ts2 in '2025-12-01T01;30m'"));
-                        Assert.assertTrue(
-                                "third branch must have timestamp filter pushed: " + plan,
-                                plan.contains("where ts3 in '2025-12-01T01;30m'"));
-                        Assert.assertTrue(
-                                "parent filter must be retained for partial pushdown: " + plan,
-                                plan.contains("where ts in '2025-12-01T01;30m'"));
-                    }
-                },
-                modelOf("t1").timestamp("ts1").col("x1", ColumnType.DOUBLE),
-                modelOf("t2").timestamp("ts2").col("x2", ColumnType.DOUBLE),
-                modelOf("t3").timestamp("ts3").col("x3", ColumnType.DOUBLE)
-        );
+    public void testPushFilterThroughUnionAllPartialPushdownToBranches1and3of3() throws Exception {
+        assertQuery("""
+                SELECT ts, x FROM (
+                    SELECT ts1 ts, x1 x FROM t1
+                    UNION ALL
+                    SELECT ts2 ts, sum(x2) x FROM t2 SAMPLE BY 1h
+                    UNION ALL
+                    SELECT ts3 ts, x3 x FROM t3
+                ) WHERE ts IN '2025-12-01T01;30m'
+                """)
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP, x1 DOUBLE) TIMESTAMP(ts1)", "CREATE TABLE t2 (ts2 TIMESTAMP, x2 DOUBLE) TIMESTAMP(ts2)", "CREATE TABLE t3 (ts3 TIMESTAMP, x3 DOUBLE) TIMESTAMP(ts3)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts, x]
+                          Union All
+                            Union All
+                              Project
+                                columns: [ts1 AS ts, x1 AS x]
+                                Filter
+                                  predicate: in(ts1, '2025-12-01T01;30m')
+                                  Scan
+                                    table: t1
+                                    columns: [ts1, x1]
+                              Sort
+                                keys: [ts]
+                                Project
+                                  columns: [ts, x]
+                                  Filter
+                                    predicate: in(ts, '2025-12-01T01;30m')
+                                    Aggregate
+                                      keys: [timestamp_floor_utc('1h', ts2, null, '00:00', null) AS ts]
+                                      values: [sum(x2) AS x]
+                                      Scan
+                                        table: t2
+                                        columns: [ts2, x2]
+                            Project
+                              columns: [ts3 AS ts, x3 AS x]
+                              Filter
+                                predicate: in(ts3, '2025-12-01T01;30m')
+                                Scan
+                                  table: t3
+                                  columns: [ts3, x3]
+                        """);
     }
 
     @Test
-    public void testPushFilterThroughUnionAllSameTable() throws SqlException {
-        // Both branches reference the same table; filter should be pushed to both independently.
-        assertQuery(
-                "select-choose ts from (" +
-                        /**/ "select-choose [ts] ts from (" +
-                        /**/   "select [ts] from t1 timestamp (ts) where ts in '2025-12-01T01;2h'" +
-                        /**/ ") union all select-choose [ts] ts from (" +
-                        /**/   "select [ts] from t1 timestamp (ts) where ts in '2025-12-01T01;2h'" +
-                        /**/ ")" +
-                        ")",
-                "select ts from (select ts from t1 union all select ts from t1) where ts in '2025-12-01T01;2h'",
-                modelOf("t1").timestamp("ts")
-        );
+    public void testPushFilterThroughUnionAllSameTable() throws Exception {
+        assertQuery("SELECT ts FROM (SELECT ts FROM t1 UNION ALL SELECT ts FROM t1) WHERE ts IN '2025-12-01T01;2h'")
+                .ddl("CREATE TABLE t1 (ts TIMESTAMP) TIMESTAMP(ts)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts]
+                          Union All
+                            Project
+                              columns: [ts]
+                              Filter
+                                predicate: in(ts, '2025-12-01T01;2h')
+                                Scan
+                                  table: t1
+                                  columns: [ts]
+                            Project
+                              columns: [ts]
+                              Filter
+                                predicate: in(ts, '2025-12-01T01;2h')
+                                Scan
+                                  table: t1
+                                  columns: [ts]
+                        """);
     }
 
     @Test
-    public void testPushFilterWithMultipleColumnsThroughUnionAll() throws SqlException {
-        // Filter references two columns (ts and v); not pushed because it references a non-timestamp column.
-        assertQuery(
-                "select-choose ts, v from (" +
-                        /**/ "select [ts, v] from (" +
-                        /**/   "select-choose [val1 v, ts1 ts] ts1 ts, val1 v from (" +
-                        /**/     "select [val1, ts1] from t1" +
-                        /**/   ") union all select-choose [val2 v, ts2 ts] ts2 ts, val2 v from (" +
-                        /**/     "select [val2, ts2] from t2" +
-                        /**/   ")" +
-                        /**/ ") _xQdbA1 where ts > v" +
-                        ")",
-                "select ts, v from (select ts1 ts, val1 v from t1 union all select ts2 ts, val2 v from t2) where ts > v",
-                modelOf("t1").col("ts1", ColumnType.TIMESTAMP).col("val1", ColumnType.INT),
-                modelOf("t2").col("ts2", ColumnType.TIMESTAMP).col("val2", ColumnType.INT)
-        );
+    public void testPushFilterWithMultipleColumnsThroughUnionAll() throws Exception {
+        assertQuery("SELECT ts, v FROM (SELECT ts1 ts, val1 v FROM t1 UNION ALL SELECT ts2 ts, val2 v FROM t2) WHERE ts > v")
+                .ddl("CREATE TABLE t1 (ts1 TIMESTAMP, val1 INT)", "CREATE TABLE t2 (ts2 TIMESTAMP, val2 INT)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [ts, v]
+                          Filter
+                            predicate: ts > v
+                            Union All
+                              Project
+                                columns: [ts1 AS ts, val1 AS v]
+                                Scan
+                                  table: t1
+                                  columns: [ts1, val1]
+                              Project
+                                columns: [ts2 AS ts, val2 AS v]
+                                Scan
+                                  table: t2
+                                  columns: [ts2, val2]
+                        """);
     }
 }

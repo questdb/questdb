@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -47,6 +48,11 @@ import org.jetbrains.annotations.NotNull;
 
 
 public class IntervalFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return IntervalUtils.getIntervalType(ResultTypes.timestampAtLeastMicros(argTypes.getQuick(0), argTypes.getQuick(1)));
+    }
 
     @Override
     public String getSignature() {

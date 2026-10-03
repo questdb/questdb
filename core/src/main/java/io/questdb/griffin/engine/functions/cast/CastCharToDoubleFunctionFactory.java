@@ -36,6 +36,11 @@ import io.questdb.std.ObjList;
 
 public class CastCharToDoubleFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Ad)";
     }

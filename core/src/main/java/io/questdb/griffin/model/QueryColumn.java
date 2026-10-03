@@ -39,7 +39,6 @@ public class QueryColumn implements Mutable, Sinkable {
     private ExpressionNode ast;
     private int columnType = -1;
     private boolean includeIntoWildcard = true;
-    private boolean isGenerated;
 
     public QueryColumn() {
     }
@@ -50,7 +49,6 @@ public class QueryColumn implements Mutable, Sinkable {
         aliasPosition = 0;
         ast = null;
         includeIntoWildcard = true;
-        isGenerated = false;
         columnType = -1;
     }
 
@@ -74,10 +72,6 @@ public class QueryColumn implements Mutable, Sinkable {
         return alias != null ? alias : ast.token;
     }
 
-    public boolean isGenerated() {
-        return isGenerated;
-    }
-
     public boolean isIncludeIntoWildcard() {
         return includeIntoWildcard;
     }
@@ -88,6 +82,12 @@ public class QueryColumn implements Mutable, Sinkable {
 
     public QueryColumn of(CharSequence alias, ExpressionNode ast) {
         return of(alias, ast, true);
+    }
+
+    public QueryColumn of(CharSequence alias, int aliasPosition, ExpressionNode ast) {
+        of(alias, ast, true, -1);
+        this.aliasPosition = aliasPosition;
+        return this;
     }
 
     public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard) {
@@ -108,10 +108,6 @@ public class QueryColumn implements Mutable, Sinkable {
         }
         this.alias = alias;
         this.aliasPosition = aliasPosition;
-    }
-
-    public void setGenerated(boolean isGenerated) {
-        this.isGenerated = isGenerated;
     }
 
     public void setIncludeIntoWildcard(boolean includeIntoWildcard) {

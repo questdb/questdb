@@ -45,6 +45,11 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "shift";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]ID)";
     }

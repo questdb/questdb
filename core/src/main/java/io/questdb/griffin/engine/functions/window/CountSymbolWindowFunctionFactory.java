@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
@@ -34,6 +35,11 @@ import io.questdb.std.ObjList;
 
 public class CountSymbolWindowFunctionFactory extends AbstractWindowFunctionFactory {
     private static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> (arg.getInt(record) != SymbolTable.VALUE_IS_NULL));
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
 
     @Override
     public String getSignature() {

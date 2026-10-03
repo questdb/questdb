@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -103,6 +104,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     protected abstract boolean isSqrt();
 
     protected abstract String name();
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     @Override
     public Function newInstance(
@@ -242,6 +248,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new StdDevOverCurrentRowFunction(args.get(0), isSample, name);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

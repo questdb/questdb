@@ -10740,7 +10740,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Optimizer rewrites DISTINCT → GROUP BY + count(*), but we intercept in
-            // generateSelectGroupBy and replace the entire chain with PostingIndex distinct
+            // AggregateFactoryGenerator and replace the entire chain with PostingIndex distinct
             assertQuery("SELECT DISTINCT sym FROM t_distinct_plan")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -12412,7 +12412,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testInListWithDuplicateBindVarKeys() throws Exception {
-        // Literal IN-list duplicates are deduped upstream by the WhereClauseParser
+        // Literal IN-list duplicates are deduped upstream by SymbolKeyExtractor
         // (see testInListWithDuplicateKeys), so only bind-variable / runtime-constant
         // duplicates reach the multi-key covering build loops. Without a contains()
         // guard there, openPartitionCursors opens one posting cursor per slot and the
@@ -16702,9 +16702,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                   values: [avg(-1)]
                                   filter: null
                                     SelectedRecord
-                                        SelectedRecord
-                                            CoveringIndex on: sym with: k
-                                              filter: sym='a'
+                                        CoveringIndex on: sym with: k
+                                          filter: sym='a'
                             """);
             assertQuery(q)
                     .expectSize()
@@ -16729,9 +16728,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                   keys: [e0]
                                   values: [avg(-1)]
                                     SelectedRecord
-                                        SelectedRecord
-                                            CoveringIndex backup: true on: sym with: k
-                                              filter: sym=null
+                                        CoveringIndex backup: true on: sym with: k
+                                          filter: sym=null
                             """);
             assertQuery(qNull)
                     .expectSize()
