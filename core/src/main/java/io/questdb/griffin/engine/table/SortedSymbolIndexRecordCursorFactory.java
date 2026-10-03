@@ -80,6 +80,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
 
     public void toPlan(PlanSink sink) {
         sink.type("SortedSymbolIndex");
+        sink.attr("keyMajor").val(true);
         sink.child(cursor.getRowCursorFactory());
         sink.child(partitionFrameCursorFactory);
     }

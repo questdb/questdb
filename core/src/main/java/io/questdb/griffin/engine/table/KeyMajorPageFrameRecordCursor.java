@@ -102,7 +102,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         // A row cursor walks its frame in the index direction. To keep that direction across
         // frames, walk the frames forward when they come in the same direction, else backward.
         final boolean indexForward = rowCursorFactory.getIndexDirection() == IndexReader.DIR_FORWARD;
-        final boolean framesForward = frameOrder == PartitionFrameCursorFactory.ORDER_ASC;
+        // ORDER_ANY gets the forward frame cursor, see AbstractPageFrameRecordCursorFactory
+        final boolean framesForward = frameOrder != PartitionFrameCursorFactory.ORDER_DESC;
         this.walkFramesBackward = indexForward != framesForward;
     }
 

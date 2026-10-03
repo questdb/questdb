@@ -1894,6 +1894,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 SelectedRecord
                                     Cross Join
                                         SortedSymbolIndex
+                                          keyMajor: true
                                             Index forward scan on: s
                                               symbolOrder: asc
                                             Interval forward scan on: t1
@@ -1945,6 +1946,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 SelectedRecord
                                     Cross Join
                                         SortedSymbolIndex
+                                          keyMajor: true
                                             Index forward scan on: s
                                               symbolOrder: asc
                                             Interval forward scan on: t1
@@ -2153,6 +2155,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 SelectedRecord
                                     Cross Join
                                         SortedSymbolIndex
+                                          keyMajor: true
                                             Index forward scan on: s
                                               symbolOrder: asc
                                             Interval forward scan on: t1

@@ -133,7 +133,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
             cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         }
-        this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
+        // the heap cursor merges keys into row order, so it never follows ORDER BY the key column
+        this.followedOrderByAdvice = (orderByKeyColumn && !heapCursorUsed) || orderByTimestamp;
 
         comparator = this::compareStrFunctions;
         comparatorDesc = this::compareStrFunctionsDesc;
@@ -213,6 +214,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         }
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);
+        if (cursor instanceof KeyMajorPageFrameRecordCursor) {
+            sink.attr("keyMajor").val(true);
+        }
         sink.child(rowCursorFactory);
         sink.child(partitionFrameCursorFactory);
     }

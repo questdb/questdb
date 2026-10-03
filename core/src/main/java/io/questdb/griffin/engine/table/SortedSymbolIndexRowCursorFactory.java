@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
@@ -36,7 +35,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.CarrierLocal;
 
@@ -44,7 +42,6 @@ import java.util.Comparator;
 
 /**
  * Scans the index of a symbol column one key at a time, in the order of the symbol values.
- * {@link #getCursor(PageFrame, PageFrameMemory)} walks the keys within one page frame;
  * {@link KeyMajorPageFrameRecordCursor} walks each key across all page frames through
  * {@link #getCursor(int, PageFrame, PageFrameMemory)}.
  */
@@ -52,7 +49,6 @@ public class SortedSymbolIndexRowCursorFactory implements KeyedRowCursorFactory 
     private final static CarrierLocal<SortHelper> TL_SORT_HELPER = new CarrierLocal<>(SortHelper::new);
     private final int columnIndex;
     private final boolean columnOrderDirectionAsc;
-    private final ListBasedSymbolIndexRowCursor cursor = new ListBasedSymbolIndexRowCursor();
     private final int indexDirection;
     private final IntList symbolKeys = new IntList();
     private int symbolKeyLimit;
@@ -67,10 +63,13 @@ public class SortedSymbolIndexRowCursorFactory implements KeyedRowCursorFactory 
         this.columnOrderDirectionAsc = columnOrderDirectionAsc;
     }
 
+    /**
+     * Not supported: walking the keys within one page frame is key-major per frame only. Use
+     * {@link #getCursor(int, PageFrame, PageFrameMemory)} through {@link KeyMajorPageFrameRecordCursor}.
+     */
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
-        return cursor;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -182,51 +181,5 @@ public class SortedSymbolIndexRowCursorFactory implements KeyedRowCursorFactory 
     private static class SymbolTableEntry {
         private int key;
         private String value;
-    }
-
-    private class ListBasedSymbolIndexRowCursor implements RowCursor {
-        private RowCursor current;
-        private int index;
-        private PageFrame pageFrame;
-
-        @Override
-        public void close() {
-            current = Misc.free(current);
-        }
-
-        @Override
-        public boolean hasNext() {
-            return current.hasNext() || fetchNext();
-        }
-
-        @Override
-        public long next() {
-            return current.next();
-        }
-
-        private boolean fetchNext() {
-            while (index < symbolKeyLimit) {
-                Misc.free(current);
-                current = pageFrame
-                        .getIndexReader(columnIndex, indexDirection)
-                        .getCursor(
-                                symbolKeys.getQuick(index++),
-                                pageFrame.getPartitionLo(),
-                                pageFrame.getPartitionHi() - 1
-                        );
-
-                if (current.hasNext()) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private void of(PageFrame pageFrame) {
-            this.pageFrame = pageFrame;
-            this.index = 0;
-            Misc.free(current);
-            this.current = EmptyRowCursor.INSTANCE;
-        }
     }
 }

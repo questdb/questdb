@@ -123,7 +123,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
             cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         }
-        this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
+        // the heap cursor merges keys into row order, so it never follows ORDER BY the key column
+        this.followedOrderByAdvice = (orderByKeyColumn && !heapCursorUsed) || orderByTimestamp;
     }
 
     @Override
@@ -149,6 +150,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         sink.type("FilterOnValues");
         if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+        }
+        if (cursor instanceof KeyMajorPageFrameRecordCursor) {
+            sink.attr("keyMajor").val(true);
         }
         sink.child(rowCursorFactory);
         sink.child(partitionFrameCursorFactory);

@@ -20432,6 +20432,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 Window
                                   functions: [row_number()]
                                     FilterOnValues symbolOrder: asc
+                                      keyMajor: true
                                         Cursor-order scan
                                             Index forward scan on: sym deferred: true
                                               filter: sym='X'
@@ -20495,6 +20496,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """
                                               unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
                                                 FilterOnValues symbolOrder: asc
+                                                  keyMajor: true
                                                     Cursor-order scan
                                                         Index forward scan on: sym deferred: true
                                                           filter: sym='X'
@@ -22075,6 +22077,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 Window
                                   functions: [row_number()]
                                     SortedSymbolIndex
+                                      keyMajor: true
                                         Index forward scan on: sym
                                           symbolOrder: asc
                                         Interval forward scan on: tab
@@ -22104,6 +22107,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "      orderedFunctions: [[l] => [avg(l) over (rows between unbounded preceding and current row)]]\n" +
                             "      unorderedFunctions: [row_number()]\n" +
                             "        SortedSymbolIndex\n" +
+                            "          keyMajor: true\n" +
                             "            Index forward scan on: sym\n" +
                             "              symbolOrder: asc\n" +
                             "            Interval forward scan on: tab\n" +

@@ -10076,6 +10076,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             String expectedPlan = """
                     Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                         FilterOnValues symbolOrder: #ORDER#
+                          keyMajor: true
                             Cursor-order scan
                                 Index forward scan on: s deferred: true
                                   filter: s=:#FIRST#::string
@@ -10117,7 +10118,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectIndexedSymbols01c() throws Exception {
         assertQuery("select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1")
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
-                .assertsPlan("Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
+                .assertsPlan("Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "      keyMajor: true\n" + "        Cursor-order scan\n" + //actual order is S2, S1
                         "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
     }
 
@@ -10234,6 +10235,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     FilterOnExcludedValues symbolOrder: #ORDER#
                       symbolFilter: s not in ['S1']
                       filter: length(s)=2
+                      keyMajor: true
                         Cursor-order scan
                         Frame forward scan on: a
                     """;
@@ -10256,6 +10258,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     FilterOnExcludedValues symbolOrder: #ORDER#
                       symbolFilter: s not in ['S1']
                       filter: length(s)=2
+                      keyMajor: true
                         Cursor-order scan
                         Interval forward scan on: a
                           intervals: [("2023-03-15T00:00:00.000000Z","2023-03-15T23:59:59.999999Z")]
@@ -10283,6 +10286,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             FilterOnExcludedValues symbolOrder: asc
                               symbolFilter: s not in ['a']
+                              keyMajor: true
                                 Cursor-order scan
                                     Index forward scan on: s
                                       filter: s=0
@@ -10304,6 +10308,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             FilterOnExcludedValues symbolOrder: desc
                               symbolFilter: s not in ['a']
+                              keyMajor: true
                                 Cursor-order scan
                                     Index forward scan on: s
                                       filter: s=2
@@ -10329,6 +10334,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             FilterOnExcludedValues symbolOrder: desc
                               symbolFilter: s not in [null]
+                              keyMajor: true
                                 Cursor-order scan
                                     Index forward scan on: s
                                       filter: s=2
@@ -10357,6 +10363,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;")
                 .assertsPlan("""
                         SortedSymbolIndex
+                          keyMajor: true
                             Index forward scan on: s
                               symbolOrder: asc
                             Interval forward scan on: a
@@ -10486,6 +10493,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             FilterOnValues symbolOrder: asc
+                              keyMajor: true
                                 Cursor-order scan
                                     Index backward scan on: s1
                                       filter: s1=1
@@ -10559,6 +10567,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         FilterOnExcludedValues symbolOrder: asc
                           symbolFilter: s not in ['S1']
                           filter: length(s)=2
+                          keyMajor: true
                             Cursor-order scan
                             Frame forward scan on: a
                         """);
@@ -13614,6 +13623,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                             FilterOnValues symbolOrder: desc
+                              keyMajor: true
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
                                       filter: s=:s2::string
@@ -13639,6 +13649,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                             FilterOnValues symbolOrder: asc
+                              keyMajor: true
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
                                       filter: s=:s1::string
@@ -13675,6 +13686,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                             FilterOnValues symbolOrder: desc
+                              keyMajor: true
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
                                       filter: s=:s2::string
@@ -13701,6 +13713,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                             FilterOnValues symbolOrder: asc
+                              keyMajor: true
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
                                       filter: s=:s1::string
