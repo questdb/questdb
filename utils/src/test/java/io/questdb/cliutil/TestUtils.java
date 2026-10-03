@@ -33,9 +33,42 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 
 public class TestUtils {
+
+    // Slack tolerates lazy NATIVE_DEFAULT allocations the shared CairoEngine
+    // makes on the first execute/select call (pool warmup, SQL parser scratch
+    // areas, etc.). The engine's pools live for the lifetime of the JVM and
+    // are released by engine.close() in tearDownStatic. A real partial-malloc
+    // leak inside the tool would dwarf this slack because shoulder buffers
+    // scale with rowCount * sizeof(int|long).
+    private static final long ENGINE_POOL_FIRST_USE_SLACK_BYTES = 8L * 1024L;
+
+    public interface LeakProneCode {
+        void run() throws Exception;
+    }
+
+    /**
+     * Wraps a test body and asserts that the tool's NATIVE_DEFAULT
+     * allocations balance. WalToParquet's manual Unsafe.malloc/free
+     * pairings (shoulder columns, synthesized symbol dictionaries, _txn
+     * read buffer, recovery_status_ column) all use NATIVE_DEFAULT; this
+     * check pins them against partial-malloc-leak regressions.
+     */
+    public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
+        long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+        runnable.run();
+        long after = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+        long diff = after - before;
+        if (diff > ENGINE_POOL_FIRST_USE_SLACK_BYTES) {
+            Assert.fail("NATIVE_DEFAULT leaked " + diff
+                    + " bytes during test body (before=" + before + ", after=" + after + ")");
+        }
+    }
+
     public static void assertEquals(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -150,7 +183,7 @@ public class TestUtils {
                         // fall through
                     case ColumnType.LONG128:
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
-                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Hi(i));
+                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
                     default:
                         // Unknown record type.
