@@ -1728,7 +1728,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinSymbolAndStringKeyIndexCollisionFast() throws Exception {
-        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("STRING", "quotes", "", "Fast"));
+        // Keyed ASOF defaults to Dense since #7423, so the Fast cursor needs its hint.
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("STRING", "quotes", "asof_fast(o q)", "Fast"));
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndStringKeyIndexCollisionDefaultDense() throws Exception {
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("STRING", "quotes", "", "Dense"));
     }
 
     @Test
@@ -1754,7 +1760,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             createOrdersAndQuotes("STRING");
             assertAlgoAndResult(
                     "q.venue, o.sym FROM quotes q ASOF JOIN orders o ON q.sym = o.sym AND q.venue = o.venue",
-                    "",
+                    "asof_fast(q o)",
                     "Fast",
                     """
                             venue\tsym
@@ -1841,7 +1847,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinSymbolAndVarcharKeyIndexCollision() throws Exception {
-        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("VARCHAR", "quotes", "", "Fast"));
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("VARCHAR", "quotes", "asof_fast(o q)", "Fast"));
     }
 
     @Test
@@ -3569,7 +3575,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             createBook();
             assertAlgoAndResult(
                     "a.ts, a.sym, b.qty FROM book a ASOF JOIN book b ON a.sym = b.sym AND a.side = b.side_str",
-                    "",
+                    "asof_fast(a b)",
                     "Fast",
                     replaceTimestampSuffix("""
                             ts\tsym\tqty
