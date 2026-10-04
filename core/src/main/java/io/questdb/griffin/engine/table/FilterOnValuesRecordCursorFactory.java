@@ -195,29 +195,23 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     }
 
     private void findDuplicates() {
-        // bind variable actual values might repeat, so to remove adjacent duplicates
-        // go through the list and if duplicate is found push it to the end of the list
-        int idx = 0;
-        int max = cursorFactories.size();
-
-        OUT:
-        while (idx < max - 1) {
-            CharSequence symbol = symbol(idx);
-            idx++;
-
-            while (equals(symbol, symbol(idx))) {
-                FunctionBasedRowCursorFactory tmp = cursorFactories.get(idx);
-                cursorFactories.remove(idx);
-                cursorFactories.add(tmp);
-
-                idx++;
-                max--;
-                if (idx >= max) {
-                    break OUT;
+        // Bind variable values may repeat. The list is sorted, so equal values are adjacent:
+        // compact the distinct values to the front, in order, and swap each duplicate behind
+        // them. The row cursor factories scan only the first cursorFactoriesIdx[0] entries.
+        // The duplicates stay in the list, so they are still closed with it.
+        final int n = cursorFactories.size();
+        int distinct = n > 0 ? 1 : 0;
+        for (int i = 1; i < n; i++) {
+            if (!equals(symbol(distinct - 1), symbol(i))) {
+                if (i != distinct) {
+                    final FunctionBasedRowCursorFactory duplicate = cursorFactories.getQuick(distinct);
+                    cursorFactories.setQuick(distinct, cursorFactories.getQuick(i));
+                    cursorFactories.setQuick(i, duplicate);
                 }
+                distinct++;
             }
         }
-        cursorFactoriesIdx[0] = max;
+        cursorFactoriesIdx[0] = distinct;
     }
 
     private CharSequence symbol(int idx) {
