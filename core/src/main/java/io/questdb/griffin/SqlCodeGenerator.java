@@ -5259,7 +5259,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final ExpressionNode filterBackup = deepClone(expressionNodePool, filterExpr);
         backupWhereClause(filterExpr);
-        Function filter = compileBooleanFilter(filterExpr, metadata, executionContext);
+        Function filter;
+        try {
+            filter = compileBooleanFilter(filterExpr, metadata, executionContext);
+        } catch (Throwable th) {
+            // the window owns the base, and nothing up the stack frees it: free it here, as
+            // generateFilter0() does on the same failure
+            Misc.free(factory, th);
+            throw th;
+        }
         if (filter.isConstant() || filter.isRuntimeConstant()) {
             // the ordinary path plans these without a filter
             Misc.free(filter);

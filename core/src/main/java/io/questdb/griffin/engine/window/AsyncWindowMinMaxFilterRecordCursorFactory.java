@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.map.MapKey;
@@ -38,7 +39,10 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -65,8 +69,10 @@ import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -97,30 +103,35 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * which is the order the serial plan emits. Window columns are looked up on demand, so a projection
  * that drops them never probes on the query's thread.
  * <p>
+ * <b>One snapshot.</b> Every pass reads the base through one page frame cursor, opened once per
+ * execution and rewound between passes, so they all read the same version of the table, as the
+ * serial plan's single scan does. A commit that lands while the query runs is not seen by any pass.
+ * <p>
  * The aggregation mirrors the window functions' first pass, see {@link WholePartitionMinMax}.
  * Every case but one is independent of row order. A DOUBLE {@code min} compares with a tolerance,
  * so when a partition holds two distinct values within {@code Numbers.DOUBLE_TOLERANCE} of its
  * smallest, the window's value is the first of them in scan order. The workers track each
- * partition's two smallest distinct values; where they are that close, the query's thread replays
- * the window's comparison in scan order over the base, for those partitions only.
+ * partition's two smallest distinct values; where they are that close, the partition is replayed:
+ * the workers collect, frame by frame and over the same snapshot, the argument values of those
+ * partitions' rows only, and the query's thread folds them with the window's comparison in scan
+ * order. The replay costs one more parallel pass over the key and argument columns, with a map
+ * probe per row, plus a serial fold over the replayed partitions' rows. Should those rows exceed
+ * the collection budget, the query's thread folds the frames of the same snapshot itself, in scan
+ * order, instead: a serial pass over the key and argument columns.
  */
 public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCursorFactory {
-    /**
-     * Test hook: the most slots a dense lookup may take, see {@link #buildDense}.
-     */
-    @TestOnly
-    public static volatile long DEBUG_MAX_DENSE_SLOTS = -1;
     public static final int ARG_DATE = 4;
     public static final int ARG_DOUBLE = 0;
     public static final int ARG_FLOAT = 1;
     public static final int ARG_LONG = 2;
     public static final int ARG_TIMESTAMP = 3;
-    private static final UnorderedPageFrameReducer AGGREGATE = AsyncWindowMinMaxFilterRecordCursorFactory::aggregate;
-    // Per window: the value, the next distinct value above the smallest (DOUBLE min only), and the
-    // scan-order value a replay computes.
-    private static final int SLOTS = 3;
-    private static final int ROWS_PER_BREAKER_CHECK = 64 * 1024;
+    private static final long DEFAULT_MAX_REPLAY_LONGS = 1L << 22;
     private static final long MAX_DENSE_SLOTS = 1 << 22;
+    private static final int MODE_AGGREGATE = 0;
+    private static final int MODE_COLLECT = 1;
+    private static final UnorderedPageFrameReducer REDUCER = AsyncWindowMinMaxFilterRecordCursorFactory::reduce;
+    private static final int ROWS_PER_BREAKER_CHECK = 64 * 1024;
+    private static final int ROWS_PER_OVERFLOW_CHECK = 4 * 1024;
     private final int[] argColumns;
     private final int[] argKinds;
     private final RecordCursorFactory base;
@@ -128,25 +139,39 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     private final IntList crossIndex;
     private final MinMaxCursor cursor;
     private final ObjList<LookupFilter> filters = new ObjList<>();
-    private final boolean[] isMin;
     // per partition key column: its base column, and whether every one is a SYMBOL
     private final boolean isAllSymbolKeys;
+    private final boolean[] isMin;
     private final int[] keyColumnArray;
+    private final OrderedMap lookupMap;
+    // the value slot of the key's ordinal among the replayed keys, or -1 without a tie window
+    private final int ordinalSlot;
+    private final PageFrameMemoryRecord replayRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    private final SnapshotBase snapshotBase;
     private final int[] symbolCounts;
+    // the DOUBLE and FLOAT min windows, whose value may depend on scan order
+    private final int[] tieWindows;
+    // value slots per key
+    private final int valueCount;
+    private final ObjList<CharSequence> windowPlans;
+    // per window, its first value slot; a tie window has two, its value and the next distinct one
+    private final int[] windowSlots;
+    private final int workerCount;
     // The dense lookup of an all-SYMBOL key, or 0: per window, one value per combination of
     // symbol keys, NULL included; see buildDense().
     private long denseAddr;
+    private int denseBuildCount;
     private long denseSize;
     private long denseSlots;
-    private int denseBuildCount;
     private MemoryTracker denseTracker;
-    private final OrderedMap lookupMap;
-    private final ObjList<CharSequence> windowPlans;
-    private final int workerCount;
     private AsyncFilteredRecordCursorFactory filterFactory;
     private UnorderedPageFrameSequence<Atom> frameSequence;
-    private long replayedKeyCount;
+    // test seams, see their setters
+    private long maxDenseSlots = -1;
+    private long maxReplayLongs = DEFAULT_MAX_REPLAY_LONGS;
+    private long replayFallbackCount;
     private long replayRunCount;
+    private long replayedKeyCount;
 
     /**
      * Takes ownership of {@code base}, {@code filter} and {@code perWorkerFilters} as soon as it is
@@ -183,6 +208,8 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     ) {
         super(metadata);
         this.base = base;
+        // owns the base from here on
+        this.snapshotBase = new SnapshotBase(base);
         this.baseColumnCount = base.getMetadata().getColumnCount();
         this.crossIndex = crossIndex;
         this.argColumns = argColumns;
@@ -198,13 +225,32 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         this.isAllSymbolKeys = allSymbols;
         this.symbolCounts = new int[keyColumnArray.length];
         final int windowCount = argColumns.length;
+        // slots by need: a tie window keeps the next distinct value above its smallest too
+        this.windowSlots = new int[windowCount];
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+        int tieWindowCount = 0;
         for (int i = 0; i < windowCount; i++) {
+            windowSlots[i] = valueTypes.getColumnCount();
             final int type = argKinds[i] <= ARG_FLOAT ? ColumnType.DOUBLE : ColumnType.LONG;
-            for (int s = 0; s < SLOTS; s++) {
+            valueTypes.add(type);
+            if (isTieWindow(i)) {
                 valueTypes.add(type);
+                tieWindowCount++;
             }
         }
+        this.tieWindows = new int[tieWindowCount];
+        for (int i = 0, t = 0; i < windowCount; i++) {
+            if (isTieWindow(i)) {
+                tieWindows[t++] = i;
+            }
+        }
+        if (tieWindowCount > 0) {
+            this.ordinalSlot = valueTypes.getColumnCount();
+            valueTypes.add(ColumnType.LONG);
+        } else {
+            this.ordinalSlot = -1;
+        }
+        this.valueCount = valueTypes.getColumnCount();
         OrderedMap lookupMap = null;
         Atom atom = null;
         UnorderedPageFrameSequence<Atom> frameSequence = null;
@@ -223,15 +269,15 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                     aggregateColumns, workerCount);
             final Atom atomToTransfer = atom;
             atom = null;
-            frameSequence = new UnorderedPageFrameSequence<>(engine, configuration, messageBus, atomToTransfer, AGGREGATE, workerCount);
+            frameSequence = new UnorderedPageFrameSequence<>(engine, configuration, messageBus, atomToTransfer, REDUCER, workerCount);
 
             final int slotCount = perWorkerFilters != null ? perWorkerFilters.size() : workerCount;
-            final LookupFilter ownerFilter = new LookupFilter(this, filter, true, keySinkClass, keyTypes, keyColumns);
+            final LookupFilter ownerFilter = new LookupFilter(this, filter, true, keySinkClass, keyColumns);
             filters.add(ownerFilter);
             final ObjList<Function> workerFilters = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 final Function inner = perWorkerFilters != null ? perWorkerFilters.getQuick(i) : filter;
-                final LookupFilter workerFilter = new LookupFilter(this, inner, perWorkerFilters != null, keySinkClass, keyTypes, keyColumns);
+                final LookupFilter workerFilter = new LookupFilter(this, inner, perWorkerFilters != null, keySinkClass, keyColumns);
                 if (perWorkerFilters != null) {
                     perWorkerFilters.setQuick(i, null);
                 }
@@ -239,11 +285,12 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 workerFilters.add(workerFilter);
             }
             ownsWorkerFilters = false;
+            // the filter reads the base through the snapshot, as phase one does
             filterFactory = new AsyncFilteredRecordCursorFactory(
                     engine,
                     configuration,
                     messageBus,
-                    base,
+                    snapshotBase,
                     ownerFilter,
                     usedBaseColumns,
                     reduceTaskFactory,
@@ -254,7 +301,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                     workerCount,
                     false
             );
-            this.cursor = new MinMaxCursor(keySinkClass, keyTypes, keyColumns, windowCount);
+            this.cursor = new MinMaxCursor(keySinkClass, keyColumns);
         } catch (Throwable th) {
             if (ownsWorkerFilters) {
                 Misc.freeObjList(perWorkerFilters, th);
@@ -267,13 +314,14 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 } else {
                     Misc.free(filter, th);
                 }
-                Misc.free(base, th);
+                Misc.free(snapshotBase, th);
             } else {
                 Misc.free(filterFactory, th);
             }
             Misc.free(frameSequence, th);
             Misc.free(atom, th);
             Misc.free(lookupMap, th);
+            Misc.free(replayRecord, th);
             throw th;
         }
         this.lookupMap = lookupMap;
@@ -291,40 +339,6 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         return base.followedOrderByAdvice();
     }
 
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
-        try {
-            lookupMap.close();
-            lookupMap.setMemoryTracker(memoryTracker);
-            lookupMap.reopen();
-            aggregate(executionContext);
-            replay(executionContext);
-            buildDense(memoryTracker);
-            final RecordCursor filterCursor = filterFactory.getCursor(executionContext);
-            cursor.of(filterCursor, memoryTracker);
-            return cursor;
-        } catch (Throwable th) {
-            if (cursor.isOpen) {
-                // releases the lookup too
-                Misc.free(cursor, th);
-            } else {
-                try {
-                    releaseLookup();
-                } catch (Throwable cleanupFailure) {
-                    th.addSuppressed(cleanupFailure);
-                }
-            }
-            throw th;
-        }
-    }
-
     /**
      * Slots held across both phases; zero whenever no task runs.
      */
@@ -334,12 +348,43 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         return frameSequence.getAtom().locks.getAcquiredSlotCount() + (filterLocks != null ? filterLocks.getAcquiredSlotCount() : 0);
     }
 
-    /**
-     * Merges one worker's values for a key into another's, as phase one does.
-     */
-    @TestOnly
-    public void mergeForTesting(MapValue dest, MapValue src) {
-        merge(dest, src);
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+        final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        try {
+            // one page frame cursor, so one version of the table, for every pass
+            snapshotBase.open(executionContext, order);
+            lookupMap.close();
+            lookupMap.setMemoryTracker(memoryTracker);
+            lookupMap.reopen();
+            aggregate(executionContext, order);
+            replay(executionContext, order, memoryTracker);
+            buildDense(memoryTracker);
+            final RecordCursor filterCursor = filterFactory.getCursor(executionContext);
+            cursor.of(filterCursor, memoryTracker);
+            return cursor;
+        } catch (Throwable th) {
+            if (cursor.isOpen) {
+                // releases the lookup and the snapshot too
+                Misc.free(cursor, th);
+            } else {
+                try {
+                    releaseLookup();
+                } catch (Throwable cleanupFailure) {
+                    th.addSuppressed(cleanupFailure);
+                } finally {
+                    snapshotBase.release(th);
+                }
+            }
+            throw th;
+        }
     }
 
     /**
@@ -348,6 +393,15 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     @TestOnly
     public int getDenseBuildCount() {
         return denseBuildCount;
+    }
+
+    /**
+     * Replays that exceeded the collection budget and folded the snapshot's frames on the query's
+     * thread instead.
+     */
+    @TestOnly
+    public long getReplayFallbackCount() {
+        return replayFallbackCount;
     }
 
     @TestOnly
@@ -370,6 +424,14 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         return base.getTableToken();
     }
 
+    /**
+     * The value slots each partition key holds in the map.
+     */
+    @TestOnly
+    public int getValueSlotCount() {
+        return valueCount;
+    }
+
     @Override
     public boolean isNonDeterministic() {
         return filterFactory.isNonDeterministic();
@@ -380,9 +442,33 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         return filterFactory.isStableWithinExecution();
     }
 
+    /**
+     * Merges one worker's values for a key into another's, as phase one does.
+     */
+    @TestOnly
+    public void mergeForTesting(MapValue dest, MapValue src) {
+        merge(dest, src);
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    /**
+     * Caps the slots of a dense lookup, see {@link #buildDense}; negative restores the default.
+     */
+    @TestOnly
+    public void setMaxDenseSlots(long maxDenseSlots) {
+        this.maxDenseSlots = maxDenseSlots;
+    }
+
+    /**
+     * Caps the longs a replay collects before it falls back to folding on the query's thread.
+     */
+    @TestOnly
+    public void setMaxReplayLongs(long maxReplayLongs) {
+        this.maxReplayLongs = maxReplayLongs;
     }
 
     @Override
@@ -404,30 +490,12 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         return base.usesIndex();
     }
 
-    private static void aggregate(
-            int workerId,
-            @NotNull PageFrameMemoryRecord record,
-            int frameIndex,
-            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @NotNull UnorderedPageFrameSequence<?> frameSequence,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
-    ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
-        @SuppressWarnings("unchecked") final Atom atom = ((UnorderedPageFrameSequence<Atom>) frameSequence).getAtom();
-        final boolean owner = stealingFrameSequence == frameSequence;
-        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final PageFrameMemoryPool pool = atom.getPool(slotId);
-        try {
-            final PageFrameMemory frameMemory = pool.navigateTo(frameIndex, atom.aggregateColumns);
-            record.init(frameMemory);
-            atom.factory.aggregateFrame(atom.getMap(slotId), atom.getSink(slotId), record, frameRowCount);
-        } finally {
-            try {
-                pool.releaseParquetBuffers();
-            } finally {
-                atom.release(slotId);
-            }
+    // A symbol key's index in its dense span: NULL first, then the keys; -1 outside the table.
+    private static long denseIndex(int key, int count) {
+        if (key == SymbolTable.VALUE_IS_NULL) {
+            return 0;
         }
+        return key >= 0 && key < count ? key + 1L : -1;
     }
 
     private static boolean isAmbiguous(double min, double next) {
@@ -444,6 +512,40 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 configuration.getSqlMapMaxResizes(),
                 false
         );
+    }
+
+    private static void reduce(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int frameIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        @SuppressWarnings("unchecked") final Atom atom = ((UnorderedPageFrameSequence<Atom>) frameSequence).getAtom();
+        final boolean owner = stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final PageFrameMemoryPool pool = atom.getPool(slotId);
+        try {
+            if (atom.mode == MODE_COLLECT && atom.isCollectOverflow) {
+                // the query's thread folds the frames itself
+                return;
+            }
+            final PageFrameMemory frameMemory = pool.navigateTo(frameIndex, atom.aggregateColumns);
+            record.init(frameMemory);
+            if (atom.mode == MODE_AGGREGATE) {
+                atom.factory.aggregateFrame(atom.getMap(slotId), atom.getSink(slotId), record, frameRowCount);
+            } else {
+                atom.factory.collectFrame(atom, slotId, record, frameIndex, frameRowCount);
+            }
+        } finally {
+            try {
+                pool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
+        }
     }
 
     private static void updateDouble(MapValue value, int slot, double d, boolean isMin) {
@@ -476,15 +578,15 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     }
 
     // Phase one: per-worker maps on the workers, merged into the lookup map here.
-    private void aggregate(SqlExecutionContext executionContext) throws SqlException {
-        final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        frameSequence.of(base, executionContext, order);
+    private void aggregate(SqlExecutionContext executionContext, int order) throws SqlException {
+        final Atom atom = frameSequence.getAtom();
+        atom.mode = MODE_AGGREGATE;
+        frameSequence.of(snapshotBase, executionContext, order);
         try {
             frameSequence.prepareForDispatch();
-            frameSequence.getAtom().initPools(frameSequence);
+            atom.initPools(frameSequence);
             frameSequence.dispatchAndAwait();
             readSymbolCounts();
-            final Atom atom = frameSequence.getAtom();
             for (int i = 0, n = atom.workerMaps.size(); i < n; i++) {
                 final OrderedMap workerMap = atom.workerMaps.getQuick(i);
                 if (workerMap.isOpen() && workerMap.size() > 0) {
@@ -508,7 +610,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 initValue(value);
             }
             for (int i = 0; i < windowCount; i++) {
-                final int slot = i * SLOTS;
+                final int slot = windowSlots[i];
                 switch (argKinds[i]) {
                     case ARG_DOUBLE: {
                         final double d = record.getDouble(argColumns[i]);
@@ -536,54 +638,6 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         }
     }
 
-    private void initValue(MapValue value) {
-        for (int i = 0, n = argColumns.length; i < n; i++) {
-            final int slot = i * SLOTS;
-            if (argKinds[i] <= ARG_FLOAT) {
-                value.putDouble(slot, Double.NaN);
-                value.putDouble(slot + 1, Double.NaN);
-                value.putDouble(slot + 2, Double.NaN);
-            } else {
-                value.putLong(slot, Numbers.LONG_NULL);
-                value.putLong(slot + 1, Numbers.LONG_NULL);
-                value.putLong(slot + 2, Numbers.LONG_NULL);
-            }
-        }
-    }
-
-    private void merge(MapValue dest, MapValue src) {
-        for (int i = 0, n = argColumns.length; i < n; i++) {
-            final int slot = i * SLOTS;
-            if (argKinds[i] <= ARG_FLOAT) {
-                final double v = src.getDouble(slot);
-                if (!Double.isNaN(v)) {
-                    updateDouble(dest, slot, v, isMin[i]);
-                    final double next = src.getDouble(slot + 1);
-                    if (!Double.isNaN(next)) {
-                        updateDouble(dest, slot, next, isMin[i]);
-                    }
-                }
-            } else {
-                final long v = src.getLong(slot);
-                if (v != Numbers.LONG_NULL) {
-                    updateLong(dest, slot, v, isMin[i]);
-                }
-            }
-        }
-    }
-
-    private long readLong(Record record, int window) {
-        final int column = argColumns[window];
-        switch (argKinds[window]) {
-            case ARG_TIMESTAMP:
-                return record.getTimestamp(column);
-            case ARG_DATE:
-                return record.getDate(column);
-            default:
-                return record.getLong(column);
-        }
-    }
-
     /**
      * For a partition key of SYMBOL columns alone, copies the frozen map into an array indexed by
      * the symbol keys, so that a lookup is arithmetic on the row's symbol keys rather than a hash
@@ -596,7 +650,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         if (!isAllSymbolKeys || lookupMap.size() == 0) {
             return;
         }
-        final long limit = DEBUG_MAX_DENSE_SLOTS >= 0 ? DEBUG_MAX_DENSE_SLOTS : Math.min(MAX_DENSE_SLOTS, 16 * lookupMap.size() + 4096);
+        final long limit = maxDenseSlots >= 0 ? maxDenseSlots : Math.min(MAX_DENSE_SLOTS, 16 * lookupMap.size() + 4096);
         long slots = 1;
         for (int count : symbolCounts) {
             if (count < 0) {
@@ -617,7 +671,6 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             final long nullBits = argKinds[w] <= ARG_FLOAT ? Double.doubleToRawLongBits(Double.NaN) : Numbers.LONG_NULL;
             Vect.setMemoryLong(addr + w * slots * Long.BYTES, nullBits, slots);
         }
-        final int valueCount = windowCount * SLOTS;
         final MapRecordCursor mapCursor = lookupMap.getCursor();
         final MapRecord mapRecord = mapCursor.getRecord();
         while (mapCursor.hasNext()) {
@@ -632,19 +685,137 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             }
             final MapValue value = mapRecord.getValue();
             for (int w = 0; w < windowCount; w++) {
-                Unsafe.putLong(addr + (w * slots + slot) * Long.BYTES, value.getLong(w * SLOTS));
+                Unsafe.putLong(addr + (w * slots + slot) * Long.BYTES, value.getLong(windowSlots[w]));
             }
         }
         denseSlots = slots;
         denseBuildCount++;
     }
 
-    // A symbol key's index in its dense span: NULL first, then the keys; -1 outside the table.
-    private static long denseIndex(int key, int count) {
-        if (key == SymbolTable.VALUE_IS_NULL) {
-            return 0;
+    // A replay's worker side: the argument values of the replayed keys' rows of one frame, in scan
+    // order, appended to the slot's list as [frame index, entry count, entries...], an entry being
+    // the key's ordinal followed by the raw bits of each tie window's argument.
+    private void collectFrame(Atom atom, int slotId, PageFrameMemoryRecord record, int frameIndex, long frameRowCount) {
+        final DirectLongList list = atom.getCollected(slotId);
+        final OrderedMap.ProbeView view = atom.getProbeView(slotId);
+        final RecordSink sink = atom.getSink(slotId);
+        final boolean backward = atom.isBackward;
+        long header = -1;
+        long entries = 0;
+        for (long i = 0; i < frameRowCount; i++) {
+            if ((i & (ROWS_PER_OVERFLOW_CHECK - 1)) == 0 && atom.isCollectOverflow) {
+                return;
+            }
+            record.setRowIndex(backward ? frameRowCount - i - 1 : i);
+            view.withKey();
+            sink.copy(record, view);
+            final MapValue value = view.findValue();
+            if (value == null) {
+                // cannot happen over phase one's snapshot
+                continue;
+            }
+            final long ordinal = value.getLong(ordinalSlot);
+            if (ordinal < 0) {
+                continue;
+            }
+            if (header < 0) {
+                header = list.size();
+                list.add(frameIndex);
+                list.add(0);
+            }
+            list.add(ordinal);
+            for (int window : tieWindows) {
+                list.add(Double.doubleToRawLongBits(readDouble(record, window)));
+            }
+            entries++;
+            if (list.size() > atom.maxCollectedLongs) {
+                atom.isCollectOverflow = true;
+                return;
+            }
         }
-        return key >= 0 && key < count ? key + 1L : -1;
+        if (header >= 0) {
+            list.set(header + 1, entries);
+        }
+    }
+
+    // The window's first pass, for one row of a replayed key: the first finite value, then a value
+    // the tolerant comparison finds smaller.
+    private void fold(long replayAddr, long ordinal, int tie, double d) {
+        if (Numbers.isFinite(d)) {
+            final long addr = replayAddr + (ordinal * tieWindows.length + tie) * Double.BYTES;
+            final double scanMin = Unsafe.getDouble(addr);
+            if (Double.isNaN(scanMin) || Numbers.compare(d, scanMin) < 0) {
+                Unsafe.putDouble(addr, d);
+            }
+        }
+    }
+
+    // Folds what the workers collected, frame by frame in scan order.
+    private void foldCollected(Atom atom, int frameCount, long replayAddr) {
+        final IntList frameSlots = atom.frameSlots;
+        final LongList frameOffsets = atom.frameOffsets;
+        frameSlots.setAll(frameCount, Integer.MIN_VALUE);
+        frameOffsets.setAll(frameCount, -1);
+        final int entryLongs = 1 + tieWindows.length;
+        for (int slotId = -1, n = atom.workerCollected.size(); slotId < n; slotId++) {
+            final DirectLongList list = atom.getCollected(slotId);
+            for (long pos = 0, size = list.size(); pos < size; ) {
+                final int frameIndex = (int) list.get(pos);
+                frameSlots.setQuick(frameIndex, slotId);
+                frameOffsets.setQuick(frameIndex, pos);
+                pos += 2 + list.get(pos + 1) * entryLongs;
+            }
+        }
+        for (int f = 0; f < frameCount; f++) {
+            final long offset = frameOffsets.getQuick(f);
+            if (offset < 0) {
+                continue;
+            }
+            final DirectLongList list = atom.getCollected(frameSlots.getQuick(f));
+            final long entries = list.get(offset + 1);
+            for (long e = 0, pos = offset + 2; e < entries; e++, pos += entryLongs) {
+                final long ordinal = list.get(pos);
+                for (int t = 0; t < tieWindows.length; t++) {
+                    fold(replayAddr, ordinal, t, Double.longBitsToDouble(list.get(pos + 1 + t)));
+                }
+            }
+        }
+    }
+
+    // The fallback: the query's thread folds the snapshot's frames itself, in scan order.
+    private void foldFrames(Atom atom, int frameCount, long replayAddr, SqlExecutionCircuitBreaker circuitBreaker) {
+        final PageFrameMemoryPool pool = atom.ownerPool;
+        final OrderedMap.ProbeView view = atom.ownerView;
+        final RecordSink sink = atom.ownerSink;
+        final PageFrameMemoryRecord record = replayRecord;
+        long rows = 0;
+        for (int f = 0; f < frameCount; f++) {
+            try {
+                record.init(pool.navigateTo(f, atom.aggregateColumns));
+                final long frameRowCount = frameSequence.getFrameRowCount(f);
+                for (long i = 0; i < frameRowCount; i++) {
+                    if ((++rows & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    }
+                    record.setRowIndex(atom.isBackward ? frameRowCount - i - 1 : i);
+                    view.withKey();
+                    sink.copy(record, view);
+                    final MapValue value = view.findValue();
+                    if (value == null) {
+                        continue;
+                    }
+                    final long ordinal = value.getLong(ordinalSlot);
+                    if (ordinal < 0) {
+                        continue;
+                    }
+                    for (int t = 0; t < tieWindows.length; t++) {
+                        fold(replayAddr, ordinal, t, readDouble(record, tieWindows[t]));
+                    }
+                }
+            } finally {
+                pool.releaseParquetBuffers();
+            }
+        }
     }
 
     private void freeDense() {
@@ -653,6 +824,66 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             denseSize = 0;
             denseSlots = 0;
             denseTracker = null;
+        }
+    }
+
+    private void initValue(MapValue value) {
+        for (int i = 0, n = argColumns.length; i < n; i++) {
+            final int slot = windowSlots[i];
+            if (argKinds[i] <= ARG_FLOAT) {
+                value.putDouble(slot, Double.NaN);
+                if (isTieWindow(i)) {
+                    value.putDouble(slot + 1, Double.NaN);
+                }
+            } else {
+                value.putLong(slot, Numbers.LONG_NULL);
+            }
+        }
+        if (ordinalSlot >= 0) {
+            value.putLong(ordinalSlot, -1);
+        }
+    }
+
+    private boolean isTieWindow(int window) {
+        return isMin[window] && argKinds[window] <= ARG_FLOAT;
+    }
+
+    private void merge(MapValue dest, MapValue src) {
+        for (int i = 0, n = argColumns.length; i < n; i++) {
+            final int slot = windowSlots[i];
+            if (argKinds[i] <= ARG_FLOAT) {
+                final double v = src.getDouble(slot);
+                if (!Double.isNaN(v)) {
+                    updateDouble(dest, slot, v, isMin[i]);
+                    if (isTieWindow(i)) {
+                        final double next = src.getDouble(slot + 1);
+                        if (!Double.isNaN(next)) {
+                            updateDouble(dest, slot, next, true);
+                        }
+                    }
+                }
+            } else {
+                final long v = src.getLong(slot);
+                if (v != Numbers.LONG_NULL) {
+                    updateLong(dest, slot, v, isMin[i]);
+                }
+            }
+        }
+    }
+
+    private double readDouble(Record record, int window) {
+        return argKinds[window] == ARG_FLOAT ? record.getFloat(argColumns[window]) : record.getDouble(argColumns[window]);
+    }
+
+    private long readLong(Record record, int window) {
+        final int column = argColumns[window];
+        switch (argKinds[window]) {
+            case ARG_TIMESTAMP:
+                return record.getTimestamp(column);
+            case ARG_DATE:
+                return record.getDate(column);
+            default:
+                return record.getLong(column);
         }
     }
 
@@ -680,78 +911,74 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         }
     }
 
-    // Recomputes, in the window's scan order, the DOUBLE min of every partition whose two smallest
-    // distinct values the tolerance cannot tell apart; see the class docs.
-    private void replay(SqlExecutionContext executionContext) throws SqlException {
-        boolean hasNearTie = false;
-        for (int i = 0, n = argColumns.length; i < n && !hasNearTie; i++) {
-            hasNearTie = isMin[i] && argKinds[i] <= ARG_FLOAT;
-        }
-        if (!hasNearTie || lookupMap.size() == 0) {
+    // Recomputes, in the window's scan order and over the same snapshot, the DOUBLE min of every
+    // partition whose two smallest distinct values the tolerance cannot tell apart; see the class
+    // docs.
+    private void replay(SqlExecutionContext executionContext, int order, MemoryTracker memoryTracker) throws SqlException {
+        if (tieWindows.length == 0 || lookupMap.size() == 0) {
             return;
         }
-        long ambiguousKeys = 0;
+        // number the keys to replay
+        long ordinals = 0;
         final MapRecordCursor mapCursor = lookupMap.getCursor();
         final MapRecord mapRecord = mapCursor.getRecord();
         while (mapCursor.hasNext()) {
             final MapValue value = mapRecord.getValue();
-            for (int i = 0, n = argColumns.length; i < n; i++) {
-                final int slot = i * SLOTS;
-                if (isMin[i] && argKinds[i] <= ARG_FLOAT && isAmbiguous(value.getDouble(slot), value.getDouble(slot + 1))) {
-                    ambiguousKeys++;
+            for (int window : tieWindows) {
+                final int slot = windowSlots[window];
+                if (isAmbiguous(value.getDouble(slot), value.getDouble(slot + 1))) {
+                    value.putLong(ordinalSlot, ordinals++);
                     break;
                 }
             }
         }
-        if (ambiguousKeys == 0) {
+        if (ordinals == 0) {
             return;
         }
         replayRunCount++;
-        replayedKeyCount += ambiguousKeys;
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        final RecordSink sink = cursor.ownerSink;
-        try (RecordCursor baseCursor = base.getCursor(executionContext)) {
-            final Record record = baseCursor.getRecord();
-            long rows = 0;
-            while (baseCursor.hasNext()) {
-                if ((++rows & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        replayedKeyCount += ordinals;
+        final long replaySize = ordinals * tieWindows.length * Double.BYTES;
+        final long replayAddr = Unsafe.malloc(replaySize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
+        try {
+            Vect.setMemoryLong(replayAddr, Double.doubleToRawLongBits(Double.NaN), ordinals * tieWindows.length);
+            final Atom atom = frameSequence.getAtom();
+            atom.mode = MODE_COLLECT;
+            atom.isBackward = order == ORDER_DESC;
+            frameSequence.of(snapshotBase, executionContext, order);
+            try {
+                frameSequence.prepareForDispatch();
+                atom.initPools(frameSequence);
+                atom.initCollect(lookupMap, Math.max(1, maxReplayLongs / (workerCount + 1)));
+                frameSequence.dispatchAndAwait();
+                final int frameCount = frameSequence.getFrameCount();
+                if (atom.isCollectOverflow) {
+                    replayFallbackCount++;
+                    foldFrames(atom, frameCount, replayAddr, executionContext.getCircuitBreaker());
+                } else {
+                    foldCollected(atom, frameCount, replayAddr);
                 }
-                final MapKey key = lookupMap.withKey();
-                sink.copy(record, key);
-                final MapValue value = key.findValue();
-                if (value == null) {
+            } finally {
+                frameSequence.await();
+                frameSequence.reset();
+            }
+            mapCursor.toTop();
+            while (mapCursor.hasNext()) {
+                final MapValue value = mapRecord.getValue();
+                final long ordinal = value.getLong(ordinalSlot);
+                if (ordinal < 0) {
                     continue;
                 }
-                for (int i = 0, n = argColumns.length; i < n; i++) {
-                    final int slot = i * SLOTS;
-                    if (!isMin[i] || argKinds[i] > ARG_FLOAT || !isAmbiguous(value.getDouble(slot), value.getDouble(slot + 1))) {
-                        continue;
-                    }
-                    final double d = argKinds[i] == ARG_FLOAT ? record.getFloat(argColumns[i]) : record.getDouble(argColumns[i]);
-                    if (!Numbers.isFinite(d)) {
-                        continue;
-                    }
-                    // the window's first pass: the first value, then a value the tolerant
-                    // comparison finds smaller
-                    final double scanMin = value.getDouble(slot + 2);
-                    if (Double.isNaN(scanMin) || Numbers.compare(d, scanMin) < 0) {
-                        value.putDouble(slot + 2, d);
+                for (int t = 0; t < tieWindows.length; t++) {
+                    final int slot = windowSlots[tieWindows[t]];
+                    if (isAmbiguous(value.getDouble(slot), value.getDouble(slot + 1))) {
+                        value.putDouble(slot, Unsafe.getDouble(replayAddr + (ordinal * tieWindows.length + t) * Double.BYTES));
+                        // settled: the next lookups read the scan-order value
+                        value.putDouble(slot + 1, Double.NaN);
                     }
                 }
             }
-        }
-        mapCursor.toTop();
-        while (mapCursor.hasNext()) {
-            final MapValue value = mapRecord.getValue();
-            for (int i = 0, n = argColumns.length; i < n; i++) {
-                final int slot = i * SLOTS;
-                if (isMin[i] && argKinds[i] <= ARG_FLOAT && isAmbiguous(value.getDouble(slot), value.getDouble(slot + 1))) {
-                    value.putDouble(slot, value.getDouble(slot + 2));
-                    // settled: the next lookups read the scan-order value
-                    value.putDouble(slot + 1, Double.NaN);
-                }
-            }
+        } finally {
+            Unsafe.free(replayAddr, replaySize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
         }
     }
 
@@ -767,28 +994,41 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         } catch (Throwable th) {
             failure = th;
         }
-        // the filter factory owns the base and the lookup filters
+        // the filter factory owns the snapshot, so the base, and the lookup filters
         failure = Misc.freeBestEffort(failure, filterFactory);
         failure = Misc.freeBestEffort(failure, frameSequence);
         failure = Misc.freeBestEffort(failure, lookupMap);
+        failure = Misc.freeBestEffort(failure, replayRecord);
         CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
-     * Phase one's state: a map, a key sink and a frame memory pool per slot. The owner's map is the
+     * The state of the passes over the base's frames: a map, a key sink, a frame memory pool, a
+     * probe view of the lookup map and a list of collected values per slot. The owner's map is the
      * factory's lookup map, which outlives the phase; the workers' maps are freed once merged.
      */
     private class Atom implements StatefulAtom, PerWorkerLockOwner {
         private final IntHashSet aggregateColumns;
         private final AsyncWindowMinMaxFilterRecordCursorFactory factory = AsyncWindowMinMaxFilterRecordCursorFactory.this;
+        // a replay's frame index -> the slot and offset of the frame's entries, see foldCollected()
+        private final LongList frameOffsets = new LongList();
+        private final IntList frameSlots = new IntList();
         private final PerWorkerLocks locks;
+        private final DirectLongList ownerCollected;
         private final OrderedMap ownerMap;
         private final PageFrameMemoryPool ownerPool;
         private final RecordSink ownerSink;
+        private final OrderedMap.ProbeView ownerView = new OrderedMap.ProbeView();
+        private final ObjList<DirectLongList> workerCollected;
         private final ObjList<OrderedMap> workerMaps;
         private final ObjList<PageFrameMemoryPool> workerPools;
         private final ObjList<RecordSink> workerSinks;
+        private final ObjList<OrderedMap.ProbeView> workerViews;
+        private volatile boolean isCollectOverflow;
+        private boolean isBackward;
+        private long maxCollectedLongs;
         private MemoryTracker memoryTracker;
+        private int mode;
 
         private Atom(
                 CairoConfiguration configuration,
@@ -806,6 +1046,9 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             this.workerMaps = new ObjList<>(workerCount);
             this.workerPools = new ObjList<>(workerCount);
             this.workerSinks = new ObjList<>(workerCount);
+            this.workerViews = new ObjList<>(workerCount);
+            this.workerCollected = new ObjList<>(workerCount);
+            this.ownerCollected = new DirectLongList(256, MemoryTag.NATIVE_DEFAULT, true);
             try {
                 this.locks = new PerWorkerLocks(configuration, workerCount);
                 this.ownerPool = new PageFrameMemoryPool(configuration);
@@ -814,6 +1057,8 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                     workerMaps.add(newMap(configuration, keyTypes, valueTypes));
                     workerPools.add(new PageFrameMemoryPool(configuration));
                     workerSinks.add(newKeySink(keySinkClass, baseMetadata, keyColumns));
+                    workerViews.add(new OrderedMap.ProbeView());
+                    workerCollected.add(new DirectLongList(256, MemoryTag.NATIVE_DEFAULT, true));
                 }
             } catch (Throwable th) {
                 close();
@@ -826,6 +1071,12 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             Misc.freeObjListAndKeepObjects(workerMaps);
             Misc.free(ownerPool);
             Misc.freeObjListAndKeepObjects(workerPools);
+            Misc.free(ownerView);
+            Misc.freeObjListAndKeepObjects(workerViews);
+            Misc.free(ownerCollected);
+            Misc.freeObjListAndKeepObjects(workerCollected);
+            frameSlots.clear();
+            frameOffsets.clear();
             memoryTracker = null;
         }
 
@@ -842,12 +1093,18 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             memoryTracker = executionContext.getMemoryTracker();
-            for (int i = 0, n = workerMaps.size(); i < n; i++) {
-                final OrderedMap map = workerMaps.getQuick(i);
-                map.close();
-                map.setMemoryTracker(memoryTracker);
-                map.reopen();
+            if (mode == MODE_AGGREGATE) {
+                for (int i = 0, n = workerMaps.size(); i < n; i++) {
+                    final OrderedMap map = workerMaps.getQuick(i);
+                    map.close();
+                    map.setMemoryTracker(memoryTracker);
+                    map.reopen();
+                }
             }
+        }
+
+        DirectLongList getCollected(int slotId) {
+            return slotId == -1 ? ownerCollected : workerCollected.getQuick(slotId);
         }
 
         OrderedMap getMap(int slotId) {
@@ -858,8 +1115,22 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             return slotId == -1 ? ownerPool : workerPools.getQuick(slotId);
         }
 
+        OrderedMap.ProbeView getProbeView(int slotId) {
+            return slotId == -1 ? ownerView : workerViews.getQuick(slotId);
+        }
+
         RecordSink getSink(int slotId) {
             return slotId == -1 ? ownerSink : workerSinks.getQuick(slotId);
+        }
+
+        // binds the slots' probe views to the frozen lookup map and empties their lists
+        void initCollect(OrderedMap lookupMap, long maxCollectedLongs) {
+            this.maxCollectedLongs = maxCollectedLongs;
+            isCollectOverflow = false;
+            bindCollect(ownerView, ownerCollected, lookupMap);
+            for (int i = 0, n = workerViews.size(); i < n; i++) {
+                bindCollect(workerViews.getQuick(i), workerCollected.getQuick(i), lookupMap);
+            }
         }
 
         void initPools(UnorderedPageFrameSequence<Atom> frameSequence) {
@@ -883,6 +1154,223 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             if (slotId != -1) {
                 locks.releaseSlot(slotId);
             }
+        }
+
+        private void bindCollect(OrderedMap.ProbeView view, DirectLongList list, OrderedMap lookupMap) {
+            view.setMemoryTracker(memoryTracker);
+            view.of(lookupMap);
+            list.setMemoryTracker(memoryTracker);
+            list.reopen();
+            list.clear();
+        }
+    }
+
+    /**
+     * The base as every pass reads it: through the one page frame cursor {@link #open} takes, which
+     * each pass rewinds and none closes. The table's version stays the one the open saw until
+     * {@link #release}. Owns the base.
+     */
+    private static class SnapshotBase extends AbstractRecordCursorFactory {
+        private final RecordCursorFactory base;
+        private final SharedFrameCursor sharedCursor = new SharedFrameCursor();
+        private PageFrameCursor frameCursor;
+        private int order;
+
+        private SnapshotBase(RecordCursorFactory base) {
+            super(base.getMetadata());
+            this.base = base;
+        }
+
+        @Override
+        public void changePageFrameSizes(int minRows, int maxRows) {
+            base.changePageFrameSizes(minRows, maxRows);
+        }
+
+        @Override
+        public boolean followedOrderByAdvice() {
+            return base.followedOrderByAdvice();
+        }
+
+        @Override
+        public RecordCursorFactory getBaseFactory() {
+            return base;
+        }
+
+        @Override
+        public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) {
+            if (frameCursor == null || order != this.order) {
+                throw CairoException.critical(0).put("no snapshot is open [order=").put(order).put(']');
+            }
+            frameCursor.toTop();
+            sharedCursor.of(frameCursor);
+            return sharedCursor;
+        }
+
+        @Override
+        public int getPageFrameScanDirection() {
+            return base.getPageFrameScanDirection();
+        }
+
+        @Override
+        public int getScanDirection() {
+            return base.getScanDirection();
+        }
+
+        @Override
+        public TableToken getTableToken() {
+            return base.getTableToken();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return base.isNonDeterministic();
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return base.isStableWithinExecution();
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return base.recordCursorSupportsRandomAccess();
+        }
+
+        @Override
+        public boolean supportsPageFrameCursor() {
+            return true;
+        }
+
+        @Override
+        public boolean supportsUpdateRowId(TableToken tableToken) {
+            return base.supportsUpdateRowId(tableToken);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            base.toPlan(sink);
+        }
+
+        @Override
+        public boolean usesIndex() {
+            return base.usesIndex();
+        }
+
+        void open(SqlExecutionContext executionContext, int order) throws SqlException {
+            assert frameCursor == null;
+            frameCursor = base.getPageFrameCursor(executionContext, order);
+            this.order = order;
+        }
+
+        void release(@Nullable Throwable th) {
+            final PageFrameCursor frameCursor = this.frameCursor;
+            this.frameCursor = null;
+            sharedCursor.of(null);
+            if (th != null) {
+                Misc.free(frameCursor, th);
+            } else {
+                Misc.free(frameCursor);
+            }
+        }
+
+        @Override
+        protected void _close() {
+            try {
+                release(null);
+            } finally {
+                Misc.free(base);
+            }
+        }
+    }
+
+    /**
+     * A pass's view of the snapshot's page frame cursor: closing it leaves the cursor open.
+     */
+    private static class SharedFrameCursor implements PageFrameCursor {
+        private PageFrameCursor delegate;
+
+        @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            delegate.calculateSize(counter);
+        }
+
+        @Override
+        public void close() {
+            // the snapshot closes the cursor
+        }
+
+        @Override
+        public ColumnMapping getColumnMapping() {
+            return delegate.getColumnMapping();
+        }
+
+        @Override
+        public long getRemainingRowsInInterval() {
+            return delegate.getRemainingRowsInInterval();
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return delegate.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasActivePushdownFilter() {
+            return delegate.hasActivePushdownFilter();
+        }
+
+        @Override
+        public boolean isExternal() {
+            return delegate.isExternal();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return delegate.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public @Nullable PageFrame next(long skipTarget) {
+            return delegate.next(skipTarget);
+        }
+
+        @Override
+        public void releaseOpenPartitions() {
+            delegate.releaseOpenPartitions();
+        }
+
+        @Override
+        public void resumeTimer() {
+            delegate.resumeTimer();
+        }
+
+        @Override
+        public void setScanProfile(ReaderScanProfile profile) {
+            delegate.setScanProfile(profile);
+        }
+
+        @Override
+        public long size() {
+            return delegate.size();
+        }
+
+        @Override
+        public boolean supportsSizeCalculation() {
+            return delegate.supportsSizeCalculation();
+        }
+
+        @Override
+        public void suspendTimer() {
+            delegate.suspendTimer();
+        }
+
+        @Override
+        public void toTop() {
+            delegate.toTop();
+        }
+
+        void of(PageFrameCursor delegate) {
+            this.delegate = delegate;
         }
     }
 
@@ -922,7 +1410,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 }
             }
             final MapValue value = find();
-            return value != null ? value.getDouble(col * SLOTS) : Double.NaN;
+            return value != null ? value.getDouble(windowSlots[col]) : Double.NaN;
         }
 
         @Override
@@ -934,7 +1422,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 }
             }
             final MapValue value = find();
-            return value != null ? value.getLong(col * SLOTS) : Numbers.LONG_NULL;
+            return value != null ? value.getLong(windowSlots[col]) : Numbers.LONG_NULL;
         }
 
         // The row's slot of the dense lookup, or -1 when a key lies outside it.
@@ -990,7 +1478,6 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 Function inner,
                 boolean ownsInner,
                 Class<RecordSink> keySinkClass,
-                ArrayColumnTypes keyTypes,
                 IntList keyColumns
         ) {
             this.factory = factory;
@@ -1096,7 +1583,6 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         private final LookupRecord lookupB;
         private final JoinRecord joinA;
         private final JoinRecord joinB;
-        private final RecordSink ownerSink;
         private final SelectedRecord recordA;
         private final SelectedRecord recordB;
         private RecordCursor baseCursor;
@@ -1104,9 +1590,8 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         private boolean isOpen;
         private MemoryTracker memoryTracker;
 
-        private MinMaxCursor(Class<RecordSink> keySinkClass, ArrayColumnTypes keyTypes, IntList keyColumns, int windowCount) {
+        private MinMaxCursor(Class<RecordSink> keySinkClass, IntList keyColumns) {
             final RecordMetadata baseMetadata = base.getMetadata();
-            this.ownerSink = newKeySink(keySinkClass, baseMetadata, keyColumns);
             this.lookupA = new LookupRecord(newKeySink(keySinkClass, baseMetadata, keyColumns));
             this.lookupB = new LookupRecord(newKeySink(keySinkClass, baseMetadata, keyColumns));
             this.joinA = new JoinRecord(baseColumnCount);
@@ -1133,7 +1618,12 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                     baseRecordB = null;
                     lookupA.view.close();
                     lookupB.view.close();
-                    releaseLookup();
+                    try {
+                        releaseLookup();
+                    } finally {
+                        // the filter's frames are gone with its cursor
+                        snapshotBase.release(null);
+                    }
                 }
             }
         }

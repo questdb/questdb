@@ -27,21 +27,36 @@ package io.questdb.test.griffin.engine.window;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.window.AsyncWindowMinMaxFilterRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * {@code WHERE x = min|max(x) OVER (PARTITION BY k...)} plans as a parallel aggregation of the
@@ -55,12 +70,6 @@ import org.junit.Test;
  */
 public class WindowMinMaxFilterTest extends AbstractCairoTest {
     private static final String C = "ts, ex, sym, v, size, price, l, d, tt, x";
-
-    @Override
-    public void tearDown() throws Exception {
-        AsyncWindowMinMaxFilterRecordCursorFactory.DEBUG_MAX_DENSE_SLOTS = -1;
-        super.tearDown();
-    }
 
     @Override
     public void setUp() {
@@ -106,17 +115,17 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createT(engine, sqlExecutionContext, 5_000);
             // SYMBOL keys look up a dense array; a zero slot budget sends them to the map
-            for (long budget : new long[]{-1, 0, 50}) {
-                AsyncWindowMinMaxFilterRecordCursorFactory.DEBUG_MAX_DENSE_SLOTS = budget;
-                for (String query : new String[]{taq56(), taq59(), taq60(), taq70(),
-                        "select " + C + ", mn, mx from (select " + C + ", min(tt) over (partition by ex, sym) mn, max(l) over (partition by ex, sym) mx from t) where tt = mn or l = mx"}) {
-                    assertSameAsSerial(query, true);
+            for (String query : new String[]{taq56(), taq59(), taq60(), taq70(),
+                    "select " + C + ", mn, mx from (select " + C + ", min(tt) over (partition by ex, sym) mn, max(l) over (partition by ex, sym) mx from t) where tt = mn or l = mx"}) {
+                final String expected = serial(engine, sqlExecutionContext, query);
+                for (long budget : new long[]{-1, 0, 50}) {
                     sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
                     try (RecordCursorFactory factory = select(query)) {
                         final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
                         Assert.assertNotNull(minMax);
+                        minMax.setMaxDenseSlots(budget);
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            print(cursor, factory);
+                            TestUtils.assertEquals(query + ", budget " + budget, expected, print(cursor, factory));
                         }
                         // ex has 3 symbols and NULL, sym 40: 4 x 41 slots
                         final boolean dense = budget < 0 || (budget == 50 && !query.contains("partition by ex, sym"));
@@ -179,6 +188,31 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                                             Frame forward scan on: t
                             """
             );
+        });
+    }
+
+    @Test
+    public void testFilterThatFailsToCompileFreesTheWindow() throws Exception {
+        // The shape qualifies, so the rewrite compiles the filter, which fails: the window, and the
+        // base it owns, must be freed all the same. alloc_ts() makes a leak observable: the base's
+        // interval holds it, and it holds native memory.
+        assertMemoryLeak(() -> {
+            createT(engine, sqlExecutionContext, 100);
+            final String window = "(select " + C + ", min(price) over (partition by sym) mn from t where ts > alloc_ts('1970-01-01T00:00:00.000000Z'::timestamp))";
+            sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+            // the base qualifies
+            try (RecordCursorFactory factory = select("select " + C + " from " + window + " where price = mn")) {
+                Assert.assertNotNull(find(factory));
+            }
+            for (boolean on : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(on);
+                try {
+                    select("select " + C + " from " + window + " where price = mn and mn like 'x%'").close();
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "like");
+                }
+            }
         });
     }
 
@@ -265,9 +299,11 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                     Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN, 7 + 0.5e-10,
                     7, 7 + 0.5e-10, Double.NEGATIVE_INFINITY, 9,
                     // F: zeroes only, the negative one first
-                    -0.0, 0.0, -0.0
+                    -0.0, 0.0, -0.0,
+                    // G: two values, the larger first: only scan order picks it, either way round
+                    3 + 0.5e-10, 3
             };
-            final String[] ks = {"A", "A", "A", "A", "B", "B", "B", "B", "C", "C", "C", "C", "D", "D", "D", "D", "E", "E", "E", "E", "E", "E", "E", "E", "F", "F", "F"};
+            final String[] ks = {"A", "A", "A", "A", "B", "B", "B", "B", "C", "C", "C", "C", "D", "D", "D", "D", "E", "E", "E", "E", "E", "E", "E", "E", "F", "F", "F", "G", "G"};
             // bind variables keep every value exact: a cast of 'Infinity' or an overflow reads NULL
             for (int i = 0; i < ps.length; i++) {
                 bindVariableService.clear();
@@ -294,9 +330,22 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         print(cursor, factory);
                     }
-                    // A, B, C, E and F
+                    // A, B, C, E, F and G
                     Assert.assertEquals(1, minMax.getReplayRunCount());
-                    Assert.assertEquals(5, minMax.getReplayedKeyCount());
+                    Assert.assertEquals(6, minMax.getReplayedKeyCount());
+                    Assert.assertEquals(0, minMax.getReplayFallbackCount());
+                }
+                // past the collection budget, the query's thread folds the frames itself
+                final String expected = serial(engine, sqlExecutionContext, q);
+                sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+                try (RecordCursorFactory factory = select(q)) {
+                    final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                    Assert.assertNotNull(minMax);
+                    minMax.setMaxReplayLongs(4);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertEquals(q, expected, print(cursor, factory));
+                    }
+                    Assert.assertEquals(1, minMax.getReplayFallbackCount());
                 }
             }
             // max never replays: it orders by Double.compare, which has no tolerance
@@ -358,6 +407,9 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                     "when x % 7 = 1 then 3.0 + x " +
                     "else 1.0 + (4 - (x / 700) % 5) * 4e-11 + (x % 7) end p, x " +
                     "from long_sequence(20000)) timestamp(ts) partition by day", ctx);
+            // Z: two values in frames far apart, the larger first, so that only the frames' scan
+            // order picks the window's value
+            engine.execute("insert into nt values (5, 'Z', 2.00000000005, 0), (199999999995, 'Z', 2.0, 20001)", ctx);
             final String query = "select ts, k, p, x, mn from (select ts, k, p, x, min(p) over (partition by k) mn from nt) where p = mn";
             final String expected = serial(engine, ctx, query);
             Assert.assertTrue(expected.length() > 100);
@@ -369,9 +421,20 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(ctx)) {
                         TestUtils.assertEquals(query, expected, print(cursor, factory));
                     }
-                    // keys 0 and 2..6
-                    Assert.assertEquals(6, minMax.getReplayedKeyCount());
+                    // keys 0, 2..6 and Z
+                    Assert.assertEquals(7, minMax.getReplayedKeyCount());
+                    Assert.assertEquals(0, minMax.getReplayFallbackCount());
                 }
+            }
+            // past the collection budget, the query's thread folds the frames itself
+            try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                Assert.assertNotNull(minMax);
+                minMax.setMaxReplayLongs(100);
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertEquals(query, expected, print(cursor, factory));
+                }
+                Assert.assertEquals(1, minMax.getReplayFallbackCount());
             }
         }));
     }
@@ -404,6 +467,64 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
             assertSameAsSerial(taq59(), true);
             assertSameAsSerial(taq60(), true);
             assertSameAsSerial(taq70() + " limit -5", true);
+        });
+    }
+
+    @Test
+    public void testReadParquetBase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 1000000) ts, rnd_symbol('A', 'B', 'C', null) k," +
+                    " case when x % 50 = 0 then 0.0 when x % 50 = 1 then -0.0 when x % 31 = 0 then null else (x * 7 % 13)::double end p," +
+                    " x from long_sequence(3000))");
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+            inputRoot = root;
+            final String w = "(select ts, k, p, x, min(p) over (partition by k) mn, max(p) over (partition by k) mx from read_parquet('x.parquet'))";
+            // -0.0 and 0.0 are near ties: the minimum replays over the file's frames
+            assertSameAsSerial("select ts, k, p, x, mn from " + w + " where p = mn", true);
+            assertSameAsSerial("select ts, k, p, x, mx from " + w + " where p = mx or mx = null", true);
+            sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+            try (RecordCursorFactory factory = select("select ts, k, p, x, mn from " + w + " where p = mn")) {
+                final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                Assert.assertNotNull(minMax);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    print(cursor, factory);
+                }
+                Assert.assertEquals(1, minMax.getReplayRunCount());
+            }
+        });
+    }
+
+    @Test
+    public void testValueSlotsByNeed() throws Exception {
+        // a DOUBLE or FLOAT min keeps the next distinct value too, and the key a replay ordinal;
+        // every other window keeps its value alone
+        assertMemoryLeak(() -> {
+            createT(engine, sqlExecutionContext, 10);
+            final String[] queries = {
+                    taq56(),
+                    taq70(),
+                    "select " + C + " from (select " + C + ", max(l) over (partition by sym) mx from t) where l = mx",
+                    "select " + C + " from (select " + C + ", min(tt) over (partition by sym) mn, max(price) over (partition by sym) mx from t) where tt = mn or price = mx",
+                    "select " + C + " from (select " + C + ", min(price) over (partition by sym) mn, min(size) over (partition by sym) ms from t) where price = mn or size = ms"
+            };
+            final int[] slots = {1, 3, 1, 2, 5};
+            sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+            for (int i = 0; i < queries.length; i++) {
+                try (RecordCursorFactory factory = select(queries[i])) {
+                    final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                    Assert.assertNotNull(queries[i], minMax);
+                    Assert.assertEquals(queries[i], slots[i], minMax.getValueSlotCount());
+                }
+                assertSameAsSerial(queries[i], true);
+            }
         });
     }
 
@@ -443,6 +564,150 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testSnapshotHeldAcrossPhases() throws Exception {
+        assertOneSnapshotUnderCommit(false, false);
+    }
+
+    @Test
+    public void testSnapshotHeldAcrossPhasesWal() throws Exception {
+        assertOneSnapshotUnderCommit(true, false);
+    }
+
+    @Test
+    public void testSnapshotHeldAcrossReplay() throws Exception {
+        assertOneSnapshotUnderCommit(false, true);
+    }
+
+    @Test
+    public void testSnapshotHeldAcrossReplayWal() throws Exception {
+        assertOneSnapshotUnderCommit(true, true);
+    }
+
+    @Test
+    public void testSnapshotHeldUnderConcurrentCommitsOnWorkerPool() throws Exception {
+        // A writer thread commits batches while the rewrite runs on a pool. Every batch adds a near
+        // tie to A, so that executions replay, and a key C<n> of one row, so that the output names
+        // the last batch its snapshot holds. The output must be the serial plan's over exactly the
+        // batches up to that one.
+        assertMemoryLeak(() -> inPool((engine, ctx) -> {
+            engine.execute("create table t (ts timestamp, k symbol, p double, b int) timestamp(ts) partition by hour", ctx);
+            engine.execute("insert into t select timestamp_sequence(0, 1000) ts, 'B', x::double, 0 from long_sequence(4000)", ctx);
+            engine.execute("insert into t values (10000000, 'A', 1.0, 0), (10000001, 'A', 1.00000000006, 0), (10000002, 'C0', 7.0, 0)", ctx);
+            final String query = "select ts, k, p, b, mn from (select ts, k, p, b, min(p) over (partition by k) mn from t) where p = mn and k != 'B'";
+            final int batches = 40;
+            final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+            final CountDownLatch writerDone = new CountDownLatch(1);
+            final Thread writer = new Thread(() -> {
+                try (TableWriter w = TestUtils.getWriter(engine, "t")) {
+                    for (int n = 1; n <= batches; n++) {
+                        final long ts = 20_000_000L + n * 1000L;
+                        // the near tie first, so that scan order picks the window's value
+                        appendRow(w, ts, "A", -n + 0.6e-10, n);
+                        appendRow(w, ts + 1, "A", -n, n);
+                        appendRow(w, ts + 2, "C" + n, 7.0, n);
+                        w.commit();
+                        Os.sleep(2);
+                    }
+                } catch (Throwable th) {
+                    writerFailure.set(th);
+                } finally {
+                    writerDone.countDown();
+                }
+            });
+            writer.start();
+            int runs = 0;
+            long replays = 0;
+            final IntHashSet seenBatches = new IntHashSet();
+            try {
+                do {
+                    final String actual;
+                    final int lastBatch;
+                    ctx.setParallelWindowMinMaxRewriteEnabled(true);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                        Assert.assertNotNull(minMax);
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            actual = print(cursor, factory);
+                            lastBatch = lastBatch(cursor, factory);
+                        }
+                        replays += minMax.getReplayRunCount();
+                    }
+                    final String serial = "select ts, k, p, b, mn from (select ts, k, p, b, min(p) over (partition by k) mn from t where b <= "
+                            + lastBatch + ") where p = mn and k != 'B'";
+                    ctx.setParallelWindowMinMaxRewriteEnabled(false);
+                    final String expected;
+                    try (RecordCursorFactory factory = engine.select(serial, ctx); RecordCursor cursor = factory.getCursor(ctx)) {
+                        expected = print(cursor, factory);
+                    }
+                    TestUtils.assertEquals("snapshot of batch " + lastBatch, expected, actual);
+                    seenBatches.add(lastBatch);
+                    runs++;
+                } while (writerDone.getCount() > 0 || runs < 3);
+            } finally {
+                writer.join();
+            }
+            if (writerFailure.get() != null) {
+                throw new AssertionError(writerFailure.get());
+            }
+            // not vacuous: the queries saw several states of the table, and replayed
+            Assert.assertTrue("runs " + runs + ", batches seen " + seenBatches.size(), seenBatches.size() > 1);
+            Assert.assertTrue(replays > 0);
+        }));
+    }
+
+    @Test
+    public void testSnapshotTornAcrossPhases() throws Exception {
+        // The review's reproduction: a commit lands from inside the query, at each consultation of
+        // the circuit breaker in turn. Every snapshot of t has exactly one row of A at its minimum.
+        final StringSink torn = new StringSink();
+        for (boolean on : new boolean[]{false, true}) {
+            for (int fireAt = 1; fireAt <= 4; fireAt++) {
+                final int fa = fireAt;
+                assertMemoryLeak(() -> {
+                    execute("create table t (ts timestamp, k symbol, p double) timestamp(ts) partition by day");
+                    execute("insert into t select timestamp_sequence(0, 1000) ts, 'B', x::double from long_sequence(5000)");
+                    execute("insert into t values (10000000, 'A', 5.0), (10000001, 'A', 0.0)");
+                    final CommittingCircuitBreaker cb = new CommittingCircuitBreaker(engine, fa, () -> {
+                        try (TableWriter w = getWriter("t")) {
+                            appendRow(w, 20000000, "A", 0.0);
+                            appendRow(w, 20000001, "A", -1.0);
+                            appendRow(w, 20000002, "C", 7.0);
+                            w.commit();
+                        }
+                    });
+                    try {
+                        withCircuitBreaker(cb);
+                        sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(on);
+                        final String q = "select ts, k, p, mn from (select ts, k, p, min(p) over (partition by k) mn from t) where p = mn and k != 'B'";
+                        try (RecordCursorFactory f = select(q)) {
+                            Assert.assertEquals(on, find(f) != null);
+                            cb.arm();
+                            final String result;
+                            try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                                result = print(c, f);
+                            }
+                            int aRows = 0;
+                            for (String line : result.split("\n")) {
+                                if (line.contains("\tA\t")) {
+                                    aRows++;
+                                }
+                            }
+                            if (aRows != 1) {
+                                torn.put("rewrite=").put(on).put(" fireAt=").put(fa).put(" A rows=").put(aRows).put('\n');
+                            }
+                        }
+                    } finally {
+                        withCircuitBreaker(circuitBreaker);
+                        Misc.free(cb);
+                        execute("drop table t");
+                    }
+                });
+            }
+        }
+        TestUtils.assertEquals("", torn);
     }
 
     @Test
@@ -502,6 +767,96 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                         " from long_sequence(" + rows + ")) timestamp(ts) partition by day",
                 ctx
         );
+    }
+
+    private static void appendRow(TableWriterAPI w, long ts, String k, double p) {
+        final TableWriter.Row r = w.newRow(ts);
+        r.putSym(1, k);
+        r.putDouble(2, p);
+        r.append();
+    }
+
+    private static void appendRow(TableWriterAPI w, long ts, String k, double p, int b) {
+        final TableWriter.Row r = w.newRow(ts);
+        r.putSym(1, k);
+        r.putDouble(2, p);
+        r.putInt(3, b);
+        r.append();
+    }
+
+    // the highest batch number in the output
+    private static int lastBatch(RecordCursor cursor, RecordCursorFactory factory) {
+        final int column = factory.getMetadata().getColumnIndex("b");
+        cursor.toTop();
+        int last = -1;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            last = Math.max(last, record.getInt(column));
+        }
+        return last;
+    }
+
+    private static void withCircuitBreaker(SqlExecutionCircuitBreaker cb) {
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(
+                sqlExecutionContext.getSecurityContext(),
+                sqlExecutionContext.getBindVariableService(),
+                sqlExecutionContext.getRandom(),
+                sqlExecutionContext.getRequestFd(),
+                cb
+        );
+    }
+
+    /**
+     * Commits to the table from inside the query: at the {@code fireAt}-th consultation of the
+     * circuit breaker after {@link #arm()}.
+     */
+    private static class CommittingCircuitBreaker extends NetworkSqlExecutionCircuitBreaker {
+        private final AtomicInteger calls = new AtomicInteger(Integer.MIN_VALUE);
+        private final Commit commit;
+        private final int fireAt;
+        private volatile boolean fired;
+
+        CommittingCircuitBreaker(CairoEngine engine, int fireAt, Commit commit) {
+            super(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
+            this.fireAt = fireAt;
+            this.commit = commit;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedNoThrottle() {
+            super.statefulThrowExceptionIfTrippedNoThrottle();
+            tick();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+            tick();
+        }
+
+        void arm() {
+            calls.set(0);
+        }
+
+        boolean hasFired() {
+            return fired;
+        }
+
+        private void tick() {
+            if (calls.incrementAndGet() == fireAt) {
+                try {
+                    commit.run();
+                    fired = true;
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface Commit {
+        void run() throws Exception;
     }
 
     private static AsyncWindowMinMaxFilterRecordCursorFactory find(RecordCursorFactory factory) {
@@ -618,6 +973,88 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                 Misc.free(circuitBreaker);
             }
         }));
+    }
+
+    // Commits from inside the query at each consultation of the circuit breaker in turn. The output
+    // must be the serial plan's over the table either before or after the commit, never a mix.
+    private void assertOneSnapshotUnderCommit(boolean wal, boolean nearTies) throws Exception {
+        final String query = "select ts, k, p, mn from (select ts, k, p, min(p) over (partition by k) mn from t) where p = mn and k != 'B'";
+        final int[] midQueryCommits = {0};
+        int fireAt = 1;
+        for (; fireAt <= 64; fireAt++) {
+            final int fa = fireAt;
+            final boolean[] firedRef = {false};
+            assertMemoryLeak(() -> {
+                execute("create table t (ts timestamp, k symbol, p double) timestamp(ts) partition by day" + (wal ? " wal" : " bypass wal"));
+                execute("insert into t select timestamp_sequence(0, 1000) ts, 'B', x::double from long_sequence(5000)");
+                if (nearTies) {
+                    // A's window value depends on scan order, so its partition replays
+                    execute("insert into t values (10000000, 'A', 1.00000000012), (10000001, 'A', 1.00000000006), (10000002, 'A', 1.0)");
+                } else {
+                    execute("insert into t values (10000000, 'A', 5.0), (10000001, 'A', 0.0)");
+                }
+                if (wal) {
+                    drainWalQueue();
+                }
+                final String before = serialOf(query);
+                final CommittingCircuitBreaker cb = new CommittingCircuitBreaker(engine, fa, () -> {
+                    try (TableWriterAPI w = engine.getTableWriterAPI("t", "test")) {
+                        if (nearTies) {
+                            appendRow(w, 20000000, "A", -0.99999999994);
+                            appendRow(w, 20000001, "A", -1.0);
+                        } else {
+                            appendRow(w, 20000000, "A", 0.0);
+                            appendRow(w, 20000001, "A", -1.0);
+                        }
+                        appendRow(w, 20000002, "C", 7.0);
+                        w.commit();
+                    }
+                    if (wal) {
+                        drainWalQueue();
+                    }
+                });
+                final String actual;
+                try {
+                    withCircuitBreaker(cb);
+                    sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+                    try (RecordCursorFactory factory = select(query)) {
+                        final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                        Assert.assertNotNull(minMax);
+                        cb.arm();
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            actual = print(cursor, factory);
+                        }
+                        if (nearTies) {
+                            Assert.assertEquals(1, minMax.getReplayRunCount());
+                        }
+                    }
+                } finally {
+                    withCircuitBreaker(circuitBreaker);
+                    Misc.free(cb);
+                }
+                firedRef[0] = cb.hasFired();
+                final String after = serialOf(query);
+                if (!actual.equals(before) && !actual.equals(after)) {
+                    Assert.fail("commit at breaker call " + fa + ": the output matches no snapshot\nbefore:\n" + before + "after:\n" + after + "actual:\n" + actual);
+                }
+                if (cb.hasFired() && actual.equals(before) && !before.equals(after)) {
+                    midQueryCommits[0]++;
+                }
+                execute("drop table t");
+            });
+            if (!firedRef[0]) {
+                break;
+            }
+        }
+        // the commit landed while the query ran, on more than one call
+        Assert.assertTrue("mid-query commits: " + midQueryCommits[0] + " of " + (fireAt - 1), midQueryCommits[0] > 1);
+    }
+
+    private String serialOf(String query) throws Exception {
+        sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(false);
+        try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            return print(cursor, factory);
+        }
     }
 
     private void assertPlan(String query, String expected) throws Exception {
