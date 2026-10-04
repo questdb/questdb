@@ -82,12 +82,70 @@ public final class PhysicalDescriptor {
     }
 
     /**
+     * The accessor family a setup-time switch that computes or decides NULL may dispatch on: the
+     * type's accessor when the type is like its family's namesake
+     * ({@link #isLikeFamilyNamesake(TypeDriver)}), which every existing type is. Any other type
+     * would take the namesake's range check and NULL sentinel in the family's arm, so this throws
+     * instead, naming the type and the site. Asked once per column at setup, never per row.
+     *
+     * @param site the label of the asking site, as the refusal names it
+     */
+    public static Accessor familyArmOf(TypeDriver driver, CharSequence site) {
+        if (!isLikeFamilyNamesake(driver)) {
+            throw noFamilyArm(driver.getTypeName(), site);
+        }
+        return driver.getAccessor();
+    }
+
+    /**
+     * The opcode form of {@link #familyArmOf(TypeDriver, CharSequence)} for the per-row switches
+     * that dispatch on the getter: the accessor's opcode for a stored type like its family's
+     * namesake, -1 for a pseudo type, for VARCHAR_SLICE and for a type with no family arm, so
+     * those switches' default arms fire. It reads a table, as {@link #accessorOpcodeOf(int)}
+     * does.
+     */
+    public static short familyArmOpcodeOf(int columnType) {
+        final short tag = ColumnType.tagOf(columnType);
+        return tag >= 0 && tag <= ColumnType.MAX_TAG ? Opcodes.FAMILY_ARM[tag] : -1;
+    }
+
+    /**
+     * Whether a stored column type reads through an accessor family but has no family arm. A
+     * default arm of a switch keyed on {@link #familyArmOpcodeOf(int)} that an existing type can
+     * also reach tests this first, so it raises {@link #noFamilyArm(CharSequence, CharSequence)}
+     * only for such a type and keeps its own text for every other.
+     */
+    public static boolean isFamilyArmMissing(int columnType) {
+        return accessorOpcodeOf(columnType) != -1 && familyArmOpcodeOf(columnType) == -1;
+    }
+
+    /**
+     * Whether a type computes and represents NULL as its accessor family's namesake does: the
+     * same arithmetic tier and the same NULL policy. Every existing type is its own namesake.
+     * An unsigned or a never-null type on INT's accessor is not.
+     */
+    public static boolean isLikeFamilyNamesake(TypeDriver driver) {
+        final TypeDriver namesake = ColumnType.getTypeDriver(driver.getAccessor().opcode());
+        return driver.getArithmetic() == namesake.getArithmetic()
+                && driver.getNullPolicy() == namesake.getNullPolicy();
+    }
+
+    /**
      * Whether values of this type order as the namesake of its accessor family does: the same
      * arithmetic tier. Code that reads a value through the family's getter and then compares,
      * sorts or ranges over it may take the family's arm only then.
      */
     public static boolean isOrderedLikeFamily(TypeDriver driver) {
         return driver.getArithmetic() == ColumnType.getTypeDriver(driver.getAccessor().opcode()).getArithmetic();
+    }
+
+    /**
+     * The refusal a site raises for a type that has no family arm there, naming the type, the
+     * site and the decision its author has to make.
+     */
+    public static CairoException noFamilyArm(CharSequence typeName, CharSequence site) {
+        return CairoException.critical(0).put("no family arm for ").put(typeName).put(" at ").put(site)
+                .put(": add the arm or declare the type like its namesake");
     }
 
     /**
@@ -213,14 +271,19 @@ public final class PhysicalDescriptor {
     /**
      * The accessor opcodes by tag, filled from the type definitions on first use and never from a
      * static initialiser the definitions reach (the class-init order of phase 1).
+     * {@link #FAMILY_ARM} holds the same opcode for a type like its family's namesake and -1
+     * otherwise, so it equals {@link #ACCESSOR} cell by cell while every type is its own
+     * namesake.
      */
     private static final class Opcodes {
         static final short[] ACCESSOR = new short[ColumnType.MAX_TAG + 1];
+        static final short[] FAMILY_ARM = new short[ColumnType.MAX_TAG + 1];
 
         static {
             for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-                final Accessor accessor = accessorOf(tag);
-                ACCESSOR[tag] = accessor != null ? accessor.opcode() : -1;
+                final TypeDriver driver = storedTypeDriverOf(tag);
+                ACCESSOR[tag] = driver != null ? driver.getAccessor().opcode() : -1;
+                FAMILY_ARM[tag] = driver != null && isLikeFamilyNamesake(driver) ? driver.getAccessor().opcode() : -1;
             }
         }
     }

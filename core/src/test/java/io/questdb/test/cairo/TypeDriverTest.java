@@ -110,6 +110,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.types.TypeConformanceTypes;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -238,6 +239,63 @@ public class TypeDriverTest {
             seen.add(driver);
         }
         Assert.assertEquals(ColumnType.MAX_TAG + 1 - PSEUDO_TAGS.size() - 1, seen.size());
+    }
+
+    @Test
+    public void testEveryTypeIsItsFamilyNamesake() {
+        // the family-arm guard refuses no existing type: each is its own accessor family's
+        // namesake, and the family-arm opcode equals the accessor opcode for every tag; a type
+        // registered later is never its family's namesake, and the conformance kit checks it
+        int storedTypes = 0;
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            final ColumnTypeTag enumTag = ColumnTypeTag.of(tag);
+            if (!PSEUDO_TAGS.contains(enumTag) && !TypeConformanceTypes.isExistingTag(enumTag)) {
+                continue;
+            }
+            Assert.assertEquals(enumTag.name(), PhysicalDescriptor.accessorOpcodeOf(tag), PhysicalDescriptor.familyArmOpcodeOf(tag));
+            Assert.assertFalse(enumTag.name(), PhysicalDescriptor.isFamilyArmMissing(tag));
+            final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(tag);
+            if (driver == null) {
+                // pseudo tags and VARCHAR_SLICE have no stored type driver, so no family arm
+                Assert.assertEquals(enumTag.name(), -1, PhysicalDescriptor.familyArmOpcodeOf(tag));
+                continue;
+            }
+            Assert.assertSame(enumTag.name(), driver, ColumnType.getTypeDriver(driver.getAccessor().opcode()));
+            Assert.assertTrue(enumTag.name(), PhysicalDescriptor.isLikeFamilyNamesake(driver));
+            Assert.assertSame(enumTag.name(), driver.getAccessor(), PhysicalDescriptor.familyArmOf(driver, "test"));
+            Assert.assertEquals(enumTag.name(), driver.getAccessor().opcode(), PhysicalDescriptor.familyArmOpcodeOf(tag));
+            storedTypes++;
+        }
+        Assert.assertEquals(30, storedTypes);
+        // an encoded type reads its tag's cell
+        final int[] encodedTypes = {
+                ColumnType.getGeoHashTypeWithBits(5),
+                ColumnType.getGeoHashTypeWithBits(60),
+                ColumnType.getDecimalType(18, 3),
+                ColumnType.encodeArrayType(ColumnType.DOUBLE, 2),
+                ColumnType.TIMESTAMP_NANO,
+                ColumnType.INTERVAL_TIMESTAMP_NANO
+        };
+        for (int type : encodedTypes) {
+            Assert.assertEquals(ColumnType.nameOf(type), PhysicalDescriptor.accessorOpcodeOf(type), PhysicalDescriptor.familyArmOpcodeOf(type));
+            Assert.assertNotEquals(ColumnType.nameOf(type), -1, PhysicalDescriptor.familyArmOpcodeOf(type));
+        }
+    }
+
+    @Test
+    public void testFamilyArmRefusesNeverNullLookAlike() {
+        assertNoFamilyArm(
+                LookAlikeTypeDriver.neverNullInt(),
+                "no family arm for NN_INT at SAMPLE BY FILL(value): add the arm or declare the type like its namesake"
+        );
+    }
+
+    @Test
+    public void testFamilyArmRefusesUnsignedLookAlike() {
+        assertNoFamilyArm(
+                LookAlikeTypeDriver.unsignedInt(),
+                "no family arm for UINT32 at SAMPLE BY FILL(value): add the arm or declare the type like its namesake"
+        );
     }
 
     @Test
@@ -951,6 +1009,19 @@ public class TypeDriverTest {
             assertS10VarSize(rnd.nextInt(), i < 20_000);
         }
         assertS10VarSize(-1, true);
+    }
+
+    private static void assertNoFamilyArm(TypeDriver lookAlike, String expectedMessage) {
+        // the type reads through INT's accessor, where INT's arm would apply INT's range check
+        // and NULL sentinel to it
+        Assert.assertSame(PhysicalDescriptor.Accessor.INT, lookAlike.getAccessor());
+        Assert.assertFalse(PhysicalDescriptor.isLikeFamilyNamesake(lookAlike));
+        try {
+            PhysicalDescriptor.familyArmOf(lookAlike, "SAMPLE BY FILL(value)");
+            Assert.fail("no family arm expected for " + lookAlike.getTypeName());
+        } catch (CairoException e) {
+            TestUtils.assertEquals(expectedMessage, e.getFlyweightMessage());
+        }
     }
 
     private static void appendTypeFacts(StringSink sink, String label, int type) {

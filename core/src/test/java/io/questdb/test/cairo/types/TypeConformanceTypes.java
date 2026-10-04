@@ -83,6 +83,14 @@ public final class TypeConformanceTypes {
         throw new IllegalArgumentException("no conformance kit type: " + label);
     }
 
+    /**
+     * Whether a tag is one of the existing types, which the kit holds recordings for; false for
+     * a pseudo tag and for a type registered later.
+     */
+    public static boolean isExistingTag(ColumnTypeTag tag) {
+        return EXISTING_TAGS.contains(tag);
+    }
+
     private static void addExisting(EnumMap<ColumnTypeTag, Entry> byTag, ColumnTypeTag tag, String label, int columnType, String ddl) {
         final Entry entry = new Entry(label, columnType, ddl, tag, null, null, null);
         if (tag != null) {
