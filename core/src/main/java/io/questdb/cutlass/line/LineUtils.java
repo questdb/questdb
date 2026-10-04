@@ -4,6 +4,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cutlass.line.tcp.LineProtocolException;
 
 public final class LineUtils {
@@ -91,13 +92,19 @@ public final class LineUtils {
      * column's NULL. So a type that reads through an existing family takes that family's arms
      * (E3 "S16 extension" finding 4). Every family is named, so adding one makes javac stop here.
      * A type without a family (a pseudo tag, VARCHAR_SLICE) takes no arm; a NULL-typed value keeps
-     * its own kind.
+     * its own kind. A type unlike its family's namesake (site "ILP column kind") takes no arm
+     * either, since the family's parser would read its values and NULL as the namesake's: its
+     * kind is UNDEFINED, so the ingest paths raise their cast error for the column.
      */
     private static int columnKind(short code) {
-        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(code);
-        if (accessor == null) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(code);
+        if (driver == null) {
             return code == ColumnType.NULL ? ColumnType.NULL : ColumnType.UNDEFINED;
         }
+        if (!PhysicalDescriptor.isLikeFamilyNamesake(driver)) {
+            return ColumnType.UNDEFINED;
+        }
+        final PhysicalDescriptor.Accessor accessor = driver.getAccessor();
         return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
                  BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, INTERVAL -> accessor.opcode();

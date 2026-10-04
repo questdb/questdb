@@ -55,14 +55,20 @@ final class ParquetColumnTypeConverter {
      * conversion target, once per column, by the target's accessor family (F39): an arm parses the
      * text and writes the value with its family's width. Every family is named: the families with
      * a parse arm yield their opcode, the rest yield UNDEFINED, which reaches no arm. A target that
-     * reads through an existing family takes that family's arm, NULL included (F74).
+     * reads through an existing family takes that family's arm, NULL included (F74), only when it is
+     * like the family's namesake; any other target is refused here, before the caller's row loop
+     * writes any target memory: an UNDEFINED opcode would write nothing and leave the memory as it
+     * was, and the family's arm would parse and NULL-fill it as the namesake's value. Each caller
+     * frees or owns its target buffer on the throw.
      */
     private static int fixedTargetOpcode(int targetType) {
-        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(targetType);
-        if (accessor == null) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(targetType);
+        if (driver == null) {
             // the pseudo tags and VARCHAR_SLICE are no conversion target
             return ColumnType.UNDEFINED;
         }
+        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.familyArmOf(driver, "Parquet conversion");
         return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, IPv4, UUID,
                  DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> accessor.opcode();

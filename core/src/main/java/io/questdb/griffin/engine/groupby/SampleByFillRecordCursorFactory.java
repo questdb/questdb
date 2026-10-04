@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -845,10 +846,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case ColumnType.LONG256 -> value.putLong256(slot, Long256Impl.NULL_LONG256);
                     case ColumnType.DECIMAL128 -> value.putDecimal128Null(slot);
                     case ColumnType.DECIMAL256 -> value.putDecimal256Null(slot);
-                    default -> {
-                        assert false : "unsupported fixed-size FILL(PREV) source type: "
-                                + ColumnType.nameOf(fixedPrevTypeTags.getQuick(i));
-                    }
+                    // a family the slot key admits with no pre-fill arm here
+                    // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+                    default -> throw PhysicalDescriptor.noFamilyArm(
+                            ColumnType.nameOf(fixedPrevTypeTags.getQuick(i)),
+                            "SAMPLE BY FILL(PREV)"
+                    );
                 }
             }
         }

@@ -1446,7 +1446,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * The memoizing wrapper for a virtual column function of this type, or the function itself
      * for a type without one (the geohashes, BINARY, LONG128, INTERVAL and the non-column tags).
-     * A memoizer caches the value its accessor family's getter reads, so the family picks it.
+     * A memoizer caches the value its accessor family's getter reads, so the family picks it. A
+     * type unlike its family's namesake is refused: the namesake's memoizer would read its NULL
+     * the namesake's way. The caller frees the function and the base factory on the throw.
      */
     private static Function memoized(Function function) {
         final TypeDriver driver = ColumnType.findTypeDriver(function.getType());
@@ -1454,7 +1456,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (driver == null) {
             return function;
         }
-        return switch (driver.getAccessor()) {
+        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+        return switch (PhysicalDescriptor.familyArmOf(driver, "memoized virtual column")) {
             case LONG -> new LongFunctionMemoizer(function);
             case INT -> new IntFunctionMemoizer(function);
             case TIMESTAMP -> new TimestampFunctionMemoizer(function);
@@ -1723,14 +1726,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Fixed-size scalars and wide types that MapValue can put/get directly, by the accessor family
     // the cache slot reads and writes through. SYMBOL is cached as the int symbol id. UUID,
     // INTERVAL, and variable-width types fall back to the recordAt path -- MapValue lacks symmetric
-    // put APIs for those.
+    // put APIs for those. A type unlike its family's namesake is refused: the slot's pre-fill
+    // writes the namesake's NULL as "no previous row yet". The caller's catch frees what the
+    // factory holds on the throw.
     private static boolean isFixedSizePrevSlotEligible(int srcType) {
         final TypeDriver driver = ColumnType.findTypeDriver(srcType);
         // pseudo types never name a SAMPLE BY column
         if (driver == null) {
             return false;
         }
-        return switch (driver.getAccessor()) {
+        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+        return switch (PhysicalDescriptor.familyArmOf(driver, "SAMPLE BY FILL(PREV)")) {
             case BOOLEAN, BYTE, CHAR, DATE, DECIMAL128, DECIMAL16, DECIMAL256, DECIMAL32, DECIMAL64, DECIMAL8, DOUBLE,
                  FLOAT, GEOBYTE, GEOINT, GEOLONG, GEOSHORT, INT, IPv4, LONG, LONG128, LONG256, SHORT, SYMBOL,
                  TIMESTAMP -> true;
@@ -4203,8 +4209,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     needsPrevPositioning = true;
                     continue;
                 }
-                // the cache slot's per-row switches dispatch on the accessor family's opcode
-                final short srcTag = PhysicalDescriptor.accessorOpcodeOf(srcType);
+                // the cache slot's per-row switches dispatch on the family arm's opcode, which
+                // isFixedSizePrevSlotEligible has already checked the type has
+                final short srcTag = PhysicalDescriptor.familyArmOpcodeOf(srcType);
                 // Deduplicate slots per source col.
                 int slot = -1;
                 for (int j = 0, n = fixedPrevSrcCols.size(); j < n; j++) {

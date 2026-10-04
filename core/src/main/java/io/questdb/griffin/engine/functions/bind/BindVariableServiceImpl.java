@@ -127,19 +127,33 @@ public class BindVariableServiceImpl implements BindVariableService {
         if (source == null) {
             return null;
         }
+        // named variables: keys are stored without colon prefix,
+        // but getFunction() expects the colon prefix for lookup
+        ReadOnlyObjList<CharSequence> names = source.getNamedVariables();
+        StringSink nameBuf = new StringSink();
+        int count = source.getIndexedVariableCount();
+
+        // A value copies through its accessor family's getter and setter, so a type unlike its
+        // family's namesake would be copied as the namesake. Refuse it before anything is copied;
+        // the caller's error path then fails the COPY.
+        for (int i = 0; i < count; i++) {
+            checkSnapshotFamilyArm(source.getFunction(i));
+        }
+        for (int i = 0, n = names.size(); i < n; i++) {
+            nameBuf.clear();
+            nameBuf.put(':').put(names.getQuick(i));
+            checkSnapshotFamilyArm(source.getFunction(nameBuf));
+        }
+
         BindVariableServiceImpl copy = new BindVariableServiceImpl(configuration);
         Decimal256 dec = null;
 
         // indexed variables ($1, $2, ...)
-        int count = source.getIndexedVariableCount();
         for (int i = 0; i < count; i++) {
             dec = snapshotIndexedFunction(source.getFunction(i), i, copy, dec);
         }
 
-        // named variables — keys are stored without colon prefix,
-        // but getFunction() expects the colon prefix for lookup
-        ReadOnlyObjList<CharSequence> names = source.getNamedVariables();
-        StringSink nameBuf = new StringSink();
+        // named variables
         for (int i = 0, n = names.size(); i < n; i++) {
             CharSequence name = names.getQuick(i);
             nameBuf.clear();
@@ -151,6 +165,15 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
 
         return copy;
+    }
+
+    private static void checkSnapshotFamilyArm(@Nullable Function f) {
+        // pseudo types and VARCHAR_SLICE have no stored type driver and copy as they always did
+        final TypeDriver driver = f != null ? PhysicalDescriptor.storedTypeDriverOf(f.getType()) : null;
+        if (driver != null) {
+            // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+            PhysicalDescriptor.familyArmOf(driver, "COPY bind snapshot");
+        }
     }
 
     private static BinarySequence copyBinarySequence(BinarySequence src) {

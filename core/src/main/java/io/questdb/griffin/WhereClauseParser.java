@@ -33,6 +33,7 @@ import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -524,12 +525,14 @@ public final class WhereClauseParser implements Mutable {
     // the column types an equality can key a scan on, by the accessor family their values are read
     // through, as isLatestOnKeyType; another type is not a key, which loses the optimisation only
     private static boolean isKeyColumnType(int columnType) {
-        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
-        // pseudo types and VARCHAR_SLICE never name a key column
-        if (accessor == null) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        // pseudo types and VARCHAR_SLICE never name a key column; a type unlike its family's
+        // namesake (site "WHERE key column") is not a key either, so its predicate stays a
+        // filter instead of a key value parsed as the namesake's
+        if (driver == null || !PhysicalDescriptor.isLikeFamilyNamesake(driver)) {
             return false;
         }
-        return switch (accessor) {
+        return switch (driver.getAccessor()) {
             case INT, LONG, STRING, SYMBOL, VARCHAR -> true;
             case BOOLEAN, BYTE, SHORT, CHAR, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, GEOBYTE, GEOSHORT, GEOINT,
                  GEOLONG, BINARY, UUID, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,

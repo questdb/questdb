@@ -147,11 +147,17 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     groupByScalarFunctions.add(function);
                     // the endpoints are stored and interpolated as the accessor family's value
                     final TypeDriver driver = ColumnType.findTypeDriver(function.getType());
-                    final PhysicalDescriptor.Accessor accessor = driver != null ? driver.getAccessor() : null;
-                    if (accessor == null) {
+                    if (driver == null) {
                         Misc.freeObjList(groupByScalarFunctions);
                         throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
                     }
+                    // a type unlike its family's namesake would be interpolated with the namesake's NULL
+                    if (!PhysicalDescriptor.isLikeFamilyNamesake(driver)) {
+                        Misc.freeObjList(groupByScalarFunctions);
+                        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+                        throw PhysicalDescriptor.noFamilyArm(driver.getTypeName(), "SAMPLE BY FILL(LINEAR)");
+                    }
+                    final PhysicalDescriptor.Accessor accessor = driver.getAccessor();
                     switch (accessor) {
                         case BYTE -> {
                             storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);

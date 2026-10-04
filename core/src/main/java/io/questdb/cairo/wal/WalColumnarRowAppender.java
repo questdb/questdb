@@ -248,7 +248,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.BYTE -> {
                 for (int row = 0; row < rowCount; row++) {
                     cursor.advanceRow();
@@ -285,8 +285,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     dataMem.putDouble(cursor.isNull() ? Double.NaN : (cursor.getValue() ? 1d : 0d));
                 }
             }
-            default -> throw CairoException.nonCritical()
-                    .put("unsupported boolean-to-numeric target type: ").put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "unsupported boolean-to-numeric target type: ");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -532,7 +531,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         } else {
             // Expand sparse to dense, inserting null sentinels
             int valueIdx = 0;
-            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+            switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
                 case ColumnType.BYTE -> {
                     for (int row = 0; row < rowCount; row++) {
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
@@ -633,8 +632,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         }
                     }
                 }
-                default -> throw CairoException.nonCritical()
-                        .put("unsupported column type for direct copy: ").put(ColumnType.nameOf(columnType));
+                default -> throw unsupportedColumnType(columnType, "unsupported column type for direct copy: ");
             }
         }
 
@@ -765,7 +763,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32 -> {
                 for (int row = 0; row < rowCount; row++) {
                     cursor.advanceRow();
@@ -781,8 +779,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     }
                 }
             }
-            default -> throw CairoException.nonCritical()
-                    .put("unsupported small decimal type: ").put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "unsupported small decimal type: ");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -879,7 +876,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
         cursor.resetRowPosition();
         try {
-            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+            switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
                 case ColumnType.DECIMAL8 ->
                         putFloatToDecimal8Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
                 case ColumnType.DECIMAL16 ->
@@ -892,8 +889,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         putFloatToDecimal128Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
                 case ColumnType.DECIMAL256 ->
                         putFloatToDecimal256Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
-                default -> throw CairoException.nonCritical().put("unsupported decimal column type: ")
-                        .put(ColumnType.nameOf(columnType));
+                default -> throw unsupportedColumnType(columnType, "unsupported decimal column type: ");
             }
         } catch (QwpParseException e) {
             throw CairoException.schemaMismatch().put("failed to convert float column to decimal");
@@ -909,7 +905,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.BYTE -> {
                 for (int row = 0; row < rowCount; row++) {
                     cursor.advanceRow();
@@ -977,8 +973,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     }
                 }
             }
-            default -> throw CairoException.nonCritical()
-                    .put("unsupported target type: ").put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "unsupported target type: ");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -1054,7 +1049,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.GEOBYTE -> {
                 for (int row = 0; row < rowCount; row++) {
                     cursor.advanceRow();
@@ -1079,8 +1074,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     dataMem.putLong(cursor.isNull() ? GeoHashes.NULL : cursor.getGeoHash());
                 }
             }
-            default -> throw CairoException.nonCritical()
-                    .put("invalid GeoHash column type: ").put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "invalid GeoHash column type: ");
         }
 
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
@@ -1144,7 +1138,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.BYTE -> {
                 for (int row = 0; row < rowCount; row++) {
                     cursor.advanceRow();
@@ -1211,8 +1205,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     }
                 }
             }
-            default -> throw CairoException.nonCritical()
-                    .put("unsupported target type: ").put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "unsupported target type: ");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -1282,7 +1275,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.DECIMAL8 ->
                     putStringToDecimal8Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             case ColumnType.DECIMAL16 ->
@@ -1295,8 +1288,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     putStringToDecimal128Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             case ColumnType.DECIMAL256 ->
                     putStringToDecimal256Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
-            default -> throw CairoException.nonCritical().put("unsupported decimal column type: ")
-                    .put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "unsupported decimal column type: ");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -1308,7 +1300,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         int typeBits = ColumnType.getGeoHashBits(columnType);
 
         cursor.resetRowPosition();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.GEOBYTE -> {
                 for (int row = 0; row < rowCount; row++) {
                     cursor.advanceRow();
@@ -1373,8 +1365,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     }
                 }
             }
-            default -> throw CairoException.nonCritical()
-                    .put("invalid GeoHash column type: ").put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "invalid GeoHash column type: ");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -1407,7 +1398,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.BYTE -> {
                 for (int row = 0; row < rowCount; row++) {
                     cursor.advanceRow();
@@ -1515,8 +1506,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     }
                 }
             }
-            default -> throw CairoException.nonCritical()
-                    .put("unsupported target type: ").put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "unsupported target type: ");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -1946,8 +1936,21 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     /**
      * Writes the appropriate null sentinel value for the given decimal column type.
      */
+    /**
+     * The error of a switch over {@link PhysicalDescriptor#familyArmOpcodeOf(int)} for a type it
+     * has no arm for: the family-arm refusal for a type unlike its family's namesake, else the
+     * switch's own message followed by the type's name.
+     */
+    private static CairoException unsupportedColumnType(int columnType, String message) {
+        if (PhysicalDescriptor.isFamilyArmMissing(columnType)) {
+            // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+            return PhysicalDescriptor.noFamilyArm(ColumnType.nameOf(columnType), "WAL columnar append");
+        }
+        return CairoException.nonCritical().put(message).put(ColumnType.nameOf(columnType));
+    }
+
     private static void writeDecimalNullSentinel(MemoryMA dataMem, int columnType) {
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.DECIMAL8 -> dataMem.putByte(Decimals.DECIMAL8_NULL);
             case ColumnType.DECIMAL16 -> dataMem.putShort(Decimals.DECIMAL16_NULL);
             case ColumnType.DECIMAL32 -> dataMem.putInt(Decimals.DECIMAL32_NULL);
@@ -1957,8 +1960,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             case ColumnType.DECIMAL256 ->
                     dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
                             Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
-            default -> throw CairoException.nonCritical().put("unsupported decimal column type for null sentinel: ")
-                    .put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "unsupported decimal column type for null sentinel: ");
         }
     }
 
@@ -2487,7 +2489,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         long lh = decimal.getLh();
         long hl = decimal.getHl();
         long hh = decimal.getHh();
-        switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+        switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
             case ColumnType.DECIMAL8 -> {
                 long sign = (ll < 0) ? -1L : 0L;
                 if ((ll != (byte) ll) || lh != sign || hl != sign || hh != sign) {
@@ -2524,8 +2526,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 dataMem.putDecimal128(lh, ll);
             }
             case ColumnType.DECIMAL256 -> dataMem.putDecimal256(hh, hl, lh, ll);
-            default -> throw CairoException.nonCritical()
-                    .put("unsupported decimal type: ").put(ColumnType.nameOf(columnType));
+            default -> throw unsupportedColumnType(columnType, "unsupported decimal type: ");
         }
     }
 }

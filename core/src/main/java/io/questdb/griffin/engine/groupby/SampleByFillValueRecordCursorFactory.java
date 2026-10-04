@@ -164,9 +164,13 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         if (driver == null) {
             throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }
+        // a type unlike its family's namesake would parse and fill as the namesake's value; the
+        // calling factory's constructor frees what it holds on the throw
+        // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.familyArmOf(driver, "SAMPLE BY FILL(value)");
         // the fill value parses as the accessor family's value, which the fill cursor reads through
         try {
-            return switch (driver.getAccessor()) {
+            return switch (accessor) {
                 case INT -> IntConstant.newInstance(Numbers.parseInt(fillNode.token));
                 case IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
                 case LONG -> LongConstant.newInstance(Numbers.parseLong(fillNode.token));
