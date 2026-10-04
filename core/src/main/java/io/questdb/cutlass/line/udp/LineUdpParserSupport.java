@@ -33,6 +33,7 @@ import io.questdb.cutlass.line.LineUtils;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Misc;
@@ -100,7 +101,7 @@ public class LineUdpParserSupport {
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return defaultFloatColumnType;
                     }
-                    if (SqlKeywords.isNanKeyword(value)) {
+                    if (SqlKeywords.isNanKeyword(value) || isInfinity(value)) {
                         return defaultFloatColumnType;
                     }
                     if (value.charAt(0) == '"') {
@@ -248,6 +249,12 @@ public class LineUdpParserSupport {
         } else {
             putNullValue(row, columnIndex, columnType);
         }
+    }
+
+    // the spellings ILP over TCP parses as a float: Numbers.parseDouble() takes Infinity,
+    // case-sensitive, with an optional sign
+    private static boolean isInfinity(CharSequence value) {
+        return Chars.equals(value, "Infinity") || Chars.equals(value, "-Infinity") || Chars.equals(value, "+Infinity");
     }
 
     private static boolean isTrue(CharSequence value) {

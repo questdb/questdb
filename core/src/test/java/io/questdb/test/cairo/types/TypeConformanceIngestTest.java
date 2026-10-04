@@ -2140,6 +2140,8 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 literal_inf\tnull
                 negzero\t-0.0
                 null\tnull
+                inf\tnull
+                ninf\tnull
                 """);
         rec("DOUBLE", """
                 ## ilp-udp
@@ -2158,6 +2160,8 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 literal_inf\tnull
                 negzero\t-0.0
                 null\tnull
+                inf\tnull
+                ninf\tnull
                 ## parquet
                 read_parquet
                 k\tv
