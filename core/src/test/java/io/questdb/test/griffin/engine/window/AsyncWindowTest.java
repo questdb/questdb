@@ -275,7 +275,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
     @Test
     public void testExplain() throws Exception {
         assertMemoryLeak(() -> {
-            createQuote(engine, sqlExecutionContext, "DAY", 200);
+            createQuote(engine, sqlExecutionContext, "DAY", 2_000);
             sqlExecutionContext.setParallelWindowEnabled(true);
             final StringSink actualPlan = new StringSink();
             printSql("explain select " + IDX50_COLUMNS + " from q where sym in ('S1', 'S2') order by sym", actualPlan);
@@ -465,15 +465,35 @@ public class AsyncWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectiveInListOnLargeTableStaysSerial() throws Exception {
+        // the plan estimates an IN list's rows as its keys' share of the table: 2 keys of 1,000
+        // stay serial, and compile no worker copies; 100 keys of 1,000 do not
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 1_000);
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type " + indexType + ", x long, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into t select 'K' || (x % 1000), x, (x * 60_000_000L)::timestamp from long_sequence(20_000)");
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            final String window = "select sym, x, sum(x) over (partition by sym rows between 2 preceding and current row) s from t where sym in (";
+            assertSerialPlan(window + "'K1', 'K2') order by sym");
+            final StringSink in = new StringSink();
+            for (int i = 0; i < 100; i++) {
+                in.put(i > 0 ? ", " : "").put("'K").put(i).put('\'');
+            }
+            assertMatchesSerial(engine, sqlExecutionContext, window + in + ") order by sym");
+        });
+    }
+
+    @Test
     public void testSmallTableStaysSerial() throws Exception {
         // a table under min.rows plans the serial window: no worker copies are compiled
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 1_000);
         assertMemoryLeak(() -> {
             createQuote(engine, sqlExecutionContext, "DAY", 999);
             sqlExecutionContext.setParallelWindowEnabled(true);
-            assertSerialPlan("select " + IDX50_COLUMNS + " from q where sym in ('S1', 'S2', 'BIG') order by sym");
+            final String query = "select " + IDX50_COLUMNS + " from q where sym != 'NOPE' order by sym";
+            assertSerialPlan(query);
             execute("insert into q select 'S1', 1, 1, 1, 1, 1, '1970-01-04'::timestamp from long_sequence(1)");
-            assertMatchesSerial(engine, sqlExecutionContext, "select " + IDX50_COLUMNS + " from q where sym in ('S1', 'S2', 'BIG') order by sym");
+            assertMatchesSerial(engine, sqlExecutionContext, query);
         });
     }
 

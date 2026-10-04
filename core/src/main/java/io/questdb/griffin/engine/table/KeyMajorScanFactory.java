@@ -38,4 +38,12 @@ public interface KeyMajorScanFactory {
      * by one, or -1 when this factory's cursor is not a {@link KeyMajorPageFrameRecordCursor}.
      */
     int getKeyMajorColumnIndex();
+
+    /**
+     * How many keys the scan walks, when the plan knows it (an IN list's values), or -1. Lets the
+     * planner estimate the share of the table the scan reads.
+     */
+    default int getKeyMajorKeyCount() {
+        return -1;
+    }
 }

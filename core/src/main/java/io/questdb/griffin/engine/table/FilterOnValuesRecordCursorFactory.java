@@ -138,6 +138,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     }
 
     @Override
+    public int getKeyMajorKeyCount() {
+        return cursorFactories.size();
+    }
+
+    @Override
     public int getScanDirection() {
         if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;

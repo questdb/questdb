@@ -12607,7 +12607,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return null;
             }
             try (TableReader reader = executionContext.getReader(tableToken)) {
-                if (reader.size() < minRows) {
+                long estimatedRows = reader.size();
+                // An IN list reads its keys' share of the table, assuming the keys are about equally
+                // frequent: two symbols of thousands stay serial, a list of most of them does not.
+                final int keyCount = keyMajorScan.getKeyMajorKeyCount();
+                final int tableColumnIndex = reader.getMetadata().getColumnIndexQuiet(baseMetadata.getColumnName(keyColumnIndex));
+                if (keyCount > 0 && tableColumnIndex > -1 && ColumnType.isSymbol(reader.getMetadata().getColumnType(tableColumnIndex))) {
+                    // the NULL key is a value too
+                    final long valueCount = reader.getSymbolMapReader(tableColumnIndex).getSymbolCount() + 1L;
+                    if (keyCount < valueCount) {
+                        estimatedRows = estimatedRows / valueCount * keyCount;
+                    }
+                }
+                if (estimatedRows < minRows) {
                     return null;
                 }
             }
