@@ -198,6 +198,36 @@ public class AsyncWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedPlanOverPartitionTurnedParquetRunsSerially() throws Exception {
+        // A plan made over native partitions still runs once one turns Parquet, whose decoded
+        // frames have no stable address for other threads: the query's thread computes it all.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 64);
+        assertMemoryLeak(() -> {
+            createQuote("DAY", 3_000);
+            final String query = "select " + IDX50_COLUMNS + " from q where sym in ('S1', 'S2', 'BIG', null) order by sym";
+            final String expected = serial(query);
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            try (RecordCursorFactory factory = select(query)) {
+                assertAsync(factory, true);
+                final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.assertEquals(expected, print(cursor, factory));
+                }
+                Assert.assertTrue(asyncCursor.getParallelTaskCount() > 0);
+                execute("alter table q convert partition to parquet list '1970-01-01'");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.assertEquals(expected, print(cursor, factory));
+                    cursor.toTop();
+                    TestUtils.assertEquals(expected, print(cursor, factory));
+                }
+                Assert.assertEquals(0, asyncCursor.getParallelTaskCount());
+                Assert.assertEquals(0, asyncCursor.getLargeKeyChunkCount());
+                assertSlotsReleased(factory);
+            }
+        });
+    }
+
+    @Test
     public void testEveryFunctionFamilyMatchesSerial() throws Exception {
         assertMemoryLeak(() -> {
             createQuote("DAY", 2_000);
