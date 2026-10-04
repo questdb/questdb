@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
@@ -859,6 +860,27 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         Assert.fail();
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "cannot import text into BINARY column [index=3]");
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testImportFileFailsWhenImportingTextIntoDoubleArrayColumn() throws Exception {
+        executeWithPool(
+                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    execute(compiler, "CREATE TABLE tab36a (ts TIMESTAMP, line STRING, d DOUBLE, description DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY;", sqlExecutionContext);
+
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                        importer.of("tab36a", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                        Assert.fail();
+                    } catch (Exception e) {
+                        TestUtils.assertContains(e.getMessage(), "no adapter for type [id=" + ColumnType.encodeArrayType(ColumnType.DOUBLE, 1) + ", name=DOUBLE[]]");
+                    }
+                    // the failed import released the table's writer
+                    try (TableWriter writer = engine.getWriter(engine.verifyTableName("tab36a"), "test")) {
+                        Assert.assertEquals(0, writer.size());
                     }
                 }
         );

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.PoolListener;
@@ -646,6 +647,47 @@ public class ImportIODispatcherTest extends AbstractTest {
                                         """
                         );
                     });
+                });
+    }
+
+    @Test
+    public void testImportIntoDoubleArrayColumnReleasesWriter() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    // a leaked writer keeps the non-WAL table busy, so the writer below cannot be
+                    // taken; a leaked WAL writer fails the pool check when the engine closes
+                    for (String table : new String[]{"arr_bypass", "arr_wal"}) {
+                        engine.execute(
+                                "CREATE TABLE " + table + " (k VARCHAR, v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                                        + (table.endsWith("_wal") ? "WAL" : "BYPASS WAL"),
+                                sqlExecutionContext
+                        );
+                        new SendAndReceiveRequestBuilder().execute(
+                                importRequest("/imp?name=" + table + "&forceHeader=true&delimiter=%2C", """
+                                        k,v,ts\r
+                                        a,[1.0],1970-01-01T00:00:00.000000Z\r
+                                        """),
+                                """
+                                        HTTP/1.1 200 OK\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        \r
+                                        2c\r
+                                        no adapter for type [id=2587, name=DOUBLE[]]\r
+                                        00\r
+                                        \r
+                                        """
+                        );
+                        try (TableWriter writer = engine.getWriter(engine.verifyTableName(table), "test")) {
+                            Assert.assertEquals(0, writer.size());
+                        }
+                    }
                 });
     }
 

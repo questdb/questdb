@@ -125,10 +125,6 @@ import java.util.stream.Stream;
  * should not, {@link #MODE_SPLIT} keeps one section per mode ({@code <path>@<mode>}), so the
  * anomaly stays visible instead of failing every run.
  * <p>
- * CSV import leaves out array columns: {@code /imp} into an existing array column fails and
- * leaks the table's writer, which the leak check would report on every run (a defect, not
- * fixed here).
- * <p>
  * Masks, applied before the comparison: the test root directory becomes {@code <root>}; the
  * mode's own table names ({@code dst_n1}, {@code dst_w1}) become {@code dst}; the error id of
  * an ILP over HTTP response, whose prefix is random per server, becomes {@code id: <id>}.
@@ -193,13 +189,6 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
             }
             final String table = createTarget(server, mode, section);
             if (table == null) {
-                return;
-            }
-            if (ColumnType.isArray(type.columnType)) {
-                // /imp into an existing array column fails ("no adapter for type") and leaks the
-                // table's writer: file descriptors (non-WAL) or the WAL writer (WAL). Not fixed here
-                // (FR-004); the import is left out until the defect is fixed
-                section.put("skipped: /imp into an array column leaks the table writer\n");
                 return;
             }
             final Utf8StringSink csv = new Utf8StringSink();
@@ -3328,7 +3317,9 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 """);
         rec("DOUBLE[]", """
                 ## csv
-                skipped: /imp into an array column leaks the table writer
+                /imp status 200
+                no adapter for type [id=2587, name=DOUBLE[]]
+                k\tv
                 ## ilp-tcp
                 min\tarray [-1.7976931348623157E308]
                 max\tarray [1.7976931348623157E308]
@@ -4555,7 +4546,9 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 specials\tnull
                 null\tnull
                 ## csv
-                skipped: /imp into an array column leaks the table writer
+                /imp status 200
+                no adapter for type [id=18971, name=DOUBLE[][]]
+                k\tv
                 """);
         rec("INTERVAL(us)", """
                 ## qwp-egress
