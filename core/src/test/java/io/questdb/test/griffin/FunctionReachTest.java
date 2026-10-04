@@ -55,11 +55,13 @@ import java.util.TreeSet;
  * <p>
  * Operators take their SQL form: {@code a OP b}, {@code OP a}, {@code a IN (b)},
  * {@code a BETWEEN b AND c}; element access ({@code []}) and casts are left out (the kit's cast
- * path checks casts). A slot some overload of the same name and arity declares for any type (a
- * pseudo type) is not a reach, nor is a variadic slot. A call that does not compile, for any
- * reason, is not listed, so the list is a lower bound. The test proves its harness on BYTE, which
- * has no trigonometric functions of its own and reaches DOUBLE's through its implicit casts, and
- * INT's {@code &} operator.
+ * path checks casts). A slot some overload of the same name and arity declares variadic is not a
+ * reach, nor is a slot of the overload itself declared for a pseudo type such as a cursor; a cursor
+ * or NULL slot of another overload does not hide this one's value slots. A call that does not
+ * compile, for any reason, is not listed, so the list is a lower bound. The test proves its harness
+ * on BYTE, which has no trigonometric functions of its own and reaches DOUBLE's through its implicit
+ * casts, and INT's {@code &}, {@code =} and {@code <} operators, the last two of which also have
+ * cursor and NULL overloads.
  */
 public class FunctionReachTest extends AbstractCairoTest {
 
@@ -69,6 +71,9 @@ public class FunctionReachTest extends AbstractCairoTest {
             final TreeSet<String> reaches = reaches(TypeConformanceTypes.byLabel("BYTE"));
             Assert.assertTrue("BYTE reaches acos(D) through its implicit casts: " + reaches, reaches.contains("BYTE -> acos(BYTE)"));
             Assert.assertTrue("BYTE reaches INT's & through its implicit casts: " + reaches, reaches.contains("BYTE -> &(BYTE, INT)"));
+            // = and < also have cursor and NULL overloads; they must not hide the value slots
+            Assert.assertTrue("BYTE reaches INT's = through its implicit casts: " + reaches, reaches.contains("BYTE -> =(BYTE, INT)"));
+            Assert.assertTrue("BYTE reaches INT's < through its implicit casts: " + reaches, reaches.contains("BYTE -> <(BYTE, INT)"));
         });
     }
 
@@ -159,12 +164,13 @@ public class FunctionReachTest extends AbstractCairoTest {
         }
     }
 
-    // a slot that an overload of the same arity declares for a pseudo type takes any type
+    // a slot that an overload of the same arity declares variadic takes any type; a cursor or NULL
+    // slot takes one specific pseudo type, so it does not hide the other overloads' value slots
     private static boolean isAnyTypeSlot(ObjList<FunctionFactoryDescriptor> overloads, int argCount, int k) {
         for (int i = 0, n = overloads.size(); i < n; i++) {
             final FunctionFactoryDescriptor overload = overloads.getQuick(i);
             if (overload.getSigArgCount() == argCount
-                    && ColumnType.findTypeDriver(FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(k))) == null) {
+                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(k)) == ColumnType.VAR_ARG) {
                 return true;
             }
         }
