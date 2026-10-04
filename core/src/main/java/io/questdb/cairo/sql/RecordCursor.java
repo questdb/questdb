@@ -273,6 +273,25 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     }
 
     /**
+     * Optional bulk read for consumers that copy rows out column by column, such as a network
+     * egress. Returns a run of up to {@code maxRows} of the rows that the next {@link #hasNext()}
+     * calls would return, without moving the cursor, or null when the cursor cannot offer one at
+     * its current position. The consumer then either reads the rows' values from the block and
+     * calls {@link #skipRecordBlock(int)} with how many of its first rows it took, or ignores the
+     * block and carries on with {@link #hasNext()}.
+     * <p>
+     * A cursor that returns a block must return exactly the rows, values and symbol keys its
+     * {@code hasNext()} and {@link #getRecord()} would. The default offers none.
+     *
+     * @param maxRows the most rows the consumer wants, at least 1
+     * @return the block, or null
+     */
+    @Nullable
+    default RecordBlock peekRecordBlock(int maxRows) {
+        return null;
+    }
+
+    /**
      * Calculates a numeric representation of the cursor's pre-computed internal state,
      * primarily for performance assertions.
      * <p>
@@ -383,6 +402,17 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @see #calculateSize(SqlExecutionCircuitBreaker, Counter)
      */
     long size();
+
+    /**
+     * Moves the cursor past the first {@code rowCount} rows of the block the last
+     * {@link #peekRecordBlock(int)} returned, as that many {@link #hasNext()} calls would. The
+     * cursor's {@link #getRecord()} is undefined until the next {@code hasNext()}.
+     *
+     * @param rowCount rows taken from the block, from 0 to its row count
+     */
+    default void skipRecordBlock(int rowCount) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Attempts to efficiently skip the specified number of rows from the current cursor position.

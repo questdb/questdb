@@ -25,10 +25,14 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -46,6 +50,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
+    private FrameBlock block;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
@@ -168,6 +173,31 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         return rowCursorFactory.isUsingIndex();
     }
 
+    /**
+     * The rest of a native frame of a plain forward scan: its rows are consecutive row indexes
+     * of the frame's column pages, read at the same addresses the record's getters read.
+     */
+    @Override
+    public RecordBlock peekRecordBlock(int maxRows) {
+        if (isExhausted || !(rowCursor instanceof PageFrameFwdRowCursor fwdCursor)) {
+            return null;
+        }
+        final long rows = Math.min(fwdCursor.remaining(), maxRowsAfterSkip - rowsProducedSinceSkip);
+        if (rows < 1) {
+            return null;
+        }
+        // the record's frame is the scan's current one, as hasNext() leaves it
+        frameMemoryPool.navigateTo(frameCount - 1, recordA);
+        if (recordA.getFrameFormat() != PartitionFormat.NATIVE) {
+            return null;
+        }
+        if (block == null) {
+            block = new FrameBlock();
+        }
+        block.of(fwdCursor.peekNext(), (int) Math.min(rows, maxRows));
+        return block;
+    }
+
     @Override
     public void of(PageFrameCursor frameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (this.frameCursor != frameCursor) {
@@ -207,6 +237,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return -1;
         }
         return entityCursor ? frameCursor.size() : -1;
+    }
+
+    @Override
+    public void skipRecordBlock(int rowCount) {
+        ((PageFrameFwdRowCursor) rowCursor).skip(rowCount);
+        rowsProducedSinceSkip += rowCount;
     }
 
     @Override
@@ -318,6 +354,42 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (!areCursorsPrepared) {
             rowCursorFactory.prepareCursor(frameCursor);
             areCursorsPrepared = true;
+        }
+    }
+
+    private class FrameBlock implements RecordBlock {
+        private long firstRow;
+        private int rowCount;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (ColumnType.isVarSize(columnType)) {
+                return 0;
+            }
+            final long address = recordA.getPageAddress(columnIndex);
+            return address != 0 ? address + firstRow * ColumnType.sizeOf(columnType) : 0;
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return ColumnType.sizeOf(metadata.getColumnType(columnIndex));
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            recordA.setRowIndex(firstRow + row);
+            return recordA;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        void of(long firstRow, int rowCount) {
+            this.firstRow = firstRow;
+            this.rowCount = rowCount;
         }
     }
 }

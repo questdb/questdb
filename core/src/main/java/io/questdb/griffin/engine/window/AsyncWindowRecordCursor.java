@@ -34,6 +34,7 @@ import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -411,6 +412,17 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         atom.getSlot(-1).open(baseCursor, executionContext);
     }
 
+    /**
+     * The rest of the task being returned, straight from its chain: workers append a task's rows
+     * one after another. Rows the query's thread streams itself (the prefix, streamed keys and
+     * the serial mode) come through {@link #hasNext()} only.
+     */
+    @Override
+    public RecordBlock peekRecordBlock(int maxRows) {
+        final Task emitTask = this.emitTask;
+        return emitTask != null ? emitTask.chain.peekSequentialRecordBlock(maxRows) : null;
+    }
+
     @Override
     public long preComputedStateSize() {
         return 0;
@@ -419,6 +431,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void skipRecordBlock(int rowCount) {
+        emitTask.chain.skipSequentialRecordBlock(rowCount);
     }
 
     @Override

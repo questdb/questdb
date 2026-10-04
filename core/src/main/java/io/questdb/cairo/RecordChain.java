@@ -28,6 +28,7 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -68,6 +69,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     protected long recordOffset;
     protected long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
+    private SequentialBlock block;
     private RecordChainRecord recordC;
     private SymbolTableSource symbolTableResolver;
 
@@ -218,6 +220,33 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     public long preComputedStateSize() {
         // chain just streams rows from the cache
         return 0;
+    }
+
+    /**
+     * A block over the rows that the next {@link #hasNext()} calls return, see
+     * {@link RecordCursor#peekRecordBlock(int)}, for a chain without variable-size columns whose
+     * records were appended one after another, each linked to the one before it, and are iterated
+     * in that order. Their rows then lie at a constant stride. The caller vouches for the order: a
+     * chain that links its records otherwise, such as a join's per-key chains, must not use it.
+     *
+     * @return the block, or null when the chain has a variable-size column or no row is left
+     */
+    @Nullable
+    public RecordBlock peekSequentialRecordBlock(int maxRows) {
+        if (varOffset != 0 || nextRecordOffset == -1) {
+            return null;
+        }
+        final long stride = rowToDataOffset(0) + fixOffset;
+        final long rows = (varAppendOffset - nextRecordOffset) / stride;
+        assert (varAppendOffset - nextRecordOffset) % stride == 0 : "records are not at a constant stride";
+        if (rows < 1) {
+            return null;
+        }
+        if (block == null) {
+            block = new SequentialBlock();
+        }
+        block.of(nextRecordOffset, (int) Math.min(rows, maxRows), stride);
+        return block;
     }
 
     public long put(Record record, long prevRecordOffset) {
@@ -433,6 +462,21 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         return -1;
     }
 
+    /**
+     * Moves the iteration past the first {@code rowCount} rows of the block
+     * {@link #peekSequentialRecordBlock(int)} returned.
+     */
+    public void skipSequentialRecordBlock(int rowCount) {
+        if (rowCount < 1) {
+            return;
+        }
+        final long stride = rowToDataOffset(0) + fixOffset;
+        final long next = nextRecordOffset + rowCount * stride;
+        assert next <= varAppendOffset;
+        assert mem.getLong(next - stride) == (next == varAppendOffset ? -1 : next) : "records are not linked in append order";
+        nextRecordOffset = next == varAppendOffset ? -1 : next;
+    }
+
     @Override
     public void skip(int bytes) {
         mem.skip(bytes);
@@ -458,6 +502,40 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
 
     protected long rowToDataOffset(long row) {
         return row + 8;
+    }
+
+    private class SequentialBlock implements RecordBlock {
+        private final RecordChainRecord record = newChainRecord();
+        private long firstOffset;
+        private int rowCount;
+        private long stride;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            return mem.addressOf(rowToDataOffset(firstOffset) + columnOffsets[columnIndex]);
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return stride;
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            record.of(rowToDataOffset(firstOffset + row * stride));
+            return record;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        void of(long firstOffset, int rowCount, long stride) {
+            this.firstOffset = firstOffset;
+            this.rowCount = rowCount;
+            this.stride = stride;
+        }
     }
 
     protected class RecordChainRecord implements Record {
