@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
@@ -732,6 +733,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.freeObjList(args, e);
             throw e;
         } catch (Throwable e) {
+            if (e instanceof CairoException ce && ce.isAuthorizationError()) {
+                // A factory that authorizes the caller, e.g. a table-name function in a view the caller
+                // may see but not read, failed the caller, not itself: keep the authorization error, which
+                // the protocols report as such, and do not log it as an internal error.
+                Misc.freeObjList(args, ce);
+                throw ce;
+            }
             LOG.error().$("exception in function factory: ").$(e).$();
             final SqlException ex = SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
             Misc.freeObjList(args, ex);

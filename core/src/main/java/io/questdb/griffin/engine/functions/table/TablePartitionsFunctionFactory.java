@@ -71,6 +71,11 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
                 timestampType = metadata.getTimestampType();
             }
         } catch (CairoException e) {
+            if (e.isAuthorizationError()) {
+                // e.g. a reader of the enclosing view without SELECT on it, see
+                // SqlExecutionContext.isTableFunctionVisible(): it stays an authorization error
+                throw e;
+            }
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
         return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt, timestampType, argPos.getQuick(0), view));

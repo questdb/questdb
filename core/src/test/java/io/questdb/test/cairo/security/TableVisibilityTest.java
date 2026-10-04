@@ -34,6 +34,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -239,7 +240,7 @@ public class TableVisibilityTest extends AbstractCairoTest {
     public void testFilesRequiresSystemAdmin() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
-                assertFailure("SELECT * FROM files('" + root + "')", context, "system admin required");
+                assertAuthorizationFailure("SELECT * FROM files('" + root + "')", context, "system admin required");
             }
         });
     }
@@ -249,9 +250,10 @@ public class TableVisibilityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createObjects();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
-                // compilation must not tell an existing table from a missing one before it authorizes
-                assertFailure("SELECT hydrate_table_metadata('secret_t')", context, "system admin required");
-                assertFailure("SELECT hydrate_table_metadata('missing_t')", context, "system admin required");
+                // compilation must not tell an existing table from a missing one before it authorizes, and
+                // the denial is an authorization error, not a fault of the function factory
+                assertAuthorizationFailure("SELECT hydrate_table_metadata('secret_t')", context, "system admin required");
+                assertAuthorizationFailure("SELECT hydrate_table_metadata('missing_t')", context, "system admin required");
             }
         });
     }
@@ -301,8 +303,8 @@ public class TableVisibilityTest extends AbstractCairoTest {
             createObjects();
             // the pools list every table with a pooled reader or writer, so only admins may see them
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
-                assertFailure("SELECT * FROM reader_pool()", context, "system admin required");
-                assertFailure("SELECT * FROM writer_pool()", context, "system admin required");
+                assertAuthorizationFailure("SELECT * FROM reader_pool()", context, "system admin required");
+                assertAuthorizationFailure("SELECT * FROM writer_pool()", context, "system admin required");
             }
             final StringSink sink = new StringSink();
             engine.print("SELECT table_name FROM reader_pool()", sink, sqlExecutionContext);
@@ -496,6 +498,30 @@ public class TableVisibilityTest extends AbstractCairoTest {
                 assertMaskedLikeMissing("SELECT * FROM visible_t CROSS JOIN %s", "secret_v", hidingContext);
                 assertMaskedLikeMissing("SELECT * FROM %s", "secret_mv", hidingContext);
                 assertMaskedLikeMissing("SELECT * FROM %s", "secret_lv", hidingContext);
+            }
+        });
+    }
+
+    @Test
+    public void testViewSelectDenialIsAnAuthorizationError() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            execute("CREATE VIEW visible_columns AS (SELECT * FROM table_columns('secret_t'))");
+            execute("CREATE VIEW visible_parts AS (SELECT * FROM table_partitions('secret_t'))");
+            execute("CREATE VIEW visible_txns AS (SELECT * FROM wal_transactions('secret_t'))");
+            execute("CREATE VIEW visible_show_columns AS (SELECT * FROM (SHOW COLUMNS FROM secret_t))");
+            drainWalAndViewQueues();
+            // the objects these views name are read through the view, so a principal who may see the views
+            // but not read them is denied with an authorization error, not with one the factory wraps
+            try (SqlExecutionContext noViewSelect = new SqlExecutionContextImpl(engine, 1).with(new HidingSecurityContext() {
+                @Override
+                public void authorizeSelect(ViewDefinition viewDefinition) {
+                    throw CairoException.authorization().put("view select denied");
+                }
+            })) {
+                for (String view : new String[]{"visible_columns", "visible_parts", "visible_txns", "visible_show_columns"}) {
+                    assertAuthorizationFailure("SELECT * FROM " + view, noViewSelect, "view select denied");
+                }
             }
         });
     }
@@ -723,6 +749,24 @@ public class TableVisibilityTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, temp.newFolder("export").getAbsolutePath());
         AbstractCairoTest.setUpStatic();
+    }
+
+    // Asserts that the statement fails with an authorization error, which the protocols report as denied
+    // access, rather than with an error that wraps it.
+    private static void assertAuthorizationFailure(CharSequence sql, SqlExecutionContext context, String expectedMessage) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final CompiledQuery cq = compiler.compile(sql, context);
+            try (RecordCursorFactory factory = cq.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                    // drain
+                }
+            }
+            Assert.fail("expected an authorization failure: " + sql);
+        } catch (CairoException e) {
+            Assert.assertTrue(sql + ": " + e.getFlyweightMessage(), e.isAuthorizationError());
+            TestUtils.assertEquals(sql.toString(), expectedMessage, e.getFlyweightMessage());
+        }
     }
 
     private static void assertCursorFails(CharSequence sql, SqlExecutionContext context, String expectedMessage, StringSink sink) throws Exception {
