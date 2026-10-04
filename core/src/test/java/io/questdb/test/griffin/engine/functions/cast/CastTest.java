@@ -1112,6 +1112,15 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastBindVariableToTextArrayNeedsConstant() throws Exception {
+        assertException("SELECT $1::text[]", 7, "constant expected");
+        // a column has no value at compile time either
+        assertQuery("SELECT s::text[] FROM t")
+                .ddl("CREATE TABLE t (s STRING)")
+                .fails(7, "constant expected");
+    }
+
+    @Test
     public void testCharToBoolean() throws Exception {
         assertQuery("select a::boolean from tab")
                 .ddl("create table tab (a char)")

@@ -39,8 +39,8 @@ import org.junit.Test;
  * targets give STRING, number targets DOUBLE, array and decimal targets themselves; any other
  * target leaves the variable to the cast overload that matches first. The table pins every type's
  * answer, the overload picks included, so a new CAST target shows up here with the type its
- * variable takes. ARRAY_STRING's error is a defect, pinned until fixed (issue
- * sql-cast-bind-text-array): the cast factory reads the unbound variable at compile time.
+ * variable takes. ARRAY_STRING refuses the variable: the cast to a text array parses its text at
+ * compile time, so it takes a constant only.
  */
 public class CastBindVariableTypeTest extends AbstractCairoTest {
 
@@ -104,7 +104,7 @@ public class CastBindVariableTypeTest extends AbstractCairoTest {
                             DECIMAL         DECIMAL(18,3)
                             REGCLASS        STRING
                             REGPROCEDURE    STRING
-                            ARRAY_STRING    error: [exception in function factory: ]
+                            ARRAY_STRING    error: [constant expected]
                             PARAMETER       error: [invalid constant: PARAMETER]
                             INTERVAL        error: [there is no matching function `cast` with the argument types: (unknown, INTERVAL)]
                             VARCHAR_SLICE   error: [invalid constant: VARCHAR_SLICE]
