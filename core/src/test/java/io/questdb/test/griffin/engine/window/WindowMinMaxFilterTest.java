@@ -231,23 +231,25 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                     2, 1, 3, 1,
                     // E: infinities and NaN, which the window skips, and a near tie
                     Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN, 7 + 0.5e-10,
-                    7, 7 + 0.5e-10, Double.NEGATIVE_INFINITY, 9
+                    7, 7 + 0.5e-10, Double.NEGATIVE_INFINITY, 9,
+                    // F: zeroes only, the negative one first
+                    -0.0, 0.0, -0.0
             };
-            final String[] ks = {"A", "A", "A", "A", "B", "B", "B", "B", "C", "C", "C", "C", "D", "D", "D", "D", "E", "E", "E", "E", "E", "E", "E", "E"};
-            final StringSink sql = new StringSink();
+            final String[] ks = {"A", "A", "A", "A", "B", "B", "B", "B", "C", "C", "C", "C", "D", "D", "D", "D", "E", "E", "E", "E", "E", "E", "E", "E", "F", "F", "F"};
+            // bind variables keep every value exact: a cast of 'Infinity' or an overflow reads NULL
             for (int i = 0; i < ps.length; i++) {
-                sql.clear();
-                sql.put("insert into nt values (").put(i * 3_600_000_000L).put(", '").put(ks[i]).put("', ");
-                if (Double.isNaN(ps[i])) {
-                    sql.put("null");
-                } else if (Double.isInfinite(ps[i])) {
-                    sql.put(ps[i] > 0 ? "cast('Infinity' as double)" : "cast('-Infinity' as double)");
-                } else {
-                    sql.put("cast('").put(Double.toString(ps[i])).put("' as double)");
-                }
-                sql.put(", ").put(i).put(")");
-                execute(sql);
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, i * 3_600_000_000L);
+                bindVariableService.setStr(1, ks[i]);
+                bindVariableService.setDouble(2, ps[i]);
+                bindVariableService.setLong(3, i);
+                execute("insert into nt values ($1, $2, $3, $4)");
             }
+            bindVariableService.clear();
+            // the infinities are stored: they compare greater than zero, which NULL does not
+            final StringSink inf = new StringSink();
+            printSql("select count() from nt where k = 'E' and (p > 0 or p < 0)", inf);
+            TestUtils.assertEquals("count\n7\n", inf);
             final String query = "select ts, k, p, x, mn from (select ts, k, p, x, min(p) over (partition by k) mn from nt) where p = mn";
             final String q2 = "select ts, k, p, x, mn from (select ts, k, p, x, min(p) over (partition by k) mn from nt) where p > mn";
             final String q3 = "select ts, k, p, x, mn from (select ts, k, p, x, min(p) over (partition by k) mn from nt order by ts desc) where p >= mn";
@@ -260,9 +262,9 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         print(cursor, factory);
                     }
-                    // A, B, C and E
+                    // A, B, C, E and F
                     Assert.assertEquals(1, minMax.getReplayRunCount());
-                    Assert.assertEquals(4, minMax.getReplayedKeyCount());
+                    Assert.assertEquals(5, minMax.getReplayedKeyCount());
                 }
             }
             // max never replays: it orders by Double.compare, which has no tolerance
@@ -280,6 +282,41 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeKeepsTheTwoSmallestDistinctValues() throws Exception {
+        assertMemoryLeak(() -> {
+            createT(engine, sqlExecutionContext, 10);
+            try (
+                    RecordCursorFactory factory = select(taq70());
+                    io.questdb.griffin.engine.groupby.SimpleMapValue dest = new io.questdb.griffin.engine.groupby.SimpleMapValue(3);
+                    io.questdb.griffin.engine.groupby.SimpleMapValue src = new io.questdb.griffin.engine.groupby.SimpleMapValue(3)
+            ) {
+                final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                Assert.assertNotNull(minMax);
+                final double[][] cases = {
+                        // dest min, dest next, src min, src next, merged min, merged next
+                        {1.0, Double.NaN, 1.0, 1.00000000005, 1.0, 1.00000000005},
+                        {2.0, 3.0, 1.0, 2.5, 1.0, 2.0},
+                        {1.0, 4.0, 2.0, 3.0, 1.0, 2.0},
+                        {-0.0, Double.NaN, 0.0, Double.NaN, -0.0, 0.0},
+                        {0.0, Double.NaN, -0.0, 5.0, -0.0, 0.0},
+                        {1.0, 2.0, Double.NaN, Double.NaN, 1.0, 2.0},
+                };
+                for (double[] c : cases) {
+                    dest.putDouble(0, c[0]);
+                    dest.putDouble(1, c[1]);
+                    dest.putDouble(2, Double.NaN);
+                    src.putDouble(0, c[2]);
+                    src.putDouble(1, c[3]);
+                    src.putDouble(2, Double.NaN);
+                    minMax.mergeForTesting(dest, src);
+                    Assert.assertEquals(Double.doubleToRawLongBits(c[4]), Double.doubleToRawLongBits(dest.getDouble(0)));
+                    Assert.assertEquals(Double.doubleToRawLongBits(c[5]), Double.doubleToRawLongBits(dest.getDouble(1)));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNearTiesOnWorkerPool() throws Exception {
         // near ties spread over many frames, so that the workers' maps each see some of them and
         // the merge has to keep the two smallest distinct values of every partition
@@ -287,7 +324,7 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
             engine.execute("create table nt as (select timestamp_sequence(0, 10000000) ts, (x % 7)::symbol k, " +
                     "case when x % 7 = 0 then (case when x % 2 = 0 then 0.0 else -1 * 0.0 end) " +
                     "when x % 7 = 1 then 3.0 + x " +
-                    "else 1.0 + ((x * 37) % 5) * 4e-11 + (x % 7) end p, x " +
+                    "else 1.0 + (4 - (x / 700) % 5) * 4e-11 + (x % 7) end p, x " +
                     "from long_sequence(20000)) timestamp(ts) partition by day", ctx);
             final String query = "select ts, k, p, x, mn from (select ts, k, p, x, min(p) over (partition by k) mn from nt) where p = mn";
             final String expected = serial(engine, ctx, query);
@@ -335,6 +372,44 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
             assertSameAsSerial(taq59(), true);
             assertSameAsSerial(taq60(), true);
             assertSameAsSerial(taq70() + " limit -5", true);
+        });
+    }
+
+    @Test
+    public void testRecordBAndRecordAt() throws Exception {
+        assertMemoryLeak(() -> {
+            createT(engine, sqlExecutionContext, 3_000);
+            final String query = "select " + C + ", mn from (select " + C + ", min(price) over (partition by sym) mn from t) where price = mn";
+            assertSameAsSerial(query, true);
+            try (RecordCursorFactory factory = select(query)) {
+                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final io.questdb.std.LongList rowIds = new io.questdb.std.LongList();
+                    final StringSink forward = new StringSink();
+                    final io.questdb.cairo.sql.Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        rowIds.add(record.getRowId());
+                        forward.put(record.getSymA(2)).put(',').put(record.getDouble(5)).put(',').put(record.getLong(9))
+                                .put(',').put(record.getDouble(10)).put('\n');
+                    }
+                    Assert.assertTrue(rowIds.size() > 10);
+                    // read back through recordB, in reverse, with recordA parked on the first row
+                    cursor.recordAt(record, rowIds.getQuick(0));
+                    final io.questdb.cairo.sql.Record recordB = cursor.getRecordB();
+                    final String[] lines = forward.toString().split("\n");
+                    for (int i = rowIds.size() - 1; i >= 0; i--) {
+                        cursor.recordAt(recordB, rowIds.getQuick(i));
+                        final StringSink line = new StringSink();
+                        line.put(recordB.getSymA(2)).put(',').put(recordB.getDouble(5)).put(',').put(recordB.getLong(9))
+                                .put(',').put(recordB.getDouble(10));
+                        TestUtils.assertEquals(lines[i], line);
+                    }
+                    final StringSink first = new StringSink();
+                    first.put(record.getSymA(2)).put(',').put(record.getDouble(5)).put(',').put(record.getLong(9))
+                            .put(',').put(record.getDouble(10));
+                    TestUtils.assertEquals(lines[0], first);
+                }
+            }
         });
     }
 

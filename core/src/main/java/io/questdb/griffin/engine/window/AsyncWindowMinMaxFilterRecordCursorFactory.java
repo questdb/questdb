@@ -303,6 +303,12 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         return frameSequence.getAtom().locks.getAcquiredSlotCount() + (filterLocks != null ? filterLocks.getAcquiredSlotCount() : 0);
     }
 
+    /** Merges one worker's values for a key into another's, as phase one does. */
+    @TestOnly
+    public void mergeForTesting(MapValue dest, MapValue src) {
+        merge(dest, src);
+    }
+
     @TestOnly
     public long getReplayRunCount() {
         return replayRunCount;
@@ -847,6 +853,13 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         }
 
         @Override
+        public void cursorClosed() {
+            if (ownsInner) {
+                inner.cursorClosed();
+            }
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             lookupRecord.of(rec);
             joinRecord.of(rec, lookupRecord);
@@ -878,6 +891,13 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(inner);
+        }
+
+        @Override
+        public void toTop() {
+            if (ownsInner) {
+                inner.toTop();
+            }
         }
 
         void releaseView() {
