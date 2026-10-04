@@ -30,6 +30,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.RelationKind;
 import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -69,10 +70,15 @@ import java.util.regex.Pattern;
  * SAMPLE BY FILL(PREV) over a leading NULL, and SAMPLE BY FILL(NULL), FILL(value) and
  * FILL(LINEAR) over gaps between two values and before a NULL.
  * <p>
- * Some paths run one query per value row, with the row's value as a constant of the type (the
- * NULL row as a NULL of the type), and record one line per row: the labels of the rows the query
- * selects, or its error. SUBSAMPLE takes a value of the type as the stride of
- * {@code cadence(...)} and as the target point count of {@code uniform(...)}.
+ * Some paths run one query per value row and record one line per row: the labels of the rows
+ * the query selects, or its error. The row's value goes into the query as a constant of the type
+ * (its literal, the NULL row as a NULL of the type), as the value as it prints (quoted unless the
+ * type is a number) or as a bind variable of the type set from that text; a row that reads as
+ * NULL goes in as NULL in the last two forms. SUBSAMPLE
+ * takes a value of the type as the stride of {@code cadence(...)} and as the target point count
+ * of {@code uniform(...)}; a WHERE bound over the designated timestamp cast to LONG takes it as a
+ * constant and as a bind variable; a key column (LATEST ON ... PARTITION BY the column, with
+ * {@code WHERE v = <value>}) takes the plain constant.
  * <p>
  * The memoized path reads a projected function of the column, its identity cast, three times,
  * which makes the projection cache its value per row; the test base turns that caching off, so
@@ -107,6 +113,9 @@ import java.util.regex.Pattern;
 public class TypeConformanceSqlTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TypeConformanceSqlTest.class);
     private static final Pattern NO_CAST = Pattern.compile("error: \\[(\\d+)] there is no matching function `cast` with the argument types: \\((.*)\\)");
+    private static final String FORM_BIND = "bind";
+    private static final String FORM_CONST = "const";
+    private static final String FORM_TEXT = "text";
     private static final String[] MODES = {"single-nojit", "parallel-nojit", "parallel-jit"};
     private static final Map<String, String> RECORDINGS = new HashMap<>();
     private final ObjList<TypeConformanceValues.Row> rows;
@@ -268,10 +277,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                     continue;
                 }
                 if (type.isLater()) {
-                    checkLaterRowQuery(eng, ctx, query[0], query[1], mode);
+                    checkLaterRowQuery(eng, ctx, query[0], query[1], query[2], mode);
                     continue;
                 }
-                assertSection(query[0], mode, rowSection(eng, ctx, path, mode, query[1]));
+                assertSection(query[0], mode, rowSection(eng, ctx, path, mode, query[1], query[2]));
             }
             dropTables(eng, ctx);
         }));
@@ -324,15 +333,39 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     /**
-     * The paths that run one query per value row, {name, sql}: {@code <value>} in the SQL stands
-     * for the row's value as a constant of the type ({@link #constantOf}). The path of each is
+     * The paths that run one query per value row, {name, sql, form}: {@code <value>} in the SQL
+     * stands for the row's value in the form named: {@code const} the value as a constant of the
+     * type ({@link #constantOf}), {@code text} as the value as it prints ({@link #keyConstantOf}),
+     * {@code bind} as the bind variable {@code $1}, defined with the type and set from the value's
+     * text. A row that reads as NULL goes in as NULL in the last two forms. The path of each is
      * {@code sql.<name>}.
      */
     private static String[][] rowQueries() {
         return new String[][]{
-                {"subsample_stride", "SELECT k, ts FROM t SUBSAMPLE cadence(<value>)"},
-                {"subsample_target", "SELECT k, ts FROM t SUBSAMPLE uniform(<value>)"},
+                {"subsample_stride", "SELECT k, ts FROM t SUBSAMPLE cadence(<value>)", FORM_CONST},
+                {"subsample_target", "SELECT k, ts FROM t SUBSAMPLE uniform(<value>)", FORM_CONST},
+                {"where_bound_const", "SELECT k FROM t WHERE ts::LONG >= <value>", FORM_CONST},
+                {"where_bound_bind", "SELECT k FROM t WHERE ts::LONG >= <value>", FORM_BIND},
+                {"where_key", "SELECT k FROM t2 WHERE v = <value> LATEST ON ts PARTITION BY v", FORM_TEXT},
         };
+    }
+
+    // a row that reads as NULL: the NULL row, and under SENTINEL the sentinel-pattern rows
+    private static boolean isNullRow(TypeConformanceValues.Row row, String nullRows) {
+        return row.isNull() || nullRows.contains("," + row.label + ",");
+    }
+
+    // a value as SQL text: a number as it is, any other text quoted, a NULL as NULL
+    private static String plainConstantOf(@Nullable String text) {
+        if (text == null) {
+            return "NULL";
+        }
+        try {
+            Numbers.parseDouble(text);
+            return text;
+        } catch (NumericException e) {
+            return "'" + text.replace("'", "''") + "'";
+        }
     }
 
 
@@ -874,17 +907,33 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     /**
      * The per-row paths for a type registered later, which has no literal: the value is a cast of
-     * an INT constant or of NULL to the type. SUBSAMPLE applies to the integral types: for a
-     * type of the INT relation kind, the value 2 selects the rows the INT 2 selects, and a NULL
-     * of the type is refused as not set under SENTINEL and as less than the minimum under NONE,
-     * where it reads as 0; a type of any other kind must be refused as no integer.
+     * an INT constant or of NULL to the type, a bind variable of the type set from text, or, for
+     * the key column, each value row as it prints.
+     * <ul>
+     * <li>SUBSAMPLE applies to the integral types: for a type of the INT relation kind, the value 2
+     * selects the rows the INT 2 selects, and a NULL of the type is refused as not set under
+     * SENTINEL and as less than the minimum under NONE, where it reads as 0; a type of any other
+     * kind must be refused as no integer.</li>
+     * <li>A WHERE bound of an integral type reads at its tier: 2 of the type, as a constant or a
+     * bind variable, selects what the INT 2 selects, and a NULL of the type selects nothing under
+     * SENTINEL and what 0 selects under NONE. A bound of another kind stays a filter and is not
+     * checked.</li>
+     * <li>The key column selects, for each value row, one row of the same value, whether the type
+     * is a key column or, unlike its family's namesake, stays a filter.</li>
+     * </ul>
      */
-    private void checkLaterRowQuery(CairoEngine eng, SqlExecutionContext ctx, String name, String sql, String mode) {
+    private void checkLaterRowQuery(CairoEngine eng, SqlExecutionContext ctx, String name, String sql, String form, String mode) throws Exception {
         final String path = "sql." + name;
-        final String two = selection(eng, ctx, sql.replace("<value>", "CAST(2 AS " + type.ddl + ")"));
-        final String nullValue = selection(eng, ctx, sql.replace("<value>", "CAST(NULL AS " + type.ddl + ")"));
+        if ("where_key".equals(name)) {
+            checkLaterKey(eng, ctx, sql, mode);
+            return;
+        }
+        final boolean isBind = FORM_BIND.equals(form);
+        final String two = isBind ? boundSelection(eng, ctx, sql, "2") : selection(eng, ctx, sql.replace("<value>", "CAST(2 AS " + type.ddl + ")"));
+        final String nullValue = isBind ? boundSelection(eng, ctx, sql, null) : selection(eng, ctx, sql.replace("<value>", "CAST(NULL AS " + type.ddl + ")"));
+        final boolean isSubsample = name.startsWith("subsample_");
         if (!ColumnType.isIntegral(type.columnType)) {
-            if (!two.startsWith("error: ") || !two.contains("integer expected for")) {
+            if (isSubsample && (!two.startsWith("error: ") || !two.contains("integer expected for"))) {
                 throw new AssertionError(TypeConformanceInvariants.context(type, "two", path, mode)
                         + ": SUBSAMPLE takes integers, so a value of a type of another kind must be refused, but gives: " + two);
             }
@@ -896,14 +945,46 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                     + ": 2 of the type gives " + two + ", the INT 2 " + expected);
         }
         final String policy = TypeConformanceInvariants.policyOf(type);
-        final String refusal = switch (policy) {
-            case TypeConformanceInvariants.POLICY_SENTINEL, TypeConformanceInvariants.POLICY_BITMAP -> "must be set";
-            case TypeConformanceInvariants.POLICY_NONE -> "must be at least";
+        if (isSubsample) {
+            final String refusal = switch (policy) {
+                case TypeConformanceInvariants.POLICY_SENTINEL, TypeConformanceInvariants.POLICY_BITMAP -> "must be set";
+                case TypeConformanceInvariants.POLICY_NONE -> "must be at least";
+                default -> "";
+            };
+            if (!nullValue.startsWith("error: ") || !nullValue.contains(refusal)) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "null", path, mode)
+                        + ": " + policy + ", a NULL of the type must be refused (" + refusal + "), but gives: " + nullValue);
+            }
+            return;
+        }
+        final String expectedNull = switch (policy) {
+            case TypeConformanceInvariants.POLICY_NONE -> selection(eng, ctx, sql.replace("<value>", "0"));
+            case TypeConformanceInvariants.POLICY_NOT_NULL -> nullValue;
             default -> "";
         };
-        if (!nullValue.startsWith("error: ") || !nullValue.contains(refusal)) {
+        if (!expectedNull.equals(nullValue)) {
             throw new AssertionError(TypeConformanceInvariants.context(type, "null", path, mode)
-                    + ": " + policy + ", a NULL of the type must be refused (" + refusal + "), but gives: " + nullValue);
+                    + ": " + policy + ", a NULL bound of the type gives " + nullValue + ", expected " + expectedNull);
+        }
+    }
+
+    // sql.where_key for a type registered later: each value row, as it prints, selects one row of that value
+    private void checkLaterKey(CairoEngine eng, SqlExecutionContext ctx, String sql, String mode) throws Exception {
+        final String path = "sql.where_key";
+        final Map<String, String> texts = readTexts(eng, ctx, "SELECT k, v FROM t");
+        final String nullRows = "," + selection(eng, ctx, "SELECT k FROM t WHERE v IS NULL") + ",";
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            final String text = texts.get(row.label);
+            if (isNullRow(row, nullRows) || text == null) {
+                continue;
+            }
+            final String selected = selection(eng, ctx, sql.replace("<value>", keyConstantOf(text)));
+            final String label = selected.startsWith("b:") ? selected.substring(2) : null;
+            if (label == null || selected.contains(",") || !text.equals(texts.get(label))) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, row.label, path, mode)
+                        + ": the value " + text + " selects " + selected + ", expected the latest row of that value");
+            }
         }
     }
 
@@ -918,6 +999,33 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         } catch (Throwable e) {
             return String.valueOf(e.getMessage());
         }
+    }
+
+    /**
+     * Defines the bind variable {@code $1} with the type, as its type driver defines one, and sets
+     * it from the value's text, NULL for null; returns the error either step raised, null when
+     * both succeed.
+     */
+    @Nullable
+    private String bind(SqlExecutionContext ctx, @Nullable String text) {
+        final BindVariableService service = ctx.getBindVariableService();
+        service.clear();
+        try {
+            ColumnType.getTypeDriver(type.columnType).defineBindVariable(service, 0, type.columnType, 0);
+            service.setStr(0, text);
+            return null;
+        } catch (Throwable e) {
+            return TypeConformanceRecording.escape(String.valueOf(e.getMessage())).replace('\n', ' ');
+        }
+    }
+
+    // a printed value as a constant to compare the column with: unquoted for a number type, else quoted
+    private String keyConstantOf(@Nullable String text) {
+        final RelationKind kind = TypeConformanceInvariants.kindOf(type.columnType);
+        if (text != null && kind != RelationKind.INT && kind != RelationKind.FLOAT) {
+            return "'" + text.replace("'", "''") + "'";
+        }
+        return plainConstantOf(text);
     }
 
     // a value row as a constant of the type: its literal, and for the NULL row a NULL of the type
@@ -1023,15 +1131,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         } catch (Throwable e) {
             return "NULL";
         }
-        if (text == null) {
-            return "NULL";
-        }
-        try {
-            Numbers.parseDouble(text);
-            return text;
-        } catch (NumericException e) {
-            return "'" + text.replace("'", "''") + "'";
-        }
+        return plainConstantOf(text);
     }
 
     // the first row the kit writes as a value (not NULL)
@@ -1199,17 +1299,31 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
      * selects with the row's value in place of {@code <value>}, comma-separated, or the query's
      * error. A query that runs is also asserted with the {@code returns} battery.
      */
-    private String rowSection(CairoEngine eng, SqlExecutionContext ctx, String path, String mode, String template) throws Exception {
+    private String rowSection(CairoEngine eng, SqlExecutionContext ctx, String path, String mode, String template, String form) throws Exception {
         final StringSink section = new StringSink();
+        final Map<String, String> texts = FORM_CONST.equals(form) ? null : readTexts(eng, ctx, "SELECT k, v FROM t");
+        final String nullRows = FORM_CONST.equals(form) ? null : "," + selection(eng, ctx, "SELECT k FROM t WHERE v IS NULL") + ",";
         for (int i = 0, n = rows.size(); i < n; i++) {
             final TypeConformanceValues.Row row = rows.getQuick(i);
             if (row.literal == null) {
                 // a row written raw has no literal to put in a query
                 continue;
             }
-            final String sql = template.replace("<value>", constantOf(row));
-            final Observation observation = observe(eng, ctx, sql);
             section.put(row.label).put('\t');
+            final String sql;
+            switch (form) {
+                case FORM_CONST -> sql = template.replace("<value>", constantOf(row));
+                case FORM_TEXT -> sql = template.replace("<value>", isNullRow(row, nullRows) ? "NULL" : keyConstantOf(texts.get(row.label)));
+                default -> {
+                    sql = template.replace("<value>", "$1");
+                    final String bindError = bind(ctx, isNullRow(row, nullRows) ? null : texts.get(row.label));
+                    if (bindError != null) {
+                        section.put("bind error: ").put(bindError).put('\n');
+                        continue;
+                    }
+                }
+            }
+            final Observation observation = observe(eng, ctx, sql);
             if (observation.error != null) {
                 section.put(observation.error.replace('\n', ' '));
             } else {
@@ -1221,6 +1335,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             }
             section.put('\n');
         }
+        ctx.getBindVariableService().clear();
         return section.toString();
     }
 
@@ -1257,6 +1372,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    // the selection of a query with $1 defined as the type and set from text, or the binding's error
+    private String boundSelection(CairoEngine eng, SqlExecutionContext ctx, String template, @Nullable String text) {
+        final String bindError = bind(ctx, text);
+        try {
+            return bindError != null ? "bind error: " + bindError : selection(eng, ctx, template.replace("<value>", "$1"));
+        } finally {
+            ctx.getBindVariableService().clear();
+        }
     }
 
     // the labels of the rows a query selects (its first column), comma-separated, or its error
@@ -1515,6 +1640,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\ttrue\ttrue\ttrue
                 null\tfalse\tfalse\tfalse
                 plan memoizes: true
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BOOLEAN
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BOOLEAN
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BOOLEAN
+                ## where_bound_bind
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BOOLEAN
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BOOLEAN
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BOOLEAN
+                ## where_key
+                min\terror: [25] there is no matching operator `=` with the argument types: BOOLEAN = STRING
+                max\terror: [25] there is no matching operator `=` with the argument types: BOOLEAN = STRING
+                null\t
                 """);
         rec("BYTE", """
                 ## filter_eq
@@ -1740,6 +1877,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 other_null\t-1\t-1\t-1
                 null\t0\t0\t0
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,other_null,null
+                max\tmax,other_null,null
+                other_null\tmin,max,other_null,null
+                null\tmin,max,other_null,null
+                ## where_bound_bind
+                min\tmin,max,other_null,null
+                max\tmax,other_null,null
+                other_null\tmin,max,other_null,null
+                null\tmin,max,other_null,null
+                ## where_key
+                min\tb:min
+                max\tb:max
+                other_null\tb:other_null
+                null\t
                 """);
         rec("SHORT", """
                 ## cast
@@ -1965,6 +2117,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 other_null\t-1\t-1\t-1
                 null\t0\t0\t0
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,other_null,null
+                max\tmax,other_null,null
+                other_null\tmin,max,other_null,null
+                null\tmin,max,other_null,null
+                ## where_bound_bind
+                min\tmin,max,other_null,null
+                max\tmax,other_null,null
+                other_null\tmin,max,other_null,null
+                null\tmin,max,other_null,null
+                ## where_key
+                min\tb:min
+                max\tb:max
+                other_null\tb:other_null
+                null\t
                 """);
         rec("CHAR", """
                 ## cast
@@ -2169,6 +2336,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 other_null\t\\uffff\t\\uffff\t\\uffff
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\terror: inconvertible value: \\u0000 [CHAR -> LONG]
+                max\terror: inconvertible value: \\uffff [CHAR -> LONG]
+                other_null\terror: inconvertible value: \\uffff [CHAR -> LONG]
+                null\terror: inconvertible value: \\u0000 [CHAR -> LONG]
+                ## where_bound_bind
+                min\terror: inconvertible value: \\u0000 [CHAR -> LONG]
+                max\terror: inconvertible value: \\uffff [CHAR -> LONG]
+                other_null\terror: inconvertible value: \\uffff [CHAR -> LONG]
+                null\terror: inconvertible value: \\u0000 [CHAR -> LONG]
+                ## where_key
+                min\tb:null
+                max\tb:other_null
+                other_null\tb:other_null
+                null\tb:null
                 """);
         rec("INT", """
                 ## cast
@@ -2391,6 +2573,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\tnull\tnull\tnull
                 null\tnull\tnull\tnull
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,sentinel,null
+                max\t
+                sentinel\t
+                null\t
+                ## where_bound_bind
+                min\tmin,max,sentinel,null
+                max\t
+                sentinel\t
+                null\t
+                ## where_key
+                min\tb:min
+                max\tb:max
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("LONG", """
                 ## cast
@@ -2613,6 +2810,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\tnull\tnull\tnull
                 null\tnull\tnull\tnull
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,sentinel,null
+                max\t
+                sentinel\t
+                null\t
+                ## where_bound_bind
+                min\tmin,max,sentinel,null
+                max\t
+                sentinel\t
+                null\t
+                ## where_key
+                min\tb:min
+                max\tb:max
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("DATE", """
                 ## filter_eq
@@ -2823,6 +3035,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\t\t\t
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,sentinel,null
+                max\t
+                sentinel\t
+                null\t
+                ## where_bound_bind
+                min\tbind error: inconvertible value: `-292275055-05-16T16:47:04.193Z` [STRING -> DATE]
+                max\tbind error: inconvertible value: `292278994-08-17T07:12:55.807Z` [STRING -> DATE]
+                sentinel\t
+                null\t
+                ## where_key
+                min\terror: [27] Invalid date [str=-292275055-05-16T16:47:04.193Z]
+                max\terror: [27] Invalid date [str=292278994-08-17T07:12:55.807Z]
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("TIMESTAMP", """
                 ## cast
@@ -3033,6 +3260,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\t\t\t
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,sentinel,null
+                max\t
+                sentinel\t
+                null\t
+                ## where_bound_bind
+                min\tbind error: inconvertible value: `-290308-01-01T19:59:05.224193Z` [STRING -> TIMESTAMP]
+                max\tbind error: inconvertible value: `294247-01-10T04:00:54.775807Z` [STRING -> TIMESTAMP]
+                sentinel\t
+                null\t
+                ## where_key
+                min\terror: [27] Invalid date [str=-290308-01-01T19:59:05.224193Z]
+                max\terror: [27] Invalid date [str=294247-01-10T04:00:54.775807Z]
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("FLOAT", """
                 ## filter_eq
@@ -3321,6 +3563,27 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 inf\tnull\tnull\tnull
                 ninf\tnull\tnull\tnull
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,nan,literal_inf,negzero,null,inf,ninf
+                max\t
+                nan\t
+                literal_inf\t
+                negzero\tmin,max,nan,literal_inf,negzero,null,inf,ninf
+                null\t
+                ## where_bound_bind
+                min\tmin,max,nan,literal_inf,negzero,null,inf,ninf
+                max\t
+                nan\t
+                literal_inf\t
+                negzero\tmin,max,nan,literal_inf,negzero,null,inf,ninf
+                null\t
+                ## where_key
+                min\t
+                max\t
+                nan\tb:null,b:inf,b:ninf
+                literal_inf\tb:null,b:inf,b:ninf
+                negzero\tb:negzero
+                null\tb:null,b:inf,b:ninf
                 """);
         rec("DOUBLE", """
                 ## cast
@@ -3609,6 +3872,27 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 inf\tnull\tnull\tnull
                 ninf\tnull\tnull\tnull
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,nan,literal_inf,negzero,null,inf,ninf
+                max\t
+                nan\t
+                literal_inf\t
+                negzero\tmin,max,nan,literal_inf,negzero,null,inf,ninf
+                null\t
+                ## where_bound_bind
+                min\tmin,max,nan,literal_inf,negzero,null,inf,ninf
+                max\t
+                nan\t
+                literal_inf\t
+                negzero\tmin,max,nan,literal_inf,negzero,null,inf,ninf
+                null\t
+                ## where_key
+                min\tb:min
+                max\tb:max
+                nan\tb:null,b:inf,b:ninf
+                literal_inf\tb:null,b:inf,b:ninf
+                negzero\tb:negzero
+                null\tb:null,b:inf,b:ninf
                 """);
         rec("STRING", """
                 ## filter_eq
@@ -3841,6 +4125,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 escape\ta"b,c\\d'e\ta"b,c\\d'e\ta"b,c\\d'e
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                empty\terror: inconvertible value: `` [STRING -> LONG]
+                min\terror: inconvertible value: ` ` [STRING -> LONG]
+                max\terror: inconvertible value: `ü€😀�` [STRING -> LONG]
+                escape\terror: inconvertible value: `a"b,c\\d'e` [STRING -> LONG]
+                null\t
+                ## where_bound_bind
+                empty\terror: inconvertible value: `` [STRING -> LONG]
+                min\terror: inconvertible value: ` ` [STRING -> LONG]
+                max\terror: inconvertible value: `ü€😀�` [STRING -> LONG]
+                escape\terror: inconvertible value: `a"b,c\\d'e` [STRING -> LONG]
+                null\t
+                ## where_key
+                empty\tb:empty
+                min\tb:min
+                max\tb:max
+                escape\tb:escape
+                null\tb:null
                 """);
         rec("SYMBOL", """
                 ## filter_eq
@@ -4080,6 +4382,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 escape\ta"b,c\\d'e\ta"b,c\\d'e\ta"b,c\\d'e
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                empty\terror: [36] Invalid date [str=]
+                min\terror: [37] Invalid date [str= ]
+                max\terror: [41] Invalid date [str=ü€😀�]
+                escape\terror: [46] Invalid date [str=a"b,c\\d'e]
+                null\t
+                ## where_bound_bind
+                empty\terror: inconvertible value: `` [STRING -> LONG]
+                min\terror: inconvertible value: ` ` [STRING -> LONG]
+                max\terror: inconvertible value: `ü€😀�` [STRING -> LONG]
+                escape\terror: inconvertible value: `a"b,c\\d'e` [STRING -> LONG]
+                null\t
+                ## where_key
+                empty\tb:empty
+                min\tb:min
+                max\tb:max
+                escape\t
+                null\tb:null
                 """);
         rec("LONG256", """
                 ## filter_eq
@@ -4291,6 +4611,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\t\t\t
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,sentinel,null
+                max\tmin,max,sentinel,null
+                sentinel\t
+                null\t
+                ## where_bound_bind
+                min\tbind error: inconvertible value: `0x00` [STRING -> LONG256]
+                max\tbind error: inconvertible value: `0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` [STRING -> LONG256]
+                sentinel\t
+                null\t
+                ## where_key
+                min\tb:min
+                max\tb:max
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("GEOBYTE", """
                 ## filter_eq
@@ -4475,6 +4810,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t1111111\t1111111\t1111111
                 null\t\t\t
                 plan memoizes: false
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(7b)
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(7b)
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(7b)
+                ## where_bound_bind
+                min\tbind error: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept STRING
+                ## where_key
+                min\tb:min
+                max\t
+                null\tb:null
                 """);
         rec("GEOSHORT", """
                 ## cast
@@ -4665,6 +5012,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\tzzz\tzzz\tzzz
                 null\t\t\t
                 plan memoizes: false
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(3c)
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(3c)
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(3c)
+                ## where_bound_bind
+                min\tbind error: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept STRING
+                ## where_key
+                min\tb:min
+                max\tb:max
+                null\tb:null
                 """);
         rec("GEOINT", """
                 ## filter_eq
@@ -4855,6 +5214,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\tzzzzzz\tzzzzzz\tzzzzzz
                 null\t\t\t
                 plan memoizes: false
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(6c)
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(6c)
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(6c)
+                ## where_bound_bind
+                min\tbind error: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept STRING
+                ## where_key
+                min\tb:min
+                max\tb:max
+                null\tb:null
                 """);
         rec("GEOLONG", """
                 ## cast
@@ -5045,6 +5416,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\tzzzzzzzz\tzzzzzzzz\tzzzzzzzz
                 null\t\t\t
                 plan memoizes: false
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(8c)
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(8c)
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(8c)
+                ## where_bound_bind
+                min\tbind error: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept STRING
+                ## where_key
+                min\tb:min
+                max\tb:max
+                null\tb:null
                 """);
         rec("BINARY", """
                 ## cast
@@ -5189,6 +5572,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\terror: [38] integer expected for target point count
                 ## memoized
                 error: [20] unsupported cast
+                ## where_bound_const
+                empty\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BINARY
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BINARY
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= BINARY
+                ## where_bound_bind
+                empty\tbind error: [0] bind variable at 0 is defined as BINARY and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as BINARY and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as BINARY and cannot accept STRING
+                ## where_key
+                empty\terror: [56] v (BINARY): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [82] v (BINARY): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (BINARY): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("UUID", """
                 ## cast
@@ -5395,6 +5790,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\t\t\t
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= UUID
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= UUID
+                sentinel\terror: [31] there is no matching operator `>=` with the argument types: LONG >= UUID
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= UUID
+                ## where_bound_bind
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= UUID
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= UUID
+                sentinel\terror: [31] there is no matching operator `>=` with the argument types: LONG >= UUID
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= UUID
+                ## where_key
+                min\tb:min
+                max\tb:max
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("LONG128", """
                 ## cast
@@ -5562,6 +5972,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\terror: [51] unsupported cast
                 ## memoized
                 error: [20] unsupported cast
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= LONG128
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= LONG128
+                sentinel\terror: [31] there is no matching operator `>=` with the argument types: LONG >= LONG128
+                null\terror: [47] unsupported cast
+                ## where_bound_bind
+                min\tbind error: [0] bind variable cannot be used [contextType=24, index=0]
+                max\tbind error: [0] bind variable cannot be used [contextType=24, index=0]
+                sentinel\tbind error: [0] bind variable cannot be used [contextType=24, index=0]
+                null\tbind error: [0] bind variable cannot be used [contextType=24, index=0]
+                ## where_key
+                min\terror: [25] there is no matching operator `=` with the argument types: LONG128 = STRING
+                max\terror: [25] there is no matching operator `=` with the argument types: LONG128 = STRING
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("IPv4", """
                 ## cast
@@ -5773,6 +6198,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\t\t\t
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= IPv4
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= IPv4
+                sentinel\terror: [31] there is no matching operator `>=` with the argument types: LONG >= IPv4
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= IPv4
+                ## where_bound_bind
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= IPv4
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= IPv4
+                sentinel\terror: [31] there is no matching operator `>=` with the argument types: LONG >= IPv4
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= IPv4
+                ## where_key
+                min\tb:min
+                max\tb:max
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("VARCHAR", """
                 ## filter_eq
@@ -6005,6 +6445,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 escape\ta"b,c\\d'e\ta"b,c\\d'e\ta"b,c\\d'e
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                empty\terror: inconvertible value: `` [VARCHAR -> LONG]
+                min\terror: inconvertible value: ` ` [VARCHAR -> LONG]
+                max\terror: inconvertible value: `ü€😀�` [VARCHAR -> LONG]
+                escape\terror: inconvertible value: `a"b,c\\d'e` [VARCHAR -> LONG]
+                null\t
+                ## where_bound_bind
+                empty\terror: inconvertible value: `` [VARCHAR -> LONG]
+                min\terror: inconvertible value: ` ` [VARCHAR -> LONG]
+                max\terror: inconvertible value: `ü€😀�` [VARCHAR -> LONG]
+                escape\terror: inconvertible value: `a"b,c\\d'e` [VARCHAR -> LONG]
+                null\t
+                ## where_key
+                empty\tb:empty
+                min\tb:min
+                max\tb:max
+                escape\tb:escape
+                null\tb:null
                 """);
         rec("DOUBLE[]", """
                 ## filter_eq
@@ -6194,6 +6652,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 specials\t[null,null,null,-0.0]\t[null,null,null,-0.0]\t[null,null,null,-0.0]
                 null\tnull\tnull\tnull
                 plan memoizes: true
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
+                empty\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
+                specials\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
+                ## where_bound_bind
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
+                empty\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
+                specials\tbind error: inconvertible value: `[null,null,null,-0.0]` [STRING -> DOUBLE[]]
+                null\tbind error: [-1] array type mismatch [expected=DOUBLE[], actual=NULL]
+                ## where_key
+                min\terror: [81] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [80] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                empty\terror: [58] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                specials\terror: [77] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL8", """
                 ## cast
@@ -6382,6 +6858,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t9.9\t9.9\t9.9
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,null
+                max\tmax,null
+                null\t
+                ## where_bound_bind
+                min\tmin,max,null
+                max\tmax,null
+                null\t
+                ## where_key
+                min\terror: [60] v (DECIMAL(2,1)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [59] v (DECIMAL(2,1)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DECIMAL(2,1)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL16", """
                 ## cast
@@ -6570,6 +7058,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t99.99\t99.99\t99.99
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,null
+                max\tmax,null
+                null\t
+                ## where_bound_bind
+                min\tmin,max,null
+                max\tmax,null
+                null\t
+                ## where_key
+                min\terror: [62] v (DECIMAL(4,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [61] v (DECIMAL(4,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DECIMAL(4,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL32", """
                 ## cast
@@ -6764,6 +7264,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t999999999\t999999999\t999999999
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_bound_bind
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_key
+                min\terror: [66] v (DECIMAL(9,0)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [65] v (DECIMAL(9,0)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DECIMAL(9,0)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL64", """
                 ## filter_eq
@@ -6952,6 +7464,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t999999999999.9999\t999999999999.9999\t999999999999.9999
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_bound_bind
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_key
+                min\terror: [74] v (DECIMAL(16,4)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [73] v (DECIMAL(16,4)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DECIMAL(16,4)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL128", """
                 ## filter_eq
@@ -7140,6 +7664,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t9999999999999999999999999999.9999999999\t9999999999999999999999999999.9999999999\t9999999999999999999999999999.9999999999
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_bound_bind
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_key
+                min\terror: [96] v (DECIMAL(38,10)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [95] v (DECIMAL(38,10)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DECIMAL(38,10)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL256", """
                 ## cast
@@ -7328,6 +7864,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999\t99999999999999999999999999999999999999999999999999999999.99999999999999999999\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_bound_bind
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_key
+                min\terror: [134] v (DECIMAL(76,20)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [133] v (DECIMAL(76,20)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DECIMAL(76,20)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("INTERVAL", """
                 ## filter_eq
@@ -7388,6 +7936,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## memoized
                 error: create: [29] non-persisted type: INTERVAL
+                ## where_bound_const
+                error: create: [29] non-persisted type: INTERVAL
+                ## where_bound_bind
+                error: create: [29] non-persisted type: INTERVAL
+                ## where_key
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
                 ## filter_eq
@@ -7447,6 +8001,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## subsample_target
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 ## memoized
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## where_bound_const
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## where_bound_bind
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## where_key
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
@@ -7664,6 +8224,21 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\t\t\t
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,sentinel,null
+                max\t
+                sentinel\t
+                null\t
+                ## where_bound_bind
+                min\tmin,max,sentinel,null
+                max\t
+                sentinel\t
+                null\t
+                ## where_key
+                min\t
+                max\t
+                sentinel\tb:null
+                null\tb:null
                 """);
         rec("GEOHASH(1c)", """
                 ## filter_eq
@@ -7848,6 +8423,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\tz\tz\tz
                 null\t\t\t
                 plan memoizes: false
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(1c)
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(1c)
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(1c)
+                ## where_bound_bind
+                min\tbind error: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept STRING
+                ## where_key
+                min\tb:min
+                max\tb:max
+                null\tb:null
                 """);
         rec("GEOHASH(8b)", """
                 ## filter_eq
@@ -8032,6 +8619,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t11111111\t11111111\t11111111
                 null\t\t\t
                 plan memoizes: false
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(8b)
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(8b)
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(8b)
+                ## where_bound_bind
+                min\tbind error: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept STRING
+                ## where_key
+                min\tb:min
+                max\t
+                null\tb:null
                 """);
         rec("GEOHASH(31b)", """
                 ## filter_eq
@@ -8216,6 +8815,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t1111111111111111111111111111111\t1111111111111111111111111111111\t1111111111111111111111111111111
                 null\t\t\t
                 plan memoizes: false
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(31b)
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(31b)
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(31b)
+                ## where_bound_bind
+                min\tbind error: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept STRING
+                ## where_key
+                min\tb:min
+                max\t
+                null\tb:null
                 """);
         rec("GEOHASH(12c)", """
                 ## cast
@@ -8406,6 +9017,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\tzzzzzzzzzzzz\tzzzzzzzzzzzz\tzzzzzzzzzzzz
                 null\t\t\t
                 plan memoizes: false
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(12c)
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(12c)
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= GEOHASH(12c)
+                ## where_bound_bind
+                min\tbind error: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept STRING
+                max\tbind error: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept STRING
+                null\tbind error: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept STRING
+                ## where_key
+                min\tb:min
+                max\tb:max
+                null\tb:null
                 """);
         rec("DECIMAL(5,2)", """
                 ## cast
@@ -8594,6 +9217,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t999.99\t999.99\t999.99
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,null
+                max\tmax,null
+                null\t
+                ## where_bound_bind
+                min\tmin,max,null
+                max\tmax,null
+                null\t
+                ## where_key
+                min\terror: [63] v (DECIMAL(5,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [62] v (DECIMAL(5,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DECIMAL(5,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL(18,3)", """
                 ## filter_eq
@@ -8782,6 +9417,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\t999999999999999.999\t999999999999999.999\t999999999999999.999
                 null\t\t\t
                 plan memoizes: true
+                ## where_bound_const
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_bound_bind
+                min\tmin,max,null
+                max\t
+                null\t
+                ## where_key
+                min\terror: [76] v (DECIMAL(18,3)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [75] v (DECIMAL(18,3)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DECIMAL(18,3)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DOUBLE[][]", """
                 ## filter_eq
@@ -8971,6 +9618,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 specials\t[[null,null,null,-0.0]]\t[[null,null,null,-0.0]]\t[[null,null,null,-0.0]]
                 null\tnull\tnull\tnull
                 plan memoizes: true
+                ## where_bound_const
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
+                empty\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
+                specials\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
+                ## where_bound_bind
+                min\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
+                max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
+                empty\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
+                specials\tbind error: inconvertible value: `[[null,null,null,-0.0]]` [STRING -> DOUBLE[][]]
+                null\tbind error: [-1] array type mismatch [expected=DOUBLE[][], actual=NULL]
+                ## where_key
+                min\terror: [83] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                max\terror: [82] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                empty\terror: [58] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                specials\terror: [79] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                null\terror: [58] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("INTERVAL(us)", """
                 ## filter_eq
@@ -9031,6 +9696,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## memoized
                 error: create: [29] non-persisted type: INTERVAL
+                ## where_bound_const
+                error: create: [29] non-persisted type: INTERVAL
+                ## where_bound_bind
+                error: create: [29] non-persisted type: INTERVAL
+                ## where_key
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
                 ## cast
@@ -9090,6 +9761,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## subsample_target
                 error: create: [29] non-persisted type: INTERVAL
                 ## memoized
+                error: create: [29] non-persisted type: INTERVAL
+                ## where_bound_const
+                error: create: [29] non-persisted type: INTERVAL
+                ## where_bound_bind
+                error: create: [29] non-persisted type: INTERVAL
+                ## where_key
                 error: create: [29] non-persisted type: INTERVAL
                 """);
     }
