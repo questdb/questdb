@@ -7867,10 +7867,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 continue;
             }
             final MemoryCR aux = reader.getColumn(primaryIndex + 1);
+            // the var-size layout of the column's accessor family, chosen once per column
+            final short opcode = PhysicalDescriptor.accessorOpcodeOf(columnType);
             long dstRowInBuffer = dstRow;
             for (long r = rowLo; r < rowHi; r++, dstRowInBuffer++) {
-                // the var-size layout of the column's accessor family
-                switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
+                switch (opcode) {
                     case ColumnType.STRING:
                         // STRING .d/.i layout: aux holds the per-row 8-byte start offset into
                         // the data payload. getStrA returns null for a null marker.
