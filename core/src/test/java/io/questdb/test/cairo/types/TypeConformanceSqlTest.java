@@ -1493,7 +1493,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE\terror: inconvertible value: \\u0000 [CHAR -> DOUBLE]
                 STRING\t|\\uffff|\\uffff|
                 SYMBOL\t|\\uffff|\\uffff|
-                LONG256\t0x00|0xffff|0xffff|0x00\treturns: ImplicitCastException: inconvertible value: \\u0000 [CHAR -> LONG]
+                LONG256\terror: inconvertible value: \\u0000 [CHAR -> LONG]
                 GEOBYTE\t|||
                 GEOSHORT\t|||
                 GEOINT\t|||
