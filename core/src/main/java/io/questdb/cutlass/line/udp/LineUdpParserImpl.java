@@ -461,6 +461,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             columnTypeTag == ColumnType.VARCHAR ||
                             columnTypeTag == ColumnType.CHAR ||
                             columnTypeTag == ColumnType.IPv4 ||
+                            columnTypeTag == ColumnType.LONG256 && LineUdpParserSupport.isLong256String(value) ||
                             isForField &&
                                     (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
                     case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;

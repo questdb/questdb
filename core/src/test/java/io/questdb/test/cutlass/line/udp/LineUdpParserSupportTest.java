@@ -131,6 +131,37 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
     }
 
     @Test
+    public void testLong256StringIntoNonWalTable() throws Exception {
+        // a string that is not a LONG256 drops its line, as over TCP; the next line arrives
+        testColumnType(
+                ColumnType.LONG256,
+                """
+                        column\tlocation\ttimestamp
+                        0x1234\tsp052w\t1970-01-01T00:00:01.000000Z
+                        0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\t\t1970-01-01T00:00:02.000000Z
+                        \tsp052w\t1970-01-01T00:00:04.000000Z
+                        """,
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, "0x1234")
+                            .field(locationColumnName, "sp052w")
+                            .$(1_000_000_000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7")
+                            .$(2_000_000_000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "0xzz")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3_000_000_000L);
+                    sender.metric(tableName)
+                            .field(locationColumnName, "sp052w")
+                            .$(4_000_000_000L);
+                    sender.flush();
+                }
+        );
+    }
+
+    @Test
     public void testPutBinaryBadValueIsTreatedAsNull() throws Exception {
         testColumnType(
                 ColumnType.BINARY,

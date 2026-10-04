@@ -772,6 +772,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testLong256StringIntoNonWalTable() throws Exception {
+        assertLong256StringStored("long256_bypass", "BYPASS WAL");
+    }
+
+    @Test
+    public void testLong256StringIntoWalTable() throws Exception {
+        assertLong256StringStored("long256_wal", "WAL");
+    }
+
+    @Test
     public void testMalformedBinaryDecimalDoesNotCrash() throws Exception {
         // Regression test: fuzzer-generated payload that triggered
         // ArrayIndexOutOfBoundsException in DecimalBinaryFormatParser.load()
@@ -2304,6 +2314,34 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     + Character.digit(hex.charAt(i + 1), 16));
         }
         return data;
+    }
+
+    private void assertLong256StringStored(String table, String walMode) throws Exception {
+        // a string field into a LONG256 column is parsed and stored; a string that is not a
+        // LONG256 is a cast error, which drops its line, and the next line is stored
+        runInContext((_) -> {
+            execute("CREATE TABLE " + table + " (v LONG256, x DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY " + walMode);
+            send(table, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    sender.metric(table).field("v", "0x1234").field("x", 1.0).$(1000);
+                    sender.metric(table).field("v", "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7").field("x", 2.0).$(2000);
+                    sender.metric(table).field("v", "0xzz").field("x", 3.0).$(3000);
+                    sender.metric(table).field("x", 4.0).$(4000);
+                    sender.flush();
+                }
+            });
+            drainWalQueue();
+            assertQuery("SELECT v, x, timestamp FROM " + table)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
+                            v\tx\ttimestamp
+                            0x1234\t1.0\t1970-01-01T00:00:00.000001Z
+                            0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\t2.0\t1970-01-01T00:00:00.000002Z
+                            \t4.0\t1970-01-01T00:00:00.000004Z
+                            """);
+        });
     }
 
     private void dropWeatherTable() {

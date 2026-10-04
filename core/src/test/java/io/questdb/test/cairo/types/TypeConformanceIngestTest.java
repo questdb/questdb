@@ -79,7 +79,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -121,9 +120,7 @@ import java.util.stream.Stream;
  * all be refused and none stored.
  * <p>
  * ILP over HTTP and QWP refuse non-WAL tables by design, so their non-WAL runs have sections of
- * their own ({@code ilp-http-nonwal}, {@code qwp-nonwal}). Where WAL and non-WAL differ and
- * should not, {@link #MODE_SPLIT} keeps one section per mode ({@code <path>@<mode>}), so the
- * anomaly stays visible instead of failing every run.
+ * their own ({@code ilp-http-nonwal}, {@code qwp-nonwal}).
  * <p>
  * Masks, applied before the comparison: the test root directory becomes {@code <root>}; the
  * mode's own table names ({@code dst_n1}, {@code dst_w1}) become {@code dst}; the error id of
@@ -140,9 +137,6 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     private static final Pattern HTTP_ERROR_ID = Pattern.compile("id: [0-9a-f]+-[0-9]+");
     private static final int LOCALHOST = Numbers.parseIPv4Quiet("127.0.0.1");
     private static final String[] MODES = {"nonwal-day", "wal-day"};
-    // (type, path) pairs whose WAL and non-WAL results differ where they should not: one section
-    // per mode, so the difference stays visible; each is a product anomaly reported in S12
-    private static final Set<String> MODE_SPLIT = Set.of("LONG256|ingest.ilp-tcp");
     private static final Map<String, String> RECORDINGS = new HashMap<>();
     private static final Pattern TABLE_NAME = Pattern.compile("dst_[nw]1");
     private final ObjList<TypeConformanceValues.Row> rows;
@@ -665,8 +659,6 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
         if (!mode.startsWith("wal") && ("ingest.ilp-http".equals(path) || "ingest.qwp".equals(path))) {
             // ILP over HTTP and QWP refuse non-WAL tables by design: their own section
             section += "-nonwal";
-        } else if (MODE_SPLIT.contains(type.label + "|" + path)) {
-            section += "@" + mode;
         }
         TypeConformanceRecording.assertSection(type, section, mode, RECORDINGS.get(type.label), TypeConformanceRecording.escape(masked));
     }
@@ -2575,15 +2567,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 min\t0x00
                 max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
                 null\t
-                ## ilp-tcp@nonwal-day
-                min\tstring 0x00
-                max\tstring 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-                sentinel\tstring\s
-                null\tomitted
-                k\tv
-                null\t
-                ~fence\t
-                ## ilp-tcp@wal-day
+                ## ilp-tcp
                 min\tstring 0x00
                 max\tstring 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
                 sentinel\tstring\s
@@ -2599,6 +2583,8 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 sentinel\tstring\s
                 null\tomitted
                 k\tv
+                min\t0x00
+                max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
                 null\t
                 """);
         rec("GEOBYTE", """

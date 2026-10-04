@@ -42,6 +42,7 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -64,6 +65,8 @@ public class LineTcpMeasurementEvent implements Closeable {
     // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
+    private static final Long256Acceptor NOOP_LONG256_ACCEPTOR = (_, _, _, _) -> {
+    };
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
     private final Decimal256 decimal256 = new Decimal256();
@@ -581,6 +584,14 @@ public class LineTcpMeasurementEvent implements Closeable {
                                 throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                             }
                             break;
+                        case ColumnType.LONG256:
+                            // the writer thread parses the text into the column; parsing it here
+                            // refuses a string that is not a LONG256, as the WAL appender does
+                            if (Numbers.extractLong256(entityValue, NOOP_LONG256_ACCEPTOR)) {
+                                offset = buffer.addLong256(offset, entityValue);
+                                break;
+                            }
+                            throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                         case ColumnType.DECIMAL:
                             final int precision = ColumnType.getDecimalPrecision(colType);
                             final int scale = ColumnType.getDecimalScale(colType);

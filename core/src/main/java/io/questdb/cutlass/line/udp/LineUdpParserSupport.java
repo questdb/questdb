@@ -33,6 +33,8 @@ import io.questdb.cutlass.line.LineUtils;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -40,6 +42,8 @@ import io.questdb.std.str.Utf8StringSink;
 
 public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
+    private static final Long256Acceptor NOOP_LONG256_ACCEPTOR = (_, _, _, _) -> {
+    };
 
     public static int getValueType(CharSequence value) {
         return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, true);
@@ -106,6 +110,26 @@ public class LineUdpParserSupport {
             }
         }
         return ColumnType.NULL;
+    }
+
+    /**
+     * Tells whether a quoted string field holds a LONG256 in the form ILP over TCP stores from a
+     * string: 0x and an even count of hex digits, at most 64, between the quotes, as
+     * {@link Numbers#extractLong256(CharSequence, Long256Acceptor)} takes it.
+     *
+     * @param value the field value, quotes included
+     */
+    public static boolean isLong256String(CharSequence value) {
+        final int len = value.length();
+        if (len > 4 && (len & 1) == 0 && len < 69 && value.charAt(1) == '0' && value.charAt(2) == 'x') {
+            try {
+                Long256FromCharSequenceDecoder.decode(value, 3, len - 1, NOOP_LONG256_ACCEPTOR);
+                return true;
+            } catch (ImplicitCastException e) {
+                return false;
+            }
+        }
+        return false;
     }
 
     /**
@@ -179,6 +203,11 @@ public class LineUdpParserSupport {
                         row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                         break;
                     case ColumnType.LONG256:
+                        if (value.charAt(0) == '"') {
+                            // a string field, which the parser admits only when isLong256String()
+                            row.putLong256(columnIndex, value, 3, value.length() - 1);
+                            break;
+                        }
                         int limit = value.length() - 1;
                         if (value.charAt(limit) != 'i') {
                             limit++;
