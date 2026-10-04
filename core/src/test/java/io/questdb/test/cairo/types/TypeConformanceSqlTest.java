@@ -39,6 +39,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.NumericException;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -62,8 +64,9 @@ import java.util.regex.Pattern;
  * The SQL part of the conformance kit (User Story 4): every kit type through filters,
  * ORDER BY, GROUP BY, inner and outer JOIN, UNION ALL, CASE, CAST, {@code lag}, SAMPLE BY and
  * LATEST ON, and the "not computed yet" versus NULL cases: {@code first}, {@code last},
- * {@code first_not_null} and {@code last_not_null} over groups whose first row is NULL, and
- * SAMPLE BY FILL(PREV) over a leading NULL.
+ * {@code first_not_null} and {@code last_not_null} over groups whose first row is NULL,
+ * SAMPLE BY FILL(PREV) over a leading NULL, and SAMPLE BY FILL(NULL), FILL(value) and
+ * FILL(LINEAR) over gaps between two values and before a NULL.
  * <p>
  * Every query runs in three modes: single-threaded with interpreted filters, and parallel (a
  * worker pool of four, the parallel factories on) with compiled and with interpreted filters. A
@@ -80,11 +83,13 @@ import java.util.regex.Pattern;
  * Tables per type: {@code t} holds every value row; {@code t2} holds them twice (GROUP BY,
  * LATEST ON); {@code u} holds the even rows (joins, UNION ALL); {@code n} holds groups whose
  * first, last or every row is NULL; {@code f} holds a NULL, the {@code max} row and a NULL two
- * seconds apart (SAMPLE BY FILL(PREV)). Queries that need a literal use the {@code max} row's.
+ * seconds apart (SAMPLE BY FILL(PREV)); {@code g} holds a low value, the high value and a NULL
+ * two seconds apart (the other FILL paths). Queries that need a literal use the {@code max}
+ * row's; FILL(value) fills with the high value as it prints.
  * <p>
  * A type registered later runs the queries whose value survives unchanged (filters on NULL,
- * ORDER BY, UNION ALL) where its resource line enables them, checked by
- * {@link TypeConformanceInvariants}; the design-proof mixing cases of the resource run once, in
+ * ORDER BY, UNION ALL) and the FILL paths over {@code g} where its resource line enables them,
+ * checked by {@link TypeConformanceInvariants}; the design-proof mixing cases of the resource run once, in
  * the first later type's instance. Other queries need literals or relations a later type does
  * not have yet, and fail when enabled.
  */
@@ -96,6 +101,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     private static final Map<String, String> RECORDINGS = new HashMap<>();
     private final ObjList<TypeConformanceValues.Row> rows;
     private final TypeConformanceTypes.Entry type;
+    // the FILL(value) token: the high row of g as it prints, quoted unless it is a number
+    private String fillValue;
 
     public TypeConformanceSqlTest(String label) {
         this.type = TypeConformanceTypes.byLabel(label);
@@ -364,6 +371,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             }
             case "case_else" -> {
                 checkLaterCaseElse(eng, ctx, mode);
+                return;
+            }
+            case "fill_null", "fill_value", "fill_prev", "fill_linear" -> {
+                checkLaterFill(eng, ctx, name, mode);
                 return;
             }
             default -> throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
@@ -644,6 +655,117 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         assertNoGaps(path, mode, "casts the relations admit", gaps);
     }
 
+    /**
+     * The FILL paths for a type registered later, over {@code g}: the low row at 0s, the high
+     * row at 2s and the NULL row at 4s, sampled by the second. A path that reaches a guarded
+     * site the type declares it is refused at must fail there with the site's refusal.
+     * Otherwise the sampled rows read back as written, and the gaps at 1s and 3s read as the
+     * fill implies: FILL(NULL) as the NULL row, FILL(PREV) as the row before, FILL(value) as
+     * the high row whose printed form fills, and FILL(LINEAR) between its two neighbours by the
+     * arithmetic tier, and as the NULL row next to a NULL under SENTINEL. FILL(LINEAR) applies
+     * to the numeric tiers: a type without one must fail with an error naming the type.
+     */
+    private void checkLaterFill(CairoEngine eng, SqlExecutionContext ctx, String name, String mode) throws Exception {
+        final String path = "sql." + name;
+        final String fill;
+        final String site;
+        switch (name) {
+            case "fill_null" -> {
+                fill = "NULL";
+                site = null;
+            }
+            case "fill_prev" -> {
+                fill = "PREV";
+                site = "SAMPLE BY FILL(PREV)";
+            }
+            case "fill_value" -> {
+                fill = fillValue;
+                site = "SAMPLE BY FILL(value)";
+            }
+            default -> {
+                fill = "LINEAR";
+                site = "SAMPLE BY FILL(LINEAR)";
+            }
+        }
+        final ObjList<TypeConformanceValues.Row> gRows = fillRows();
+        if (gRows == null) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": the type has no low and high value rows");
+        }
+        final TypeConformanceValues.Row low = gRows.getQuick(0);
+        final TypeConformanceValues.Row high = gRows.getQuick(2);
+        final ObjList<long[]> bits = new ObjList<>();
+        final ObjList<String> texts = new ObjList<>();
+        String error = null;
+        try (
+                SqlCompiler compiler = eng.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SELECT ts, last(v) v FROM g SAMPLE BY 1s FILL(" + fill + ")", ctx).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(ctx)
+        ) {
+            final RecordMetadata metadata = factory.getMetadata();
+            final Record record = cursor.getRecord();
+            final StringSink sink = new StringSink();
+            while (cursor.hasNext()) {
+                bits.add(TypeConformanceValues.readValue(record, 1, type));
+                sink.clear();
+                CursorPrinter.printColumn(record, metadata, 1, sink);
+                texts.add(sink.toString());
+            }
+        } catch (Throwable e) {
+            error = String.valueOf(e.getMessage());
+        }
+        if (site != null && TypeConformanceInvariants.assertDeclaredRefusal(type, "-", path, mode, error, site)) {
+            return;
+        }
+        if ("fill_linear".equals(name) && type.laterTier == null) {
+            if (error == null || !error.contains(ColumnType.nameOf(type.columnType))) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
+                        + ": FILL(LINEAR) applies to the numeric tiers, so without one the query must fail naming the type, but "
+                        + (error == null ? "it ran" : "it failed with: " + error));
+            }
+            return;
+        }
+        if (error != null) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + error);
+        }
+        // the NULL row at 4s is refused under NOT_NULL, which leaves three seconds to sample
+        if (bits.size() < 3) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + bits.size() + " sampled rows, expected 3 or 5");
+        }
+        TypeConformanceInvariants.assertReadsBackAsWritten(type, low.label, path, mode, low.bits, bits.getQuick(0));
+        TypeConformanceInvariants.assertReadsBackAsWritten(type, high.label, path, mode, high.bits, bits.getQuick(2));
+        final boolean hasNullRow = bits.size() > 4;
+        switch (name) {
+            case "fill_null" -> {
+                for (int gap = 1; gap < bits.size() && hasNullRow; gap += 2) {
+                    if (!texts.getQuick(4).equals(texts.getQuick(gap))) {
+                        throw new AssertionError(TypeConformanceInvariants.context(type, "gap" + gap, path, mode)
+                                + ": the gap reads " + texts.getQuick(gap) + ", the NULL row " + texts.getQuick(4));
+                    }
+                }
+            }
+            case "fill_prev" -> {
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap1", path, mode, low.bits, bits.getQuick(1));
+                if (hasNullRow) {
+                    TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, high.bits, bits.getQuick(3));
+                }
+            }
+            case "fill_value" -> {
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap1", path, mode, high.bits, bits.getQuick(1));
+                if (hasNullRow) {
+                    TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, high.bits, bits.getQuick(3));
+                }
+            }
+            default -> {
+                TypeConformanceInvariants.assertBetween(type, "gap1", path, mode, low.bits, bits.getQuick(1), high.bits);
+                if (hasNullRow && TypeConformanceInvariants.POLICY_SENTINEL.equals(TypeConformanceInvariants.policyOf(type))
+                        && !texts.getQuick(4).equals(texts.getQuick(3))) {
+                    throw new AssertionError(TypeConformanceInvariants.context(type, "gap3", path, mode)
+                            + ": next to a NULL the gap must read as NULL, " + texts.getQuick(4) + ", but reads " + texts.getQuick(3));
+                }
+            }
+        }
+    }
+
     // the error compiling the query raises, null when it compiles
     @Nullable
     private String compileError(CairoEngine eng, SqlExecutionContext ctx, String sql) {
@@ -663,7 +785,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
      */
     private boolean createTables(CairoEngine eng, SqlExecutionContext ctx, StringSink steps) {
         final String columns = " (k VARCHAR, v " + type.ddl + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
-        for (String table : new String[]{"t", "t2", "u", "n", "f"}) {
+        for (String table : new String[]{"t", "t2", "u", "n", "f", "g"}) {
             execute(eng, ctx, "CREATE TABLE " + table + columns, "create", steps);
             if (steps.length() > 0) {
                 return false;
@@ -695,13 +817,74 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             gaps.add(relabel(nullRow, "r4"));
             TypeConformanceValues.writeRows(eng, ctx, "f", gaps, "", 0, 0, gaps.size(), 2, true, steps);
         }
+        final ObjList<TypeConformanceValues.Row> gRows = fillRows();
+        fillValue = "NULL";
+        if (gRows != null) {
+            TypeConformanceValues.writeRows(eng, ctx, "g", gRows, "", 0, 0, gRows.size(), 2, true, steps);
+            fillValue = fillToken(eng, ctx);
+        }
         return true;
     }
 
     private void dropTables(CairoEngine eng, SqlExecutionContext ctx) {
         final StringSink ignored = new StringSink();
-        for (String table : new String[]{"t", "t2", "u", "n", "f"}) {
+        for (String table : new String[]{"t", "t2", "u", "n", "f", "g"}) {
             execute(eng, ctx, "DROP TABLE IF EXISTS " + table, "drop", ignored);
+        }
+    }
+
+    /**
+     * The rows of {@code g}: a low value, a gap, the high value, a gap and the NULL row, written
+     * at 0, 2 and 4 seconds. High is {@code max} or, without one, the literal row the queries use
+     * ({@code one} for a type registered later); low is {@code min} or, without one, the first
+     * other value row ({@code zero} for a type registered later). Null when the type has no two
+     * such rows.
+     */
+    @Nullable
+    private ObjList<TypeConformanceValues.Row> fillRows() {
+        TypeConformanceValues.Row high = rowLabelled("max");
+        if (high == null) {
+            high = type.isLater() ? rowLabelled("one") : valueRow();
+        }
+        TypeConformanceValues.Row low = rowLabelled("min");
+        if (low == null) {
+            low = type.isLater() ? rowLabelled("zero") : null;
+            for (int i = 0, n = rows.size(); i < n && low == null; i++) {
+                final TypeConformanceValues.Row row = rows.getQuick(i);
+                if (!row.isNull() && row.literal != null && row != high) {
+                    low = row;
+                }
+            }
+        }
+        final TypeConformanceValues.Row nullRow = rowLabelled("null");
+        if (high == null || low == null || nullRow == null) {
+            return null;
+        }
+        final ObjList<TypeConformanceValues.Row> fillRows = new ObjList<>();
+        fillRows.add(TypeConformanceValues.Row.relabel(low, "r0"));
+        fillRows.add(null);
+        fillRows.add(TypeConformanceValues.Row.relabel(high, "r2"));
+        fillRows.add(null);
+        fillRows.add(TypeConformanceValues.Row.relabel(nullRow, "r4"));
+        return fillRows;
+    }
+
+    // the FILL(value) token: the high row of g as it prints, a number as it is, any other text quoted
+    private String fillToken(CairoEngine eng, SqlExecutionContext ctx) {
+        final String text;
+        try {
+            text = readTexts(eng, ctx, "SELECT k, v FROM g WHERE k = 'r2'").get("r2");
+        } catch (Throwable e) {
+            return "NULL";
+        }
+        if (text == null) {
+            return "NULL";
+        }
+        try {
+            Numbers.parseDouble(text);
+            return text;
+        } catch (NumericException e) {
+            return "'" + text.replace("'", "''") + "'";
         }
     }
 
@@ -798,6 +981,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 {"first_last", "SELECT k, first(v) f, last(v) l FROM n GROUP BY k ORDER BY k"},
                 {"first_not_null", "SELECT k, first_not_null(v) f, last_not_null(v) l FROM n GROUP BY k ORDER BY k"},
                 {"fill_prev", "SELECT ts, last(v) v FROM f SAMPLE BY 1s FILL(PREV)"},
+                {"fill_null", "SELECT ts, last(v) v FROM g SAMPLE BY 1s FILL(NULL)"},
+                {"fill_value", "SELECT ts, last(v) v FROM g SAMPLE BY 1s FILL(" + (fillValue != null ? fillValue : "NULL") + ")"},
+                {"fill_linear", "SELECT ts, last(v) v FROM g SAMPLE BY 1s FILL(LINEAR)"},
                 {"latest_on", "SELECT k, v FROM (t2 LATEST ON ts PARTITION BY v) ORDER BY k"},
         };
     }
@@ -862,6 +1048,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     private TypeConformanceValues.Row relabel(TypeConformanceValues.Row row, String label) {
         return new TypeConformanceValues.Row(label, row.literal);
+    }
+
+    @Nullable
+    private TypeConformanceValues.Row rowLabelled(String label) {
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            if (label.equals(rows.getQuick(i).label)) {
+                return rows.getQuick(i);
+            }
+        }
+        return null;
     }
 
     /**
@@ -1111,6 +1307,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 b:max\ttrue
                 b:null\tfalse
+                ## fill_null
+                error: [46] fill value of type NULL cannot fill column of type BOOLEAN
+                ## fill_value
+                error: [46] fill value of type STRING cannot fill column of type BOOLEAN
+                ## fill_linear
+                error: [11] Unsupported interpolation type: BOOLEAN
                 """);
         rec("BYTE", """
                 ## filter_eq
@@ -1294,6 +1496,30 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\t[[-128.0]]|[[127.0]]|[[-1.0]]|[[0.0]]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-128
+                1970-01-01T00:00:01.000000Z\t0
+                1970-01-01T00:00:02.000000Z\t127
+                1970-01-01T00:00:03.000000Z\t0
+                1970-01-01T00:00:04.000000Z\t0
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-128
+                1970-01-01T00:00:01.000000Z\t127
+                1970-01-01T00:00:02.000000Z\t127
+                1970-01-01T00:00:03.000000Z\t127
+                1970-01-01T00:00:04.000000Z\t0
+                ## fill_linear
+                props: random_access=true size=known timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-128
+                1970-01-01T00:00:01.000000Z\t0
+                1970-01-01T00:00:02.000000Z\t127
+                1970-01-01T00:00:03.000000Z\t63
+                1970-01-01T00:00:04.000000Z\t0
                 """);
         rec("SHORT", """
                 ## cast
@@ -1477,6 +1703,30 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:min\t-32768
                 b:null\t0
                 b:other_null\t-1
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-32768
+                1970-01-01T00:00:01.000000Z\t0
+                1970-01-01T00:00:02.000000Z\t32767
+                1970-01-01T00:00:03.000000Z\t0
+                1970-01-01T00:00:04.000000Z\t0
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-32768
+                1970-01-01T00:00:01.000000Z\t32767
+                1970-01-01T00:00:02.000000Z\t32767
+                1970-01-01T00:00:03.000000Z\t32767
+                1970-01-01T00:00:04.000000Z\t0
+                ## fill_linear
+                props: random_access=true size=known timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-32768
+                1970-01-01T00:00:01.000000Z\t0
+                1970-01-01T00:00:02.000000Z\t32767
+                1970-01-01T00:00:03.000000Z\t16383
+                1970-01-01T00:00:04.000000Z\t0
                 """);
         rec("CHAR", """
                 ## cast
@@ -1651,6 +1901,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 b:null\t
                 b:other_null\t\\uffff
+                ## fill_null
+                error: [46] fill value of type NULL cannot fill column of type CHAR
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t
+                1970-01-01T00:00:01.000000Z\t\\uffff
+                1970-01-01T00:00:02.000000Z\t\\uffff
+                1970-01-01T00:00:03.000000Z\t\\uffff
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [11] Unsupported interpolation type: CHAR
                 """);
         rec("INT", """
                 ## cast
@@ -1831,6 +2093,30 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\t2147483647
                 b:min\t-2147483647
                 b:null\tnull
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-2147483647
+                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:02.000000Z\t2147483647
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-2147483647
+                1970-01-01T00:00:01.000000Z\t2147483647
+                1970-01-01T00:00:02.000000Z\t2147483647
+                1970-01-01T00:00:03.000000Z\t2147483647
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_linear
+                props: random_access=true size=known timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-2147483647
+                1970-01-01T00:00:01.000000Z\t0
+                1970-01-01T00:00:02.000000Z\t2147483647
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
                 """);
         rec("LONG", """
                 ## cast
@@ -2011,6 +2297,30 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\t9223372036854775807
                 b:min\t-9223372036854775807
                 b:null\tnull
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-9223372036854775807
+                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:02.000000Z\t9223372036854775807
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-9223372036854775807
+                1970-01-01T00:00:01.000000Z\t9223372036854775807
+                1970-01-01T00:00:02.000000Z\t9223372036854775807
+                1970-01-01T00:00:03.000000Z\t9223372036854775807
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_linear
+                props: random_access=true size=known timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-9223372036854775807
+                1970-01-01T00:00:01.000000Z\t0
+                1970-01-01T00:00:02.000000Z\t9223372036854775807
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
                 """);
         rec("DATE", """
                 ## filter_eq
@@ -2191,6 +2501,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\t[[-9.223372036854776E18]]|[[9.223372036854776E18]]|null|null
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-292275055-05-16T16:47:04.193Z
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t292278994-08-17T07:12:55.807Z
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: inconvertible value: `292278994-08-17T07:12:55.807Z` [STRING -> LONG]
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunction]
                 """);
         rec("TIMESTAMP", """
                 ## cast
@@ -2371,6 +2693,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\t294247-01-10T04:00:54.775807Z
                 b:min\t-290308-01-01T19:59:05.224193Z
                 b:null\t
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-290308-01-01T19:59:05.224193Z
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t294247-01-10T04:00:54.775807Z
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] invalid fill value: '294247-01-10T04:00:54.775807Z'
+                ## fill_linear
+                error: [11] Unsupported interpolation type: TIMESTAMP
                 """);
         rec("FLOAT", """
                 ## filter_eq
@@ -2609,6 +2943,30 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\t[[-3.4028234663852886E38]]|[[3.4028234663852886E38]]|null|null|[[-0.0]]|null|null|null
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-3.4028235E38
+                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:02.000000Z\t3.4028235E38
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-3.4028235E38
+                1970-01-01T00:00:01.000000Z\t3.4028235E38
+                1970-01-01T00:00:02.000000Z\t3.4028235E38
+                1970-01-01T00:00:03.000000Z\t3.4028235E38
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_linear
+                props: random_access=true size=known timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-3.4028235E38
+                1970-01-01T00:00:01.000000Z\t0.0
+                1970-01-01T00:00:02.000000Z\t3.4028235E38
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
                 """);
         rec("DOUBLE", """
                 ## cast
@@ -2847,6 +3205,30 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:negzero\t-0.0
                 b:ninf\tnull
                 b:null\tnull
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-1.7976931348623157E308
+                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:02.000000Z\t1.7976931348623157E308
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-1.7976931348623157E308
+                1970-01-01T00:00:01.000000Z\t1.7976931348623157E308
+                1970-01-01T00:00:02.000000Z\t1.7976931348623157E308
+                1970-01-01T00:00:03.000000Z\t1.7976931348623157E308
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_linear
+                props: random_access=true size=known timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-1.7976931348623157E308
+                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:02.000000Z\t1.7976931348623157E308
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
                 """);
         rec("STRING", """
                 ## filter_eq
@@ -3040,6 +3422,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tnull|null|null|null|null
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t\s
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tü€😀�
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t\s
+                1970-01-01T00:00:01.000000Z\tü€😀�
+                1970-01-01T00:00:02.000000Z\tü€😀�
+                1970-01-01T00:00:03.000000Z\tü€😀�
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastStrGroupByFunction]
                 """);
         rec("SYMBOL", """
                 ## filter_eq
@@ -3239,6 +3639,25 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tnull|null|null|null|null
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t\s
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tü€😀�
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t\s
+                1970-01-01T00:00:01.000000Z\tü€😀�
+                1970-01-01T00:00:02.000000Z\tü€😀�
+                1970-01-01T00:00:03.000000Z\tü€😀�
+                1970-01-01T00:00:04.000000Z\t
+                returns: ImplicitCastException: inconvertible value: `ü€😀�` [STRING -> INT]
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastSymbolGroupByFunction]
                 """);
         rec("LONG256", """
                 ## filter_eq
@@ -3414,6 +3833,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t0
+                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:02.000000Z\t-1
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_value
+                error: inconvertible value: `0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` [STRING -> LONG]
+                ## fill_linear
+                props: random_access=true size=known timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t0
+                1970-01-01T00:00:01.000000Z\t0
+                1970-01-01T00:00:02.000000Z\t-1
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
                 """);
         rec("GEOBYTE", """
                 ## filter_eq
@@ -3571,6 +4008,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t0000000
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t1111111
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type INT cannot fill column of type GEOHASH(7b)
+                ## fill_linear
+                error: [11] Unsupported interpolation type: GEOHASH(7b)
                 """);
         rec("GEOSHORT", """
                 ## cast
@@ -3728,6 +4177,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\tzzz
                 b:min\t000
                 b:null\t
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t000
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tzzz
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t000
+                1970-01-01T00:00:01.000000Z\tzzz
+                1970-01-01T00:00:02.000000Z\tzzz
+                1970-01-01T00:00:03.000000Z\tzzz
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory$2]
                 """);
         rec("GEOINT", """
                 ## filter_eq
@@ -3885,6 +4352,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t000000
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tzzzzzz
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t000000
+                1970-01-01T00:00:01.000000Z\tzzzzzz
+                1970-01-01T00:00:02.000000Z\tzzzzzz
+                1970-01-01T00:00:03.000000Z\tzzzzzz
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [11] Unsupported interpolation type: GEOHASH(6c)
                 """);
         rec("GEOLONG", """
                 ## cast
@@ -4042,6 +4527,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\tzzzzzzzz
                 b:min\t00000000
                 b:null\t
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t00000000
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tzzzzzzzz
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t00000000
+                1970-01-01T00:00:01.000000Z\tzzzzzzzz
+                1970-01-01T00:00:02.000000Z\tzzzzzzzz
+                1970-01-01T00:00:03.000000Z\tzzzzzzzz
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [11] Unsupported interpolation type: GEOHASH(8c)
                 """);
         rec("BINARY", """
                 ## cast
@@ -4170,6 +4673,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [11] there is no matching function `last` with the argument types: (BINARY)
                 ## latest_on
                 error: [47] v (BINARY): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## fill_null
+                error: [11] there is no matching function `last` with the argument types: (BINARY)
+                ## fill_value
+                error: [11] there is no matching function `last` with the argument types: (BINARY)
+                ## fill_linear
+                error: [11] there is no matching function `last` with the argument types: (BINARY)
                 """);
         rec("UUID", """
                 ## cast
@@ -4340,6 +4849,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\tffffffff-ffff-ffff-ffff-ffffffffffff
                 b:min\t00000000-0000-0000-0000-000000000000
                 b:null\t
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000000
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tffffffff-ffff-ffff-ffff-ffffffffffff
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000000
+                1970-01-01T00:00:01.000000Z\tffffffff-ffff-ffff-ffff-ffffffffffff
+                1970-01-01T00:00:02.000000Z\tffffffff-ffff-ffff-ffff-ffffffffffff
+                1970-01-01T00:00:03.000000Z\tffffffff-ffff-ffff-ffff-ffffffffffff
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastUuidGroupByFunction]
                 """);
         rec("LONG128", """
                 ## cast
@@ -4489,6 +5016,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\tffffffff-ffff-ffff-ffff-ffffffffffff
                 b:min\t00000000-0000-0000-0000-000000000000
                 b:null\t
+                ## fill_null
+                error: [11] there is no matching function `last` with the argument types: (LONG128)
+                ## fill_value
+                error: [11] there is no matching function `last` with the argument types: (LONG128)
+                ## fill_linear
+                error: [11] there is no matching function `last` with the argument types: (LONG128)
                 """);
         rec("IPv4", """
                 ## cast
@@ -4664,6 +5197,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\t255.255.255.255
                 b:min\t0.0.0.1
                 b:null\t
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t0.0.0.1
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t255.255.255.255
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t0.0.0.1
+                1970-01-01T00:00:01.000000Z\t255.255.255.255
+                1970-01-01T00:00:02.000000Z\t255.255.255.255
+                1970-01-01T00:00:03.000000Z\t255.255.255.255
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastIPv4GroupByFunction]
                 """);
         rec("VARCHAR", """
                 ## filter_eq
@@ -4857,6 +5408,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tnull|null|null|null|null
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t\s
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tü€😀�
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t\s
+                1970-01-01T00:00:01.000000Z\tü€😀�
+                1970-01-01T00:00:02.000000Z\tü€😀�
+                1970-01-01T00:00:03.000000Z\tü€😀�
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastVarcharGroupByFunction]
                 """);
         rec("DOUBLE[]", """
                 ## filter_eq
@@ -5013,6 +5582,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: not supported as array element type: NULL
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t[-1.7976931348623157E308]
+                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:02.000000Z\t[1.7976931348623157E308]
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_value
+                error: [46] support for VALUE fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastArrayGroupByFunction]
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastArrayGroupByFunction]
                 """);
         rec("DECIMAL8", """
                 ## cast
@@ -5174,6 +5755,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## latest_on
                 error: [47] v (DECIMAL(2,1)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-9.9
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t9.9
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(2,1)
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal8Func]
                 """);
         rec("DECIMAL16", """
                 ## cast
@@ -5335,6 +5928,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## latest_on
                 error: [47] v (DECIMAL(4,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-99.99
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t99.99
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(4,2)
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal16Func]
                 """);
         rec("DECIMAL32", """
                 ## cast
@@ -5496,6 +6101,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## latest_on
                 error: [47] v (DECIMAL(9,0)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-999999999
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t999999999
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-999999999
+                1970-01-01T00:00:01.000000Z\t999999999
+                1970-01-01T00:00:02.000000Z\t999999999
+                1970-01-01T00:00:03.000000Z\t999999999
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal32Func]
                 """);
         rec("DECIMAL64", """
                 ## filter_eq
@@ -5657,6 +6280,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-999999999999.9999
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t999999999999.9999
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(16,4)
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal64Func]
                 """);
         rec("DECIMAL128", """
                 ## filter_eq
@@ -5818,6 +6453,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-9999999999999999999999999999.9999999999
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t9999999999999999999999999999.9999999999
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(38,10)
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal128Func]
                 """);
         rec("DECIMAL256", """
                 ## cast
@@ -5979,6 +6626,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## latest_on
                 error: [47] v (DECIMAL(76,20)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(76,20)
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal256Func]
                 """);
         rec("INTERVAL", """
                 ## filter_eq
@@ -6027,6 +6686,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## cast
                 error: create: [29] non-persisted type: INTERVAL
+                ## fill_null
+                error: create: [29] non-persisted type: INTERVAL
+                ## fill_value
+                error: create: [29] non-persisted type: INTERVAL
+                ## fill_linear
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
                 ## filter_eq
@@ -6074,6 +6739,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## latest_on
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 ## cast
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## fill_null
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## fill_value
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## fill_linear
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
@@ -6255,6 +6926,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\t[[-9.223372036854776E18]]|[[9.223372036854776E18]]|null|null
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t1677-01-01T00:12:43.145224193Z
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t2262-04-11T23:47:16.854775807Z
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t1677-01-01T00:12:43.145224193Z
+                1970-01-01T00:00:01.000000Z\t2262-04-11T23:47:16.854775807Z
+                1970-01-01T00:00:02.000000Z\t2262-04-11T23:47:16.854775807Z
+                1970-01-01T00:00:03.000000Z\t2262-04-11T23:47:16.854775807Z
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [11] Unsupported interpolation type: TIMESTAMP_NS
                 """);
         rec("GEOHASH(1c)", """
                 ## filter_eq
@@ -6412,6 +7101,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t0
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tz
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: null
+                ## fill_linear
+                error: [11] Unsupported interpolation type: GEOHASH(1c)
                 """);
         rec("GEOHASH(8b)", """
                 ## filter_eq
@@ -6569,6 +7270,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t00000000
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t11111111
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type INT cannot fill column of type GEOHASH(8b)
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory$2]
                 """);
         rec("GEOHASH(31b)", """
                 ## filter_eq
@@ -6726,6 +7439,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t0000000000000000000000000000000
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t1111111111111111111111111111111
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type DOUBLE cannot fill column of type GEOHASH(31b)
+                ## fill_linear
+                error: [11] Unsupported interpolation type: GEOHASH(31b)
                 """);
         rec("GEOHASH(12c)", """
                 ## cast
@@ -6883,6 +7608,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 b:max\tzzzzzzzzzzzz
                 b:min\t000000000000
                 b:null\t
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t000000000000
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\tzzzzzzzzzzzz
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t000000000000
+                1970-01-01T00:00:01.000000Z\tzzzzzzzzzzzz
+                1970-01-01T00:00:02.000000Z\tzzzzzzzzzzzz
+                1970-01-01T00:00:03.000000Z\tzzzzzzzzzzzz
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_linear
+                error: [11] Unsupported interpolation type: GEOHASH(12c)
                 """);
         rec("DECIMAL(5,2)", """
                 ## cast
@@ -7044,6 +7787,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## latest_on
                 error: [47] v (DECIMAL(5,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-999.99
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t999.99
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(5,2)
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal32Func]
                 """);
         rec("DECIMAL(18,3)", """
                 ## filter_eq
@@ -7205,6 +7960,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\tno cast [10]
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t-999999999999999.999
+                1970-01-01T00:00:01.000000Z\t
+                1970-01-01T00:00:02.000000Z\t999999999999999.999
+                1970-01-01T00:00:03.000000Z\t
+                1970-01-01T00:00:04.000000Z\t
+                ## fill_value
+                error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(18,3)
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal64Func]
                 """);
         rec("DOUBLE[][]", """
                 ## filter_eq
@@ -7361,6 +8128,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 DOUBLE[][]\t[[-1.7976931348623157E308]]|[[1.7976931348623157E308]]|[]|[[null,null,null,-0.0]]|null
                 INTERVAL(us)\terror: [20] unsupported cast
                 INTERVAL(ns)\terror: [20] unsupported cast
+                ## fill_null
+                props: random_access=false size=unknown timestamp=ts:asc
+                ts\tv
+                1970-01-01T00:00:00.000000Z\t[[-1.7976931348623157E308]]
+                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:02.000000Z\t[[1.7976931348623157E308]]
+                1970-01-01T00:00:03.000000Z\tnull
+                1970-01-01T00:00:04.000000Z\tnull
+                ## fill_value
+                error: [46] support for VALUE fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastArrayGroupByFunction]
+                ## fill_linear
+                error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastArrayGroupByFunction]
                 """);
         rec("INTERVAL(us)", """
                 ## filter_eq
@@ -7409,6 +8188,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## cast
                 error: create: [29] non-persisted type: INTERVAL
+                ## fill_null
+                error: create: [29] non-persisted type: INTERVAL
+                ## fill_value
+                error: create: [29] non-persisted type: INTERVAL
+                ## fill_linear
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
                 ## cast
@@ -7456,6 +8241,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## fill_prev
                 error: create: [29] non-persisted type: INTERVAL
                 ## latest_on
+                error: create: [29] non-persisted type: INTERVAL
+                ## fill_null
+                error: create: [29] non-persisted type: INTERVAL
+                ## fill_value
+                error: create: [29] non-persisted type: INTERVAL
+                ## fill_linear
                 error: create: [29] non-persisted type: INTERVAL
                 """);
     }

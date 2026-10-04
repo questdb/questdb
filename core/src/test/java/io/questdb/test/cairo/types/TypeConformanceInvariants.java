@@ -184,6 +184,24 @@ public final class TypeConformanceInvariants {
     }
 
     /**
+     * Invariant 3 for an interpolated value: it lies between its two neighbours, both ends
+     * included, by the order the declared arithmetic tier implies. Without a declared tier
+     * nothing is checked.
+     */
+    public static void assertBetween(TypeConformanceTypes.Entry type, String row, String path, String mode, long[] low, long[] value, long[] high) {
+        if (type.laterTier == null) {
+            return;
+        }
+        final boolean isAscending = compare(type, low, high) <= 0;
+        final long[] first = isAscending ? low : high;
+        final long[] last = isAscending ? high : low;
+        if (compare(type, first, value) > 0 || compare(type, value, last) > 0) {
+            Assert.fail(context(type, row, path, mode) + ": " + hex(value) + " lies outside " + hex(first) + " .. " + hex(last)
+                    + " by tier " + type.laterTier);
+        }
+    }
+
+    /**
      * Invariant 6, the declared refusal: when the type declares it is refused at one of the guarded
      * sites the path reaches, the path must have failed at setup with that site's refusal, naming
      * the type. The caller runs the path under {@code assertMemoryLeak}, which checks that the
