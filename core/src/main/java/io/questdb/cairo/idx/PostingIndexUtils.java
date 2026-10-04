@@ -526,6 +526,62 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Locates the high-bits word that holds the one bit of EF ordinal {@code ordinal}, using the
+     * ranked trailer's checkpoints. Returns {@code (wordIndex << 32) | rankBeforeWord}, where
+     * {@code rankBeforeWord} is the number of ordinals encoded in the words before
+     * {@code wordIndex}, or {@code -1} for a legacy unranked blob, a malformed/truncated trailer,
+     * or an out-of-range ordinal. A cursor positioned at {@code (wordIndex, rankBeforeWord)}
+     * decodes exactly the ordinals from {@code rankBeforeWord} on, so it can seek to an ordinal
+     * with one checkpoint search plus at most eight high-word reads instead of decoding the list
+     * from ordinal 0.
+     */
+    public static long efHighWordOfOrdinal(long srcAddr, int encodedSize, int ordinal) {
+        final long trailer = efRankTrailerAddress(srcAddr, encodedSize);
+        if (trailer == 0) {
+            return -1;
+        }
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        if (ordinal < 0 || ordinal >= count) {
+            return -1;
+        }
+        final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
+        final int highWordCount = Unsafe.getInt(trailer + 8);
+        final int checkpointCount = Unsafe.getInt(trailer + 12);
+        int lo = 0;
+        int hi = checkpointCount;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            final int midRank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, mid);
+            if (midRank < 0) {
+                return -1;
+            }
+            if (midRank <= ordinal) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        final int checkpoint = lo - 1;
+        if (checkpoint < 0 || checkpoint >= checkpointCount - 1) {
+            return -1;
+        }
+        int rank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, checkpoint);
+        if (rank < 0) {
+            return -1;
+        }
+        final long highStart = srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL);
+        final int wordHi = Math.min(highWordCount, (checkpoint + 1) << EF_RANK_CHECKPOINT_SHIFT);
+        for (int wordIndex = checkpoint << EF_RANK_CHECKPOINT_SHIFT; wordIndex < wordHi; wordIndex++) {
+            final int wordRank = Long.bitCount(Unsafe.getLong(highStart + (long) wordIndex * Long.BYTES));
+            if (rank + wordRank > ordinal) {
+                return ((long) wordIndex << 32) | rank;
+            }
+            rank += wordRank;
+        }
+        return -1;
+    }
+
+    /**
      * Returns the first EF ordinal whose value is at least {@code target}, or {@code -1} when
      * {@code encodedSize} describes a legacy unranked blob (including a malformed/truncated
      * trailer). Checkpoint lookup plus each high-vector seek scans at most eight words.
