@@ -68,6 +68,8 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -132,6 +134,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.PropertyKey.*;
 
 public class CheckpointTest extends AbstractCairoTest {
+    private static final long TXNLOG_CRC_FIRST_COVERED_TXN_OFFSET = 16; // TxnLogCrcSidecar header
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     private static Path path;
     private static Rnd rnd;
@@ -3843,6 +3846,44 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreKeepsTxnLogCrcCoverage() throws Exception {
+        // Recovery rolls the V1 txnlog's tail back to the checkpoint. It must move the header's sidecar tail
+        // copy with it, or the next open reads the rollback as an older binary's append and drops CRC coverage
+        // of every record the restore kept.
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("INSERT INTO test VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            execute("INSERT INTO test VALUES ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("test");
+            Assert.assertEquals(WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1, readSeqFileInt(tableToken, WalUtils.TXNLOG_FILE_NAME, 0));
+            Assert.assertEquals(1, readSeqFileLong(tableToken, WalUtils.TXNLOG_CRC_FILE_NAME, TXNLOG_CRC_FIRST_COVERED_TXN_OFFSET));
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+            Assert.assertEquals(2, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            Assert.assertEquals(2, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV1.CRC_TAIL_OFFSET_64));
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            Assert.assertEquals(1, readSeqFileLong(tableToken, WalUtils.TXNLOG_CRC_FILE_NAME, TXNLOG_CRC_FIRST_COVERED_TXN_OFFSET));
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointRestoresViewDefinition() throws Exception {
         final String snapshotId = "id1";
         assertMemoryLeak(() -> {
@@ -5133,6 +5174,32 @@ public class CheckpointTest extends AbstractCairoTest {
         }
         Assert.fail("Table not found in callback map: " + tableNamePrefix);
         return -1; // unreachable
+    }
+
+    private static int readSeqFileInt(TableToken tableToken, String fileName, long offset) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR).concat(fileName);
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            try {
+                return ff.readNonNegativeInt(fd, offset);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    private static long readSeqFileLong(TableToken tableToken, String fileName, long offset) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR).concat(fileName);
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            try {
+                return ff.readNonNegativeLong(fd, offset);
+            } finally {
+                ff.close(fd);
+            }
+        }
     }
 
     private void assertSequencerReadColumnOrder(TableToken tableToken, int... expected) {

@@ -129,6 +129,9 @@ public class TxnLogCrcSidecar implements QuietCloseable {
      * logs when rmdir fails -- adopting its watermark W would leave records 1..W-1 legacy and then, at
      * txn W, match the NEW records against the OLD lineage's CRCs. That is a permanent "torn" verdict on
      * a healthy table, so the header must be reset rather than adopted, and the old entries retired.
+     * <p>
+     * {@code TableTransactionLogV1.open()} resets the same way when another writer moved the txnlog's tail,
+     * since entries below that tail may then name records this sidecar never saw.
      */
     public void ofNewLineage(FilesFacade ff, Path path, long watermark) {
         of(ff, path, watermark, true);

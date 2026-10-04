@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.cairo.wal.seq.TxnLogCrcSidecar;
 import io.questdb.std.Numbers;
@@ -66,6 +67,7 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
 
     private static final long CHECKSUM_CAPABILITY_MAGIC = 0x54584E434B533031L; // TXNCKS01, TableTransactionLogV2
     private static final int SEQ_PART_TXN_COUNT = 16;
+    private static final long SIDECAR_FIRST_COVERED_TXN_OFFSET = 16; // TxnLogCrcSidecar header
     private static final String TABLE = "dg_txn";
 
     /**
@@ -201,6 +203,62 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n3\n");
+        });
+    }
+
+    /**
+     * A crash between stamping txn T+1's CRC in {@code _txnlog.c} and publishing T+1 leaves the stamp past
+     * the tail. An older binary then appends its own T+1 and never touches the sidecar, so after the roll
+     * forward the stamp sits below the tail and names a record it never described. Read as authoritative, it
+     * reports that intact record as torn: the unapplied T+1 suspends the table and {@code wal_transactions()}
+     * fails for good.
+     * <p>
+     * The header's sidecar tail copy is what tells the two writers apart: the older binary advances the tail
+     * without it, so this binary sees the mismatch on open and restarts coverage after the tail.
+     */
+    @Test
+    public void testV1StaleSidecarStampBelowOlderBinaryTailStillApplies() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = commitV1OverStaleSidecarStamp(true);
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("SELECT count() FROM dg_v1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+            assertQuery("SELECT count() FROM wal_transactions('dg_v1')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+
+            // The reset is adopted once, and coverage resumes from the next txn.
+            final Path txnLog = seqFile(tt, WalUtils.TXNLOG_FILE_NAME);
+            final Path sidecar = seqFile(tt, WalUtils.TXNLOG_CRC_FILE_NAME);
+            Assert.assertEquals(3, readLongAt(txnLog, TableTransactionLogV1.CRC_TAIL_OFFSET_64));
+            Assert.assertEquals(4, readLongAt(sidecar, SIDECAR_FIRST_COVERED_TXN_OFFSET));
+            execute("INSERT INTO dg_v1 VALUES ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            Assert.assertEquals(4, readLongAt(sidecar, TxnLogCrcSidecar.BODY_OFFSET + TxnLogCrcSidecar.ENTRY_STAMP_OFFSET));
+            Assert.assertEquals(4, readLongAt(txnLog, TableTransactionLogV1.CRC_TAIL_OFFSET_64));
+        });
+    }
+
+    /**
+     * Non-vacuity control for {@link #testV1StaleSidecarStampBelowOlderBinaryTailStillApplies}: the same
+     * stamped, disagreeing CRC, but with the tail copy left as this binary published it. Nothing else wrote
+     * the log, so the stamp is authoritative and the record must still be reported as torn.
+     */
+    @Test
+    public void testV1StampedWrongCrcWithoutOlderBinaryIsTorn() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = commitV1OverStaleSidecarStamp(false);
+            drainWalQueue();
+            Assert.assertTrue(
+                    "a stamped CRC that disagrees with a record only this binary wrote must still suspend",
+                    engine.getTableSequencerAPI().isSuspended(tt)
+            );
         });
     }
 
@@ -502,6 +560,17 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
         }
     }
 
+    private static Path seqFile(TableToken tt, String name) {
+        return Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), WalUtils.SEQ_DIR, name);
+    }
+
+    private static void writeLongAt(Path file, long offset, long value) throws Exception {
+        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "rw")) {
+            raf.seek(offset);
+            raf.write(ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array());
+        }
+    }
+
     /**
      * Zeroes the reserved checksum slot of every V2 record from {@code fromRecord} onward, leaving the
      * header's capability magic and watermark standing.
@@ -581,6 +650,39 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
         drainWalQueue();
         engine.releaseInactive();
         TxnCorruptionUtils.writeBodyChecksumSlots(engine, TABLE, slotA, slotB, stampA, stampB);
+    }
+
+    /**
+     * Leaves {@code dg_v1} the way a crash on this binary followed by an older binary's append would: txns 1-2
+     * applied, txn 3 published but unapplied, and the sidecar entry for txn 3 still stamped but holding the CRC
+     * of a different record -- the one this binary stamped and never published. The older binary's append is
+     * this binary's commit minus the header's sidecar tail copy, which {@code olderBinaryAppended} winds back.
+     */
+    private TableToken commitV1OverStaleSidecarStamp(boolean olderBinaryAppended) throws Exception {
+        execute("CREATE TABLE dg_v1 (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO dg_v1 VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+        execute("INSERT INTO dg_v1 VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+        drainWalQueue();
+        execute("INSERT INTO dg_v1 VALUES ('2024-01-03T00:00:00.000000Z', 3)");
+
+        final TableToken tt = engine.verifyTableName("dg_v1");
+        engine.releaseInactive();
+        engine.getTableSequencerAPI().releaseAll();
+
+        final Path txnLog = seqFile(tt, WalUtils.TXNLOG_FILE_NAME);
+        final Path sidecar = seqFile(tt, WalUtils.TXNLOG_CRC_FILE_NAME);
+        Assert.assertTrue("precondition: V1 must have written a sidecar", Files.exists(sidecar));
+        Assert.assertEquals(3, readLongAt(txnLog, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+        Assert.assertEquals(3, readLongAt(txnLog, TableTransactionLogV1.CRC_TAIL_OFFSET_64));
+
+        final long entry = TxnLogCrcSidecar.BODY_OFFSET
+                + (3 - readLongAt(sidecar, SIDECAR_FIRST_COVERED_TXN_OFFSET)) * TxnLogCrcSidecar.ENTRY_SIZE;
+        Assert.assertEquals("precondition: txn 3 must be stamped", 3, readLongAt(sidecar, entry + TxnLogCrcSidecar.ENTRY_STAMP_OFFSET));
+        writeLongAt(sidecar, entry, readLongAt(sidecar, entry) ^ 1);
+        if (olderBinaryAppended) {
+            writeLongAt(txnLog, TableTransactionLogV1.CRC_TAIL_OFFSET_64, 2);
+        }
+        return tt;
     }
 
     /**

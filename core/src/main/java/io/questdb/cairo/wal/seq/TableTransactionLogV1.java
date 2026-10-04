@@ -64,6 +64,14 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * See the format of the header and transaction record in {@link TableTransactionLogFile}
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
+    /**
+     * Header slot (in the reserved area, clear of V2's checksum fields) where every publish copies
+     * {@code MAX_TXN_OFFSET_64}. A binary that predates the {@code _txnlog.c} sidecar advances the tail
+     * without it, so a copy that disagrees with the tail on open means another writer appended and the
+     * sidecar's entries may name records it never saw. Both fields sit in the header's first sector, so
+     * a power cut cannot land one without the other.
+     */
+    public static final long CRC_TAIL_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
@@ -108,6 +116,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         long maxTxn = this.maxTxn.incrementAndGet();
         recordCrcBeforePublish(maxTxn);
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
+        txnMem.putLong(CRC_TAIL_OFFSET_64, maxTxn);
         sync0();
         // Transactions are 1 based here
         return maxTxn;
@@ -149,6 +158,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(0);
+        txnMem.putLong(CRC_TAIL_OFFSET_64, 0L);
         if (isReplacingLineage) {
             txnMem.sync(false);
             ff.fdatasync(txnMem.getFd());
@@ -172,6 +182,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         long nextTxn = maxTxn.incrementAndGet();
         recordCrcBeforePublish(nextTxn);
         txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
+        txnMem.putLong(CRC_TAIL_OFFSET_64, nextTxn);
         return nextTxn;
     }
 
@@ -250,7 +261,25 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         // every entry from this txn on, because a crash can leave entries the header never published.
         final int seqDirLen = path.size();
         try {
-            crcSidecar.of(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), lastTxn + 1);
+            path.concat(WalUtils.TXNLOG_CRC_FILE_NAME);
+            final long crcTail = txnMem.getLong(CRC_TAIL_OFFSET_64);
+            if (crcTail == lastTxn) {
+                crcSidecar.of(ff, path, lastTxn + 1);
+            } else {
+                LOG.info().$("txnlog tail moved outside CRC coverage, restarting it [path=").$(path)
+                        .$(", maxTxn=").$(lastTxn)
+                        .$(", crcTail=").$(crcTail)
+                        .I$();
+                // Another writer moved the tail -- an older binary, say -- or a crash fell between the two
+                // header stores. An entry this binary stamped but never published can now sit below the
+                // tail and name a record that writer put there, which would read as torn.
+                // Restart coverage after the tail instead, as on the first upgrade, and adopt the tail
+                // only once the reset took, so the next open does not repeat it.
+                crcSidecar.ofNewLineage(ff, path, lastTxn + 1);
+                if (crcSidecar.firstCoveredTxn() == lastTxn + 1) {
+                    txnMem.putLong(CRC_TAIL_OFFSET_64, lastTxn);
+                }
+            }
         } finally {
             path.trimTo(seqDirLen);
         }

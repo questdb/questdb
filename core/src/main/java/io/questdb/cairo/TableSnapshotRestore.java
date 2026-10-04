@@ -40,6 +40,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -351,6 +352,12 @@ public class TableSnapshotRestore implements QuietCloseable {
                     long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
                     if (newMaxTxn < oldMaxTxn) {
                         memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
+                        // Keep V1's sidecar tail copy in step, or the next open would read this rollback
+                        // as a foreign append and drop CRC coverage of the records it keeps.
+                        if (memFile.getInt(0) == WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1
+                                && memFile.getLong(TableTransactionLogV1.CRC_TAIL_OFFSET_64) == oldMaxTxn) {
+                            memFile.putLong(TableTransactionLogV1.CRC_TAIL_OFFSET_64, newMaxTxn);
+                        }
                         LOG.info()
                                 .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
                                 .$(", oldMaxTxn=").$(oldMaxTxn)
