@@ -945,8 +945,8 @@ public class TxReader implements Closeable, Mutable {
      * caller's retry loop cannot make progress and times out looking like contention. Callers use this on their
      * deadline path to name the corruption instead.
      * <p>
-     * Reads only; touches none of the load state, so a caller may use it on an in-use reader. Costs nothing on
-     * the healthy path — it is never called from one.
+     * Touches none of the load state, so a caller may use it on an in-use reader. Like a load, it may grow the
+     * mapping to reach the live area. Costs nothing on the healthy path — it is never called from one.
      */
     public boolean unsafeIsLiveAreaTorn() {
         final long selectedVersion = unsafeReadVersion();
@@ -959,8 +959,10 @@ public class TxReader implements Closeable, Mutable {
         final long areaSize = calculateTxRecordSize(areaSymbolsSize, areaPartitionSegmentSize);
 
         final boolean intact;
-        if (areaBaseOffset < TX_BASE_HEADER_SIZE || areaBaseOffset + areaSize > roTxMemBase.size()) {
-            // The header's own geometry does not fit the file: torn, and not something to read further.
+        if (!unsafeMapArea(areaBaseOffset, areaSize)) {
+            // The header's own geometry does not fit the file: torn, and not something to read further. The
+            // file length decides, not this reader's mapping: a commit since the last load can move the live
+            // area past the mapping, and that area is not torn.
             intact = false;
         } else if (roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_TXN_64) != selectedVersion) {
             intact = false;
