@@ -207,7 +207,7 @@ class Tree:
         return out
 
     def signature_chars(self, exclude=None):
-        """The signature chars every type driver answers, except the driver of `exclude`."""
+        """The signature chars every type driver answers, except the driver of `exclude`, and the pseudo types'."""
         chars = set()
         for p, args in self.type_facts_calls():
             if exclude and p.name == f'{camel(exclude)}TypeDriver.java':
@@ -219,6 +219,10 @@ class Tree:
             m = re.search(r"char getSignatureChar\(\)\s*\{\s*return '(.)';", text)
             if m:
                 chars.add(m.group(1))
+        # the pseudo types the function signatures name take theirs in FunctionFactoryDescriptor
+        descriptor = self.path('core/src/main/java/io/questdb/griffin/FunctionFactoryDescriptor.java')
+        if descriptor.exists():
+            chars |= set(re.findall(r"pseudoSignature\(ColumnType\.\w+, '(.)'", descriptor.read_text(encoding='utf-8')))
         return chars
 
     def driver_facts(self, name):

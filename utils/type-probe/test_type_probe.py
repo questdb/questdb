@@ -32,7 +32,7 @@ def fixture_sites():
 def valid_facts(tree, name='PROBE_INT', like='INT'):
     """A valid facts file for a new type registered next, as init writes it with its choices made."""
     text = tp.init_facts(tree, name, like, tree.null_code())
-    free = next(c for c in 'pqrvwxyzgcmo' if c not in {s.lower() for s in tree.signature_chars()})
+    free = next(c for c in 'pqrvwxyzgcmoy' if c not in {s.lower() for s in tree.signature_chars()})
     text = text.replace('wire_kind = "CHANGE-ME"', 'wire_kind = "new"').replace('signature_char = "CHANGE-ME"', f'signature_char = "{free}"')
     return tomllib.loads(text)
 
@@ -178,6 +178,9 @@ class FactsTest(unittest.TestCase):
         self.assertProblem(f, 'type.name', 'is taken by a tag')
         f = valid_facts(self.tree)
         f['functions']['signature_char'] = 'i'
+        self.assertProblem(f, 'functions.signature_char', 'is taken')
+        # a pseudo type's signature character is taken too
+        f['functions']['signature_char'] = 'c'
         self.assertProblem(f, 'functions.signature_char', 'is taken')
         f = valid_facts(self.tree)
         f['type']['storage'] = 'var'
