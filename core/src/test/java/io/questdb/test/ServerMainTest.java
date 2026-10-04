@@ -361,6 +361,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testConcurrentCloseWaitsForCurrentAttempt() throws Exception {
         assertMemoryLeak(() -> {
+            final Thread startThread = Thread.currentThread();
             final AtomicInteger closeAttempts = new AtomicInteger();
             final SOCountDownLatch closeThreadsDone = new SOCountDownLatch(2);
             final SOCountDownLatch firstCloseEntered = new SOCountDownLatch(1);
@@ -376,9 +377,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
                         @Override
                         public void close() {
-                            if (!isStopComplete() && closeAttempts.incrementAndGet() == 1) {
+                            // On a boot failure run() closes on the thread that called start(),
+                            // which must not wait for a release that only it could give
+                            final boolean isStartThread = Thread.currentThread() == startThread;
+                            if (!isStartThread && !isStopComplete() && closeAttempts.incrementAndGet() == 1) {
                                 firstCloseEntered.countDown();
-                                releaseFirstClose.await();
+                                final boolean isReleased = releaseFirstClose.await(TimeUnit.SECONDS.toNanos(30));
+                                Assert.assertTrue("first close was not released", isReleased);
                             }
                             super.close();
                         }
