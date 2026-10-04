@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
@@ -159,11 +160,30 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         return round;
     }
 
-    // Lets the task buffers' rows be read on any slot: every slot reads them through its own pool
-    // over the scan's frame address cache.
-    void ofFrames(PageFrameAddressCache frameAddressCache) {
-        for (int i = 0, n = slots.size(); i < n; i++) {
+    /**
+     * Tasks the worker slots, not the query's own thread, computed since the last
+     * {@link #resetTaskCounts()}.
+     */
+    @TestOnly
+    public long getWorkerSlotTaskCount() {
+        long count = 0;
+        for (int i = 1, n = slots.size(); i < n; i++) {
+            count += slots.getQuick(i).taskCount;
+        }
+        return count;
+    }
+
+    // Lets the worker slots read the scan's rows: each reads them through its own pool over the
+    // scan's frame address cache.
+    void ofWorkerFrames(PageFrameAddressCache frameAddressCache) {
+        for (int i = 1, n = slots.size(); i < n; i++) {
             slots.getQuick(i).ofFrames(frameAddressCache);
+        }
+    }
+
+    void resetTaskCounts() {
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            slots.getQuick(i).taskCount = 0;
         }
     }
 
@@ -179,7 +199,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     static class Slot implements QuietCloseable {
         // Rows of one frame computed between two touch-ahead loads, see KeyMajorPageFrameRecordCursor.
         private static final int BATCH_ROWS = 32;
-        // Batches between two circuit breaker checks.
+        // Batches between two checks of the circuit breaker and of the round's cancellation.
         private static final int CHECK_BATCHES = 64;
         private final long[] batchRows = new long[BATCH_ROWS];
         private final ObjList<Function> functions;
@@ -194,6 +214,12 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private final int windowFunctionsCount;
         private PageFrameAddressCache frameAddressCache;
         private boolean isOpen;
+        // the frame streamRow() last positioned the record on, -1 when it must position it again
+        private int streamFrameIndex = -1;
+        // the stream's rows before this index have had their columns loaded
+        private long streamTouchedHi;
+        // written by the thread that holds the slot, read once the round has been awaited
+        private long taskCount;
 
         Slot(
                 CairoConfiguration configuration,
@@ -261,7 +287,14 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
          * Computes the window over collected rows, in their order, and appends each output row to
          * {@code chain}. The rows are row ids of a {@link KeyMajorPageFrameRecordCursor} walk.
          */
-        void compute(DirectLongList rows, RecordChain chain, SqlExecutionCircuitBreaker circuitBreaker) {
+        void compute(
+                DirectLongList rows,
+                RecordChain chain,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                UnorderedPageFrameSequence<?> sequence
+        ) {
+            // the record moves to other frames, so a stream on this slot positions it again
+            streamFrameIndex = -1;
             chain.rewind(rows.size());
             final long[] batch = batchRows;
             final long rowCount = rows.size();
@@ -273,6 +306,11 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 if (++batches == CHECK_BATCHES) {
                     batches = 0;
                     circuitBreaker.statefulThrowExceptionIfTripped();
+                    if (!sequence.isActive()) {
+                        // the round was cancelled, by a LIMIT that closed the cursor or by another
+                        // task's error: its output will never be read
+                        return;
+                    }
                 }
                 final int frameIndex = KeyMajorPageFrameRecordCursor.toFrameIndex(rows.get(i));
                 if (frameIndex != currentFrameIndex) {
@@ -299,6 +337,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                     prevOffset = chain.put(virtualRecord, prevOffset);
                 }
             }
+        }
+
+        void countTask() {
+            taskCount++;
         }
 
         void computeNext(Record record) {
@@ -359,6 +401,50 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         }
 
         /**
+         * Forgets where {@link #streamRow} left off: the next row positions the record again.
+         */
+        void resetStream() {
+            streamFrameIndex = -1;
+            streamTouchedHi = 0;
+        }
+
+        /**
+         * Computes the window for the row at {@code index} of {@code rows}, which are row ids of a
+         * {@link KeyMajorPageFrameRecordCursor} walk, leaving its output in this slot's virtual
+         * record. Rows are streamed in order, one call each; the columns of up to a batch of rows
+         * of one frame ahead are loaded together first.
+         */
+        void streamRow(DirectLongList rows, long index) {
+            final long rowId = rows.get(index);
+            final int frameIndex = KeyMajorPageFrameRecordCursor.toFrameIndex(rowId);
+            if (frameIndex != streamFrameIndex) {
+                final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
+                record.init(frameMemory);
+                toucher.of(frameAddressCache, frameIndex, frameMemory);
+                streamFrameIndex = frameIndex;
+                streamTouchedHi = index;
+            }
+            if (index >= streamTouchedHi && toucher.isEnabled()) {
+                final long[] batch = batchRows;
+                final long rowCount = rows.size();
+                int n = 0;
+                long i = index;
+                while (n < BATCH_ROWS && i < rowCount) {
+                    final long id = rows.get(i);
+                    if (KeyMajorPageFrameRecordCursor.toFrameIndex(id) != frameIndex) {
+                        break;
+                    }
+                    batch[n++] = KeyMajorPageFrameRecordCursor.toFrameRowIndex(id);
+                    i++;
+                }
+                toucher.touch(batch, n);
+                streamTouchedHi = i;
+            }
+            record.setRowIndex(KeyMajorPageFrameRecordCursor.toFrameRowIndex(rowId));
+            computeNext(record);
+        }
+
+        /**
          * Forgets every partition's state, so that the next row starts its key from scratch.
          */
         void toTop() {
@@ -372,9 +458,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             }
         }
 
-        private void ofFrames(PageFrameAddressCache frameAddressCache) {
+        void ofFrames(PageFrameAddressCache frameAddressCache) {
             this.frameAddressCache = frameAddressCache;
             pool.of(frameAddressCache);
+            resetStream();
             // the serial mode of an earlier execution may have pointed it at the scan's record
             virtualRecord.of(record);
         }

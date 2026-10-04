@@ -1095,6 +1095,20 @@ public interface CairoConfiguration {
     long getSqlParallelWindowMaxKeyRows();
 
     /**
+     * Rows below which a window stays serial: a table smaller than this plans the serial window,
+     * and the parallel window computes this many rows of its scan on the query's own thread before
+     * it dispatches anything, so a LIMIT or a small result never waits for a round of tasks.
+     */
+    long getSqlParallelWindowMinRows();
+
+    /**
+     * Rows one round of the parallel window's tasks holds at most, past the last key it takes,
+     * whatever the number of workers. Two rounds are live at a time, so this bounds the output
+     * the parallel window buffers.
+     */
+    long getSqlParallelWindowRoundRows();
+
+    /**
      * Rows a task of the parallel window collects before it closes at the next key boundary.
      */
     long getSqlParallelWindowTaskRows();

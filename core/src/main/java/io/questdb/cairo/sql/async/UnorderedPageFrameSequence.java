@@ -258,13 +258,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         endRound();
     }
 
-    /**
-     * True while a round {@link #dispatchRound} started still waits for its {@link #awaitRound()}.
-     */
-    public boolean isRoundPending() {
-        return roundReducer != null;
-    }
-
     private void abandonRound(Throwable th) {
         // The dispatch loop can throw with tasks still queued; they must not outlive the round.
         try {

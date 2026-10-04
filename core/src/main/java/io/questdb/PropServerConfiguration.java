@@ -589,6 +589,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
     private final long sqlParallelWindowMaxKeyRows;
+    private final long sqlParallelWindowMinRows;
+    private final long sqlParallelWindowRoundRows;
     private final long sqlParallelWindowTaskRows;
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
@@ -2434,6 +2436,16 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (sqlParallelWindowMaxKeyRows < 1) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS.getPropertyPath(),
                         Long.toString(sqlParallelWindowMaxKeyRows));
+            }
+            this.sqlParallelWindowMinRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 262_144);
+            if (sqlParallelWindowMinRows < 0) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelWindowMinRows));
+            }
+            this.sqlParallelWindowRoundRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, 2_097_152);
+            if (sqlParallelWindowRoundRows < 1) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS.getPropertyPath(),
+                        Long.toString(sqlParallelWindowRoundRows));
             }
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelHashJoinGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, defaultParallelSqlEnabled);
@@ -5957,6 +5969,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlParallelWindowMaxKeyRows() {
             return sqlParallelWindowMaxKeyRows;
+        }
+
+        @Override
+        public long getSqlParallelWindowMinRows() {
+            return sqlParallelWindowMinRows;
+        }
+
+        @Override
+        public long getSqlParallelWindowRoundRows() {
+            return sqlParallelWindowRoundRows;
         }
 
         @Override

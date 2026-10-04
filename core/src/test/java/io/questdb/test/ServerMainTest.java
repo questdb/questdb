@@ -1060,6 +1060,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.window.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.task.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.max.key.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS\t4194304\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.window.min.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS\t262144\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.window.round.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS\t2097152\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.build.rows.per.partition\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION\t32768\tdefault\tfalse\tfalse\n" +

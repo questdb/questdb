@@ -12588,9 +12588,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!isPartitionedByKey) {
                 return null;
             }
+            // A random function draws from the query's one Rnd, which is not thread safe, and its
+            // values would depend on which thread computed which key first.
+            if (hasRandomFunction(qc.getAst()) || hasRandomFunction(partitionBy)) {
+                return null;
+            }
         }
         if (!hasWindowFunction) {
             return null;
+        }
+        // A table too small to repay the worker copies compiled below stays serial. The table's
+        // row count overestimates what an IN list selects; the cursor computes min.rows of the scan
+        // on the query's thread before it dispatches anything, which keeps a selective query there.
+        final long minRows = configuration.getSqlParallelWindowMinRows();
+        if (minRows > 0) {
+            final TableToken tableToken = base.getTableToken();
+            if (tableToken == null) {
+                return null;
+            }
+            try (TableReader reader = executionContext.getReader(tableToken)) {
+                if (reader.size() < minRows) {
+                    return null;
+                }
+            }
         }
         final RecordSink recordSink;
         try {
@@ -12628,6 +12648,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 keyColumnIndex,
                 workerCount
         );
+    }
+
+    private static boolean hasRandomFunction(ObjList<ExpressionNode> nodes) {
+        for (int i = 0, n = nodes.size(); i < n; i++) {
+            if (hasRandomFunction(nodes.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True when the expression calls a random function, rnd_*() or random().
+    private static boolean hasRandomFunction(@Nullable ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == FUNCTION && (Chars.startsWithIgnoreCase(node.token, "rnd_") || Chars.equalsIgnoreCase(node.token, "random"))) {
+            return true;
+        }
+        return hasRandomFunction(node.lhs) || hasRandomFunction(node.rhs) || hasRandomFunction(node.args);
     }
 
     /**

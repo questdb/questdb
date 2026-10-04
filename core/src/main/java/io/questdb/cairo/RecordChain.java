@@ -391,13 +391,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     /**
-     * Binds the per-query native memory tracker. The chain is lazy by design
-     * (the inner MemoryCARW does not allocate native memory until the first
-     * write), so factories can safely set the tracker between cursors as long
-     * as the chain's backing has been released first via {@link #clear()} or
-     * {@link #close()}.
-     */
-    /**
      * Forgets the records but, unlike {@link #clear()}, keeps the memory for the next ones, and
      * makes room for {@code recordCount} records of the fixed part's size in one allocation, so a
      * chain whose size is known up front does not grow a page at a time.
@@ -412,6 +405,13 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         varAppendOffset = 0L;
     }
 
+    /**
+     * Binds the per-query native memory tracker. The chain is lazy by design
+     * (the inner MemoryCARW does not allocate native memory until the first
+     * write), so factories can safely set the tracker between cursors as long
+     * as the chain's backing has been released first via {@link #clear()} or
+     * {@link #close()}.
+     */
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         mem.setMemoryTracker(tracker);
     }
