@@ -817,8 +817,10 @@ the test, so each failing test is an item: the copier test of `RelationCoverageT
 registration; else to the first row its instrument names.
 
 There is one item per location and decision; a compiler error repeated by several builds is one
-item. The kit and the coverage tests run only when every build group is empty, since a build error
-hides the tests behind it.
+item. Of several failures at one kit location (two later types failing the same path), the item
+keeps the one of the type the run adds, so a rerun lists the same item whatever order the tests ran
+in; a test's temporary directory reads as `<tmp>`. The kit and the coverage tests run only when
+every build group is empty, since a build error hides the tests behind it.
 
 Exit codes:
 

@@ -346,6 +346,20 @@ class RegistrationTest(unittest.TestCase):
 class WorklistTest(unittest.TestCase):
     facts = {'kit': {'refused_sites': ['SAMPLE BY FILL(PREV)']}}
 
+    def test_one_item_per_location_whatever_the_test_order(self):
+        def at(type_label, message):
+            return tp.Item('kit', 'implement-pair', '`kit:sql.cast@single-nojit#-`',
+                           f'type={type_label} row=- path=sql.cast mode=single-nojit: {message}', 'TypeDrivers.find tag enum switch')
+        other, own = at('nn_int', '5 casts break an invariant'), at('uint32', '9 casts break an invariant')
+        for order in ([other, own], [own, other]):
+            self.assertEqual([own], tp.sort_items(order, 'uint32'))
+            self.assertEqual([other], tp.sort_items(order))
+
+    def test_temporary_directory_reads_the_same_on_every_run(self):
+        self.assertEqual('error: write : [-1] cannot insert rows out of order. Table=<tmp>/dbRoot/ins_n0o~',
+                         tp.ascii_message('error: write : [-1] cannot insert rows out of order. '
+                                          'Table=/tmp/junit8367132894678967833/dbRoot/ins_n0o~'))
+
     def test_message_rule(self):
         self.assertEqual('a / b', tp.ascii_message('a | b\nsecond line'))
         self.assertEqual('caf? ok', tp.ascii_message('café ok'))

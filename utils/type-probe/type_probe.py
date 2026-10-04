@@ -79,6 +79,7 @@ LAYER_SITES = (
 MESSAGE_LIMIT = 200
 
 REFUSAL = re.compile(r'\b(no (?:family arm|compare arm|UNION cast)) for (.+?) at (.+?): (.+)$')
+TEMP_DIR = re.compile(r'(?<![\w<])/\S*?/junit\d+/')
 STACK_FRAME = re.compile(r'\s+at [\w.$]+\([\w.$]+(?::\d+)?\).*$')
 # the kit names the type, the value row, the path and the mode of every failure
 KIT_CONTEXT = re.compile(r'type=(\S+) row=(\S+) path=(\S+) mode=(\S+?):? ')
@@ -1066,8 +1067,10 @@ class Item:
 
 
 def ascii_message(text):
-    """The first line of a message, ASCII only, `|` as `/`, at most 200 characters."""
+    """The first line of a message, ASCII only, `|` as `/`, at most 200 characters; a test's
+    temporary directory, which differs on every run, reads as `<tmp>`."""
     first = (text.strip().splitlines() or [''])[0]
+    first = TEMP_DIR.sub('<tmp>/', first)
     first = first.encode('ascii', 'replace').decode('ascii').replace('|', '/').strip()
     return first if len(first) <= MESSAGE_LIMIT else first[:MESSAGE_LIMIT - 3] + '...'
 
@@ -1213,11 +1216,19 @@ def manual_items(readme_text, done_text=None):
     return items
 
 
-def sort_items(items):
-    """One item per location and decision, by group, then by location."""
+def sort_items(items, label=''):
+    """One item per location and decision, by group, then by location. Of the failures at one
+    location, the one of the type the run adds (its kit label, `type=<label>`) is kept, then one
+    that names its site, then the first by message, so a rerun keeps the same one whatever order
+    the tests ran in."""
+    own = f'type={label.lower()} ' if label else None
     unique = {}
     for item in items:
-        unique.setdefault((item.group, item.location, item.decision), item)
+        k = (item.group, item.location, item.decision)
+        rank = (own is not None and own not in item.message, item.site in ('', 'unmapped'), ascii_message(item.message))
+        if k not in unique or rank < unique[k][0]:
+            unique[k] = (rank, item)
+    unique = {k: item for k, (_rank, item) in unique.items()}
 
     def key(item):
         loc = item.location.strip('`')
@@ -1318,7 +1329,7 @@ def cmd_run(args, tree):
                 items += failure_items(failure, sites, facts, tree)
     done = Path(args.manual_done).read_text(encoding='utf-8') if args.manual_done else None
     items += manual_items(tree.read(README_FILE), done)
-    items = sort_items(items)
+    items = sort_items(items, facts['type']['sql_names'][0])
     sha = hashlib.sha256(facts_path.read_bytes()).hexdigest()
     text = render_worklist(name, facts_path, sha, tree_description(tree), started, time.monotonic() - t0, items, notes)
     (out / 'worklist.md').write_text(text, encoding='utf-8')
