@@ -903,6 +903,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final SymbolTable[] sts = symbolTablesArr;
         // a SYMBOL column read from memory: its address and stride; 0 reads it through the record
         final long[] addresses = blockSymbolAddresses(block);
+        if (symbolColumnCount == 1 && addresses[0] != 0) {
+            for (int ci = 0; ci < n; ci++) {
+                if (wts[ci] == QwpConstants.TYPE_SYMBOL) {
+                    return appendBlockSymbolColumn(scs[ci], addresses[0], addresses[1], rows, sts[ci], dictBudgetWireBytes);
+                }
+            }
+        }
         int dictSize = connDict.size();
         for (int r = 0; r < rows; r++) {
             for (int ci = 0, s = 0; ci < n; ci++) {
@@ -920,6 +927,50 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             final int newDictSize = connDict.size();
             if (newDictSize != dictSize) {
                 dictSize = newDictSize;
+                if (currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+                    return r + 1;
+                }
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * {@link #appendBlockSymbols} for the one SYMBOL column of a schema, read from memory: one
+     * loop over the keys, which looks a key up only when it differs from the previous row's, as
+     * runs of a key are common (a key-ordered result is all runs).
+     */
+    private int appendBlockSymbolColumn(
+            QwpColumnScratch scratch,
+            long address,
+            long stride,
+            int rows,
+            SymbolTable st,
+            int dictBudgetWireBytes
+    ) {
+        scratch.reserveSymbolRows(rows);
+        final IntIntHashMap k2c = scratch.connKeyToConnId;
+        int lastKey = SymbolTable.VALUE_IS_NULL;
+        int lastConnId = -1;
+        for (int r = 0; r < rows; r++) {
+            final int key = Unsafe.getInt(address + r * stride);
+            if (key == SymbolTable.VALUE_IS_NULL) {
+                scratch.appendNull();
+                continue;
+            }
+            if (key == lastKey) {
+                scratch.appendSymbolConnIdReserved(lastConnId);
+                continue;
+            }
+            lastKey = key;
+            final int mapIdx = k2c.keyIndex(key);
+            if (mapIdx < 0) {
+                lastConnId = k2c.valueAt(mapIdx);
+                scratch.appendSymbolConnIdReserved(lastConnId);
+            } else {
+                lastConnId = connDict.addEntry(st.valueOf(key));
+                k2c.putAt(mapIdx, key, lastConnId);
+                scratch.appendSymbolConnIdReserved(lastConnId);
                 if (currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
                     return r + 1;
                 }

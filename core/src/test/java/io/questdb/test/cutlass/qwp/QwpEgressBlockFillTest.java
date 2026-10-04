@@ -180,6 +180,10 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 };
                 assertBlockFillMatchesRowFill(sqls, "", 0, -1);
                 Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits);
+                // one SYMBOL column, on a fresh connection so that its values are new: its own loop
+                final long splits2 = metrics.batchOverflowSplitCount();
+                assertBlockFillMatchesRowFill(new String[]{"select n, a, d from sy limit 100000"}, "", 0, -1);
+                Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits2);
             }
         });
     }

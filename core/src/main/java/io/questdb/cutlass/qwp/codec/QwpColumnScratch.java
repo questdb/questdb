@@ -825,6 +825,19 @@ final class QwpColumnScratch implements QuietCloseable {
         markNonNullAndAdvanceRow();
     }
 
+    /**
+     * SYMBOL: {@link #appendSymbolConnId} after {@link #reserveSymbolRows} made room, without
+     * the capacity checks.
+     */
+    void appendSymbolConnIdReserved(int connId) {
+        final int slot = nonNullCount;
+        Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);
+        final int prevCum = slot == 0 ? 0 : Unsafe.getInt(symbolBytesCumAddr + 4L * slot);
+        Unsafe.putInt(symbolBytesCumAddr + 4L * (slot + 1), prevCum + QwpVarint.encodedLength(connId));
+        nonNullCount = slot + 1;
+        rowCount++;
+    }
+
     void appendUuid(long lo, long hi) {
         ensureValuesCapacity(valuesPos + 16);
         Unsafe.putLong(valuesAddr + valuesPos, lo);
@@ -924,6 +937,19 @@ final class QwpColumnScratch implements QuietCloseable {
         int prevCum = nonNullCount == 0 ? 0
                 : Unsafe.getInt(symbolBytesCumAddr + 4L * nonNullCount);
         Unsafe.putInt(symbolBytesCumAddr + 4L * slotIdx, prevCum + QwpVarint.encodedLength(connId));
+    }
+
+    /**
+     * SYMBOL: room for {@code n} more non-null values, for {@link #appendSymbolConnIdReserved}.
+     */
+    void reserveSymbolRows(int n) {
+        ensureSymbolIdsCapacity(4 * (nonNullCount + n));
+        final int cumNeeded = 4 * (nonNullCount + n + 1);
+        if (symbolBytesCumCapacity < cumNeeded) {
+            int newCap = Math.max(symbolBytesCumCapacity * 2, Math.max(INITIAL_BYTES, cumNeeded));
+            symbolBytesCumAddr = Unsafe.realloc(symbolBytesCumAddr, symbolBytesCumCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            symbolBytesCumCapacity = newCap;
+        }
     }
 
     /**
