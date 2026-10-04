@@ -1064,6 +1064,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.window.max.rounds\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MAX_ROUNDS\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.min.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.round.rows\tQDB_CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS\t2097152\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.window.minmax.rewrite.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_MINMAX_REWRITE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.build.rows.per.partition\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION\t32768\tdefault\tfalse\tfalse\n" +
@@ -1072,6 +1073,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO\t0.4\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO\t0.125\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.right.join.max.build.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE\t268435456\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.probe.enabled\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_PROBE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.batch.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE\t2048\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +

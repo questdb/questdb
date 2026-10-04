@@ -121,12 +121,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelHashJoinGroupByEnabled;
+    private boolean parallelHashJoinProbeEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowEnabled;
     private boolean parallelWindowJoinEnabled;
+    private boolean parallelWindowMinMaxRewriteEnabled;
     private long queryRegistryOwnerId = -1;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
@@ -152,6 +154,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
         parallelHashJoinGroupByEnabled = cairoConfiguration.isSqlParallelHashJoinGroupByEnabled();
+        parallelHashJoinProbeEnabled = cairoConfiguration.isSqlParallelHashJoinProbeEnabled();
+        parallelWindowMinMaxRewriteEnabled = cairoConfiguration.isSqlParallelWindowMinMaxRewriteEnabled();
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
         parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
@@ -470,6 +474,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelHashJoinProbeEnabled() {
+        return parallelHashJoinProbeEnabled && isParallelFilterEnabled() && sharedQueryWorkerCount > 0;
+    }
+
+    @Override
     public boolean isParallelHashJoinGroupByEnabled() {
         return parallelHashJoinGroupByEnabled && isParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
     }
@@ -492,6 +501,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isParallelHorizonJoinEnabled() {
         return parallelHorizonJoinEnabled;
+    }
+
+    @Override
+    public boolean isParallelWindowMinMaxRewriteEnabled() {
+        return parallelWindowMinMaxRewriteEnabled && isParallelFilterEnabled() && sharedQueryWorkerCount > 0;
     }
 
     @Override
@@ -712,6 +726,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setParallelHashJoinProbeEnabled(boolean enabled) {
+        this.parallelHashJoinProbeEnabled = enabled;
+    }
+
+    @Override
     public void setParallelHashJoinGroupByEnabled(boolean enabled) {
         this.parallelHashJoinGroupByEnabled = enabled;
     }
@@ -734,6 +753,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
         this.parallelHorizonJoinEnabled = parallelHorizonJoinEnabled;
+    }
+
+    @Override
+    public void setParallelWindowMinMaxRewriteEnabled(boolean enabled) {
+        this.parallelWindowMinMaxRewriteEnabled = enabled;
     }
 
     @Override
