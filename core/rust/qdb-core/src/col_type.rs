@@ -138,6 +138,7 @@ pub enum ColumnTypeTag {
     Decimal128 = 32,
     Decimal256 = 33,
     VarcharSlice = 40,
+    // type-registration: rust tag (see utils/type-probe/README.md)
 }
 
 impl ColumnTypeTag {

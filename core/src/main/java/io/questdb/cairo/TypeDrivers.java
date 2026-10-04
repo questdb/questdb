@@ -84,6 +84,7 @@ final class TypeDrivers {
             case DECIMAL128 -> DecimalTypeDriver.DECIMAL128;
             case DECIMAL256 -> DecimalTypeDriver.DECIMAL256;
             case INTERVAL -> IntervalTypeDriver.INSTANCE;
+            // type-registration: type driver lookup (see utils/type-probe/README.md)
             // pseudo tags resolve overloads or mark parser state; no value of theirs is ever stored or computed
             case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
                  NULL, UNKNOWN -> null;

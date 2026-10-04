@@ -69,7 +69,9 @@ public enum WireKind {
     DECIMAL32,
     DECIMAL64,
     DECIMAL128,
-    DECIMAL256;
+    DECIMAL256,
+    // type-registration: wire kind (see utils/type-probe/README.md)
+    ;
 
     /**
      * The wire kind of a stored column type, or null for a pseudo type and for VARCHAR_SLICE,

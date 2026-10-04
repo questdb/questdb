@@ -79,6 +79,7 @@ public enum ColumnTypeTag {
     PARAMETER(38),
     INTERVAL(39),
     VARCHAR_SLICE(40),
+    // type-registration: tag list (see utils/type-probe/README.md)
     NULL(41),
     /**
      * Not a tag. Returned by {@link #of(int)} for any number without a constant.

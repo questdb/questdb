@@ -76,6 +76,7 @@ enum class ColumnType : int {
   PARAMETER = 38,
   INTERVAL = 39,
   VARCHAR_SLICE = 40,
+  // type-registration: native tag (see utils/type-probe/README.md)
   NULL_ = 41,
   TIMESTAMP_NANO = 1 << 18 | TIMESTAMP_MICRO,
 };

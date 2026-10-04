@@ -137,6 +137,7 @@ public final class ColumnType {
     public static final short PARAMETER = ARRAY_STRING + 1;    // = 38;
     public static final short INTERVAL = PARAMETER + 1;        // = 39;
     public static final short VARCHAR_SLICE = INTERVAL + 1;    // = 40;
+    // type-registration: column type constant (see utils/type-probe/README.md)
     public static final short NULL = VARCHAR_SLICE + 1;        // = 41; ALWAYS the last
     // The highest tag number. Every table indexed by tag is sized MAX_TAG + 1 and every loop over
     // the tag space runs to MAX_TAG inclusive; nothing else may derive a bound from NULL's number.
@@ -992,6 +993,7 @@ public final class ColumnType {
         nameTypeMap.put("interval", INTERVAL_TIMESTAMP_MICRO);
         nameTypeMap.put("timestamp_ns", TIMESTAMP_NANO);
         nameTypeMap.put("decimal", DECIMAL);
+        // type-registration: column type name (see utils/type-probe/README.md)
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {
