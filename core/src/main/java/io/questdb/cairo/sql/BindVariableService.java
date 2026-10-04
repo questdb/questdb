@@ -345,7 +345,7 @@ public interface BindVariableService extends Mutable {
      * @param index numeric index of the bind variable
      * @param value as integer
      */
-    void setIPv4(int index, int value);
+    void setIPv4(int index, int value) throws SqlException;
 
     /**
      * Set type of bind variable by index as ipv4 (CharSequence form) and provide a value
@@ -354,7 +354,7 @@ public interface BindVariableService extends Mutable {
      * @param index numeric index of the bind variable
      * @param value as CharSequence
      */
-    void setIPv4(int index, CharSequence value);
+    void setIPv4(int index, CharSequence value) throws SqlException;
 
     /**
      * Set type of bind variable by index as binary
@@ -362,7 +362,7 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      */
-    void setIPv4(int index);
+    void setIPv4(int index) throws SqlException;
 
     /**
      * Set type of bind variable by name as integer and provide a value

@@ -793,17 +793,17 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setIPv4(int index) {
+    public void setIPv4(int index) throws SqlException {
         setIPv4(index, Numbers.IPv4_NULL);
     }
 
     @Override
-    public void setIPv4(int index, int value) {
+    public void setIPv4(int index, int value) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setIPv40(function, value);
+            setIPv40(function, value, index);
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
             ((IPv4BindVariable) function).value = value;
@@ -811,12 +811,12 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setIPv4(int index, CharSequence value) {
+    public void setIPv4(int index, CharSequence value) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setIPv40(function, Numbers.parseIPv4Quiet(value));
+            setIPv40(function, Numbers.parseIPv4Quiet(value), index);
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
             ((IPv4BindVariable) function).value = Numbers.parseIPv4Quiet(value);
@@ -1125,9 +1125,6 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.ARRAY:
                 ((ArrayBindVariable) function).setView(value);
                 break;
-            case ColumnType.STRING:
-            case ColumnType.VARCHAR:
-                throw new UnsupportedOperationException("implement me");
             default:
                 reportError(function, ColumnType.ARRAY, index, null);
                 break;
@@ -1408,8 +1405,12 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setIPv40(Function function, int value) {
-        ((IPv4BindVariable) function).value = value;
+    private static void setIPv40(Function function, int value, int index) throws SqlException {
+        if (ColumnType.tagOf(function.getType()) == ColumnType.IPv4) {
+            ((IPv4BindVariable) function).value = value;
+        } else {
+            reportError(function, ColumnType.IPv4, index, null);
+        }
     }
 
     private static void setInt0(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {

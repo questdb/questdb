@@ -1144,6 +1144,34 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSetIntToIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                bindVariableService.define(0, ColumnType.INT, 0);
+                bindVariableService.setIPv4(0, 7);
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as INT and cannot accept IPv4");
+            }
+            try {
+                bindVariableService.define(0, ColumnType.INT, 0);
+                bindVariableService.setIPv4(0, "1.2.3.4");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as INT and cannot accept IPv4");
+            }
+            try {
+                bindVariableService.define(0, ColumnType.INT, 0);
+                bindVariableService.define(0, ColumnType.IPv4, 0);
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as INT and cannot accept IPv4");
+            }
+            Assert.assertEquals(ColumnType.INT, bindVariableService.getFunction(0).getType());
+        });
+    }
+
+    @Test
     public void testSetIntToStr() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.define(0, ColumnType.INT, 0);
@@ -1279,6 +1307,40 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSetTextToArray() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectArray array = new DirectArray(new DefaultTestCairoConfiguration(null))) {
+                array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                array.setDimLen(0, 1);
+                array.applyShape();
+                array.startMemoryA().putDouble(7);
+                // a SYMBOL variable is a STRING one
+                bindVariableService.define(0, ColumnType.STRING, 0);
+                bindVariableService.define(1, ColumnType.SYMBOL, 0);
+                bindVariableService.define(2, ColumnType.VARCHAR, 0);
+                try {
+                    bindVariableService.setArray(0, array);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as STRING and cannot accept ARRAY");
+                }
+                try {
+                    bindVariableService.setArray(1, array);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 1 is defined as STRING and cannot accept ARRAY");
+                }
+                try {
+                    bindVariableService.setArray(2, array);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 2 is defined as VARCHAR and cannot accept ARRAY");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSetTimestampNSToStr() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.define(0, ColumnType.TIMESTAMP_NANO, 0);
@@ -1350,9 +1412,7 @@ public class BindVariableServiceImplTest {
         // Coverage of the setters' pairs (F34 keeps them per type): a value of each setter's type
         // into a variable of each type define() accepts, including the encoded types. X accepts,
         // "." refuses with the setter's error, e refuses the value with another error, "!" crashes:
-        // a pair no setter arm handles. A type define() refuses has no row. Known crashes, pinned
-        // until fixed (issue bind-variable-setter-crash): setIPv4 casts every variable to an IPv4
-        // one, and setArray into a text variable throws "implement me".
+        // a pair no setter arm handles. A type define() refuses has no row.
         assertMemoryLeak(() -> {
             try (
                     DirectArray array = new DirectArray(new DefaultTestCairoConfiguration(null));
@@ -1452,45 +1512,45 @@ public class BindVariableServiceImplTest {
                                 19 setDecimal
                                                         0         1
                                                         01234567890123456789
-                                UNDEFINED               ................!.e.
-                                BOOLEAN                 X..........XX...!.e.
-                                BYTE                    .XXXXXXXX..XX...!.e.
-                                SHORT                   .XXXXXXXX..XX...!.e.
-                                CHAR                    .XXXXXX....XX...!.e.
-                                INT                     .XXXXXXXX..XX...!.e.
-                                LONG                    .XXXXXXXX..XX...!.e.
-                                DATE                    .XXXXXXXX..XX...!.e.
-                                TIMESTAMP               .XXXXXXXX..XX...!.e.
-                                FLOAT                   .XXXXXXXXXXXX...!.e.
-                                DOUBLE                  .XXXXXXXXXXXX...!.e.
-                                STRING                  XXXXXXXXXXXXXXX.!!e.
-                                SYMBOL                  XXXXXXXXXXXXXXX.!!e.
-                                LONG256                 ...........XXX..!.e.
-                                GEOBYTE                 ...X...........X!.e.
-                                GEOSHORT                ...............X!.e.
-                                GEOINT                  ...............X!.e.
-                                GEOLONG                 ...............X!.e.
-                                BINARY                  ................!.X.
-                                UUID                    ...........ee.X.!.e.
+                                UNDEFINED               ..................e.
+                                BOOLEAN                 X..........XX.....e.
+                                BYTE                    .XXXXXXXX..XX.....e.
+                                SHORT                   .XXXXXXXX..XX.....e.
+                                CHAR                    .XXXXXX....XX.....e.
+                                INT                     .XXXXXXXX..XX.....e.
+                                LONG                    .XXXXXXXX..XX.....e.
+                                DATE                    .XXXXXXXX..XX.....e.
+                                TIMESTAMP               .XXXXXXXX..XX.....e.
+                                FLOAT                   .XXXXXXXXXXXX.....e.
+                                DOUBLE                  .XXXXXXXXXXXX.....e.
+                                STRING                  XXXXXXXXXXXXXXX...e.
+                                SYMBOL                  XXXXXXXXXXXXXXX...e.
+                                LONG256                 ...........XXX....e.
+                                GEOBYTE                 ...X...........X..e.
+                                GEOSHORT                ...............X..e.
+                                GEOINT                  ...............X..e.
+                                GEOLONG                 ...............X..e.
+                                BINARY                  ..................X.
+                                UUID                    ...........ee.X...e.
                                 IPv4                    ....X......ee...X.e.
-                                VARCHAR                 XXXXXXXXXXXXXXX.!!e.
-                                ARRAY                   ...........e....!Xe.
-                                DECIMAL8                ...........ee...!.ee
-                                DECIMAL16               ...........ee...!.ee
-                                DECIMAL32               ...........ee...!.ee
-                                DECIMAL64               ...........ee...!.ee
-                                DECIMAL128              ...........ee...!.ee
-                                DECIMAL256              ...........ee...!.ee
-                                DECIMAL                 ...........XX...!.eX
-                                TIMESTAMP_NS            .XXXXXXXX..XX...!.e.
-                                GEOHASH(1c)             ...X...........X!.e.
-                                GEOHASH(8b)             ...............e!.e.
-                                GEOHASH(31b)            ...............e!.e.
-                                GEOHASH(12c)            ...............e!.e.
-                                DECIMAL(5,2)            ...........XX...!.eX
-                                DECIMAL(18,3)           ...........XX...!.eX
-                                DOUBLE[]                ...........e....!Xe.
-                                DOUBLE[][]              ...........e....!ee.
+                                VARCHAR                 XXXXXXXXXXXXXXX...e.
+                                ARRAY                   ...........e.....Xe.
+                                DECIMAL8                ...........ee.....ee
+                                DECIMAL16               ...........ee.....ee
+                                DECIMAL32               ...........ee.....ee
+                                DECIMAL64               ...........ee.....ee
+                                DECIMAL128              ...........ee.....ee
+                                DECIMAL256              ...........ee.....ee
+                                DECIMAL                 ...........XX.....eX
+                                TIMESTAMP_NS            .XXXXXXXX..XX.....e.
+                                GEOHASH(1c)             ...X...........X..e.
+                                GEOHASH(8b)             ...............e..e.
+                                GEOHASH(31b)            ...............e..e.
+                                GEOHASH(12c)            ...............e..e.
+                                DECIMAL(5,2)            ...........XX.....eX
+                                DECIMAL(18,3)           ...........XX.....eX
+                                DOUBLE[]                ...........e.....Xe.
+                                DOUBLE[][]              ...........e.....ee.
                                 """,
                         sink
                 );
