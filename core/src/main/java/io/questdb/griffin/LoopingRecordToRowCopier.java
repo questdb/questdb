@@ -77,6 +77,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             final int opcode = toColumnIndex == timestampIndex
                     ? RecordToRowCopierUtils.COPY_NONE
                     : RecordToRowCopierUtils.copyOpcode(fromColumnType, toColumnType);
+            if (opcode == RecordToRowCopierUtils.COPY_NONE && toColumnIndex != timestampIndex) {
+                throw RecordToRowCopierUtils.noCopierArmForColumn(fromColumnType, toColumnType, this.toMetadata.getColumnName(toColumnIndex));
+            }
             opcodes.add(opcode);
             // STRING/VARCHAR -> ARRAY parses the text
             isArrayParserRequired |= RecordToRowCopierUtils.copyToTag(opcode) == ColumnType.ARRAY
@@ -94,7 +97,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         for (int i = 0; i < n; i++) {
             final int opcode = opcodes.getQuick(i);
             if (opcode == RecordToRowCopierUtils.COPY_NONE) {
-                // the timestamp column, or a pair without an arm: the null setters have written it
+                // the timestamp column, copied apart from the copier
                 continue;
             }
             final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);

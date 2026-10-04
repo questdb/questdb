@@ -115,8 +115,8 @@ public class RelationCoverageTest extends AbstractCairoTest {
                 }
             }
         }
-        // the copiers write nothing for these and the column stays NULL; see
-        // issues/copier-admitted-pairs-without-arm and TypeRelationGoldenTest.testCopierGaps
+        // the conversion relation admits these pairs but the copiers have no arm for them, so
+        // INSERT refuses them (RecordToRowCopierUtils.hasCopierArm)
         assertGaps("""
                 BYTE -> CHAR
                 DATE -> CHAR

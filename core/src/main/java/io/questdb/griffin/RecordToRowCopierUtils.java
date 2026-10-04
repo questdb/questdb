@@ -131,6 +131,15 @@ public class RecordToRowCopierUtils {
     }
 
     /**
+     * Whether the copiers have an arm that copies a value of {@code fromType} into a column of
+     * {@code toType}. INSERT admits a pair only when it has one, besides the conversion relation,
+     * since a copier writes nothing for a pair without an arm.
+     */
+    public static boolean hasCopierArm(int fromType, int toType) {
+        return copyOpcode(fromType, toType) != COPY_NONE;
+    }
+
+    /**
      * The target tag of a {@link #copyOpcode}: the cast-and-put arm the copiers take.
      */
     static int copyToTag(int opcode) {
@@ -783,8 +792,7 @@ public class RecordToRowCopierUtils {
                 final int fromColumnType = fromTypes.getColumnType(i);
                 final int opcode = copyOpcode(fromColumnType, toColumnType);
                 if (opcode == COPY_NONE) {
-                    // no arm for the pair: the column keeps the NULL the null setters wrote
-                    continue;
+                    throw noCopierArmForColumn(fromColumnType, toColumnType, toMetadata.getColumnName(toColumnIndex));
                 }
                 final int fromColumnTypeTag = copyFromTag(opcode);
                 final int toColumnTypeTag = copyToTag(opcode);
@@ -1944,8 +1952,7 @@ public class RecordToRowCopierUtils {
             final int fromColumnType = fromTypes.getColumnType(i);
             final int opcode = copyOpcode(fromColumnType, toColumnType);
             if (opcode == COPY_NONE) {
-                // no arm for the pair: the column keeps the NULL the null setters wrote
-                continue;
+                throw noCopierArmForColumn(fromColumnType, toColumnType, toMetadata.getColumnName(toColumnIndex));
             }
             final int fromColumnTypeTag = copyFromTag(opcode);
             final int toColumnTypeTag = copyToTag(opcode);
@@ -2998,6 +3005,17 @@ public class RecordToRowCopierUtils {
      */
     private static IllegalStateException noCopierArm(int fromColumnType, int toColumnType) {
         return new IllegalStateException("no copier arm [from=" + ColumnType.nameOf(fromColumnType) + ", to=" + ColumnType.nameOf(toColumnType) + "]");
+    }
+
+    /**
+     * The error for a column whose pair of types has no copier arm, which would leave the column
+     * NULL. INSERT refuses such a pair when it compiles ({@link #hasCopierArm}), so only a caller
+     * that copies without that check meets it, such as a materialized view refreshed after a base
+     * column changed type.
+     */
+    static CairoException noCopierArmForColumn(int fromColumnType, int toColumnType, CharSequence columnName) {
+        return CairoException.nonCritical().put("inconvertible types: ").put(ColumnType.nameOf(fromColumnType))
+                .put(" -> ").put(ColumnType.nameOf(toColumnType)).put(" [column=").put(columnName).put(']');
     }
 
     /**

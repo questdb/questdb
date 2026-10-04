@@ -3749,7 +3749,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
-                    if (ColumnType.isConvertibleFrom(fromType, toType)) {
+                    // the copier writes every column but the designated timestamp, so a pair it has
+                    // no arm for would store NULL
+                    if (ColumnType.isConvertibleFrom(fromType, toType)
+                            && (index == writerTimestampIndex || RecordToRowCopierUtils.hasCopierArm(fromType, toType))) {
                         listColumnFilter.add(index + 1);
                     } else {
                         throw SqlException.inconvertibleTypes(
@@ -3804,7 +3807,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 for (int i = 0; i < n; i++) {
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
-                    if (ColumnType.isConvertibleFrom(fromType, toType)) {
+                    // as above: the copier must have an arm for every column but the designated timestamp
+                    if (ColumnType.isConvertibleFrom(fromType, toType)
+                            && (i == writerTimestampIndex || RecordToRowCopierUtils.hasCopierArm(fromType, toType))) {
                         continue;
                     }
 
@@ -5632,7 +5637,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             function.assignType(columnType, bindVariableService);
         }
 
-        if (ColumnType.isConvertibleFrom(function.getType(), columnType)) {
+        // the designated timestamp is written apart from the copier; any other column needs a
+        // copier arm for the value's type, else it goes through the implicit cast or is refused
+        if (ColumnType.isConvertibleFrom(function.getType(), columnType)
+                && (metadataColumnIndex == metadataTimestampIndex || RecordToRowCopierUtils.hasCopierArm(function.getType(), columnType))) {
             if (metadataColumnIndex == metadataTimestampIndex) {
                 return;
             }

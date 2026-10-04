@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,6 +59,12 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class InsertTest extends AbstractCairoTest {
+    private static final int[] COPIER_TYPES = {
+            RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD,
+            RecordToRowCopierUtils.COPIER_TYPE_CHUNKED,
+            RecordToRowCopierUtils.COPIER_TYPE_LOOPING
+    };
+
     private final boolean walEnabled;
 
     public InsertTest() {
@@ -1511,6 +1518,129 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertSelectNullSourceIntoCharAdmitted() throws Exception {
+        // a NULL source reads through the target's own arm, so it stays admitted for the pairs
+        // whose non-NULL sources are refused; CHAR has no NULL and stores its default
+        assertMemoryLeak(() -> {
+            createCopierGapTables("BYPASS WAL");
+            execute("INSERT INTO dst(c, t, tn, ts) SELECT NULL, NULL, NULL, ts FROM src");
+            assertQuery("SELECT c, t, tn FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\tt\ttn
+                            \t\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testInsertSelectPairWithoutCopierArmWithExplicitCast() throws Exception {
+        // with an explicit cast the source has the target's type, so the copier's same-type arm
+        // writes it, under every copier and into WAL and non-WAL tables
+        assertMemoryLeak(() -> {
+            for (int copierType : COPIER_TYPES) {
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                for (String wal : new String[]{"WAL", "BYPASS WAL"}) {
+                    createCopierGapTables(wal);
+                    execute("""
+                            INSERT INTO dst(c, ts) SELECT b::CHAR, ts FROM src
+                            UNION ALL SELECT s::CHAR, ts FROM src
+                            UNION ALL SELECT l::CHAR, ts FROM src
+                            UNION ALL SELECT d::CHAR, ts FROM src
+                            UNION ALL SELECT t::CHAR, ts FROM src
+                            UNION ALL SELECT tn::CHAR, ts FROM src
+                            UNION ALL SELECT f::CHAR, ts FROM src
+                            UNION ALL SELECT db::CHAR, ts FROM src""");
+                    execute("INSERT INTO dst(t, tn, ts) SELECT sym::TIMESTAMP, sym::TIMESTAMP_NS, ts FROM src");
+                    drainWalQueue();
+                    assertQuery("SELECT c, t, tn FROM dst")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    c\tt\ttn
+                                    A\t\t
+                                    A\t\t
+                                    A\t\t
+                                    A\t\t
+                                    A\t\t
+                                    A\t\t
+                                    A\t\t
+                                    A\t\t
+                                    \t1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000000Z
+                                    """);
+                    execute("DROP TABLE dst");
+                    execute("DROP TABLE src");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSelectRefusesPairWithoutCopierArm() throws Exception {
+        // INSERT ... SELECT admitted these pairs by the conversion relation, but the copiers have
+        // no arm for them: the generated copiers stored NULL and the looping copier threw
+        // mid-insert. The statement is refused before it runs, under every copier, into WAL and
+        // non-WAL tables, and stores nothing
+        final String[][] pairs = {
+                {"c", "b"}, {"c", "s"}, {"c", "l"}, {"c", "d"}, {"c", "t"}, {"c", "tn"}, {"c", "f"}, {"c", "db"},
+                {"t", "sym"}, {"tn", "sym"}
+        };
+        assertMemoryLeak(() -> {
+            for (int copierType : COPIER_TYPES) {
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                for (String wal : new String[]{"WAL", "BYPASS WAL"}) {
+                    createCopierGapTables(wal);
+                    for (String[] pair : pairs) {
+                        assertExceptionNoLeakCheck(
+                                "INSERT INTO dst(" + pair[0] + ", ts) SELECT " + pair[1] + ", ts FROM src",
+                                16,
+                                "inconvertible types"
+                        );
+                    }
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM dst").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+                    execute("DROP TABLE dst");
+                    execute("DROP TABLE src");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertValuesPairWithoutCopierArm() throws Exception {
+        // INSERT ... VALUES admitted the same pairs by the same relation, and the copier stored
+        // nothing for them. A value of such a pair now goes through the implicit cast: a SYMBOL
+        // parses into either timestamp, and a number has no implicit cast into CHAR, so it is
+        // refused, as an INT already was
+        assertMemoryLeak(() -> {
+            for (int copierType : COPIER_TYPES) {
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                createCopierGapTables("BYPASS WAL");
+                for (String value : new String[]{"65::BYTE", "65::SHORT", "65L", "65::DATE", "65::TIMESTAMP", "65::TIMESTAMP_NS", "65.0::FLOAT", "65.0"}) {
+                    // the error points at the cast operator, or at the literal
+                    final int castAt = value.indexOf("::");
+                    assertExceptionNoLeakCheck(
+                            "INSERT INTO dst(c, ts) VALUES (" + value + ", 0::TIMESTAMP)",
+                            31 + Math.max(castAt, 0),
+                            "inconvertible types"
+                    );
+                }
+                execute("INSERT INTO dst(t, tn, ts) VALUES ('1970-01-02'::SYMBOL, '1970-01-02'::SYMBOL, 0::TIMESTAMP)");
+                assertQuery("SELECT c, t, tn FROM dst")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                c\tt\ttn
+                                \t1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000000Z
+                                """);
+                execute("DROP TABLE dst");
+                execute("DROP TABLE src");
+            }
+        });
+    }
+
+    @Test
     public void testInsertSelectTwoWheres() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table result (r long)");
@@ -2129,6 +2259,15 @@ public class InsertTest extends AbstractCairoTest {
                             Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\tC>Wy;\t1970-01-01T00:00:00.000000Z
                             """);
         });
+    }
+
+    // the source holds one value of each type INSERT used to admit into CHAR, TIMESTAMP or
+    // TIMESTAMP_NS without a copier arm; the target has the three columns
+    private static void createCopierGapTables(String wal) throws SqlException {
+        execute("""
+                CREATE TABLE src AS (SELECT 65::BYTE b, 65::SHORT s, 65L l, 65::DATE d, 65::TIMESTAMP t, 65::TIMESTAMP_NS tn,
+                65.0::FLOAT f, 65.0 db, '1970-01-02'::SYMBOL sym, 0::TIMESTAMP ts FROM long_sequence(1))""");
+        execute("CREATE TABLE dst (c CHAR, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + wal);
     }
 
     private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert, String timestampType) throws Exception {
