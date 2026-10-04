@@ -320,6 +320,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                             "  functions: [avg(bsize*bid+asize*ask/bsize+asize) over (partition by [sym] rows between 4 preceding and current row)," +
                             "avg(asize+bsize) over (partition by [sym] rows between 4 preceding and current row)]\n" +
                             "  keyShards: sym\n" +
+                            "  keyRuns: true\n" +
                             "  keySplit: warmup 4 rows\n" +
                             "    FilterOnValues symbolOrder: asc\n" +
                             "      keyMajor: true\n" +

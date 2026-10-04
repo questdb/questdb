@@ -1925,6 +1925,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelWindowKeyRunsEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return true;
     }

@@ -151,6 +151,13 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     }
 
     @Override
+    public boolean hasDistinctKeys() {
+        // findDuplicates() leaves each distinct value once in the keys the walk visits, and
+        // distinct values are distinct symbol keys
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

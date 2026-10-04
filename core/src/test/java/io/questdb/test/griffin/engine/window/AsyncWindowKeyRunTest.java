@@ -33,10 +33,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.window.AsyncWindowAtom;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.AsyncWindowSplitPlan;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -55,9 +57,10 @@ import java.util.Collection;
  * writes its output rows straight into the task's chain (see {@code AsyncWindowAtom.Slot#computeKeyRuns}).
  * Every test reads every value of every row as raw bits, and compares three runs of each query:
  * <ul>
- *     <li>with key runs, which must have computed the tasks;</li>
- *     <li>through the functions' maps, as before key runs ({@code DEBUG_DISABLE_KEY_RUNS}), which
- *     must equal them bit for bit whatever the split, since both compute a split key the same way;</li>
+ *     <li>with key runs, which must have computed the tasks and show in the plan;</li>
+ *     <li>through the functions' maps, as before key runs ({@code cairo.sql.parallel.window.key.runs.enabled}
+ *     off), which must equal them bit for bit whatever the split, since both compute a split key the
+ *     same way;</li>
  *     <li>the serial window, which they must equal bit for bit when no key is split.</li>
  * </ul>
  * The fixture holds NULLs in every column, zero denominators, -0.0 and keys of every size.
@@ -109,12 +112,6 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, ROUND_ROWS);
     }
 
-    @Override
-    public void tearDown() throws Exception {
-        AsyncWindowAtom.DEBUG_DISABLE_KEY_RUNS = false;
-        super.tearDown();
-    }
-
     @Test
     public void testColumnTops() throws Exception {
         assertMemoryLeak(() -> {
@@ -129,6 +126,32 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
                     "avg(late_i + d) over (partition by sym rows between 3 preceding and 1 preceding) a";
             assertKeyRuns(engine, sqlExecutionContext, "select " + columns + " from k where sym in " + IN + " order by sym");
             assertKeyRuns(engine, sqlExecutionContext, "select " + columns + " from k where sym != 'S3' order by sym desc");
+        });
+    }
+
+    @Test
+    public void testDuplicateBindKeys() throws Exception {
+        // A task restarts each key of the walk. A key the walk visited twice, for an IN list's
+        // repeated bind value, would restart where the serial window continues: the scan must
+        // walk each distinct value once, see KeyMajorScanFactory.hasDistinctKeys().
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "DAY", 3_000);
+            final String[][] tuples = {
+                    {"S1", "S1", "S2", "S2"},
+                    {"S2", "S1", "S2", "S1"},
+                    {"BIG", "BIG", "BIG", "S3"},
+                    {null, "S4", null, "S4"},
+                    {"S5", "NOPE", "S5", "NOPE"},
+            };
+            for (String[] tuple : tuples) {
+                bindVariableService.clear();
+                for (int i = 0; i < tuple.length; i++) {
+                    bindVariableService.setStr(i, tuple[i]);
+                }
+                assertKeyRuns(engine, sqlExecutionContext, "select sym, x, sum(d) over (partition by sym rows between 3 preceding and current row) s " +
+                        "from k where sym in ($1, $2, $3, $4) order by sym");
+                assertKeyRuns(engine, sqlExecutionContext, "select " + IDX50 + " from k where sym in ($1, 'S5', $2, $3, 'S1', $4) order by sym desc");
+            }
         });
     }
 
@@ -315,7 +338,11 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
 
     private static String bits(CairoEngine engine, SqlExecutionContext ctx, String query, boolean parallel, boolean keyRuns) throws Exception {
         ctx.setParallelWindowEnabled(parallel);
-        AsyncWindowAtom.DEBUG_DISABLE_KEY_RUNS = !keyRuns;
+        // Set only when it changes the value: setting a property to the value it has drops the
+        // other overrides set since the configuration was last read.
+        if (!keyRuns) {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED, "false");
+        }
         try (RecordCursorFactory factory = engine.select(query, ctx)) {
             final StringSink sink = new StringSink();
             try (RecordCursor cursor = factory.getCursor(ctx)) {
@@ -332,7 +359,9 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
             return sink.toString();
         } finally {
             ctx.setParallelWindowEnabled(false);
-            AsyncWindowAtom.DEBUG_DISABLE_KEY_RUNS = false;
+            if (!keyRuns) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED, "true");
+            }
         }
     }
 
@@ -349,6 +378,16 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
         return (AsyncWindowAtom) findAsyncFactory(factory).getAtom();
     }
 
+    private static String plan(RecordCursorFactory factory, SqlExecutionContext ctx) {
+        final TextPlanSink planSink = new TextPlanSink();
+        planSink.of(factory, ctx);
+        final StringSink lines = new StringSink();
+        for (int i = 1; i <= planSink.getLineCount(); i++) {
+            lines.put(planSink.getLine(i)).put('\n');
+        }
+        return lines.toString();
+    }
+
     private static int findSplitMode(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
         ctx.setParallelWindowEnabled(true);
         try (RecordCursorFactory factory = engine.select(query, ctx)) {
@@ -361,37 +400,41 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
     // Every value of every row as the bits a reader gets from the record.
     private static void printBits(RecordCursor cursor, RecordMetadata metadata, StringSink sink) {
         final Record record = cursor.getRecord();
-        final int columnCount = metadata.getColumnCount();
         while (cursor.hasNext()) {
-            for (int c = 0; c < columnCount; c++) {
-                if (c > 0) {
-                    sink.put('\t');
-                }
-                final int type = metadata.getColumnType(c);
-                switch (ColumnType.tagOf(type)) {
-                    case ColumnType.BOOLEAN -> sink.put(record.getBool(c));
-                    case ColumnType.BYTE -> sink.put(record.getByte(c));
-                    case ColumnType.SHORT -> sink.put(record.getShort(c));
-                    case ColumnType.CHAR -> sink.put((int) record.getChar(c));
-                    case ColumnType.INT -> sink.put(record.getInt(c));
-                    case ColumnType.IPv4 -> sink.put(record.getIPv4(c));
-                    case ColumnType.SYMBOL -> sink.put(record.getInt(c)).put(':').put(record.getSymA(c));
-                    case ColumnType.FLOAT -> sink.put(Float.floatToRawIntBits(record.getFloat(c)));
-                    case ColumnType.LONG -> sink.put(record.getLong(c));
-                    case ColumnType.DATE -> sink.put(record.getDate(c));
-                    case ColumnType.TIMESTAMP -> sink.put(record.getTimestamp(c));
-                    case ColumnType.DOUBLE -> sink.put(Double.doubleToRawLongBits(record.getDouble(c)));
-                    case ColumnType.GEOBYTE -> sink.put(record.getGeoByte(c));
-                    case ColumnType.GEOSHORT -> sink.put(record.getGeoShort(c));
-                    case ColumnType.GEOINT -> sink.put(record.getGeoInt(c));
-                    case ColumnType.GEOLONG -> sink.put(record.getGeoLong(c));
-                    case ColumnType.VARCHAR -> sink.put(record.getVarcharA(c));
-                    case ColumnType.UUID -> sink.put(record.getLong128Hi(c)).put('/').put(record.getLong128Lo(c));
-                    default -> throw new AssertionError("unexpected column type " + ColumnType.nameOf(type));
-                }
-            }
-            sink.put('\n');
+            printRecord(record, metadata, sink);
         }
+    }
+
+    private static void printRecord(Record record, RecordMetadata metadata, StringSink sink) {
+        final int columnCount = metadata.getColumnCount();
+        for (int c = 0; c < columnCount; c++) {
+            if (c > 0) {
+                sink.put('\t');
+            }
+            final int type = metadata.getColumnType(c);
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.BOOLEAN -> sink.put(record.getBool(c));
+                case ColumnType.BYTE -> sink.put(record.getByte(c));
+                case ColumnType.SHORT -> sink.put(record.getShort(c));
+                case ColumnType.CHAR -> sink.put((int) record.getChar(c));
+                case ColumnType.INT -> sink.put(record.getInt(c));
+                case ColumnType.IPv4 -> sink.put(record.getIPv4(c));
+                case ColumnType.SYMBOL -> sink.put(record.getInt(c)).put(':').put(record.getSymA(c));
+                case ColumnType.FLOAT -> sink.put(Float.floatToRawIntBits(record.getFloat(c)));
+                case ColumnType.LONG -> sink.put(record.getLong(c));
+                case ColumnType.DATE -> sink.put(record.getDate(c));
+                case ColumnType.TIMESTAMP -> sink.put(record.getTimestamp(c));
+                case ColumnType.DOUBLE -> sink.put(Double.doubleToRawLongBits(record.getDouble(c)));
+                case ColumnType.GEOBYTE -> sink.put(record.getGeoByte(c));
+                case ColumnType.GEOSHORT -> sink.put(record.getGeoShort(c));
+                case ColumnType.GEOINT -> sink.put(record.getGeoInt(c));
+                case ColumnType.GEOLONG -> sink.put(record.getGeoLong(c));
+                case ColumnType.VARCHAR -> sink.put(record.getVarcharA(c));
+                case ColumnType.UUID -> sink.put(record.getLong128Hi(c)).put('/').put(record.getLong128Lo(c));
+                default -> throw new AssertionError("unexpected column type " + ColumnType.nameOf(type));
+            }
+        }
+        sink.put('\n');
     }
 
     /**
@@ -404,27 +447,35 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
         ctx.setParallelWindowEnabled(true);
         final long workerTasks;
         final String keyRuns;
-        try (RecordCursorFactory factory = engine.select(query, ctx)) {
-            final AsyncWindowAtom atom = findAtom(factory);
-            Assert.assertTrue(query, atom.isKeyRunEnabled());
-            final StringSink sink = new StringSink();
-            try (RecordCursor cursor = factory.getCursor(ctx)) {
-                printBits(cursor, factory.getMetadata(), sink);
+        try {
+            try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                final AsyncWindowAtom atom = findAtom(factory);
+                Assert.assertTrue(query, atom.isKeyRunEnabled());
+                TestUtils.assertContains(plan(factory, ctx), "keyRuns: true");
+                final StringSink sink = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    printBits(cursor, factory.getMetadata(), sink);
+                }
+                keyRuns = sink.toString();
+                // a LIMIT may stop before the first task: the query's thread computes the first rows
+                Assert.assertTrue(query, atom.getKeyRunTaskCount() > 0 || query.contains(" limit "));
+                workerTasks = atom.getWorkerThreadTaskCount();
             }
-            keyRuns = sink.toString();
-            // a LIMIT may stop before the first task: the query's thread computes the first rows
-            Assert.assertTrue(query, atom.getKeyRunTaskCount() > 0 || query.contains(" limit "));
-            workerTasks = atom.getWorkerThreadTaskCount();
-            // the same factory again, through the maps
-            AsyncWindowAtom.DEBUG_DISABLE_KEY_RUNS = true;
-            sink.clear();
-            try (RecordCursor cursor = factory.getCursor(ctx)) {
-                printBits(cursor, factory.getMetadata(), sink);
+            // compiled again with key runs off: through the maps
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED, "false");
+            try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                final AsyncWindowAtom atom = findAtom(factory);
+                Assert.assertFalse(query, atom.isKeyRunEnabled());
+                Assert.assertFalse(query, Chars.contains(plan(factory, ctx), "keyRuns"));
+                final StringSink sink = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    printBits(cursor, factory.getMetadata(), sink);
+                }
+                Assert.assertEquals(query, 0, atom.getKeyRunTaskCount());
+                TestUtils.assertEquals(query, sink, keyRuns);
             }
-            Assert.assertEquals(query, 0, atom.getKeyRunTaskCount());
-            TestUtils.assertEquals(query, sink, keyRuns);
         } finally {
-            AsyncWindowAtom.DEBUG_DISABLE_KEY_RUNS = false;
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED, "true");
             ctx.setParallelWindowEnabled(false);
         }
         final String serial = bits(engine, ctx, query, false, false);

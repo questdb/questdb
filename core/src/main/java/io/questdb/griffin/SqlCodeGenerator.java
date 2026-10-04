@@ -12561,7 +12561,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null;
         }
         final int keyColumnIndex = keyMajorScan.getKeyMajorColumnIndex();
-        if (keyColumnIndex < 0) {
+        // A task restarts a key's state at each key of the walk, from scratch or from warm-up
+        // rows, so a key the walk visited twice would restart where the serial window continues.
+        if (keyColumnIndex < 0 || !keyMajorScan.hasDistinctKeys()) {
             return null;
         }
         final ObjList<QueryColumn> columns = model.getColumns();
@@ -12675,7 +12677,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 recordSink,
                 splitPlan,
                 keyColumnIndex,
-                partitionedByKeyOnly,
+                partitionedByKeyOnly && configuration.isSqlParallelWindowKeyRunsEnabled(),
                 workerCount
         );
     }

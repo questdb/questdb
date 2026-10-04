@@ -89,6 +89,12 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     }
 
     @Override
+    public boolean hasDistinctKeys() {
+        // one key per symbol of the symbol table, plus NULL
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

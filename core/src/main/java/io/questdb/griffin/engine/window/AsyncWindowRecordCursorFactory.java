@@ -221,6 +221,9 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.meta("workers").val(workerCount);
         sink.optAttr("functions", windowFunctions, true);
         sink.attr("keyShards").putBaseColumnName(keyColumnIndex);
+        if (atom.isKeyRunEnabled()) {
+            sink.attr("keyRuns").val(true);
+        }
         if (splitPlan.getMode() != AsyncWindowSplitPlan.MODE_NONE) {
             sink.attr("keySplit").val(splitPlan);
         }

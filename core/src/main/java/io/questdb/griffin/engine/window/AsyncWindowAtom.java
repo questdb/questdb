@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRowToucher;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -80,10 +81,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@link AsyncWindowSplitPlan}.
  */
 public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
-    // Makes tasks go through the functions' maps even where they could compute key runs, so that
-    // tests can compare the two.
-    @TestOnly
-    public static volatile boolean DEBUG_DISABLE_KEY_RUNS = false;
     private final PerWorkerLocks perWorkerLocks;
     // slot -1, the query's own thread, then the worker slots
     private final ObjList<Slot> slots;
@@ -265,8 +262,8 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
 
     /**
      * Whether the tasks of this atom's query compute key runs, see {@link KeyRunWindowFunction}.
+     * Decided when the query is compiled.
      */
-    @TestOnly
     public boolean isKeyRunEnabled() {
         return slots.getQuick(0).keyRunFunctions != null;
     }
@@ -313,6 +310,8 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private final int keyRunColumnIndex;
         // the window functions as key runs, or null when tasks go through the functions' maps
         private final KeyRunWindowFunction[] keyRunFunctions;
+        // the keys of the task's runs so far, kept only while assertions are enabled
+        private final IntHashSet keyRunKeys = new IntHashSet();
         // the columns of a frame a key run reads, by column index, or null for all of them
         private final boolean[] keyRunTouchedColumns;
         private final ObjList<WindowMapState> mapStates;
@@ -547,7 +546,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 SqlExecutionCircuitBreaker circuitBreaker,
                 UnorderedPageFrameSequence<?> sequence
         ) {
-            if (keyRunFunctions != null && !DEBUG_DISABLE_KEY_RUNS) {
+            if (keyRunFunctions != null) {
                 return computeKeyRuns(rows, keyStarts, emitFrom, chain, circuitBreaker, sequence);
             }
             // the record moves to other frames, so a stream on this slot positions it again
@@ -624,6 +623,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 return -1;
             }
             assert keyStarts.size() > 0 && keyStarts.getQuick(0) == 0 : "a task's rows start a key";
+            assert clearKeyRunKeys();
             final long stride = chain.getFixedRecordStride();
             final long[] offsets = outputOffsets;
             for (int c = 0, n = offsets.length; c < n; c++) {
@@ -683,6 +683,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                         }
                         // every row of the run has the key the walk collected it for
                         key = record.getInt(keyRunColumnIndex);
+                        // A run starts its key afresh, which is right only when no other run of
+                        // the task has that key: the scan's keys are distinct, see
+                        // KeyMajorScanFactory.hasDistinctKeys().
+                        assert keyRunKeys.add(key) : "the walk visits key " + key + " twice in one task";
                     }
                     for (KeyRunWindowFunction function : functions) {
                         function.keyRunNext(record);
@@ -695,6 +699,11 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 batchLo += n;
             }
             return prevOffset;
+        }
+
+        private boolean clearKeyRunKeys() {
+            keyRunKeys.clear();
+            return true;
         }
 
         // The rows of one frame from index lo of rows, at most a batch of them, as frame row
