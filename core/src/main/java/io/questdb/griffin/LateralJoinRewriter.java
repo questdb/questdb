@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -41,6 +42,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Uuid;
 
 import java.util.ArrayDeque;
 
@@ -466,6 +468,44 @@ class LateralJoinRewriter implements Mutable {
         return true;
     }
 
+    // True when the value is a constant that differs from what a RIGHT or FULL join puts in a
+    // column of the type in the rows that it NULL-extends: NULL, or false or 0 for a type without
+    // NULL. A column of unknown type, -1, may hold any of these, so only a non-zero integer counts.
+    private static boolean isNonFillConstant(ExpressionNode value, int columnType) {
+        if (columnType < 0 || isTypeWithoutNull(columnType)) {
+            final long v = columnType < 0 ? constOperand(value) : typeWithoutNullConstant(value, columnType);
+            return v != LIMIT_NOT_CONSTANT && v != 0;
+        }
+        final ExpressionNode constant = isUnaryMinusConstant(value) ? value.rhs : value;
+        return constant.type == ExpressionNode.CONSTANT && !isNullConstantOfType(constant, columnType);
+    }
+
+    // True when a column of the type reads the constant as NULL: NULL, NaN, or a string that an
+    // IPv4 or UUID column reads as NULL, such as '0.0.0.0'. A type of -1 is unknown.
+    private static boolean isNullConstantOfType(ExpressionNode constant, int columnType) {
+        final CharSequence token = constant.token;
+        if (SqlKeywords.isNullKeyword(token) || SqlKeywords.isNanKeyword(token)) {
+            return true;
+        }
+        if (columnType < 0 || token.length() < 2 || token.charAt(0) != '\'') {
+            return false;
+        }
+        final short tag = ColumnType.tagOf(columnType);
+        if (tag != ColumnType.IPv4 && tag != ColumnType.UUID) {
+            return false;
+        }
+        final CharSequence value = token.subSequence(1, token.length() - 1);
+        if (tag == ColumnType.IPv4) {
+            return Numbers.parseIPv4Quiet(value) == Numbers.IPv4_NULL;
+        }
+        try {
+            Uuid.checkDashesAndLength(value);
+            return Uuid.isNull(Uuid.parseLo(value), Uuid.parseHi(value));
+        } catch (NumericException e) {
+            return true;
+        }
+    }
+
     private static boolean isOuterRefJoinModel(IQueryModel joinModel) {
         return joinModel.getAlias() != null && Chars.startsWith(joinModel.getAlias().token, OUTER_REF_PREFIX);
     }
@@ -532,6 +572,16 @@ class LateralJoinRewriter implements Mutable {
         return condition == null
                 || (condition.type == ExpressionNode.CONSTANT
                 && SqlKeywords.isTrueKeyword(condition.token));
+    }
+
+    // BOOLEAN, BYTE and SHORT have no NULL: a RIGHT or FULL join puts false or 0 in the rows that
+    // it NULL-extends, which compare as any other value
+    private static boolean isTypeWithoutNull(int columnType) {
+        if (columnType < 0) {
+            return false;
+        }
+        final short tag = ColumnType.tagOf(columnType);
+        return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE || tag == ColumnType.SHORT;
     }
 
     private static boolean isUnaryMinusConstant(ExpressionNode node) {
@@ -619,6 +669,23 @@ class LateralJoinRewriter implements Mutable {
             case IQueryModel.JOIN_LATERAL_CROSS -> IQueryModel.JOIN_CROSS;
             default -> throw new AssertionError("unexpected lateral join type: " + lateralJoinType);
         };
+    }
+
+    // Returns the value of a constant compared with a BOOLEAN, BYTE or SHORT column, with false and
+    // true as 0 and 1, or LIMIT_NOT_CONSTANT when the operand is not such a constant
+    private static long typeWithoutNullConstant(ExpressionNode node, int columnType) {
+        if (ColumnType.tagOf(columnType) != ColumnType.BOOLEAN) {
+            return constOperand(node);
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            if (SqlKeywords.isTrueKeyword(node.token)) {
+                return 1;
+            }
+            if (SqlKeywords.isFalseKeyword(node.token)) {
+                return 0;
+            }
+        }
+        return LIMIT_NOT_CONSTANT;
     }
 
     private static CharSequence unqualify(CharSequence token) {
@@ -2578,10 +2645,7 @@ class LateralJoinRewriter implements Mutable {
     }
 
     // Returns a conjunct of the filter that is false for every row in which the join at joinIndex
-    // NULL-extends its master side, or null. QuestDB evaluates < and > to false when an operand is
-    // NULL. It evaluates <= and >= to true when both operands are NULL, so they count only against
-    // an operand that reads no column, which an outer or a NULL-extended column would make NULL.
-    // = counts only against a non-NULL constant, and != only against NULL, which is IS NOT NULL.
+    // NULL-extends its master side, or null; see isNullRejectingConjunct()
     private ExpressionNode findNullRejectingConjunct(IQueryModel level, ExpressionNode filter, int joinIndex) {
         if (filter == null) {
             return null;
@@ -2589,27 +2653,7 @@ class LateralJoinRewriter implements Mutable {
         splitAndPredicates(filter, filterConjuncts);
         for (int i = 0, n = filterConjuncts.size(); i < n; i++) {
             final ExpressionNode conjunct = filterConjuncts.getQuick(i);
-            final int op = comparisonOp(conjunct.token);
-            if (op == CMP_NONE || conjunct.paramCount != 2) {
-                continue;
-            }
-            final ExpressionNode other;
-            if (isMasterSideColumn(level, conjunct.lhs, joinIndex)) {
-                other = conjunct.rhs;
-            } else if (isMasterSideColumn(level, conjunct.rhs, joinIndex)) {
-                other = conjunct.lhs;
-            } else {
-                continue;
-            }
-            final boolean isConstant = other.type == ExpressionNode.CONSTANT;
-            final boolean isNullConstant = isConstant && SqlKeywords.isNullKeyword(other.token);
-            final boolean isRejecting = switch (op) {
-                case CMP_EQ -> isConstant && !isNullConstant;
-                case CMP_NE -> isNullConstant;
-                case CMP_LE, CMP_GE -> !isNullConstant && !hasColumnRef(other);
-                default -> true;
-            };
-            if (isRejecting) {
+            if (isNullRejectingConjunct(level, conjunct, joinIndex)) {
                 return conjunct;
             }
         }
@@ -3003,6 +3047,77 @@ class LateralJoinRewriter implements Mutable {
         }
         // count() is non-negative, so covering [0, Long.MAX_VALUE] covers the domain
         return truthLo > 0 || truthHi != Long.MAX_VALUE;
+    }
+
+    // True when the conjunct is false for every row in which the join at joinIndex NULL-extends
+    // its master side. Such a row holds NULL in a master-side column, but false or 0 in a BOOLEAN,
+    // BYTE or SHORT column of a table, as these types have no NULL. A conjunct on such a column
+    // counts only when it compares the column with a constant and is false for false or 0.
+    //
+    // Otherwise, QuestDB evaluates < and > to false when an operand is NULL. It evaluates <= and
+    // >= to true when both operands are NULL, so they count only against an operand that reads no
+    // column, which an outer or a NULL-extended column would make NULL. = counts only against a
+    // non-NULL constant, and != only against NULL, which is IS NOT NULL. As = matches NULL to
+    // NULL, IN counts only when no value is NULL. BETWEEN is false for a NULL value, whatever its
+    // bounds, and it does not accept a BOOLEAN, BYTE or SHORT column.
+    //
+    // The type of a sub-query column is not known before code generation, and the column may be a
+    // BYTE or SHORT. IN on it counts only when every value is a non-zero integer.
+    private boolean isNullRejectingConjunct(IQueryModel level, ExpressionNode conjunct, int joinIndex) {
+        if (SqlKeywords.isInKeyword(conjunct.token)) {
+            final int valueCount = conjunct.paramCount - 1;
+            if (valueCount < 1) {
+                return false;
+            }
+            final ExpressionNode column = valueCount == 1 ? conjunct.lhs : conjunct.args.getLast();
+            if (!isMasterSideColumn(level, column, joinIndex)) {
+                return false;
+            }
+            final int columnType = resolveTableColumnType(level, column);
+            if (valueCount == 1) {
+                return isNonFillConstant(conjunct.rhs, columnType);
+            }
+            for (int i = 0; i < valueCount; i++) {
+                if (!isNonFillConstant(conjunct.args.getQuick(i), columnType)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (SqlKeywords.isBetweenKeyword(conjunct.token)) {
+            final ExpressionNode column = conjunct.paramCount == 3 ? conjunct.args.getLast() : null;
+            return isMasterSideColumn(level, column, joinIndex)
+                    && !isTypeWithoutNull(resolveTableColumnType(level, column));
+        }
+        final int op = comparisonOp(conjunct.token);
+        if (op == CMP_NONE || conjunct.paramCount != 2) {
+            return false;
+        }
+        final ExpressionNode column;
+        final ExpressionNode other;
+        if (isMasterSideColumn(level, conjunct.lhs, joinIndex)) {
+            column = conjunct.lhs;
+            other = conjunct.rhs;
+        } else if (isMasterSideColumn(level, conjunct.rhs, joinIndex)) {
+            column = conjunct.rhs;
+            other = conjunct.lhs;
+        } else {
+            return false;
+        }
+        final int columnType = resolveTableColumnType(level, column);
+        if (isTypeWithoutNull(columnType)) {
+            final long value = typeWithoutNullConstant(other, columnType);
+            final int columnOp = column == conjunct.lhs ? op : flipComparison(op);
+            return value != LIMIT_NOT_CONSTANT && !compare(columnOp, 0, value);
+        }
+        final boolean isConstant = other.type == ExpressionNode.CONSTANT;
+        final boolean isNullConstant = isConstant && isNullConstantOfType(other, columnType);
+        return switch (op) {
+            case CMP_EQ -> isConstant && !isNullConstant;
+            case CMP_NE -> isNullConstant;
+            case CMP_LE, CMP_GE -> !isNullConstant && !hasColumnRef(other);
+            default -> true;
+        };
     }
 
     private boolean isPinnedOuterRefJoin(IQueryModel joinModel) {
@@ -4231,6 +4346,22 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return -1;
+    }
+
+    // Returns the type of a column that a table of the level holds, or -1 for a column of a
+    // sub-query, whose type is not known before code generation
+    private int resolveTableColumnType(IQueryModel level, ExpressionNode column) {
+        final CharSequence token = column.token;
+        final int index = resolveJoinModelIndex(level, token);
+        if (index < 0) {
+            return -1;
+        }
+        final IQueryModel joinModel = level.getJoinModels().getQuick(index);
+        if (joinModel.getNestedModel() != null) {
+            return -1;
+        }
+        final QueryColumn qc = joinModel.getAliasToColumnMap().get(token, Chars.indexOf(token, '.') + 1, token.length());
+        return qc != null ? qc.getColumnType() : -1;
     }
 
     // Resolves a column referenced by a layer above the aggregate to the scalar
