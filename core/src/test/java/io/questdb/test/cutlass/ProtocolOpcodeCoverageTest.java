@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.WireKind;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorState;
 import io.questdb.cutlass.line.LineUtils;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
@@ -78,6 +79,8 @@ public class ProtocolOpcodeCoverageTest {
         unhandled.put("columnKind", Set.of(NOT_STORED));
         // QWP egress has no wire code for LONG128, INTERVAL and the decimals narrower than DECIMAL64
         unhandled.put("appendOpcode", with(Set.of("LONG128", "DECIMAL8", "DECIMAL16", "DECIMAL32", "DECIMAL(5,2)", NOT_STORED), INTERVALS));
+        // the JSON result writer refuses a LONG128 column: it has no JSON form
+        unhandled.put("jsonOpcode", Set.of("LONG128", NOT_STORED));
 
         final Method print = method(CursorPrinter.class, "printOpcode", int.class);
         final Method csv = method(ExportQueryProcessor.class, "csvOpcode", int.class);
@@ -86,6 +89,7 @@ public class ProtocolOpcodeCoverageTest {
         final Method parquet = method(Class.forName("io.questdb.cairo.ParquetColumnTypeConverter"), "fixedTargetOpcode", int.class);
         final Method line = method(LineUtils.class, "columnKind", int.class);
         final Method qwp = method(QwpResultBatchBuffer.class, "appendOpcode", int.class);
+        final Method json = method(JsonQueryProcessorState.class, "jsonOpcode", int.class);
 
         final StringBuilder failures = new StringBuilder();
         for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
@@ -109,6 +113,7 @@ public class ProtocolOpcodeCoverageTest {
             check(failures, unhandled, "fixedTargetOpcode", entry, () -> (int) parquet.invoke(null, type) == ColumnType.UNDEFINED);
             check(failures, unhandled, "columnKind", entry, () -> (int) line.invoke(null, type) == ColumnType.UNDEFINED);
             check(failures, unhandled, "appendOpcode", entry, () -> (int) qwp.invoke(null, type) == ColumnType.UNDEFINED);
+            check(failures, unhandled, "jsonOpcode", entry, () -> (int) json.invoke(null, type) == ColumnType.UNDEFINED);
         }
         Assert.assertEquals("", failures.toString());
     }
