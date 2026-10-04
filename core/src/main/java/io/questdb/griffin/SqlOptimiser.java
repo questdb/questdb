@@ -229,6 +229,10 @@ public class SqlOptimiser implements Mutable {
     private final IntList loneEmittedClauseEdges = new IntList();
     private final int maxRecursion;
     private final AtomicInteger nonAggSelectCount = new AtomicInteger(0);
+    // Model indexes of the ASOF and LT joins whose unmatched master rows a WHERE conjunct drops, see
+    // collectNullRejectedJoins().
+    private final IntHashSet nullRejectedJoinIndexes = new IntHashSet();
+    private final ArrayDeque<ExpressionNode> nullRejectedJoinStack = new ArrayDeque<>();
     // Per-level master-nulling-join anchors filled by precomputeNullingJoinAnchors for O(1) lookups.
     // By exec position: model index of the last master-nulling join strictly after it, or -1.
     private final IntList nullingAnchorByExecPos = new IntList();
@@ -622,6 +626,13 @@ public class SqlOptimiser implements Mutable {
         } else {
             terms.add(node);
         }
+    }
+
+    private static QueryColumn getModelColumn(IQueryModel model, CharSequence columnName) {
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        return dot > -1
+                ? model.getAliasToColumnMap().get(columnName, dot + 1, columnName.length())
+                : model.getAliasToColumnMap().get(columnName);
     }
 
     // Returns true when a join model links the given model as a dependency.
@@ -1447,7 +1458,18 @@ public class SqlOptimiser implements Mutable {
                 && maxMasterIndex < contextSlaveIndex
                 && joinBarriers.excludes(parent.getJoinModels().getQuick(maxMasterIndex).getJoinType())
                 && !hasMasterNullingJoinBetween(parent, maxMasterIndex, contextSlaveIndex);
-        if (!isEmittedClause && joinBarriers.contains(joinType) && !isRightJoinMasterKey) {
+        // A WHERE conjunct that drops the unmatched master rows of an ASOF or LT join leaves the rows of
+        // an INNER join, so an implied equality between two columns of one master table may filter that
+        // table, as the keys of an INNER join do. The table must not be a slave itself, no master-nulling
+        // join may run between it and the join, and the filter must keep the rows that the keys match.
+        final boolean isNullRejectedMasterKey = (joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT)
+                && ai == bi
+                && ai < contextSlaveIndex
+                && nullRejectedJoinIndexes.contains(contextSlaveIndex)
+                && joinBarriers.excludes(parent.getJoinModels().getQuick(ai).getJoinType())
+                && !hasMasterNullingJoinBetween(parent, ai, contextSlaveIndex)
+                && isFilterEqualToKeyMatch(parent.getJoinModels().getQuick(ai), an, bn);
+        if (!isEmittedClause && joinBarriers.contains(joinType) && !isRightJoinMasterKey && !isNullRejectedMasterKey) {
             final boolean isSlaveOnly = ai == bi && ai == contextSlaveIndex;
             final boolean isSlavePreserved = joinType != IQueryModel.JOIN_LEFT_OUTER
                     && joinType != IQueryModel.JOIN_ASOF
@@ -3011,6 +3033,78 @@ public class SqlOptimiser implements Mutable {
         // it's only a duplicate if its being applied to a different model.
         if (parent != model) {
             throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
+        }
+    }
+
+    // Collects the ASOF and LT joins whose unmatched master rows a top-level WHERE conjunct drops: the
+    // conjunct compares one column of the join's slave with a constant and is false when that column
+    // is NULL. The joins of a model with a master-nulling join are skipped, because such a join could
+    // null-extend the master rows of the ASOF or LT join.
+    private void collectNullRejectedJoins(IQueryModel parent, ExpressionNode where, SqlExecutionContext sqlExecutionContext) {
+        nullRejectedJoinIndexes.clear();
+        if (where == null) {
+            return;
+        }
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        boolean hasAsOfOrLtJoin = false;
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final int joinType = joinModels.getQuick(i).getJoinType();
+            if (isMasterNullingJoinType(joinType)) {
+                return;
+            }
+            hasAsOfOrLtJoin |= joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT;
+        }
+        if (!hasAsOfOrLtJoin) {
+            return;
+        }
+        nullRejectedJoinStack.clear();
+        nullRejectedJoinStack.push(where);
+        while (!nullRejectedJoinStack.isEmpty()) {
+            final ExpressionNode node = nullRejectedJoinStack.pop();
+            if (node.token != null && joinOps.get(node.token) == JOIN_OP_AND) {
+                if (node.lhs != null) {
+                    nullRejectedJoinStack.push(node.lhs);
+                }
+                if (node.rhs != null) {
+                    nullRejectedJoinStack.push(node.rhs);
+                }
+                continue;
+            }
+            if (node.type != OPERATION || node.paramCount != 2 || node.lhs == null || node.rhs == null) {
+                continue;
+            }
+            final boolean isColumnLhs = node.lhs.type == LITERAL && node.rhs.type != LITERAL;
+            if (!isColumnLhs && !(node.rhs.type == LITERAL && node.lhs.type != LITERAL)) {
+                continue;
+            }
+            final ExpressionNode columnNode = isColumnLhs ? node.lhs : node.rhs;
+            final int modelIndex;
+            try {
+                tempIntHashSet.clear();
+                literalCollector.withModel(parent);
+                literalCollector.resetCounts();
+                traversalAlgo.traverse(isColumnLhs ? node.rhs : node.lhs, literalCollector.to(tempIntHashSet));
+                if (tempIntHashSet.size() > 0) {
+                    // the constant side reads a column
+                    continue;
+                }
+                traversalAlgo.traverse(columnNode, literalCollector.to(tempIntHashSet));
+                if (tempIntHashSet.size() != 1) {
+                    continue;
+                }
+                modelIndex = tempIntHashSet.get(0);
+            } catch (SqlException ignored) {
+                // processJoinConditions() reports the invalid column
+                continue;
+            }
+            if (modelIndex < 1) {
+                continue;
+            }
+            final int joinType = joinModels.getQuick(modelIndex).getJoinType();
+            if ((joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT)
+                    && isNullRejectingPredicate(joinModels, modelIndex, node, isColumnLhs, sqlExecutionContext)) {
+                nullRejectedJoinIndexes.add(modelIndex);
+            }
         }
     }
 
@@ -6417,6 +6511,23 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    // Returns true when the filter a = b on two columns of the model keeps exactly the rows whose a and b
+    // encode the same as join keys. That holds for two columns of one type whose equal values have equal
+    // bytes, with NULL equal to NULL. FLOAT and DOUBLE fail it: 0.0 = -0.0 holds, yet the keys differ.
+    private boolean isFilterEqualToKeyMatch(IQueryModel model, CharSequence aName, CharSequence bName) {
+        final int aType = getQueryColumnType(model, getModelColumn(model, aName));
+        final int bType = getQueryColumnType(model, getModelColumn(model, bName));
+        if (aType < 0 || aType != bType) {
+            return false;
+        }
+        return switch (ColumnType.tagOf(aType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
+                 ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.SYMBOL, ColumnType.STRING,
+                 ColumnType.VARCHAR, ColumnType.UUID, ColumnType.IPv4 -> true;
+            default -> false;
+        };
+    }
+
     private boolean isFoldableConstantExpression(ExpressionNode node, SqlExecutionContext sqlExecutionContext) {
         if (!isEffectivelyConstantExpression(node)) {
             return false;
@@ -6692,11 +6803,17 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    private boolean isNullRejectingJoinConstant(
+    // Returns true when the comparison of the column with the compile-time constant, in the given operand
+    // order, is false for the NULL record of the column type, so it drops every row whose column is NULL.
+    // The NULL record keeps the NULL semantics of the type: a BOOLEAN, BYTE or SHORT column has no NULL,
+    // so a comparison that its NULL record passes never qualifies.
+    private boolean isNullRejectingComparison(
             ObjList<IQueryModel> joinModels,
             int modelIndex,
             CharSequence columnName,
+            CharSequence operator,
             ExpressionNode constNode,
+            boolean isColumnLhs,
             SqlExecutionContext sqlExecutionContext
     ) {
         // Runtime constants may become NULL in another cached-plan execution, so require compile-time folding.
@@ -6704,16 +6821,12 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
         final IQueryModel model = joinModels.getQuick(modelIndex);
-        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
-        final QueryColumn column = dot > -1
-                ? model.getAliasToColumnMap().get(columnName, dot + 1, columnName.length())
-                : model.getAliasToColumnMap().get(columnName);
-        final int columnType = getQueryColumnType(model, column);
+        final int columnType = getQueryColumnType(model, getModelColumn(model, columnName));
         if (columnType < 0) {
             return false;
         }
 
-        // Evaluate the pushed equality on an outer join's NULL record to preserve type-specific NULL semantics.
+        // Evaluate the comparison on the NULL record to preserve type-specific NULL semantics.
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata(
                 NULL_REJECTING_PROBE_COLUMN,
@@ -6730,23 +6843,55 @@ public class SqlOptimiser implements Mutable {
                 0,
                 constNode.position
         );
-        final ExpressionNode equalityNode = expressionNodePool.next().of(OPERATION, "=", 0, constNode.position);
-        equalityNode.lhs = columnNode;
-        equalityNode.rhs = ExpressionNode.deepClone(expressionNodePool, constNode);
-        equalityNode.paramCount = 2;
+        final ExpressionNode comparisonNode = expressionNodePool.next().of(OPERATION, operator, 0, constNode.position);
+        final ExpressionNode constCopy = ExpressionNode.deepClone(expressionNodePool, constNode);
+        comparisonNode.lhs = isColumnLhs ? columnNode : constCopy;
+        comparisonNode.rhs = isColumnLhs ? constCopy : columnNode;
+        comparisonNode.paramCount = 2;
 
         Function function = null;
         Record nullRecord = null;
         try {
             nullRecord = NullRecordFactory.getInstance(metadata);
-            function = functionParser.parseFunction(equalityNode, metadata, sqlExecutionContext);
-            return function != null && !function.getBool(nullRecord);
+            function = functionParser.parseFunction(comparisonNode, metadata, sqlExecutionContext);
+            return function != null && ColumnType.isBoolean(function.getType()) && !function.getBool(nullRecord);
         } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException ignored) {
             return false;
         } finally {
             Misc.free(function);
             Misc.freeIfCloseable(nullRecord);
         }
+    }
+
+    private boolean isNullRejectingJoinConstant(
+            ObjList<IQueryModel> joinModels,
+            int modelIndex,
+            CharSequence columnName,
+            ExpressionNode constNode,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        // Evaluate the pushed equality on an outer join's NULL record to preserve type-specific NULL semantics.
+        return isNullRejectingComparison(joinModels, modelIndex, columnName, "=", constNode, true, sqlExecutionContext);
+    }
+
+    // Returns true when the predicate, which compares one column of the model at modelIndex with a
+    // compile-time constant, drops every row whose column is NULL.
+    private boolean isNullRejectingPredicate(
+            ObjList<IQueryModel> joinModels,
+            int modelIndex,
+            ExpressionNode predicate,
+            boolean isColumnLhs,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return isNullRejectingComparison(
+                joinModels,
+                modelIndex,
+                (isColumnLhs ? predicate.lhs : predicate.rhs).token,
+                predicate.token,
+                isColumnLhs ? predicate.rhs : predicate.lhs,
+                isColumnLhs,
+                sqlExecutionContext
+        );
     }
 
     // Returns true when every model the ON clause of the context-free join at index reads precedes it
@@ -8065,6 +8210,7 @@ public class SqlOptimiser implements Mutable {
             // nestedModel, e.g. "where" clause is still null there as well
 
             ExpressionNode where = model.getWhereClause();
+            collectNullRejectedJoins(model, where, sqlExecutionContext);
 
             // clear where clause of model so that
             // optimiser can assign there correct nodes
