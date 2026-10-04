@@ -32,6 +32,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.MemoryTag;
@@ -62,6 +63,10 @@ public class TableWriterSegmentFileCache {
     private final LongObjHashMap<LongList> walFdCache = new LongObjHashMap<>();
     private final WeakClosableObjectPool<LongList> walFdCacheListPool = new WeakClosableObjectPool<>(LongList::new, 5, true);
     private final LongObjHashMap.LongObjConsumer<LongList> walFdCloseCachedFdAction;
+    // walId -> [segmentId, known length of each column file of that segment]. Lets the column length guard in
+    // mmapSegments() skip a stat per column on every apply pass. Unlike walFdCache it survives the
+    // last-segment-usage close, which under trickle ingestion happens on every pass.
+    private final IntObjHashMap<LongList> walKnownFileLengths = new IntObjHashMap<>();
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
     private int walFdCacheSize;
 
@@ -169,6 +174,7 @@ public class TableWriterSegmentFileCache {
         walFdCache.forEach(walFdCloseCachedFdAction);
         walFdCache.clear();
         walFdCacheSize = 0;
+        walKnownFileLengths.clear();
     }
 
     // Copies the address of the column in all the open segments into a dense pre-allocated buffer.
@@ -211,6 +217,7 @@ public class TableWriterSegmentFileCache {
             fds = walFdCache.valueAt(fdCacheKey);
         }
         int initialSize = walMappedColumns.size();
+        final LongList knownLengths = getKnownFileLengths(walSegmentId);
 
         try {
             int file = 0;
@@ -243,7 +250,7 @@ public class TableWriterSegmentFileCache {
                         // Guard: aux file must cover all rowHi entries before mapping.
                         if (rowHi > 0) {
                             validateSegmentFileLength(auxFd, ifile, metadata.getColumnName(columnIndex),
-                                    columnTypeDriver.getAuxVectorSize(rowHi));
+                                    columnTypeDriver.getAuxVectorSize(rowHi), knownLengths, 2 + 2 * columnIndex);
                         }
 
                         columnTypeDriver.configureAuxMemOM(
@@ -271,7 +278,8 @@ public class TableWriterSegmentFileCache {
                         // without requiring the aux to be mmap-ed yet (lazy mapping defers the mmap call).
                         if (rowHi > 0) {
                             validateSegmentFileLength(dataFd, dfile, metadata.getColumnName(columnIndex),
-                                    columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), rowHi - 1));
+                                    columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), rowHi - 1),
+                                    knownLengths, 1 + 2 * columnIndex);
                         }
 
                         columnTypeDriver.configureDataMemOM(
@@ -302,7 +310,7 @@ public class TableWriterSegmentFileCache {
                         // Guard: fixed-width column file must cover all rowHi rows before mapping.
                         if (rowHi > 0 && sizeBitsPow2 >= 0) {
                             validateSegmentFileLength(fd, dfile, metadata.getColumnName(columnIndex),
-                                    rowHi << sizeBitsPow2);
+                                    rowHi << sizeBitsPow2, knownLengths, 1 + 2 * columnIndex);
                         }
 
                         primary.ofOffset(
@@ -378,7 +386,49 @@ public class TableWriterSegmentFileCache {
         }
     }
 
-    private void validateSegmentFileLength(long fd, LPSZ file, CharSequence columnName, long required) {
+    // Returns the known file lengths of the segment, dropping those of the WAL's previous segment: a WAL
+    // writes its segments strictly in order, so a new segment id means the old segment takes no more rows.
+    // Slot 0 holds the segment id, slot 1 + 2 * columnIndex the data file and slot 2 + 2 * columnIndex the aux.
+    private LongList getKnownFileLengths(long walSegmentId) {
+        final int walId = Numbers.decodeHighInt(walSegmentId);
+        final int segmentId = Numbers.decodeLowInt(walSegmentId);
+        int keyIndex = walKnownFileLengths.keyIndex(walId);
+        LongList lengths;
+        if (keyIndex < 0) {
+            lengths = walKnownFileLengths.valueAt(keyIndex);
+            if (lengths.getQuick(0) == segmentId) {
+                return lengths;
+            }
+            lengths.clear();
+        } else {
+            if (walKnownFileLengths.size() >= configuration.getWalMaxSegmentFileDescriptorsCache()) {
+                // Same bound, and the same reset-all policy, as the fd cache.
+                walKnownFileLengths.clear();
+                keyIndex = walKnownFileLengths.keyIndex(walId);
+            }
+            lengths = new LongList();
+            walKnownFileLengths.putAt(keyIndex, walId, lengths);
+        }
+        lengths.add(segmentId);
+        return lengths;
+    }
+
+    private void validateSegmentFileLength(
+            long fd,
+            LPSZ file,
+            CharSequence columnName,
+            long required,
+            LongList knownLengths,
+            int slot
+    ) {
+        // A length seen earlier for this file still covers what it covered then: nothing cuts the bytes of
+        // committed rows while the process runs. The WAL writer truncates only down to its append position,
+        // and a segment file is only ever replaced by a copy holding at least the same rows. The short files
+        // this guard exists for (an OS crash under nosync, a partial copy) are therefore first seen by a
+        // fresh process with nothing cached, and get the stat.
+        if (slot < knownLengths.size() && knownLengths.getQuick(slot) >= required) {
+            return;
+        }
         final FilesFacade ff = configuration.getFilesFacade();
         final long actual = fd != -1 ? ff.length(fd) : ff.length(file);
         if (actual < required) {
@@ -390,6 +440,11 @@ public class TableWriterSegmentFileCache {
                     .put(", actual=").put(actual)
                     .put(']');
         }
+        // LongList.clear() keeps stale values past the size, so mark every new slot unknown explicitly.
+        for (int i = knownLengths.size(); i <= slot; i++) {
+            knownLengths.add(Long.MIN_VALUE);
+        }
+        knownLengths.setQuick(slot, actual);
     }
 
     private static MemoryCMOR openMemoryCMORBypassFdCache() {

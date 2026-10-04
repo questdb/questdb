@@ -358,17 +358,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public void close() {
-            if (crcAddress != 0) {
-                ff.munmap(crcAddress, crcMappedSize, MemoryTag.MMAP_TX_LOG_CURSOR);
-                crcAddress = 0;
-            }
-            crcMappedSize = 0;
-            isCrcMappingFailed = false;
-            if (crcFd > -1) {
-                ff.close(crcFd);
-                crcFd = -1;
-            }
-            crcFirstCoveredTxn = Long.MAX_VALUE;
+            closeCrcSidecar();
             if (crcBuf != 0) {
                 Unsafe.free(crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, MemoryTag.NATIVE_DEFAULT);
                 crcBuf = 0;
@@ -496,6 +486,20 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                     : TableUtils.openRO(ff, path, WalUtils.TXNLOG_FILE_NAME, LOG);
         }
 
+        private void closeCrcSidecar() {
+            if (crcAddress != 0) {
+                ff.munmap(crcAddress, crcMappedSize, MemoryTag.MMAP_TX_LOG_CURSOR);
+                crcAddress = 0;
+            }
+            crcMappedSize = 0;
+            isCrcMappingFailed = false;
+            if (crcFd > -1) {
+                ff.close(crcFd);
+                crcFd = -1;
+            }
+            crcFirstCoveredTxn = Long.MAX_VALUE;
+        }
+
         private long getMappedLen() {
             return txnCount * RECORD_SIZE + HEADER_SIZE;
         }
@@ -534,13 +538,21 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             );
         }
 
+        // Reads from the mapping when it covers the field, so a healthy open costs no pread; falls back to
+        // pread when nothing is mapped (empty file, failed fstat or mmap).
         private int readSidecarInt(FilesFacade ff, long offset) {
+            if (offset + Integer.BYTES <= crcMappedSize) {
+                return Unsafe.getInt(crcAddress + offset);
+            }
             return ff.read(crcFd, crcBuf, Integer.BYTES, offset) == Integer.BYTES
                     ? Unsafe.getUnsafe().getInt(crcBuf)
                     : -1;
         }
 
         private long readSidecarLong(FilesFacade ff, long offset) {
+            if (offset + Long.BYTES <= crcMappedSize) {
+                return Unsafe.getLong(crcAddress + offset);
+            }
             return ff.read(crcFd, crcBuf, Long.BYTES, offset) == Long.BYTES
                     ? Unsafe.getUnsafe().getLong(crcBuf)
                     : 0L;
@@ -601,6 +613,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                 path.concat(WalUtils.TXNLOG_CRC_FILE_NAME);
                 crcFd = bypassFdCache ? ff.openRONoCache(path.$()) : ff.openRO(path.$());
                 if (crcFd > -1) {
+                    // Map before validating: the apply job opens a cursor on every pass, and reading the
+                    // header from the mapping saves four preads per open.
+                    refreshCrcMapping();
                     // Validate the FULL header, not just the magic. Accepting a sidecar whose entry
                     // size differs from the compiled-in one would compute misaligned offsets, read
                     // non-zero garbage as a CRC, and report "torn" on a perfectly healthy table.
@@ -608,12 +623,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                             && readSidecarInt(ff, 8) == TxnLogCrcSidecar.FILE_VERSION
                             && readSidecarInt(ff, 12) == TxnLogCrcSidecar.ENTRY_SIZE) {
                         crcFirstCoveredTxn = readSidecarLong(ff, 16);
-                        refreshCrcMapping();
                     } else {
                         // Unrecognisable sidecar: treat as absent rather than fatal. It carries no
                         // durability claim, so the cost is lost detection, never a failed read.
-                        ff.close(crcFd);
-                        crcFd = -1;
+                        closeCrcSidecar();
                     }
                 }
             } finally {

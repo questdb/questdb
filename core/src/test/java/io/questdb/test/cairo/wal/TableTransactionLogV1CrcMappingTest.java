@@ -130,6 +130,22 @@ public class TableTransactionLogV1CrcMappingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidHeaderReleasesSidecar() throws Exception {
+        withLog(false, (log, path, ff) -> {
+            append(log, 3);
+            writeSidecarLong(path, 0, 0);
+            writeSidecarLong(path, TxnLogCrcSidecar.BODY_OFFSET, 0);
+            try (TransactionLogCursor cursor = log.getCursor(0, path)) {
+                // An unrecognisable sidecar reads as absent: its fd and mapping go before the first record.
+                Assert.assertEquals(0, ff.crcFds.size());
+                Assert.assertEquals(0, ff.crcMappings.size());
+                assertTransactions(cursor, 1, 3);
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
     public void testNoPerEntryIO() throws Exception {
         assertNoPerEntryIO(false);
     }
@@ -137,6 +153,25 @@ public class TableTransactionLogV1CrcMappingTest extends AbstractCairoTest {
     @Test
     public void testNoPerEntryIOWithFdCacheBypassed() throws Exception {
         assertNoPerEntryIO(true);
+    }
+
+    @Test
+    public void testOpenReadsHeaderFromMapping() throws Exception {
+        withLog(false, (log, path, ff) -> {
+            append(log, 3);
+            final int reads = ff.readCount;
+            try (TransactionLogCursor cursor = log.getCursor(0, path)) {
+                Assert.assertEquals("cursor open must not pread the sidecar header", reads, ff.readCount);
+                Assert.assertEquals(1, ff.mapCount);
+                assertTransactions(cursor, 1, 3);
+                Assert.assertEquals(reads, ff.readCount);
+            }
+            // The header still gates verification: a torn record read through this path is detected.
+            writeSidecarLong(path, TxnLogCrcSidecar.BODY_OFFSET, 0);
+            try (TransactionLogCursor cursor = log.getCursor(0, path)) {
+                assertTorn(cursor);
+            }
+        });
     }
 
     @Test
