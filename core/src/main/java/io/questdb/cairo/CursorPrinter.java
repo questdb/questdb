@@ -205,8 +205,8 @@ public class CursorPrinter {
             default:
                 // a wire kind whose opcode has no arm here: javac lists printOpcode() for a new kind,
                 // not this per-row switch, so fail loudly rather than print an empty cell
-                throw new UnsupportedOperationException("no print arm for opcode " + printOpcode(columnType)
-                        + " [type=" + ColumnType.nameOf(columnType) + ']');
+                throw CairoException.nonCritical().put("no print arm for opcode ").put(printOpcode(columnType))
+                        .put(" [type=").put(ColumnType.nameOf(columnType)).put(']');
         }
         if (printTypes) {
             int printColType = symbolAsString && ColumnType.isSymbol(columnType) ? ColumnType.STRING : columnType;

@@ -1385,9 +1385,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             default:
                 // csvOpcode() yields only the labels above; a wire kind whose opcode has no arm here
                 // fails loudly rather than write an empty cell (javac lists csvOpcode() for a new kind,
-                // not this per-row switch)
-                throw new UnsupportedOperationException("no CSV arm for opcode " + state.columnOpcodes.getQuick(columnIndex)
-                        + " [type=" + ColumnType.nameOf(columnType) + ']');
+                // not this per-row switch), as an error the export's handler reports
+                throw CairoException.nonCritical().put("no CSV arm for opcode ").put(state.columnOpcodes.getQuick(columnIndex))
+                        .put(" [type=").put(ColumnType.nameOf(columnType)).put(']');
         }
     }
 
