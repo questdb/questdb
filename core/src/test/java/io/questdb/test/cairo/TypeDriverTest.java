@@ -124,6 +124,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -1056,6 +1057,32 @@ public class TypeDriverTest {
     }
 
     @Test
+    public void testTypesSharingAWireKindShareNullPolicyAndTiers() {
+        // types that write the same bytes under the same NULL test share a wire kind (WireKind's
+        // javadoc), so a type that shares a kind with another must agree with it on the NULL policy,
+        // the accessor, the arithmetic tier and the movement. Every stored type has its own kind
+        // today; the look-alikes show the check catches a type that would share one wrongly
+        final ArrayList<TypeDriver> drivers = new ArrayList<>();
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            final TypeDriver driver = ColumnType.findTypeDriver(tag);
+            // VARCHAR_SLICE is served by VARCHAR's type driver object
+            if (driver != null && tag != ColumnType.VARCHAR_SLICE) {
+                drivers.add(driver);
+            }
+        }
+        Assert.assertEquals("", wireKindSharingMismatches(drivers));
+
+        drivers.add(LookAlikeTypeDriver.sentinelInt());
+        Assert.assertEquals("", wireKindSharingMismatches(drivers));
+        drivers.add(LookAlikeTypeDriver.neverNullInt());
+        drivers.add(LookAlikeTypeDriver.unsignedInt());
+        Assert.assertEquals("""
+                INT: NN_INT has NULL policy NONE, INT has SENTINEL
+                INT: UINT32 has arithmetic U32, INT has I32
+                """, wireKindSharingMismatches(drivers));
+    }
+
+    @Test
     public void testVarSizeAsAtS10() {
         // isVarSize and getDriver answer as s10-done's comparisons and switch did, for every tag
         // with every value of bits 8 to 23 and for random encodings; every definition on the
@@ -1239,6 +1266,37 @@ public class TypeDriverTest {
             }
         }
         return names;
+    }
+
+    // each pair of types that share a wire kind and disagree on a fact the kind's writer relies on
+    private static String wireKindSharingMismatches(List<TypeDriver> drivers) {
+        final EnumMap<WireKind, TypeDriver> first = new EnumMap<>(WireKind.class);
+        final StringBuilder mismatches = new StringBuilder();
+        for (int i = 0, n = drivers.size(); i < n; i++) {
+            final TypeDriver driver = drivers.get(i);
+            final TypeDriver other = first.putIfAbsent(driver.getWireKind(), driver);
+            if (other == null) {
+                continue;
+            }
+            final String prefix = driver.getWireKind().name() + ": " + driver.getTypeName() + " has ";
+            if (driver.getNullPolicy() != other.getNullPolicy()) {
+                mismatches.append(prefix).append("NULL policy ").append(driver.getNullPolicy())
+                        .append(", ").append(other.getTypeName()).append(" has ").append(other.getNullPolicy()).append('\n');
+            }
+            if (driver.getAccessor() != other.getAccessor()) {
+                mismatches.append(prefix).append("accessor ").append(driver.getAccessor())
+                        .append(", ").append(other.getTypeName()).append(" has ").append(other.getAccessor()).append('\n');
+            }
+            if (driver.getArithmetic() != other.getArithmetic()) {
+                mismatches.append(prefix).append("arithmetic ").append(driver.getArithmetic())
+                        .append(", ").append(other.getTypeName()).append(" has ").append(other.getArithmetic()).append('\n');
+            }
+            if (driver.getMovement() != other.getMovement()) {
+                mismatches.append(prefix).append("movement ").append(driver.getMovement())
+                        .append(", ").append(other.getTypeName()).append(" has ").append(other.getMovement()).append('\n');
+            }
+        }
+        return mismatches.toString();
     }
 
     private void runInFreshJvm(Class<?> mainClass, String[] args) throws Exception {
