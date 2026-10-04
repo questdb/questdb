@@ -1447,6 +1447,15 @@ public interface CairoConfiguration {
      */
     boolean isSqlParallelHashJoinProbeEnabled();
 
+    /**
+     * A test seam, false outside tests: whether the planner may take an inner hash join's build
+     * side as unique on the join key without proving it, so that a test reaches the parallel
+     * probe's run-time handling of repeated keys. The planner reads it once per join it plans.
+     */
+    default boolean isSqlParallelHashJoinProbeUniqueBuildAssumed() {
+        return false;
+    }
+
     boolean isSqlParallelHorizonJoinEnabled();
 
     boolean isSqlParallelReadParquetEnabled();

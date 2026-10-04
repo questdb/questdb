@@ -1925,6 +1925,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHashJoinProbeUniqueBuildAssumed() {
+        return getDelegate().isSqlParallelHashJoinProbeUniqueBuildAssumed();
+    }
+
+    @Override
     public boolean isSqlParallelHorizonJoinEnabled() {
         return getDelegate().isSqlParallelHorizonJoinEnabled();
     }

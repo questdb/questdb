@@ -27,9 +27,11 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -42,6 +44,8 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * An inner hash join whose build side is unique on the join key probes its master on the shared
@@ -56,12 +60,6 @@ public class AsyncHashJoinLightTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         sqlExecutionContext.changePageFrameSizes(1, 64);
-    }
-
-    @Override
-    public void tearDown() throws Exception {
-        AsyncHashJoinLightRecordCursorFactory.DEBUG_ASSUME_UNIQUE_BUILD = false;
-        super.tearDown();
     }
 
     @Test
@@ -104,13 +102,110 @@ public class AsyncHashJoinLightTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastAndTranslationEdges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table m as (select timestamp_sequence(0, 1000000) ts, rnd_symbol('A','B','C',null) sy, rnd_str('A','B','Z',null) st," +
+                    " (x % 5)::timestamp t, case when x % 3 = 0 then -0.0 when x % 3 = 1 then 0.0 else null end d, x from long_sequence(2000)) timestamp(ts) partition by hour");
+            execute("create table s as (select rnd_symbol('B','C','D',null) sy, rnd_str('A','B','Y',null) st," +
+                    " (x % 3)::timestamp_ns tn, case when x % 3 = 0 then -0.0 when x % 3 = 1 then 0.0 else null end d, x from long_sequence(300))");
+            // a STRING master against a SYMBOL build
+            assertSameAsSerial("select m.ts, m.x, g.k, g.c from m join (select sy k, count() c from s) g on m.st = g.k", true);
+            // TIMESTAMP against TIMESTAMP_NS
+            assertSameAsSerial("select m.ts, m.x, g.k, g.c from m join (select tn k, count() c from s) g on m.t = g.k", true);
+            // DOUBLE keys: -0.0, 0.0 and NULL
+            assertSameAsSerial("select m.ts, m.x, g.k, g.c from m join (select d k, count() c from s) g on m.d = g.k", true);
+            // a SYMBOL master against a STRING build stays serial
+            assertSameAsSerial("select m.ts, m.x, g.k, g.c from m join (select st k, count() c from s) g on m.sy = g.k", false);
+        });
+    }
+
+    @Test
+    public void testPlannerProofHoldsAtRunTime() throws Exception {
+        // a build the planner proves unique is unique when it runs: no chain walk
+        assertMemoryLeak(() -> {
+            createT(engine, sqlExecutionContext, 3_000);
+            sqlExecutionContext.setParallelHashJoinProbeEnabled(true);
+            for (String query : new String[]{mo59(), mo70(),
+                    "select t.ts, t.x, t.ex, t.v from t join (select distinct ex dex, v dv from t where x % 3 = 0) d on t.ex = d.dex and t.v = d.dv"}) {
+                try (RecordCursorFactory factory = select(query)) {
+                    final AsyncHashJoinLightRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(query, join);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        print(cursor, factory);
+                    }
+                    Assert.assertTrue(query, join.isLastBuildUnique());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSelfJoinOpensTheSlaveFirst() throws Exception {
+        // A commit lands from inside the query, at each consultation of the circuit breaker in
+        // turn. The light hash join opens its slave before its master, so a self-join may pair an
+        // older build with a newer master, never a newer build with an older master. Here a newer
+        // build names maxima the older master lacks, and its rows would vanish.
+        final StringSink inverted = new StringSink();
+        for (boolean on : new boolean[]{false, true}) {
+            for (int fireAt = 1; fireAt <= 12; fireAt++) {
+                final int fa = fireAt;
+                assertMemoryLeak(() -> {
+                    execute("create table t as (select timestamp_sequence(0, 1000000) ts, rnd_symbol('A','B','C') sym, x from long_sequence(3000)) timestamp(ts) partition by day");
+                    // the master's interval reads a sub-query when the master opens, which consults
+                    // the circuit breaker: a commit can land between the two opens
+                    final String join = "select t.ts, t.sym, t.x from (%s where ts >= (select min(x)::timestamp from t)) t join (select sym msym, max(x) mx from %s) m on t.sym = m.msym and t.x = m.mx";
+                    final String query = String.format(join, "t", "t");
+                    sqlExecutionContext.setParallelHashJoinProbeEnabled(false);
+                    final String old = runOnce(query);
+                    final CommittingCircuitBreaker cb = new CommittingCircuitBreaker(engine, fa, () -> {
+                        try (TableWriter w = getWriter("t")) {
+                            for (int i = 0; i < 3; i++) {
+                                final TableWriter.Row r = w.newRow(10_000_000_000L + i);
+                                r.putSym(1, String.valueOf((char) ('A' + i)));
+                                r.putLong(2, 10_000 + i);
+                                r.append();
+                            }
+                            w.commit();
+                        }
+                    });
+                    final String actual;
+                    try {
+                        withCircuitBreaker(cb);
+                        sqlExecutionContext.setParallelHashJoinProbeEnabled(on);
+                        try (RecordCursorFactory factory = select(query)) {
+                            Assert.assertEquals(on, find(factory) != null);
+                            cb.arm();
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                actual = print(cursor, factory);
+                            }
+                        }
+                    } finally {
+                        withCircuitBreaker(circuitBreaker);
+                        Misc.free(cb);
+                    }
+                    sqlExecutionContext.setParallelHashJoinProbeEnabled(false);
+                    final String now = runOnce(query);
+                    // the master's new rows against the old build: the old maxima, still present
+                    final String slaveOld = runOnce(String.format(join, "t", "(t where x < 10000)"));
+                    if (!actual.equals(old) && !actual.equals(now) && !actual.equals(slaveOld)) {
+                        inverted.put("probe=").put(on).put(" fireAt=").put(fa).put(":\n").put(actual);
+                    }
+                    execute("drop table t");
+                });
+            }
+        }
+        TestUtils.assertEquals("", inverted);
+    }
+
+    @Test
     public void testDuplicateBuildKeysWalkTheChain() throws Exception {
         assertMemoryLeak(() -> {
             createT(engine, sqlExecutionContext, 2_000);
             execute("create table d as (select rnd_symbol('A', 'B', 'C', null) dex, (x % 9)::double dsize, x dx from long_sequence(50))");
-            // the planner cannot prove this build unique; pretend it did, so that the cursor meets
-            // repeated keys at run time
-            AsyncHashJoinLightRecordCursorFactory.DEBUG_ASSUME_UNIQUE_BUILD = true;
+            // The planner cannot prove this build unique; have it assume so, as a wrong proof would,
+            // so that the cursor meets repeated keys at run time. The proof is a performance hint:
+            // the output must still be the light hash join's.
+            node1.getConfigurationOverrides().setHashJoinProbeUniqueBuildAssumed(true);
             final String query = "select t.ts, t.x, t.ex, t.size, d.dx, d.dsize from t join d on t.ex = d.dex and t.size = d.dsize";
             assertSameAsSerial(query, true);
             assertSameAsSerial("select count(*) from (" + query + ")", false);
@@ -341,6 +436,69 @@ public class AsyncHashJoinLightTest extends AbstractCairoTest {
             }
             return first;
         }
+    }
+
+    private static String runOnce(String query) throws Exception {
+        try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            return print(cursor, factory);
+        }
+    }
+
+    private static void withCircuitBreaker(SqlExecutionCircuitBreaker cb) {
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(
+                sqlExecutionContext.getSecurityContext(),
+                sqlExecutionContext.getBindVariableService(),
+                sqlExecutionContext.getRandom(),
+                sqlExecutionContext.getRequestFd(),
+                cb
+        );
+    }
+
+    /**
+     * Commits to the table from inside the query: at the {@code fireAt}-th consultation of the
+     * circuit breaker after {@link #arm()}.
+     */
+    private static class CommittingCircuitBreaker extends NetworkSqlExecutionCircuitBreaker {
+        private final AtomicInteger calls = new AtomicInteger(Integer.MIN_VALUE);
+        private final Commit commit;
+        private final int fireAt;
+
+        CommittingCircuitBreaker(CairoEngine engine, int fireAt, Commit commit) {
+            super(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
+            this.fireAt = fireAt;
+            this.commit = commit;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedNoThrottle() {
+            super.statefulThrowExceptionIfTrippedNoThrottle();
+            tick();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+            tick();
+        }
+
+        void arm() {
+            calls.set(0);
+        }
+
+        private void tick() {
+            if (calls.incrementAndGet() == fireAt) {
+                try {
+                    commit.run();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface Commit {
+        void run() throws Exception;
     }
 
     private static String serial(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {

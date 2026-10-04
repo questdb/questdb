@@ -38,6 +38,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -68,25 +69,28 @@ import org.jetbrains.annotations.TestOnly;
  * An inner hash join whose build (slave) side is unique on the join key, such as a GROUP BY on
  * that key, probed in parallel: the master's page frames go through an
  * {@link AsyncFilteredRecordCursorFactory} whose filter, on the shared query workers, keeps the
- * master rows whose key the build holds. Every kept row has exactly one match, so the join's
- * output is the kept master rows in master order, which is the order {@link HashJoinLightRecordCursorFactory}
- * emits them in, with the slave record positioned on the query's thread only when a consumer reads
- * a slave column. A projection of master columns alone, a semi-join, never touches the slave.
+ * master rows whose key the build holds. With a unique build every kept row has exactly one match,
+ * so the join's output is the kept master rows in master order, which is the order
+ * {@link HashJoinLightRecordCursorFactory} emits them in, with the slave record positioned on the
+ * query's thread only when a consumer reads a slave column. A projection of master columns alone, a
+ * semi-join, never touches the slave.
  * <p>
  * The build is {@link HashJoinLightRecordCursorFactory}'s: a map from the key to a chain of slave
  * row ids, built on the query's thread before any frame is dispatched, with symbol keys translated
  * into the master's symbol domain. A slave symbol the master does not have can match no master row,
- * so its rows are left out. The planner proves the build unique; should a key repeat all the same,
- * the cursor falls back to walking each kept row's chain, as the light hash join does, which keeps
- * the output identical.
+ * so its rows are left out. As in the light hash join, the slave's cursor opens before the
+ * master's, and the build's frames decode scattered.
+ * <p>
+ * <b>Uniqueness.</b> The planner chooses this factory only when it can prove the build unique on
+ * the join key, but the proof is a performance hint, not what makes the output right. The build
+ * counts each key's rows as it goes, and when a key repeats the cursor walks each kept row's chain
+ * exactly as the light hash join does, so a wrong proof costs speed (a second probe per kept row,
+ * on the query's thread), never rows.
+ * <p>
+ * A kept row's slave is found by probing the map again on the query's thread: the workers' probe
+ * keeps no per-row result. That second probe runs only for the rows whose slave columns are read.
  */
 public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    /**
-     * Lets the planner take a build it cannot prove unique, so that tests reach the cursor's
-     * fallback for repeated keys.
-     */
-    @TestOnly
-    public static volatile boolean DEBUG_ASSUME_UNIQUE_BUILD = false;
     private static final int ROWS_PER_BREAKER_CHECK = 64 * 1024;
     private final Build build;
     private final int columnSplit;
@@ -191,8 +195,10 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        build.prepare(slave, executionContext);
         try {
+            // the slave first, as the light hash join opens it: a self-join reads the same
+            // snapshots as the serial plan
+            build.open(slave, executionContext);
             // the owner's filter builds the hash table when the filter initializes, before any
             // frame is dispatched, see ProbeFilter.init()
             final RecordCursor masterCursor = filterFactory.getCursor(executionContext);
@@ -286,7 +292,6 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
         private SqlExecutionContext executionContext;
         private boolean isBuilt;
         private MemoryTracker memoryTracker;
-        private RecordCursorFactory slave;
         private RecordCursor slaveCursor;
         private boolean unique;
 
@@ -337,7 +342,6 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
             if (isBuilt) {
                 return;
             }
-            slaveCursor = slave.getCursor(executionContext);
             map.setMemoryTracker(memoryTracker);
             map.reopen();
             chain.setMemoryTracker(memoryTracker);
@@ -380,11 +384,16 @@ public class AsyncHashJoinLightRecordCursorFactory extends AbstractRecordCursorF
             isBuilt = true;
         }
 
-        void prepare(RecordCursorFactory slave, SqlExecutionContext executionContext) {
-            this.slave = slave;
+        // Opens the slave's cursor, on the query's thread, before the master opens; the owner's
+        // filter builds from it once the master's frames are open, see build().
+        void open(RecordCursorFactory slave, SqlExecutionContext executionContext) throws SqlException {
             this.executionContext = executionContext;
             this.memoryTracker = executionContext.getMemoryTracker();
             isBuilt = false;
+            assert slaveCursor == null;
+            slaveCursor = slave.getCursor(executionContext);
+            // the probe positions the slave by row id, in master order
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         }
     }
 

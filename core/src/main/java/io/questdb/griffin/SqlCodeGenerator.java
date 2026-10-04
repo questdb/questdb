@@ -5337,6 +5337,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * key, the master must have page frames and a designated timestamp (so that the light hash
      * join would not swap its sides), and every master key column must stage without a symbol
      * table. Call after {@link #convertSymbolJoinKeysToInt}, which settles the key encodings.
+     * <p>
+     * The uniqueness proof only picks the plan: should it be wrong, the factory meets the repeated
+     * keys at run time and walks their chains as the light hash join does, at some cost in speed.
      */
     private @Nullable RecordCursorFactory createAsyncHashJoinLight(
             JoinRecordMetadata metadata,
@@ -5355,7 +5358,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 || slaveModel == null
                 || !master.supportsPageFrameCursor()
                 || metadata.getTimestampIndex() < 0
-                || !(AsyncHashJoinLightRecordCursorFactory.DEBUG_ASSUME_UNIQUE_BUILD || isSlaveUniqueOnJoinKeys(slaveModel, context))) {
+                || !(configuration.isSqlParallelHashJoinProbeUniqueBuildAssumed() || isSlaveUniqueOnJoinKeys(slaveModel, context))) {
             return null;
         }
         final RecordMetadata masterMetadata = master.getMetadata();
@@ -5419,7 +5422,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Whether the rows of a join's slave are unique on the slave's join key columns: the slave is,
      * below renames, a GROUP BY or DISTINCT whose every key column is a join key. Filters, ORDER BY
      * and LIMIT keep uniqueness; joins, unions, SAMPLE BY, LATEST BY and expressions over the keys
-     * do not count.
+     * do not count. A performance hint for {@link #createAsyncHashJoinLight}, which stays correct
+     * when it is wrong; it errs towards false.
      */
     private boolean isSlaveUniqueOnJoinKeys(IQueryModel slaveModel, JoinContext context) {
         if (context == null || context.aNames.size() == 0) {
