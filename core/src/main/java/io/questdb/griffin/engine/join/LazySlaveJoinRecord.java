@@ -377,7 +377,9 @@ public class LazySlaveJoinRecord extends JoinRecord {
 
     @FunctionalInterface
     public interface SlavePositioner {
-        /** Positions the slave record for the current master row, unless it already is. */
+        /**
+         * Positions the slave record for the current master row, unless it already is.
+         */
         void positionSlave();
     }
 }

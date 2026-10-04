@@ -105,7 +105,9 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * the window's comparison in scan order over the base, for those partitions only.
  */
 public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCursorFactory {
-    /** Test hook: the most slots a dense lookup may take, see {@link #buildDense}. */
+    /**
+     * Test hook: the most slots a dense lookup may take, see {@link #buildDense}.
+     */
     @TestOnly
     public static volatile long DEBUG_MAX_DENSE_SLOTS = -1;
     public static final int ARG_DATE = 4;
@@ -323,20 +325,26 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         }
     }
 
-    /** Slots held across both phases; zero whenever no task runs. */
+    /**
+     * Slots held across both phases; zero whenever no task runs.
+     */
     @TestOnly
     public int getAcquiredSlotCount() {
         final PerWorkerLocks filterLocks = filterFactory.getAtom().getPerWorkerLocks();
         return frameSequence.getAtom().locks.getAcquiredSlotCount() + (filterLocks != null ? filterLocks.getAcquiredSlotCount() : 0);
     }
 
-    /** Merges one worker's values for a key into another's, as phase one does. */
+    /**
+     * Merges one worker's values for a key into another's, as phase one does.
+     */
     @TestOnly
     public void mergeForTesting(MapValue dest, MapValue src) {
         merge(dest, src);
     }
 
-    /** Executions that looked window values up in a dense array rather than the map. */
+    /**
+     * Executions that looked window values up in a dense array rather than the map.
+     */
     @TestOnly
     public int getDenseBuildCount() {
         return denseBuildCount;
