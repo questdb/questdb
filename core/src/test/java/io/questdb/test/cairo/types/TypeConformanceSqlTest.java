@@ -65,11 +65,11 @@ import java.util.regex.Pattern;
  * {@code first_not_null} and {@code last_not_null} over groups whose first row is NULL, and
  * SAMPLE BY FILL(PREV) over a leading NULL.
  * <p>
- * Every query runs in four modes: single-threaded and parallel (a worker pool of four, the
- * parallel factories on), each with compiled and interpreted filters. Today a filter compiles
- * only on the parallel path ({@code SqlCodeGenerator} gives the JIT to the async filter alone),
- * so the single-threaded compiled mode repeats the interpreted one. Every mode must give the
- * one recording made at S12 ({@link TypeConformanceRecording}). A section holds the query's
+ * Every query runs in three modes: single-threaded with interpreted filters, and parallel (a
+ * worker pool of four, the parallel factories on) with compiled and with interpreted filters. A
+ * filter compiles only on the parallel path ({@code SqlCodeGenerator} gives the JIT to the async
+ * filter alone), so a single-threaded compiled mode would repeat the interpreted one and is not
+ * run. Every mode must give the one recording made at S12 ({@link TypeConformanceRecording}). A section holds the query's
  * output and the factory properties it pins: random access, whether the cursor knows its size,
  * and the designated timestamp with its order. A query that runs is also asserted with
  * {@code assertQuery(sql).returns(...)} under those properties, which reads the cursor twice
@@ -92,7 +92,7 @@ import java.util.regex.Pattern;
 public class TypeConformanceSqlTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TypeConformanceSqlTest.class);
     private static final Pattern NO_CAST = Pattern.compile("error: \\[(\\d+)] there is no matching function `cast` with the argument types: \\((.*)\\)");
-    private static final String[] MODES = {"single-nojit", "single-jit", "parallel-nojit", "parallel-jit"};
+    private static final String[] MODES = {"single-nojit", "parallel-nojit", "parallel-jit"};
     private static final Map<String, String> RECORDINGS = new HashMap<>();
     private final ObjList<TypeConformanceValues.Row> rows;
     private final TypeConformanceTypes.Entry type;
@@ -865,19 +865,17 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs {@code body} in every mode: single-threaded on the test's engine, then parallel on a
-     * worker pool's engine, each with interpreted and compiled filters.
+     * Runs {@code body} in every mode: single-threaded on the test's engine with interpreted
+     * filters, then parallel on a worker pool's engine with interpreted and compiled filters.
      */
     private void runModes(ModeBody body) throws Exception {
-        for (int m = 0; m < 2; m++) {
-            configure(sqlExecutionContext, MODES[m]);
-            body.run(engine, sqlExecutionContext, MODES[m]);
-        }
+        configure(sqlExecutionContext, MODES[0]);
+        body.run(engine, sqlExecutionContext, MODES[0]);
         final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (eng, compiler, ctx) -> {
-                    for (int m = 2; m < 4; m++) {
+                    for (int m = 1; m < MODES.length; m++) {
                         configure(ctx, MODES[m]);
                         body.run(eng, ctx, MODES[m]);
                     }

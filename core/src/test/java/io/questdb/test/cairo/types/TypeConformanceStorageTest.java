@@ -955,15 +955,37 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     }
 
     /**
-     * Prints a query through a record cursor, escaped; an error prints as {@code error: ...}.
+     * Prints a query through a record cursor, escaped; an error prints as {@code error: ...}. A
+     * query that runs is also asserted with the full {@code assertQuery(sql).returns(...)} battery,
+     * which reads the cursor twice and checks its size, under the random access, size and
+     * designated timestamp its factory declares, as the SQL kit's {@code assertReturns} does.
      */
-    private String query(String sql) {
+    private String query(String sql) throws Exception {
         final StringSink sink = new StringSink();
+        final boolean isRandomAccess;
+        final boolean isSizeKnown;
         try {
             printSql(sql, sink);
+            try (
+                    RecordCursorFactory factory = select(sql);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                isRandomAccess = factory.recordCursorSupportsRandomAccess();
+                while (cursor.hasNext()) {
+                    // the size is known, if at all, once the cursor has been read
+                }
+                cursor.toTop();
+                isSizeKnown = cursor.size() != -1;
+            }
         } catch (Throwable e) {
             return "error: " + e.getMessage() + '\n';
         }
+        assertQuery(sql)
+                .noLeakCheck()
+                .supportsRandomAccess(isRandomAccess)
+                .expectSize(isSizeKnown)
+                .inferTimestamp()
+                .returns(sink);
         return TypeConformanceRecording.escape(sink);
     }
 
@@ -1018,7 +1040,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         return texts;
     }
 
-    private String valuesLine(String sql) {
+    private String valuesLine(String sql) throws Exception {
         final String printed = query(sql);
         if (printed.startsWith("error: ")) {
             return oneLine(printed);
