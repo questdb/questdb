@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
 public class InterpolationUtil {
@@ -100,7 +101,7 @@ public class InterpolationUtil {
     ) {
         function.setInt(
                 mapValue,
-                (int) interpolate(
+                interpolateInt(
                         x,
                         x1,
                         Unsafe.getInt(y1Address),
@@ -108,6 +109,17 @@ public class InterpolationUtil {
                         Unsafe.getInt(y2Address)
                 )
         );
+    }
+
+    /**
+     * Interpolates between two INT values. A NULL endpoint gives NULL, as a NaN endpoint does for
+     * DOUBLE, instead of entering the NULL sentinel into the arithmetic as a number.
+     */
+    public static int interpolateInt(long x, long x1, int y1, long x2, int y2) {
+        if (y1 == Numbers.INT_NULL || y2 == Numbers.INT_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return (int) interpolate(x, x1, y1, x2, y2);
     }
 
     public static void interpolateLong(
@@ -121,7 +133,7 @@ public class InterpolationUtil {
     ) {
         function.setLong(
                 mapValue,
-                (long) interpolate(
+                interpolateLong(
                         x,
                         x1,
                         Unsafe.getLong(y1Address),
@@ -129,6 +141,17 @@ public class InterpolationUtil {
                         Unsafe.getLong(y2Address)
                 )
         );
+    }
+
+    /**
+     * Interpolates between two LONG values. A NULL endpoint gives NULL, as a NaN endpoint does for
+     * DOUBLE, instead of entering the NULL sentinel into the arithmetic as a number.
+     */
+    public static long interpolateLong(long x, long x1, long y1, long x2, long y2) {
+        if (y1 == Numbers.LONG_NULL || y2 == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        return (long) interpolate(x, x1, y1, x2, y2);
     }
 
     public static void interpolateShort(
