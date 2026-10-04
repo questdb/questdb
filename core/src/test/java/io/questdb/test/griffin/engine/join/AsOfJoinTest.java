@@ -1530,6 +1530,122 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnChecksMasterKey() throws Exception {
+        // m.s1 = s.sym AND m.s2 = s.sym matches only master rows whose s1 and s2 are equal, NULL
+        // included. The join checks that before it scans the slave table, so a master row whose
+        // values differ gets a NULL slave side without a scan back to the first slave row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, s1 SYMBOL, s2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                    (1, 'A', 'A', 10::TIMESTAMP),
+                    (2, 'A', 'B', 20::TIMESTAMP),
+                    (3, 'B', NULL, 30::TIMESTAMP),
+                    (4, NULL, NULL, 40::TIMESTAMP),
+                    (5, 'C', 'C', 50::TIMESTAMP),
+                    (6, 'B', 'B', 60::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE s (id INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO s VALUES
+                    (10, 'A', 1::TIMESTAMP),
+                    (20, NULL, 2::TIMESTAMP),
+                    (30, 'A', 5::TIMESTAMP),
+                    (40, 'B', 6::TIMESTAMP)
+                    """);
+
+            // row 2 and row 3 disagree, and 'C' of row 5 does not occur in the slave table
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.s1 = s.sym AND m.s2 = s.sym")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast", "symbolKeyJoin: true", "sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1
+                            1\t30
+                            2\tnull
+                            3\tnull
+                            4\t20
+                            5\tnull
+                            6\t40
+                            """);
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.s1 = s.sym AND m.s2 = s.sym WHERE s.id IS NOT NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1
+                            1\t30
+                            4\t20
+                            6\t40
+                            """);
+            // a join whose keys do not share a slave column has no master key check
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.s1 = s.sym")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanNotContaining("sharedKeyCheck")
+                    .returns("""
+                            id\tid1
+                            1\t30
+                            2\t30
+                            3\t40
+                            4\t20
+                            5\tnull
+                            6\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnFilteredSlave() throws Exception {
+        // The filtered ASOF join, which steals the slave filter, checks the master key the same way,
+        // also when a projection reorders the slave columns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, k1 INT, k2 INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                    (1, 1, 1, 10::TIMESTAMP),
+                    (2, 1, 2, 20::TIMESTAMP),
+                    (3, 2, 2, 30::TIMESTAMP),
+                    (4, NULL, NULL, 40::TIMESTAMP),
+                    (5, NULL, 2, 50::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE s (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO s VALUES
+                    (10, 1, 1::TIMESTAMP),
+                    (20, 2, 2::TIMESTAMP),
+                    (30, NULL, 3::TIMESTAMP),
+                    (40, 1, 4::TIMESTAMP),
+                    (50, 2, 5::TIMESTAMP)
+                    """);
+
+            // the filter drops slave rows 40 and 50, so rows 1 and 3 match the earlier rows of their keys
+            final String expected = """
+                    id\tid1
+                    1\t10
+                    2\tnull
+                    3\t20
+                    4\t30
+                    5\tnull
+                    """;
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN (SELECT * FROM s WHERE id < 40) s ON m.k1 = s.k AND m.k2 = s.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Filtered AsOf Join Fast", "sharedKeyCheck: true")
+                    .returns(expected);
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN (SELECT ts, k, id FROM s WHERE id < 40) s ON m.k1 = s.k AND m.k2 = s.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Filtered AsOf Join Fast", "sharedKeyCheck: true")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnKeysSharingSlaveColumnFullFat() throws Exception {
         // ASOF and LT joins keep both key pairs of m.x = s.k AND m.k = s.k, so the full-fat join
         // sees the slave column s.k at two key positions and must expose it only once.
@@ -1574,6 +1690,184 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         .expectSize()
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnGroups() throws Exception {
+        // All master columns that share a slave column must agree: three columns of one group, and
+        // two columns of each of two groups.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, a INT, b INT, c INT, d INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                    (1, 1, 1, 1, 1, '1970-01-01T00:00:10.000000Z'),
+                    (2, 1, 1, 2, 2, '1970-01-01T00:00:20.000000Z'),
+                    (3, 1, 2, 1, 1, '1970-01-01T00:00:30.000000Z'),
+                    (4, 2, 2, 2, 1, '1970-01-01T00:00:40.000000Z'),
+                    (5, 2, 2, 2, 2, '1970-01-01T00:00:50.000000Z')
+                    """);
+            execute("CREATE TABLE s (id INT, k INT, j INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO s VALUES
+                    (10, 1, 1, '1970-01-01T00:00:01.000000Z'),
+                    (20, 1, 2, '1970-01-01T00:00:02.000000Z'),
+                    (30, 2, 2, '1970-01-01T00:00:03.000000Z'),
+                    (40, 2, 1, '1970-01-01T00:00:45.000000Z')
+                    """);
+
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.a = s.k AND m.b = s.k AND m.c = s.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1
+                            1\t20
+                            2\tnull
+                            3\tnull
+                            4\t30
+                            5\t40
+                            """);
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.a = s.k AND m.b = s.k AND m.c = s.j AND m.d = s.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\t20
+                            3\tnull
+                            4\tnull
+                            5\t30
+                            """);
+            // the tolerance drops matches that are more than 10s older than the master row
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.a = s.k AND m.b = s.k TOLERANCE 10s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1
+                            1\t20
+                            2\tnull
+                            3\tnull
+                            4\tnull
+                            5\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnMatchesFullFatJoin() throws Exception {
+        // The full-fat join looks the keys up in a map and has no master key check, so both joins
+        // must return the same rows for random keys with NULLs, empty strings and signed zeros.
+        assertMemoryLeak(() -> {
+            // t.k1 and t.k3 have the first type, t.k2 the second, and q.k and q.j the third
+            final String[][] keyTypes = {
+                    {"SYMBOL", "SYMBOL", "SYMBOL"},
+                    {"INT", "INT", "INT"},
+                    {"LONG", "LONG", "LONG"},
+                    {"DOUBLE", "DOUBLE", "DOUBLE"},
+                    {"STRING", "STRING", "STRING"},
+                    {"VARCHAR", "VARCHAR", "VARCHAR"},
+                    {"SYMBOL", "STRING", "STRING"},
+                    {"STRING", "VARCHAR", "VARCHAR"},
+                    {"SYMBOL", "VARCHAR", "VARCHAR"},
+            };
+            final String[] queries = {
+                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k",
+                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
+                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.j",
+                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.j AND t.k3 = q.j",
+                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k TOLERANCE 20s",
+                    "SELECT t.id, q.id FROM t ASOF JOIN (SELECT * FROM q WHERE id % 3 <> 0) q ON t.k1 = q.k AND t.k2 = q.k",
+                    "SELECT t.id, q.id FROM t ASOF JOIN (SELECT ts, k, id FROM q WHERE id % 3 <> 0) q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
+            };
+            for (String[] types : keyTypes) {
+                for (int round = 0; round < 2; round++) {
+                    execute("DROP TABLE IF EXISTS t");
+                    execute("DROP TABLE IF EXISTS q");
+                    execute("CREATE TABLE q AS (SELECT x id, " + sharedKeyValue(types[2]) + " k, " + sharedKeyValue(types[2])
+                            + " j, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR");
+                    execute("CREATE TABLE t AS (SELECT x id, " + sharedKeyValue(types[0]) + " k1, " + sharedKeyValue(types[1]) + " k2, "
+                            + sharedKeyValue(types[0]) + " k3, timestamp_sequence(500_000, 1_000_000) ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR");
+                    for (String query : queries) {
+                        final String message = query + ", key types: " + String.join(", ", types);
+                        printSql("EXPLAIN " + query, false);
+                        TestUtils.assertContains(message, sink, "sharedKeyCheck: true");
+                        printSql("EXPLAIN " + query, true);
+                        TestUtils.assertNotContains(message, sink, "AsOf Join Fast");
+                        printSql(query, true);
+                        final String fullFatResult = sink.toString();
+                        printSql(query, false);
+                        TestUtils.assertEquals(message, fullFatResult, sink);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnMixedTypes() throws Exception {
+        // SYMBOL, STRING and VARCHAR master columns compare as strings with the slave column they share.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, sy SYMBOL, st STRING, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                    (1, '\u00e9', '\u00e9', '\u00e9', 10::TIMESTAMP),
+                    (2, '\u00e9', 'e', '\u00e9', 20::TIMESTAMP),
+                    (3, NULL, NULL, NULL, 30::TIMESTAMP),
+                    (4, 'A', 'A', NULL, 40::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE s (id INT, st STRING, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO s VALUES
+                    (10, '\u00e9', '\u00e9', 1::TIMESTAMP),
+                    (20, NULL, NULL, 2::TIMESTAMP),
+                    (30, 'A', 'A', 3::TIMESTAMP)
+                    """);
+
+            // SYMBOL and STRING share a STRING column
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.sy = s.st AND m.st = s.st")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\tnull
+                            3\t20
+                            4\t30
+                            """);
+            // SYMBOL and VARCHAR share a VARCHAR column
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.sy = s.v AND m.v = s.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\t10
+                            3\t20
+                            4\tnull
+                            """);
+            // STRING and VARCHAR share a VARCHAR column
+            assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON m.st = s.v AND m.v = s.v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("sharedKeyCheck: true")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\tnull
+                            3\t20
+                            4\tnull
+                            """);
         });
     }
 
@@ -6840,6 +7134,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             BTC-USD\t2000-06-01T00:00:00.000000Z\t6\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3
                             """, leftTableTimestampType.getTypeName()));
         });
+    }
+
+    // Picks from a small domain with NULLs, so equal values, different values and NULL = NULL all occur.
+    private static String sharedKeyValue(String type) {
+        final String value = switch (type) {
+            case "SYMBOL" -> "rnd_str('A', 'B', '\u00e9')";
+            case "INT" -> "rnd_int(1, 3, 0)";
+            case "LONG" -> "rnd_long(1, 3, 0)";
+            case "DOUBLE" -> "CASE WHEN rnd_boolean() THEN 1.5 WHEN rnd_boolean() THEN 0.0 ELSE -0.0 END";
+            case "STRING", "VARCHAR" -> "rnd_str('A', 'B', '\u00e9', '')";
+            default -> throw new IllegalArgumentException("unsupported key type: " + type);
+        };
+        return "(CASE WHEN rnd_int(0, 3, 0) = 0 THEN NULL ELSE " + value + " END)::" + type;
     }
 
     private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws Exception {

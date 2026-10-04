@@ -62,6 +62,8 @@ import org.jetbrains.annotations.Nullable;
 public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
+    // writes the master key with the key positions that share a slave column rotated, null when none do
+    private final @Nullable RecordSink rotatedMasterKeySink;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final RecordSink slaveKeySink;
     private final long toleranceInterval;
@@ -98,27 +100,48 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             int slaveTimestampIndex,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable RecordSink rotatedMasterKeySink
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
         this.masterKeySink = masterKeySink;
+        this.rotatedMasterKeySink = rotatedMasterKeySink;
         this.slaveKeySink = slaveKeySink;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-        this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
-                columnSplit,
-                slaveNullRecord,
-                masterFactory.getMetadata().getTimestampIndex(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
-                slaveTimestampIndex,
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead()
-        );
+        final SingleRecordSink masterSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                SingleRecordSink.CONFIG_KEYS_ASOF_JOIN);
+        final SingleRecordSink slaveSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                SingleRecordSink.CONFIG_KEYS_ASOF_JOIN);
+        // Only a join whose keys share a slave column gets the cursor that checks the master key
+        // before it moves the slave cursor, so every other join keeps the plain cursor.
+        if (rotatedMasterKeySink == null) {
+            this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
+                    columnSplit,
+                    slaveNullRecord,
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    masterSinkTarget,
+                    slaveTimestampIndex,
+                    slaveSinkTarget,
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType(),
+                    configuration.getSqlAsOfJoinLookAhead()
+            );
+        } else {
+            this.cursor = new FilteredAsOfJoinKeyedFastCheckedRecordCursor(
+                    columnSplit,
+                    slaveNullRecord,
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    masterSinkTarget,
+                    slaveTimestampIndex,
+                    slaveSinkTarget,
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType(),
+                    configuration.getSqlAsOfJoinLookAhead(),
+                    rotatedMasterKeySink
+            );
+        }
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
             this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
         } else {
@@ -178,6 +201,9 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
+        if (rotatedMasterKeySink != null) {
+            sink.attr("sharedKeyCheck").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -194,15 +220,67 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    private class FilteredAsOfJoinKeyedFastCheckedRecordCursor extends FilteredAsOfJoinKeyedFastRecordCursor {
+        private final RecordSink rotatedMasterKeySink;
+
+        public FilteredAsOfJoinKeyedFastCheckedRecordCursor(
+                int columnSplit,
+                Record nullRecord,
+                int masterTimestampIndex,
+                SingleRecordSink masterSinkTarget,
+                int slaveTimestampIndex,
+                SingleRecordSink slaveSinkTarget,
+                int masterTimestampType,
+                int slaveTimestampType,
+                int lookahead,
+                RecordSink rotatedMasterKeySink
+        ) {
+            super(columnSplit, nullRecord, masterTimestampIndex, masterSinkTarget, slaveTimestampIndex, slaveSinkTarget, masterTimestampType, slaveTimestampType, lookahead);
+            this.rotatedMasterKeySink = rotatedMasterKeySink;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (!masterCursor.hasNext()) {
+                return false;
+            }
+            if (!isMasterKeyMatchable()) {
+                // No slave row matches master values that differ at key positions sharing a slave
+                // column, so skip moving the slave cursor and scanning it.
+                record.hasSlave(false);
+                return true;
+            }
+            return findSlaveRecord();
+        }
+
+        // A slave row writes one value at all key positions that share its column, so it matches
+        // only a master key that equals its rotated copy. The method leaves the master key in
+        // masterSinkTarget and its rotated copy in slaveSinkTarget, and findSlaveRecord() writes
+        // both sinks again before it reads them.
+        private boolean isMasterKeyMatchable() {
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
+            }
+            masterSinkTarget.clear();
+            masterKeySink.copy(masterKeyRecord, masterSinkTarget);
+            if (symbolTranslatingRecord != null && symbolTranslatingRecord.hadNonExistentKey()) {
+                return false;
+            }
+            slaveSinkTarget.clear();
+            rotatedMasterKeySink.copy(masterKeyRecord, slaveSinkTarget);
+            return masterSinkTarget.memeq(slaveSinkTarget);
+        }
+    }
+
     private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
-        private final SingleRecordSink masterSinkTarget;
-        private final SingleRecordSink slaveSinkTarget;
-        private SqlExecutionCircuitBreaker circuitBreaker;
-        private Record filterRecord;
+        protected final SingleRecordSink masterSinkTarget;
+        protected final SingleRecordSink slaveSinkTarget;
         // Record used for master key serialization. Set once in of() to either
         // masterRecord or SymbolTranslatingRecord wrapping it, so that getInt()
         // on symbol key columns returns slave symbol IDs.
-        private Record masterKeyRecord;
+        protected Record masterKeyRecord;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private Record filterRecord;
         private int unfilteredCursorFrameIndex = -1;
         private long unfilteredRecordRowId = -1;
 
@@ -235,7 +313,54 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             if (!masterCursor.hasNext()) {
                 return false;
             }
+            return findSlaveRecord();
+        }
 
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, Record filterRecord, SqlExecutionCircuitBreaker circuitBreaker) {
+            // Reopen the sinks and the translation caches before super.of() adopts the cursors
+            // so an open-time breach frees each exactly once.
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
+            super.of(masterCursor, slaveCursor);
+            this.circuitBreaker = circuitBreaker;
+            this.filterRecord = filterRecord;
+            this.masterKeyRecord = masterRecord;
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.of(masterRecord);
+                masterKeyRecord = symbolTranslatingRecord;
+            }
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            masterSinkTarget.setMemoryTracker(tracker);
+            slaveSinkTarget.setMemoryTracker(tracker);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(tracker);
+            }
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            slaveRecordFilter.toTop();
+            unfilteredRecordRowId = -1;
+            unfilteredCursorFrameIndex = -1;
+            origHasSlave = false;
+        }
+
+        // Finds the slave record of the current master record. A subclass whose hasNext() skips this
+        // call for some master records leaves the slave state consistent, because the next call
+        // restores the slave cursor position and nextSlave() only moves forward in time.
+        protected final boolean findSlaveRecord() {
             final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
             TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
             record.hasSlave(origHasSlave);
@@ -329,47 +454,6 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             }
 
             return true;
-        }
-
-        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, Record filterRecord, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen the sinks and the translation caches before super.of() adopts the cursors
-            // so an open-time breach frees each exactly once.
-            masterSinkTarget.reopen();
-            slaveSinkTarget.reopen();
-            if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
-            }
-            super.of(masterCursor, slaveCursor);
-            this.circuitBreaker = circuitBreaker;
-            this.filterRecord = filterRecord;
-            this.masterKeyRecord = masterRecord;
-            if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.of(masterRecord);
-                masterKeyRecord = symbolTranslatingRecord;
-            }
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            return 0;
-        }
-
-        @Override
-        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            masterSinkTarget.setMemoryTracker(tracker);
-            slaveSinkTarget.setMemoryTracker(tracker);
-            if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.setMemoryTracker(tracker);
-            }
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            slaveRecordFilter.toTop();
-            unfilteredRecordRowId = -1;
-            unfilteredCursorFrameIndex = -1;
-            origHasSlave = false;
         }
     }
 }
