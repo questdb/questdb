@@ -1415,6 +1415,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelWindowMaxRounds() {
+        return 3;
+    }
+
+    @Override
     public long getSqlParallelWindowMinRows() {
         return 262_144;
     }

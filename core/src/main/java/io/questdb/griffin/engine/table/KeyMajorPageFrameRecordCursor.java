@@ -162,6 +162,41 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         return frameRowId & 0xFFFF_FFFFL;
     }
 
+    /**
+     * Counts the rows the walk has left without loading any column: no one reads them, so the
+     * touch-ahead {@link #hasNext()} does for its consumer would be wasted.
+     */
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        if (isExhausted) {
+            return;
+        }
+        // rows hasNext() has taken from the index but not yet returned
+        counter.add(rowBufLen - rowBufPos);
+        rowBufPos = rowBufLen;
+        try {
+            prepareFrames();
+            while (true) {
+                final RowCursor cursor = rowCursor;
+                if (cursor != null) {
+                    long n = 0;
+                    while (cursor.hasNext()) {
+                        cursor.next();
+                        n++;
+                    }
+                    counter.add(n);
+                }
+                if (!nextKeyFrame(false)) {
+                    break;
+                }
+            }
+        } catch (NoMoreFramesException ignore) {
+            // fall through
+        }
+        rowCursor = Misc.free(rowCursor);
+        isExhausted = true;
+    }
+
     @Override
     public void close() {
         rowCursor = Misc.free(rowCursor);
@@ -219,6 +254,53 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     }
 
     /**
+     * Walks one key of the scan apart from the walk itself, whole frames at a time: appends the
+     * key's rows (see {@link #toFrameRowId}) from its frame at walk position {@code framePos} on,
+     * until at least {@code rowLimit} rows have been appended. Returns the walk position to
+     * continue from, or -1 once the key's last frame has been read. It leaves no row cursor open,
+     * so the walk may continue between two calls for a key it has passed with
+     * {@link #skipKey()}, as long as the walk has no row cursor open itself, i.e. it stands at a
+     * key boundary. Loads no column.
+     */
+    public int collectKeyFrames(int keyIndex, int framePos, DirectLongList sink, long rowLimit) {
+        assert rowCursor == null : "collectKeyFrames() with the walk inside a key";
+        prepareFrames();
+        long collected = 0;
+        int pos = framePos;
+        while (pos < frameCount) {
+            final int frameIndex = walkFramesBackward ? frameCount - 1 - pos : pos;
+            pos++;
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            if (frameAddressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET && hasNoRows(keyIndex, frameIndex)) {
+                continue;
+            }
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            frameSnapshot.of(frameIndex);
+            final RowCursor cursor = rowCursorFactory.getCursor(keyIndex, frameSnapshot, frameMemory);
+            try {
+                final long rowIdBase = toFrameRowId(frameIndex, 0);
+                while (cursor.hasNext()) {
+                    sink.add(rowIdBase | cursor.next());
+                    collected++;
+                }
+            } finally {
+                Misc.free(cursor);
+            }
+            if (collected >= rowLimit && pos < frameCount) {
+                return pos;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The index of the key the walk is in, or will start next when it stands at a key boundary.
+     */
+    public int getKeyIndex() {
+        return keyIndex;
+    }
+
+    /**
      * The address cache of every page frame of the scan, which row ids from
      * {@link #collectKeyRows} index into. Complete once {@link #prepareFrames()} has run.
      */
@@ -247,7 +329,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 if (rowCursor != null && fillRowBuf()) {
                     continue;
                 }
-                if (!nextKeyFrame()) {
+                if (!nextKeyFrame(true)) {
                     break;
                 }
             }
@@ -323,6 +405,17 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         }
     }
 
+    /**
+     * Abandons the rest of the current key: the next {@link #collectKeyRows} starts the next key,
+     * and no row cursor stays open.
+     */
+    public void skipKey() {
+        assert rowBufPos == rowBufLen : "skipKey() mixed with hasNext()";
+        rowCursor = Misc.free(rowCursor);
+        keyIndex++;
+        framePos = 0;
+    }
+
     @Override
     public long size() {
         return -1;
@@ -362,9 +455,9 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
 
     // Moves to the next (key, frame) pair and opens its row cursor. Returns false once all keys
     // have been walked across all frames.
-    private boolean nextKeyFrame() {
+    private boolean nextKeyFrame(boolean touch) {
         while (keyIndex < keyCount) {
-            if (openNextFrameOfKey(true)) {
+            if (openNextFrameOfKey(touch)) {
                 return true;
             }
             keyIndex++;

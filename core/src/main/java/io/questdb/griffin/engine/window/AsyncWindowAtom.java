@@ -56,23 +56,26 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 /**
  * State the tasks of an {@link AsyncWindowRecordCursorFactory} share: one copy of the window's
- * functions per worker slot plus one for the query's own thread, and the round of tasks the
- * workers are running.
+ * functions per worker slot plus one for the query's own thread, which only computes the rows it
+ * streams itself.
  * <p>
- * A task computes the window over the rows of whole keys of a key-major scan. Every window
- * function is partitioned by that key, so a key's values depend on its own rows only, in the order
- * the scan walks them, and any slot can compute any key. A task starts from clean function state,
- * which costs nothing in results, because the keys of one task share no partition with the keys of
- * another.
+ * A task computes the window over consecutive rows of a key-major scan. Every window function is
+ * partitioned by that key, so a key's values depend on its own rows only, in the order the scan
+ * walks them, and any slot can compute any task. A task starts from clean function state; a key it
+ * continues from an earlier task is rebuilt by warm-up rows or combined afterwards, see
+ * {@link AsyncWindowSplitPlan}.
  */
 public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     private final PerWorkerLocks perWorkerLocks;
     // slot -1, the query's own thread, then the worker slots
     private final ObjList<Slot> slots;
-    // the round the workers run, set before the round is dispatched
-    private AsyncWindowRecordCursor.Round round;
+    // tasks run on a worker thread, as opposed to one the query's thread stole; written by the
+    // workers, read once their rounds have been awaited
+    private final AtomicLong workerThreadTaskCount = new AtomicLong();
 
     /**
      * @param ownerFunctions     the functions of the query's own thread, every output column in
@@ -111,7 +114,6 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
 
     @Override
     public void clear() {
-        round = null;
     }
 
     @Override
@@ -137,8 +139,18 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         // the cursor initializes the slots when it opens, before it knows whether it dispatches
     }
 
-    public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        return workerId == -1 && owner ? -1 : perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+    /**
+     * A worker slot for a task, also for one the query's own thread steals: slot -1 is the query
+     * thread's own, which keeps the state of the rows it streams between two of them.
+     */
+    public int acquireTaskSlot(int workerId, SqlExecutionCircuitBreaker circuitBreaker) {
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+    }
+
+    void countTask(int workerId) {
+        if (workerId > -1) {
+            workerThreadTaskCount.incrementAndGet();
+        }
     }
 
     public void release(int slotId) {
@@ -156,8 +168,13 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         return slots.size();
     }
 
-    AsyncWindowRecordCursor.Round getRound() {
-        return round;
+    /**
+     * Tasks run on a worker thread, not stolen by the query's own thread, since the last
+     * {@link #resetTaskCounts()}.
+     */
+    @TestOnly
+    public long getWorkerThreadTaskCount() {
+        return workerThreadTaskCount.get();
     }
 
     /**
@@ -191,13 +208,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     }
 
     void resetTaskCounts() {
+        workerThreadTaskCount.set(0);
         for (int i = 0, n = slots.size(); i < n; i++) {
             slots.getQuick(i).taskCount = 0;
         }
-    }
-
-    void setRound(AsyncWindowRecordCursor.Round round) {
-        this.round = round;
     }
 
     /**
@@ -293,18 +307,22 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         }
 
         /**
-         * Computes the window over collected rows, in their order, and appends each output row to
-         * {@code chain}. The rows are row ids of a {@link KeyMajorPageFrameRecordCursor} walk.
+         * Computes the window over collected rows, in their order, and appends the output rows
+         * from {@code emitFrom} on to {@code chain}: the rows before it only rebuild the state of
+         * a key that an earlier task started. The rows are row ids of a
+         * {@link KeyMajorPageFrameRecordCursor} walk. Returns the offset of the last record
+         * appended, -1 when none was.
          */
-        void compute(
+        long compute(
                 DirectLongList rows,
+                long emitFrom,
                 RecordChain chain,
                 SqlExecutionCircuitBreaker circuitBreaker,
                 UnorderedPageFrameSequence<?> sequence
         ) {
             // the record moves to other frames, so a stream on this slot positions it again
             streamFrameIndex = -1;
-            chain.rewind(rows.size());
+            chain.rewind(rows.size() - emitFrom);
             final long[] batch = batchRows;
             final long rowCount = rows.size();
             long prevOffset = -1;
@@ -318,7 +336,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                     if (!sequence.isActive()) {
                         // the round was cancelled, by a LIMIT that closed the cursor or by another
                         // task's error: its output will never be read
-                        return;
+                        return prevOffset;
                     }
                 }
                 final int frameIndex = KeyMajorPageFrameRecordCursor.toFrameIndex(rows.get(i));
@@ -340,12 +358,16 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 if (toucher.isEnabled()) {
                     toucher.touch(batch, n);
                 }
+                final long batchLo = i - n;
                 for (int j = 0; j < n; j++) {
                     record.setRowIndex(batch[j]);
                     computeNext(record);
-                    prevOffset = chain.put(virtualRecord, prevOffset);
+                    if (batchLo + j >= emitFrom) {
+                        prevOffset = chain.put(virtualRecord, prevOffset);
+                    }
                 }
             }
+            return prevOffset;
         }
 
         void countTask() {

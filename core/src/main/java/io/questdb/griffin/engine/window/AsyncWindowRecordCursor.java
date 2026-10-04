@@ -28,6 +28,7 @@ package io.questdb.griffin.engine.window;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
@@ -35,6 +36,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
@@ -53,6 +55,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -66,17 +69,23 @@ import org.jetbrains.annotations.TestOnly;
  * walk. It takes the walk in chunks that start small and double, so the first row costs what it
  * costs serially, and a LIMIT or a small result never reaches a worker or opens a worker slot.
  * <p>
- * <b>Rounds.</b> From the first key boundary after the prefix, the query's thread collects the row
- * ids of whole keys into tasks of about {@code cairo.sql.parallel.window.task.rows} rows. A task's
+ * <b>Pipeline.</b> Past the prefix, the query's thread collects the walk's row ids into tasks of
+ * about {@code cairo.sql.parallel.window.task.rows} rows, and the tasks into rounds of at most
+ * {@code cairo.sql.parallel.window.round.rows} rows. Up to {@code cairo.sql.parallel.window.max.rounds}
+ * rounds are alive at a time, each dispatched through a sequence of its own: the one whose rows are
+ * being returned, task by task in scan order, and those the workers compute ahead of it. A task's
  * worker computes the window over its rows and writes the complete output rows into the task's
- * {@link RecordChain}. Tasks go out in rounds of at most {@code cairo.sql.parallel.window.round.rows}
- * rows, whatever the number of workers: while the query's thread returns the rows of one round,
- * task by task in scan order, the workers compute the next. A task's chain is freed once returned,
- * so at most two rounds of output exist at any time.
+ * {@link RecordChain}, which is freed once its rows have been returned.
  * <p>
- * <b>Large keys.</b> A key above {@code cairo.sql.parallel.window.max.key.rows} rows would make one
- * task's output unbounded, so the query's thread streams it itself, between rounds, as it streams
- * the prefix: no output buffer at all, only the key's row ids.
+ * <b>Splitting keys.</b> When the window allows it, see {@link AsyncWindowSplitPlan}, tasks are
+ * plain slices of the walk: a key larger than a task spans several, each computed by any worker,
+ * and the next task rebuilds the key's state from warm-up rows, or the query's thread combines its
+ * rows with the key's running values before returning them.
+ * <p>
+ * <b>Large keys.</b> Otherwise a key is computed whole by one task, and one above
+ * {@code cairo.sql.parallel.window.max.key.rows} rows would make a task's output unbounded: the
+ * walk skips it, and the query's thread streams it itself, in scan order, walking it apart from the
+ * walk. Rounds of the keys after it keep being dispatched meanwhile; their rows follow it.
  * <p>
  * The query's thread computes everything itself, as the serial window does, when the scan is not
  * a key-major one or has a frame other threads cannot read at a stable address (Parquet, or a
@@ -86,14 +95,16 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     static final UnorderedPageFrameReducer REDUCER = AsyncWindowRecordCursor::reduce;
     // the first prefix chunk; each next one is twice as large, up to task.rows
     private static final long FIRST_CHUNK_ROWS = 256;
-    private static final int LARGE_KEY_ACTIVE = 2;
-    private static final int LARGE_KEY_NONE = 0;
-    private static final int LARGE_KEY_PENDING = 1;
     private static final int MODE_PARALLEL = 2;
     private static final int MODE_SERIAL = 1;
     private static final int MODE_UNDECIDED = 0;
     private static final long ROW_IDS_INITIAL_CAPACITY = 1024;
+    private static final int SEGMENT_NONE = 0;
+    private static final int SEGMENT_ROUND = 1;
+    private static final int SEGMENT_STREAM = 2;
     private final AsyncWindowAtom atom;
+    // MODE_PREFIX: each combined column's value at the last row returned, as raw bits
+    private final long[] carry;
     private final long chainMaxPages;
     private final long chainPageSize;
     private final ColumnTypes columnTypes;
@@ -102,55 +113,66 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final SelectedRecord record;
     private final RecordSink recordSink;
     private final long roundRows;
-    private final Round[] rounds = new Round[2];
-    private final UnorderedPageFrameSequence<AsyncWindowAtom> sequence;
+    private final Round[] rounds;
+    // queue of what to return after the head, in scan order: rounds and streamed keys
+    private final int[] segmentKeys;
+    private final int[] segmentKinds;
+    private final Round[] segmentRounds;
+    private final AsyncWindowSplitPlan splitPlan;
+    private final boolean splitsKeys;
     private final long taskRows;
     private final int tasksPerRound;
     private RecordCursor baseCursor;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    // the round whose tasks are being returned
-    private Round emitRound;
     // the task whose rows are being returned
     private Task emitTask;
     private int emitTaskIndex;
     private SqlExecutionContext executionContext;
-    // the round the workers are computing, awaited before its rows are returned
-    private Round inFlightRound;
+    private int headKey;
+    // what is being returned now
+    private int headKind = SEGMENT_NONE;
+    private Round headRound;
+    // the next frame position of the streamed key, -1 once its last frame has been read
+    private int headStreamPos;
     private boolean isOpen;
     private boolean isParallelPhase;
-    private boolean isSequenceOpen;
     private boolean isWorkerSlotsOpen;
     private KeyMajorPageFrameRecordCursor keyMajorCursor;
-    // the row ids of a key too large for a task, collected while its round was assembled
-    private DirectLongList largeKeyRows;
     private long largeKeyRowsStreamed;
-    private int largeKeyState = LARGE_KEY_NONE;
     private long maxRoundRows;
     private int mode = MODE_UNDECIDED;
     // the next prefix chunk's row count
     private long nextChunkRows;
-    // true while the walk stopped inside a key that this thread streams
-    private boolean ownerKeyOpen;
     private long ownerPos;
     // the row ids this thread streams: the prefix's current chunk, or a large key's
     private DirectLongList ownerRows;
     private long parallelRoundCount;
     private long parallelTaskCount;
     private long prefixRowsStreamed;
+    private long roundsAheadOfStreams;
+    private int segmentCount;
+    private int segmentHead;
     private long taskRowsComputed;
+    // true while the walk stands inside a key, which the next task then continues
+    private boolean walkKeyOpen;
+    // MODE_WARMUP: the last warm-up rows of the key the walk stands in
+    private DirectLongList warmRows;
 
     public AsyncWindowRecordCursor(
             @NotNull CairoConfiguration configuration,
             @NotNull AsyncWindowAtom atom,
-            @NotNull UnorderedPageFrameSequence<AsyncWindowAtom> sequence,
+            @NotNull ObjList<UnorderedPageFrameSequence<RoundAtom>> sequences,
             @NotNull ColumnTypes columnTypes,
             @NotNull RecordSink recordSink,
+            @NotNull AsyncWindowSplitPlan splitPlan,
             int workerCount
     ) {
         this.atom = atom;
-        this.sequence = sequence;
         this.columnTypes = columnTypes;
         this.recordSink = recordSink;
+        this.splitPlan = splitPlan;
+        this.splitsKeys = splitPlan.getMode() != AsyncWindowSplitPlan.MODE_NONE;
+        this.carry = new long[splitPlan.getPrefixCount()];
         this.taskRows = configuration.getSqlParallelWindowTaskRows();
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
         this.minRows = configuration.getSqlParallelWindowMinRows();
@@ -169,8 +191,18 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             identity.add(i);
         }
         this.record = new SelectedRecord(identity);
-        rounds[0] = new Round();
-        rounds[1] = new Round();
+        final int roundCount = sequences.size();
+        this.rounds = new Round[roundCount];
+        for (int i = 0; i < roundCount; i++) {
+            final UnorderedPageFrameSequence<RoundAtom> sequence = sequences.getQuick(i);
+            rounds[i] = new Round(sequence);
+            sequence.getAtom().round = rounds[i];
+        }
+        // a round can bring a streamed key with it, and the walk can meet several in a row
+        final int segmentCapacity = 4 * roundCount;
+        this.segmentKinds = new int[segmentCapacity];
+        this.segmentKeys = new int[segmentCapacity];
+        this.segmentRounds = new Round[segmentCapacity];
     }
 
     @Override
@@ -192,14 +224,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         }
         isOpen = false;
         Throwable failure = null;
-        awaitInFlightRound(true);
-        if (isSequenceOpen) {
-            isSequenceOpen = false;
-            try {
-                sequence.reset();
-            } catch (Throwable th) {
-                failure = th;
-            }
+        try {
+            stopRounds();
+        } catch (Throwable th) {
+            failure = th;
         }
         for (int i = 0, n = atom.getSlotCount(); i < n; i++) {
             try {
@@ -208,10 +236,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 failure = addFailure(failure, th);
             }
         }
-        failure = Misc.freeBestEffort(failure, rounds[0]);
-        failure = Misc.freeBestEffort(failure, rounds[1]);
+        for (Round round : rounds) {
+            failure = Misc.freeBestEffort(failure, round);
+        }
         ownerRows = Misc.free(ownerRows);
-        largeKeyRows = Misc.free(largeKeyRows);
+        warmRows = Misc.free(warmRows);
         keyMajorCursor = null;
         final RecordCursor baseCursor = this.baseCursor;
         this.baseCursor = null;
@@ -225,19 +254,21 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     }
 
     /**
-     * The most rows one round of tasks held since the cursor opened or rewound.
-     */
-    @TestOnly
-    public long getMaxRoundRows() {
-        return maxRoundRows;
-    }
-
-    /**
-     * Rows of keys too large for a task this cursor streamed on the query's thread since it opened or rewound.
+     * Rows of keys too large for a task this cursor streamed on the query's thread since it
+     * opened or rewound.
      */
     @TestOnly
     public long getLargeKeyRowCount() {
         return largeKeyRowsStreamed;
+    }
+
+    /**
+     * The most rows one round of tasks held since the cursor opened or rewound, warm-up rows
+     * included.
+     */
+    @TestOnly
+    public long getMaxRoundRows() {
+        return maxRoundRows;
     }
 
     /**
@@ -274,13 +305,22 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Rounds of later keys that were dispatched, computing or computed, when the query's thread
+     * started streaming a large key, summed over the large keys since the cursor opened or rewound.
+     */
+    @TestOnly
+    public long getRoundsAheadOfStreams() {
+        return roundsAheadOfStreams;
+    }
+
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return (SymbolTable) atom.getSlot(-1).getFunctions().getQuick(columnIndex);
     }
 
     /**
-     * Rows the tasks of this cursor computed since it opened or rewound.
+     * Rows the tasks of this cursor returned since it opened or rewound, warm-up rows excluded.
      */
     @TestOnly
     public long getTaskRowCount() {
@@ -301,50 +341,53 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 if (emitTask.chain.hasNext()) {
                     return true;
                 }
-                // Returned: the output goes back now, so that only the rounds in flight hold any.
-                // The next fill sizes the chain in one allocation from its row count.
-                emitTask.chain.clear();
-                this.emitTask = null;
+                finishEmitting(emitTask);
             }
             if (ownerPos < ownerRows.size()) {
                 // streamed row by row, as the serial window computes it
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                atom.getSlot(-1).streamRow(ownerRows, ownerPos++);
+                final AsyncWindowAtom.Slot owner = atom.getSlot(-1);
+                owner.streamRow(ownerRows, ownerPos++);
+                if (ownerPos == ownerRows.size() && carry.length > 0) {
+                    captureCarry(owner.getVirtualRecord());
+                }
                 return true;
             }
-            final Round emitRound = this.emitRound;
-            if (emitRound != null) {
-                if (emitTaskIndex < emitRound.taskCount) {
-                    startEmitting(emitRound.tasks.getQuick(emitTaskIndex++));
+            if (headKind == SEGMENT_ROUND) {
+                final Round round = headRound;
+                if (round.state == Round.STATE_IN_FLIGHT) {
+                    awaitRound(round);
+                    // a round finished: its slots can take the next one
+                    produce();
+                }
+                if (emitTaskIndex < round.taskCount) {
+                    startEmitting(round.tasks.getQuick(emitTaskIndex++));
                     continue;
                 }
-                this.emitRound = null;
+                round.release();
+                headKind = SEGMENT_NONE;
+                headRound = null;
+                // a round is free again
+                produce();
+                continue;
             }
-            final Round inFlightRound = this.inFlightRound;
-            if (inFlightRound != null) {
-                // Cleared first: whether awaitRound() returns or throws, no task of the round is
-                // running afterwards, so there is nothing left for close() to wait for.
-                this.inFlightRound = null;
-                sequence.awaitRound();
-                this.emitRound = inFlightRound;
-                emitTaskIndex = 0;
-                // compute the next round while this one's rows are returned
-                if (largeKeyState == LARGE_KEY_NONE && !isWalkExhausted()) {
-                    dispatchRound();
+            if (headKind == SEGMENT_STREAM) {
+                if (refillStream()) {
+                    continue;
                 }
+                headKind = SEGMENT_NONE;
                 continue;
             }
-            if (refillOwnerRows()) {
+            if (!isParallelPhase) {
+                refillPrefix();
                 continue;
             }
-            if (!isParallelPhase || largeKeyState != LARGE_KEY_NONE) {
-                // the prefix has just ended, or a large key: refill once more
-                continue;
+            if (!nextSegment()) {
+                produce();
+                if (!nextSegment()) {
+                    return false;
+                }
             }
-            if (isWalkExhausted()) {
-                return false;
-            }
-            dispatchRound();
         }
     }
 
@@ -393,11 +436,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     public void toTop() {
         // Ends the walk in a state the next pass can start from, also after a hasNext() that
         // threw: no round runs, and a sequence a failure left cancelled starts afresh.
-        awaitInFlightRound(true);
-        if (isSequenceOpen) {
-            isSequenceOpen = false;
-            sequence.reset();
-        }
+        stopRounds();
         baseCursor.toTop();
         for (int i = 0, n = atom.getSlotCount(); i < n; i++) {
             atom.getSlot(i - 1).toTop();
@@ -434,39 +473,67 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             @NotNull UnorderedPageFrameSequence<?> sequence,
             @Nullable UnorderedPageFrameSequence<?> stealingSequence
     ) {
-        final AsyncWindowAtom atom = (AsyncWindowAtom) sequence.getAtom();
-        final Task task = atom.getRound().tasks.getQuick(taskIndex);
-        final int slotId = atom.maybeAcquire(workerId, stealingSequence == sequence, circuitBreaker);
+        final RoundAtom roundAtom = (RoundAtom) sequence.getAtom();
+        final AsyncWindowAtom atom = roundAtom.atom;
+        final Task task = roundAtom.round.tasks.getQuick(taskIndex);
+        final int slotId = atom.acquireTaskSlot(workerId, circuitBreaker);
         try {
             final AsyncWindowAtom.Slot slot = atom.getSlot(slotId);
-            // the task's keys share no partition with any key this slot computed before
+            // a task starts from clean state: warm-up rows rebuild a key it continues
             slot.toTop();
-            slot.compute(task.rows, task.chain, circuitBreaker, sequence);
+            task.lastOffset = slot.compute(task.rows, task.emitFrom, task.chain, circuitBreaker, sequence);
             slot.countTask();
+            atom.countTask(workerId);
         } finally {
             atom.release(slotId);
         }
     }
 
-    // Waits for the round the workers are computing, if any, and drops its output: a cursor that
-    // closes or rewinds mid-round must not free or reuse what the round's tasks still write to.
-    // The round is cancelled first, which the tasks notice between batches, so the wait is short.
-    private void awaitInFlightRound(boolean cancel) {
-        final Round round = inFlightRound;
-        if (round == null) {
-            return;
-        }
-        inFlightRound = null;
-        if (cancel) {
-            sequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-            try {
-                sequence.awaitRound();
-            } catch (Throwable ignore) {
-                // the cancellation asked for here, or an error no one reads now; either way no
-                // task of the round runs any more
+    // Combines the rows of the key the task continues with the key's running values at the end of
+    // the previous rows returned, in place, before they are returned.
+    private void applyCarry(Task task) {
+        final RecordChain chain = task.chain;
+        final int n = carry.length;
+        long offset = 0;
+        for (long r = 0, hi = task.firstKeyRows; r < hi; r++) {
+            for (int j = 0; j < n; j++) {
+                final int type = splitPlan.getPrefixType(j);
+                final long address = chain.getAddress(offset, splitPlan.getPrefixColumn(j));
+                if (ColumnType.tagOf(type) == ColumnType.INT) {
+                    Unsafe.putInt(address, (int) AsyncWindowSplitPlan.combine(splitPlan.getPrefixOp(j), type, carry[j], Unsafe.getInt(address)));
+                } else {
+                    Unsafe.putLong(address, AsyncWindowSplitPlan.combine(splitPlan.getPrefixOp(j), type, carry[j], Unsafe.getLong(address)));
+                }
             }
-        } else {
-            sequence.awaitRound();
+            offset = chain.getNextRecordOffset(offset);
+        }
+    }
+
+    // Waits for a round the workers compute, taking queued tasks meanwhile.
+    private void awaitRound(Round round) {
+        // Marked first: whether awaitRound() returns or throws, no task of the round runs after.
+        round.state = Round.STATE_READY;
+        round.sequence.awaitRound();
+    }
+
+    private void captureCarry(Record source) {
+        for (int j = 0, n = carry.length; j < n; j++) {
+            final int column = splitPlan.getPrefixColumn(j);
+            carry[j] = switch (ColumnType.tagOf(splitPlan.getPrefixType(j))) {
+                case ColumnType.DOUBLE -> Double.doubleToRawLongBits(source.getDouble(column));
+                case ColumnType.INT -> source.getInt(column);
+                default -> source.getLong(column);
+            };
+        }
+    }
+
+    private void captureCarry(Task task) {
+        final RecordChain chain = task.chain;
+        for (int j = 0, n = carry.length; j < n; j++) {
+            final long address = chain.getAddress(task.lastOffset, splitPlan.getPrefixColumn(j));
+            carry[j] = ColumnType.tagOf(splitPlan.getPrefixType(j)) == ColumnType.INT
+                    ? Unsafe.getInt(address)
+                    : Unsafe.getLong(address);
         }
     }
 
@@ -479,6 +546,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 mode = MODE_PARALLEL;
                 final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
                 ownerRows = newRowIds(memoryTracker);
+                if (splitPlan.getMode() == AsyncWindowSplitPlan.MODE_WARMUP) {
+                    warmRows = newRowIds(memoryTracker);
+                }
                 atom.getSlot(-1).ofFrames(keyMajorCursor.getFrameAddressCache());
                 record.of(atom.getSlot(-1).getVirtualRecord());
                 return;
@@ -488,74 +558,150 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         atom.getSlot(-1).getVirtualRecord().of(baseCursor.getRecord());
     }
 
-    // Collects the next round's tasks from the scan and dispatches them to the workers. A round
-    // stops at a key too large for a task, which this thread then streams itself.
-    private void dispatchRound() {
-        if (!isSequenceOpen) {
-            openWorkerSlots();
-            try {
-                sequence.ofRounds(baseCursor, executionContext);
-            } catch (SqlException e) {
-                throw CairoException.nonCritical().put(e.getFlyweightMessage());
-            }
-            isSequenceOpen = true;
-        }
-        final Round round = emitRound == rounds[0] ? rounds[1] : rounds[0];
+    // Collects the next round's tasks from the walk and dispatches them, then queues the round.
+    // Without key splitting, a round stops at a key too large for a task: it is queued after the
+    // round, for this thread to stream.
+    private void collectRound(Round round) {
         round.clear();
         long collectedRows = 0;
-        while (collectedRows < roundRows && round.taskCount < tasksPerRound) {
+        // warm-up rows included
+        long heldRows = 0;
+        int streamKey = -1;
+        while (collectedRows < roundRows && round.taskCount < tasksPerRound && !keyMajorCursor.isWalkExhausted()) {
             final Task task = round.nextTask(this);
-            final DirectLongList rows = task.rows;
-            // a task stops at the first key boundary past taskRows, or past what the round has left
             final long taskLimit = Math.min(taskRows, roundRows - collectedRows);
-            boolean stop = false;
-            while (rows.size() < taskLimit) {
-                final long keyLo = rows.size();
-                final int status = keyMajorCursor.collectKeyRows(rows, maxKeyRows);
-                if (status == KeyMajorPageFrameRecordCursor.COLLECT_KEY_END) {
-                    continue;
-                }
-                if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
-                    // A key too large for a task: its rows so far move to this thread's stream.
-                    if (largeKeyRows == null) {
-                        largeKeyRows = newRowIds(executionContext.getMemoryTracker());
-                    }
-                    largeKeyRows.clear();
-                    final long keyRows = rows.size() - keyLo;
-                    largeKeyRows.ensureCapacity(keyRows);
-                    for (long r = keyLo, hi = rows.size(); r < hi; r++) {
-                        largeKeyRows.add(rows.get(r));
-                    }
-                    rows.setPos(keyLo);
-                    largeKeyState = LARGE_KEY_PENDING;
-                    // the task's list grew for the key's rows, which it no longer holds
-                    if (keyLo == 0) {
-                        shrinkIfOversized(rows, taskRows);
-                    }
-                }
-                // a key too large for a task, or no key left
-                stop = true;
-                break;
-            }
-            if (rows.size() == 0) {
+            final long emitted = splitsKeys ? collectSlice(task, taskLimit) : collectWholeKeys(task, taskLimit);
+            if (emitted == 0) {
                 round.dropLastTask();
             } else {
-                round.taskRowCounts.add(rows.size());
-                collectedRows += rows.size();
+                round.taskRowCounts.add(task.rows.size());
+                heldRows += task.rows.size();
+                collectedRows += emitted;
+                task.emittedRows = emitted;
             }
-            if (stop) {
+            if (task.largeKeyIndex > -1) {
+                streamKey = task.largeKeyIndex;
                 break;
             }
         }
         if (round.taskCount > 0) {
-            atom.setRound(round);
-            sequence.dispatchRound(REDUCER, round.taskRowCounts);
-            inFlightRound = round;
-            parallelRoundCount++;
-            parallelTaskCount += round.taskCount;
-            taskRowsComputed += collectedRows;
-            maxRoundRows = Math.max(maxRoundRows, collectedRows);
+            dispatch(round, heldRows);
+            enqueue(SEGMENT_ROUND, round, -1);
         }
+        if (streamKey > -1) {
+            enqueue(SEGMENT_STREAM, null, streamKey);
+        }
+    }
+
+    // Splitting keys: the next taskLimit rows of the walk, whatever keys they belong to, after the
+    // warm-up rows of a key it continues. Returns the rows collected, warm-up excluded.
+    private long collectSlice(Task task, long taskLimit) {
+        final DirectLongList rows = task.rows;
+        task.continuesKey = walkKeyOpen;
+        if (walkKeyOpen && warmRows != null) {
+            for (long i = 0, n = warmRows.size(); i < n; i++) {
+                rows.add(warmRows.get(i));
+            }
+        }
+        task.emitFrom = rows.size();
+        long emitted = 0;
+        boolean first = true;
+        while (emitted < taskLimit) {
+            // a key the task continues has its warm-up rows ahead of its new ones
+            final long keyStart = first && walkKeyOpen ? 0 : rows.size();
+            final long keyLo = rows.size();
+            final int status = keyMajorCursor.collectKeyRows(rows, taskLimit - emitted);
+            final long collected = rows.size() - keyLo;
+            emitted += collected;
+            if (first) {
+                task.firstKeyRows = collected;
+                first = false;
+            }
+            if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
+                walkKeyOpen = true;
+                updateWarmRows(rows, keyStart, false);
+                break;
+            }
+            walkKeyOpen = false;
+            if (status == KeyMajorPageFrameRecordCursor.COLLECT_EXHAUSTED) {
+                break;
+            }
+        }
+        return emitted;
+    }
+
+    // Whole keys only: keys until the task holds taskLimit rows; a key above max.key.rows is
+    // skipped by the walk and marked for this thread to stream. Returns the rows collected.
+    private long collectWholeKeys(Task task, long taskLimit) {
+        final DirectLongList rows = task.rows;
+        task.emitFrom = 0;
+        task.continuesKey = false;
+        while (rows.size() < taskLimit) {
+            final long keyLo = rows.size();
+            final int keyIndex = keyMajorCursor.getKeyIndex();
+            final int status = keyMajorCursor.collectKeyRows(rows, maxKeyRows);
+            if (status == KeyMajorPageFrameRecordCursor.COLLECT_KEY_END) {
+                continue;
+            }
+            if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
+                // too large for a task: the walk goes on past it, this thread walks it later
+                rows.setPos(keyLo);
+                // the list grew for the key's rows, which it no longer holds
+                shrinkIfOversized(rows, taskRows);
+                keyMajorCursor.skipKey();
+                task.largeKeyIndex = keyIndex;
+            }
+            // a large key, or no key left
+            break;
+        }
+        return rows.size();
+    }
+
+    private void dispatch(Round round, long heldRows) {
+        if (!isWorkerSlotsOpen) {
+            openWorkerSlots();
+        }
+        if (!round.isSequenceOpen) {
+            try {
+                round.sequence.ofRounds(baseCursor, executionContext);
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            }
+            round.isSequenceOpen = true;
+        }
+        round.state = Round.STATE_IN_FLIGHT;
+        round.sequence.dispatchRound(REDUCER, round.taskRowCounts);
+        parallelRoundCount++;
+        parallelTaskCount += round.taskCount;
+        maxRoundRows = Math.max(maxRoundRows, heldRows);
+    }
+
+    private void enqueue(int kind, @Nullable Round round, int key) {
+        final int tail = (segmentHead + segmentCount) % segmentKinds.length;
+        segmentKinds[tail] = kind;
+        segmentRounds[tail] = round;
+        segmentKeys[tail] = key;
+        segmentCount++;
+    }
+
+    private void finishEmitting(Task task) {
+        if (carry.length > 0 && task.emittedRows > 0) {
+            captureCarry(task);
+        }
+        // Returned: the output goes back now, so that only the live rounds hold any. The next fill
+        // sizes the chain in one allocation from its row count.
+        task.chain.clear();
+        taskRowsComputed += task.emittedRows;
+        emitTask = null;
+    }
+
+    private Round freeRound() {
+        for (Round round : rounds) {
+            if (round.state == Round.STATE_FREE) {
+                return round;
+            }
+        }
+        return null;
     }
 
     private boolean hasNextSerial() {
@@ -565,17 +711,6 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             return true;
         }
         return false;
-    }
-
-    private boolean isWalkExhausted() {
-        return keyMajorCursor.isWalkExhausted();
-    }
-
-    // Gives a row id list's memory back once it has grown well past what a task or a chunk needs.
-    private static void shrinkIfOversized(DirectLongList rows, long taskRows) {
-        if (rows.getCapacity() > 2 * Math.max(taskRows, ROW_IDS_INITIAL_CAPACITY)) {
-            rows.resetCapacity();
-        }
     }
 
     private DirectLongList newRowIds(MemoryTracker memoryTracker) {
@@ -608,91 +743,112 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         }
     }
 
-    private void openWorkerSlots() {
-        if (!isWorkerSlotsOpen) {
-            isWorkerSlotsOpen = true;
-            for (int i = 0, n = atom.getSlotCount() - 1; i < n; i++) {
-                try {
-                    atom.getSlot(i).open(baseCursor, executionContext);
-                } catch (SqlException e) {
-                    throw CairoException.nonCritical().put(e.getFlyweightMessage());
+    // Takes the next queued segment as the head. Returns false when none is queued.
+    private boolean nextSegment() {
+        if (segmentCount == 0) {
+            return false;
+        }
+        headKind = segmentKinds[segmentHead];
+        headRound = segmentRounds[segmentHead];
+        headKey = segmentKeys[segmentHead];
+        segmentRounds[segmentHead] = null;
+        segmentHead = (segmentHead + 1) % segmentKinds.length;
+        segmentCount--;
+        emitTaskIndex = 0;
+        if (headKind == SEGMENT_STREAM) {
+            // A key of its own: no task can take this thread's slot meanwhile, so its state
+            // carries from chunk to chunk.
+            atom.getSlot(-1).toTop();
+            headStreamPos = 0;
+            // the workers compute the keys after it while it streams
+            produce();
+            for (Round round : rounds) {
+                if (round.state != Round.STATE_FREE) {
+                    roundsAheadOfStreams++;
                 }
             }
-            atom.ofWorkerFrames(keyMajorCursor.getFrameAddressCache());
+        }
+        return true;
+    }
+
+    private void openWorkerSlots() {
+        isWorkerSlotsOpen = true;
+        for (int i = 0, n = atom.getSlotCount() - 1; i < n; i++) {
+            try {
+                atom.getSlot(i).open(baseCursor, executionContext);
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            }
+        }
+        atom.ofWorkerFrames(keyMajorCursor.getFrameAddressCache());
+    }
+
+    // Dispatches rounds while a round is free, the walk has rows left and the queue has room.
+    private void produce() {
+        if (!isParallelPhase) {
+            return;
+        }
+        while (segmentCount <= segmentKinds.length - 2 && !keyMajorCursor.isWalkExhausted()) {
+            final Round round = freeRound();
+            if (round == null) {
+                return;
+            }
+            collectRound(round);
         }
     }
 
-    // Fills ownerRows with the next rows this thread streams itself: the prefix's next chunk, or
-    // the next chunk of a large key. Returns true when it has rows to stream.
-    private boolean refillOwnerRows() {
-        final AsyncWindowAtom.Slot owner = atom.getSlot(-1);
-        if (largeKeyState == LARGE_KEY_PENDING) {
-            // The rounds before the key have been returned and none runs, so no task can take this
-            // thread's slot until the key ends: its state carries from chunk to chunk.
-            final DirectLongList rows = ownerRows;
-            ownerRows = largeKeyRows;
-            largeKeyRows = rows;
-            ownerPos = 0;
-            ownerKeyOpen = true;
-            largeKeyState = LARGE_KEY_ACTIVE;
-            owner.toTop();
-            owner.resetStream();
-            record.of(owner.getVirtualRecord());
-            largeKeyRowsStreamed += ownerRows.size();
-            return ownerRows.size() > 0;
-        }
-        if (largeKeyState == LARGE_KEY_ACTIVE) {
-            if (ownerKeyOpen) {
-                // the key's first rows were up to max.key.rows: give that memory back
-                shrinkIfOversized(ownerRows, taskRows);
-                ownerRows.clear();
-                ownerPos = 0;
-                ownerKeyOpen = keyMajorCursor.collectKeyRows(ownerRows, taskRows) == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT;
-                owner.resetStream();
-                largeKeyRowsStreamed += ownerRows.size();
-                if (ownerRows.size() > 0) {
-                    return true;
-                }
-            }
-            largeKeyState = LARGE_KEY_NONE;
-            return false;
-        }
-        if (!isParallelPhase) {
-            // the prefix: whole keys and, at its end, the rest of the key it stopped in
-            ownerRows.clear();
-            ownerPos = 0;
-            final long chunkRows = nextChunkRows;
-            nextChunkRows = Math.min(taskRows, 2 * chunkRows);
-            while (ownerRows.size() < chunkRows) {
-                if (!ownerKeyOpen && prefixRowsStreamed + ownerRows.size() >= minRows) {
-                    // at a key boundary past the prefix: the next keys go to the workers
-                    isParallelPhase = true;
-                    break;
-                }
-                final int status = keyMajorCursor.collectKeyRows(ownerRows, chunkRows - ownerRows.size());
-                if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
-                    ownerKeyOpen = true;
-                    break;
-                }
-                ownerKeyOpen = false;
-                if (status == KeyMajorPageFrameRecordCursor.COLLECT_EXHAUSTED) {
-                    break;
-                }
-            }
-            prefixRowsStreamed += ownerRows.size();
-            owner.resetStream();
-            // the record may point at the last task returned before a rewind
-            record.of(owner.getVirtualRecord());
-            if (ownerRows.size() > 0) {
-                return true;
-            }
-            if (isWalkExhausted()) {
-                // nothing for the workers at all
+    // The prefix's next chunk of rows, for this thread to stream. Ends the prefix, at a key
+    // boundary unless keys split, once min.rows rows have been streamed.
+    private void refillPrefix() {
+        ownerRows.clear();
+        ownerPos = 0;
+        final long chunkRows = nextChunkRows;
+        nextChunkRows = Math.min(taskRows, 2 * chunkRows);
+        boolean first = true;
+        while (ownerRows.size() < chunkRows) {
+            if (prefixRowsStreamed + ownerRows.size() >= minRows && (splitsKeys || !walkKeyOpen)) {
                 isParallelPhase = true;
+                break;
             }
+            final boolean continued = first && walkKeyOpen;
+            first = false;
+            final long keyLo = ownerRows.size();
+            final int status = keyMajorCursor.collectKeyRows(ownerRows, chunkRows - ownerRows.size());
+            if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
+                walkKeyOpen = true;
+                updateWarmRows(ownerRows, keyLo, continued);
+                break;
+            }
+            walkKeyOpen = false;
+            if (status == KeyMajorPageFrameRecordCursor.COLLECT_EXHAUSTED) {
+                // nothing left for the workers at all
+                isParallelPhase = true;
+                break;
+            }
+        }
+        prefixRowsStreamed += ownerRows.size();
+        atom.getSlot(-1).resetStream();
+        // the record may point at the last task returned before a rewind
+        record.of(atom.getSlot(-1).getVirtualRecord());
+    }
+
+    // The streamed key's next chunk, walked apart from the walk, whole frames at a time. Returns
+    // false once the key is done.
+    private boolean refillStream() {
+        if (headStreamPos < 0) {
             return false;
         }
-        return false;
+        shrinkIfOversized(ownerRows, taskRows);
+        ownerRows.clear();
+        ownerPos = 0;
+        headStreamPos = keyMajorCursor.collectKeyFrames(headKey, headStreamPos, ownerRows, taskRows);
+        largeKeyRowsStreamed += ownerRows.size();
+        final AsyncWindowAtom.Slot owner = atom.getSlot(-1);
+        owner.resetStream();
+        record.of(owner.getVirtualRecord());
+        // keep the workers busy with the keys after this one
+        produce();
+        return ownerRows.size() > 0 || headStreamPos > -1;
     }
 
     private void resetCounters() {
@@ -701,25 +857,41 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         parallelRoundCount = 0;
         parallelTaskCount = 0;
         prefixRowsStreamed = 0;
+        roundsAheadOfStreams = 0;
         taskRowsComputed = 0;
     }
 
     private void resetWalkState() {
         emitTask = null;
-        emitRound = null;
         emitTaskIndex = 0;
-        inFlightRound = null;
-        largeKeyState = LARGE_KEY_NONE;
+        headKind = SEGMENT_NONE;
+        headRound = null;
+        headStreamPos = -1;
+        for (int i = 0, n = segmentRounds.length; i < n; i++) {
+            segmentRounds[i] = null;
+        }
+        segmentHead = 0;
+        segmentCount = 0;
         isParallelPhase = minRows <= 0;
-        ownerKeyOpen = false;
+        walkKeyOpen = false;
         ownerPos = 0;
         nextChunkRows = Math.min(FIRST_CHUNK_ROWS, taskRows);
         if (ownerRows != null) {
             ownerRows.clear();
         }
-        if (rounds[0] != null) {
-            rounds[0].clear();
-            rounds[1].clear();
+        if (warmRows != null) {
+            warmRows.clear();
+        }
+        for (Round round : rounds) {
+            round.clear();
+        }
+    }
+
+    // Gives a row id list's memory back once it has grown well past what a task or a chunk needs,
+    // keeping the rows it holds.
+    private static void shrinkIfOversized(DirectLongList rows, long taskRows) {
+        if (rows.getCapacity() > 2 * Math.max(taskRows, ROW_IDS_INITIAL_CAPACITY)) {
+            rows.setCapacity(Math.max(rows.size(), ROW_IDS_INITIAL_CAPACITY));
         }
     }
 
@@ -727,18 +899,104 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         // Once per task of about task.rows rows, a coarse site: cancellation and the timeout are
         // checked on every call, unlike the per-row check, which samples them.
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        if (carry.length > 0 && task.continuesKey) {
+            applyCarry(task);
+        }
         task.chain.toTop();
         record.of(task.chain.getRecord());
         emitTask = task;
     }
 
+    // Waits for every round the workers still compute and resets the sequences: a cursor that
+    // closes or rewinds must not free or reuse what their tasks still write to. The rounds are
+    // cancelled first, which the tasks notice between batches, so the wait is short.
+    private void stopRounds() {
+        for (Round round : rounds) {
+            if (round.state == Round.STATE_IN_FLIGHT) {
+                round.state = Round.STATE_READY;
+                round.sequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                try {
+                    round.sequence.awaitRound();
+                } catch (Throwable ignore) {
+                    // the cancellation asked for here, or an error no one reads now; either way no
+                    // task of the round runs any more
+                }
+            }
+        }
+        Throwable failure = null;
+        for (Round round : rounds) {
+            if (round.isSequenceOpen) {
+                round.isSequenceOpen = false;
+                try {
+                    round.sequence.reset();
+                } catch (Throwable th) {
+                    failure = addFailure(failure, th);
+                }
+            }
+            round.state = Round.STATE_FREE;
+        }
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    // MODE_WARMUP: keeps the last warm-up rows of the key the walk stopped in, from the rows of
+    // the list from keyStart on, and, when the key started before the list, from the rows kept
+    // before.
+    private void updateWarmRows(DirectLongList rows, long keyStart, boolean continued) {
+        final DirectLongList warm = warmRows;
+        if (warm == null) {
+            return;
+        }
+        final long n = splitPlan.getWarmupRows();
+        final long hi = rows.size();
+        final long k = hi - keyStart;
+        if (k >= n || !continued) {
+            warm.clear();
+            for (long i = Math.max(keyStart, hi - n); i < hi; i++) {
+                warm.add(rows.get(i));
+            }
+            return;
+        }
+        // keep the last n - k rows kept so far, then append the k new ones
+        final long keep = Math.min(warm.size(), n - k);
+        final long from = warm.size() - keep;
+        for (long i = 0; i < keep; i++) {
+            warm.set(i, warm.get(from + i));
+        }
+        warm.setPos(keep);
+        for (long i = keyStart; i < hi; i++) {
+            warm.add(rows.get(i));
+        }
+    }
+
     /**
-     * The tasks of one dispatch to the workers, reused round after round.
+     * The state a round's sequence hands its tasks: the round, and the atom the cursor shares.
+     */
+    static class RoundAtom implements StatefulAtom {
+        final AsyncWindowAtom atom;
+        Round round;
+
+        RoundAtom(AsyncWindowAtom atom) {
+            this.atom = atom;
+        }
+    }
+
+    /**
+     * The tasks of one dispatch to the workers, and the sequence that dispatches them.
      */
     static class Round implements Mutable, QuietCloseable {
+        static final int STATE_FREE = 0;
+        static final int STATE_IN_FLIGHT = 1;
+        static final int STATE_READY = 2;
+        private final UnorderedPageFrameSequence<RoundAtom> sequence;
         private final LongList taskRowCounts = new LongList();
         private final ObjList<Task> tasks = new ObjList<>();
+        private boolean isSequenceOpen;
+        private int state = STATE_FREE;
         private int taskCount;
+
+        Round(UnorderedPageFrameSequence<RoundAtom> sequence) {
+            this.sequence = sequence;
+        }
 
         @Override
         public void clear() {
@@ -764,14 +1022,30 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             task.reuse(cursor.taskRows);
             return task;
         }
+
+        void release() {
+            state = STATE_FREE;
+            clear();
+        }
     }
 
     /**
-     * The row ids of whole keys and, once computed, their output rows.
+     * Row ids of the walk and, once computed, their output rows.
      */
     static class Task implements QuietCloseable {
         private final RecordChain chain;
         private final DirectLongList rows;
+        // the first key of the task continues from the rows returned before it
+        private boolean continuesKey;
+        // rows before this index only rebuild a continued key's state
+        private long emitFrom;
+        private long emittedRows;
+        // rows of the first key, warm-up excluded
+        private long firstKeyRows;
+        // a key the walk skipped after this task's rows, for the query's thread to stream
+        private int largeKeyIndex = -1;
+        // offset of the last record in the chain, written by the task's worker
+        private long lastOffset = -1;
 
         private Task(RecordChain chain, DirectLongList rows) {
             this.chain = chain;
@@ -791,6 +1065,12 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         private void reuse(long taskRows) {
             shrinkIfOversized(rows, taskRows);
             rows.clear();
+            continuesKey = false;
+            emitFrom = 0;
+            emittedRows = 0;
+            firstKeyRows = 0;
+            largeKeyIndex = -1;
+            lastOffset = -1;
         }
     }
 }

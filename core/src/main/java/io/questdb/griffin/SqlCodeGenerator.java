@@ -351,6 +351,7 @@ import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.AsyncWindowSplitPlan;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowMapGroups;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
@@ -12632,11 +12633,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // an output column type a task's row buffer cannot hold
             return null;
         }
-        // A round holds at most about round.rows / task.rows tasks, so more copies than that would
-        // never all be busy: compile, and later open, no more. Workers beyond them share the slots.
+        // A round holds at most about round.rows / task.rows tasks, and all but the round being
+        // returned may compute at once, so more copies than that would never all be busy: compile,
+        // and later open, no more. Workers beyond them share the slots.
         final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
         final long roundRows = Math.max(taskRows, configuration.getSqlParallelWindowRoundRows());
-        final int copyCount = (int) Math.min(workerCount, (roundRows + taskRows - 1) / taskRows);
+        // several rounds are alive at a time, but only the ones the workers compute need copies
+        final int rounds = Math.max(2, configuration.getSqlParallelWindowMaxRounds());
+        final int copyCount = (int) Math.min(workerCount, (rounds - 1) * ((roundRows + taskRows - 1) / taskRows));
         final ObjList<ObjList<Function>> perWorkerFunctions = new ObjList<>(copyCount);
         final ObjList<ObjList<WindowMapState>> perWorkerMapStates = new ObjList<>(copyCount);
         try {
@@ -12650,6 +12654,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             throw th;
         }
+        final AsyncWindowSplitPlan splitPlan = classifyKeySplit(columns, functions, taskRows);
         // takes the worker copies, also when it throws
         return new AsyncWindowRecordCursorFactory(
                 executionContext.getCairoEngine(),
@@ -12662,9 +12667,128 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 perWorkerFunctions,
                 perWorkerMapStates,
                 recordSink,
+                splitPlan,
                 keyColumnIndex,
                 workerCount
         );
+    }
+
+    /**
+     * Decides whether, and how, the parallel window may split one key over several tasks; see
+     * {@link AsyncWindowSplitPlan}. Every window function must allow the same kind of split:
+     * warm-up rows for a bounded ROWS frame ending at or before the current row (and {@code lag}),
+     * or a running carry for an aggregate from UNBOUNDED PRECEDING to the current row (and
+     * {@code row_number}). Anything else, or the two kinds together, keeps keys whole.
+     */
+    private static AsyncWindowSplitPlan classifyKeySplit(ObjList<QueryColumn> columns, ObjList<Function> functions, long taskRows) {
+        long warmupRows = -1;
+        final IntList prefixColumns = new IntList();
+        final IntList prefixOps = new IntList();
+        final IntList prefixTypes = new IntList();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (!qc.isWindowExpression()) {
+                continue;
+            }
+            final WindowExpression ac = (WindowExpression) qc;
+            // A partition finer than the scan's key, e.g. (sym, side), has its own frames and
+            // running values inside a key: the key's last rows are not its last rows.
+            if (ac.getPartitionBy().size() != 1
+                    || ac.isIgnoreNulls()
+                    || ac.getExclusionKind() != WindowExpression.EXCLUDE_NO_OTHERS) {
+                return AsyncWindowSplitPlan.NONE;
+            }
+            final ExpressionNode ast = qc.getAst();
+            final CharSequence name = ast.token;
+            final int type = ColumnType.tagOf(functions.getQuick(i).getType());
+            final boolean rows = ac.getFramingMode() == WindowExpression.FRAMING_ROWS;
+            final long lo = ac.getRowsLo();
+            final long hi = ac.getRowsHi();
+            if (Chars.equalsIgnoreCase(name, "lag")) {
+                final long k = lagOffset(ast);
+                if (k < 0) {
+                    return AsyncWindowSplitPlan.NONE;
+                }
+                warmupRows = Math.max(warmupRows, k);
+            } else if (Chars.equalsIgnoreCase(name, "row_number")) {
+                prefixColumns.add(i);
+                prefixOps.add(AsyncWindowSplitPlan.OP_ADD);
+                prefixTypes.add(functions.getQuick(i).getType());
+            } else if (rows && lo != Long.MIN_VALUE && lo <= 0 && hi <= 0 && hi >= lo && isFrameFunction(name)) {
+                warmupRows = Math.max(warmupRows, -lo);
+            } else if (rows && lo == Long.MIN_VALUE && hi == 0) {
+                final int op;
+                if (Chars.equalsIgnoreCase(name, "sum") || Chars.equalsIgnoreCase(name, "count")) {
+                    op = AsyncWindowSplitPlan.OP_ADD;
+                } else if (Chars.equalsIgnoreCase(name, "min")) {
+                    op = AsyncWindowSplitPlan.OP_MIN;
+                } else if (Chars.equalsIgnoreCase(name, "max")) {
+                    op = AsyncWindowSplitPlan.OP_MAX;
+                } else if (Chars.equalsIgnoreCase(name, "first_value")) {
+                    op = AsyncWindowSplitPlan.OP_FIRST;
+                } else {
+                    return AsyncWindowSplitPlan.NONE;
+                }
+                // A floating min or max cannot be carried: the serial running min treats values
+                // within Numbers.compare's tolerance as equal, so where it stands depends on the
+                // path to it, and the running max ranks -0.0 below 0.0. A piece computed from its
+                // own first row, then compared with the carry, reproduces neither.
+                final boolean isFloatingMinMax = (op == AsyncWindowSplitPlan.OP_MIN || op == AsyncWindowSplitPlan.OP_MAX)
+                        && type == ColumnType.DOUBLE;
+                final boolean typeOk = !isFloatingMinMax && (type == ColumnType.DOUBLE || type == ColumnType.LONG
+                        || (type == ColumnType.INT && op != AsyncWindowSplitPlan.OP_ADD));
+                if (!typeOk) {
+                    return AsyncWindowSplitPlan.NONE;
+                }
+                prefixColumns.add(i);
+                prefixOps.add(op);
+                prefixTypes.add(functions.getQuick(i).getType());
+            } else {
+                return AsyncWindowSplitPlan.NONE;
+            }
+        }
+        if (warmupRows > -1 && prefixColumns.size() > 0) {
+            // a task that continues a key cannot both rebuild it and start it from scratch
+            return AsyncWindowSplitPlan.NONE;
+        }
+        if (warmupRows > -1) {
+            // warm-up rows come from the previous task, which holds about taskRows of them
+            return warmupRows * 2 < taskRows
+                    ? new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_WARMUP, warmupRows, prefixColumns, prefixOps, prefixTypes)
+                    : AsyncWindowSplitPlan.NONE;
+        }
+        return prefixColumns.size() > 0
+                ? new AsyncWindowSplitPlan(AsyncWindowSplitPlan.MODE_PREFIX, 0, prefixColumns, prefixOps, prefixTypes)
+                : AsyncWindowSplitPlan.NONE;
+    }
+
+    // Aggregates whose value over a ROWS frame depends on the frame's rows alone.
+    private static boolean isFrameFunction(CharSequence name) {
+        return Chars.equalsIgnoreCase(name, "avg")
+                || Chars.equalsIgnoreCase(name, "sum")
+                || Chars.equalsIgnoreCase(name, "count")
+                || Chars.equalsIgnoreCase(name, "min")
+                || Chars.equalsIgnoreCase(name, "max")
+                || Chars.equalsIgnoreCase(name, "first_value")
+                || Chars.equalsIgnoreCase(name, "last_value");
+    }
+
+    // lag(x[, k[, default]]): k when it is a constant, 1 when it is absent, -1 otherwise.
+    private static long lagOffset(ExpressionNode ast) {
+        if (ast.paramCount < 2) {
+            return 1;
+        }
+        // two arguments are lhs and rhs; more are in args, last argument first
+        final ExpressionNode k = ast.paramCount == 2 ? ast.rhs : ast.args.getQuick(ast.paramCount - 2);
+        if (k == null || k.type != CONSTANT) {
+            return -1;
+        }
+        try {
+            final long offset = Numbers.parseLong(k.token);
+            return offset >= 0 ? offset : -1;
+        } catch (NumericException e) {
+            return -1;
+        }
     }
 
     private static boolean hasRandomFunction(ObjList<ExpressionNode> nodes) {

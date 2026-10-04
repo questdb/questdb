@@ -589,6 +589,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
     private final long sqlParallelWindowMaxKeyRows;
+    private final int sqlParallelWindowMaxRounds;
     private final long sqlParallelWindowMinRows;
     private final long sqlParallelWindowRoundRows;
     private final long sqlParallelWindowTaskRows;
@@ -2436,6 +2437,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (sqlParallelWindowMaxKeyRows < 1) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS.getPropertyPath(),
                         Long.toString(sqlParallelWindowMaxKeyRows));
+            }
+            this.sqlParallelWindowMaxRounds = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_ROUNDS, 3);
+            if (sqlParallelWindowMaxRounds < 2) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_ROUNDS.getPropertyPath(),
+                        Integer.toString(sqlParallelWindowMaxRounds));
             }
             this.sqlParallelWindowMinRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 262_144);
             if (sqlParallelWindowMinRows < 0) {
@@ -5969,6 +5975,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlParallelWindowMaxKeyRows() {
             return sqlParallelWindowMaxKeyRows;
+        }
+
+        @Override
+        public int getSqlParallelWindowMaxRounds() {
+            return sqlParallelWindowMaxRounds;
         }
 
         @Override

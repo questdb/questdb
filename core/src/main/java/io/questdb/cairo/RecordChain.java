@@ -167,6 +167,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
     }
 
+    /**
+     * The offset of the record after the one at {@code recordOffset}, or -1 for the last one. The
+     * first record of a filled chain is at offset 0.
+     */
+    public long getNextRecordOffset(long recordOffset) {
+        return mem.getLong(recordOffset);
+    }
+
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {
         return rowToDataOffset(recordOffset) + varOffset + columnOffsets[columnIndex];
     }
