@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -73,6 +74,19 @@ public class PostingIndexFrameSeekQueryTest extends AbstractCairoTest {
     @Test
     public void testPostingEfCovering() throws Exception {
         assertIdentity("POSTING EF INCLUDE (px, qty, note)");
+    }
+
+    @Test
+    public void testPostingEfLegacyCovering() throws Exception {
+        // EF blobs without the ranked trailer, as written before it existed: the cursors take
+        // the unranked seek
+        final boolean wasRanked = PostingIndexUtils.isEfRankTrailerEnabled;
+        PostingIndexUtils.isEfRankTrailerEnabled = false;
+        try {
+            assertIdentity("POSTING EF INCLUDE (px, qty, note)");
+        } finally {
+            PostingIndexUtils.isEfRankTrailerEnabled = wasRanked;
+        }
     }
 
     private static String rowsSql(long lo, long hi) {
@@ -125,6 +139,15 @@ public class PostingIndexFrameSeekQueryTest extends AbstractCairoTest {
                         "SELECT * FROM %t WHERE sym = '" + s + "' LATEST ON ts PARTITION BY sym",
                         "SELECT ts, px, qty, note FROM %t WHERE sym = '" + s + "'",
                         "SELECT ts, px FROM %t WHERE sym = '" + s + "' ORDER BY ts DESC LIMIT 7",
+                        // covered columns read through cursors that start mid-partition, in both
+                        // directions: the sidecar ordinal must follow the seek
+                        "SELECT ts, px, qty, note FROM %t WHERE sym = '" + s + "' AND ts BETWEEN '2024-01-01T13:00' AND '2024-01-03T07:30'",
+                        "SELECT ts, px, qty, note FROM %t WHERE sym = '" + s + "' AND ts BETWEEN '2024-01-01T13:00' AND '2024-01-03T07:30' ORDER BY ts DESC",
+                        "SELECT ts, px, qty, note FROM %t WHERE sym = '" + s + "' AND ts BETWEEN '2024-01-02T01:00' AND '2024-01-02T01:30'",
+                        "SELECT ts, px, note FROM %t WHERE sym = '" + s + "' AND ts < '2024-01-03T19:00' ORDER BY ts DESC LIMIT 5",
+                        "SELECT ts, px, note FROM %t WHERE sym = '" + s + "' AND ts > '2024-01-02T03:00' LIMIT 5",
+                        "SELECT ts, px, qty FROM %t WHERE sym = '" + s + "' AND ts < '2024-01-02T09:00' LATEST ON ts PARTITION BY sym",
+                        "SELECT count(), sum(px), sum(qty), min(note), max(note) FROM %t WHERE sym = '" + s + "' AND ts BETWEEN '2024-01-01T13:00' AND '2024-01-03T07:30'",
                         "SELECT * FROM %t WHERE s2 = '" + s + "'",
                         "SELECT * FROM %t WHERE s2 = '" + s + "' ORDER BY ts DESC",
                         "SELECT * FROM %t WHERE sym IN ('" + s + "', 'S', 'H')",
