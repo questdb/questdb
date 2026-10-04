@@ -101,70 +101,6 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEfHighWordOfOrdinalMatchesBruteForce() throws Exception {
-        assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
-            final int maxCount = 20_000;
-            final long src = Unsafe.malloc((long) maxCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            final long dstSize = PostingIndexUtils.computeMaxEncodedSize(maxCount);
-            final long dst = Unsafe.malloc(dstSize, MemoryTag.NATIVE_DEFAULT);
-            try (PostingIndexUtils.EncodeContext ctx = new PostingIndexUtils.EncodeContext()) {
-                for (int iter = 0; iter < 60; iter++) {
-                    final int count = 1 + rnd.nextInt(iter < 10 ? 70 : maxCount);
-                    // Mix of tight and sparse gaps, plus occasional long runs, so the high
-                    // vector has empty words, full words and multi-word buckets.
-                    long v = rnd.nextInt(1000);
-                    final int gapScale = 1 + rnd.nextInt(5_000);
-                    for (int i = 0; i < count; i++) {
-                        Unsafe.putLong(src + (long) i * Long.BYTES, v);
-                        v += rnd.nextInt(10) == 0 ? 1 : 1 + rnd.nextInt(gapScale);
-                    }
-                    ctx.ensureCapacity(count);
-                    final int size = PostingIndexUtils.encodeKeyEF(src, count, dst, ctx);
-                    final long[] decoded = new long[count];
-                    PostingIndexUtils.decodeKeyEF(dst, decoded);
-
-                    final int bitsL = Unsafe.getByte(dst + 8) & 0xFF;
-                    final long highStart = dst + 17 + ((((long) count * bitsL + 63) >>> 6) << 3);
-                    int rank = 0;
-                    int word = 0;
-                    for (int ordinal = 0; ordinal < count; ordinal++) {
-                        Assert.assertEquals(Unsafe.getLong(src + (long) ordinal * Long.BYTES), decoded[ordinal]);
-                        // brute force: the word whose cumulative one count passes the ordinal
-                        while (rank + Long.bitCount(Unsafe.getLong(highStart + (long) word * Long.BYTES)) <= ordinal) {
-                            rank += Long.bitCount(Unsafe.getLong(highStart + (long) word * Long.BYTES));
-                            word++;
-                        }
-                        final long packed = PostingIndexUtils.efHighWordOfOrdinal(dst, size, ordinal);
-                        Assert.assertEquals("count=" + count + ", ordinal=" + ordinal, word, (int) (packed >>> 32));
-                        Assert.assertEquals("count=" + count + ", ordinal=" + ordinal, rank, (int) packed);
-                    }
-                    Assert.assertEquals(-1, PostingIndexUtils.efHighWordOfOrdinal(dst, size, count));
-                    Assert.assertEquals(-1, PostingIndexUtils.efHighWordOfOrdinal(dst, size, -1));
-                    // a size that does not match the ranked extent is treated as legacy
-                    Assert.assertEquals(-1, PostingIndexUtils.efHighWordOfOrdinal(dst, size - 1, 0));
-                }
-
-                // legacy unranked blob: no trailer, so no ranked seek
-                PostingIndexUtils.isEfRankTrailerEnabled = false;
-                try {
-                    for (int i = 0; i < 100; i++) {
-                        Unsafe.putLong(src + (long) i * Long.BYTES, i * 7L);
-                    }
-                    ctx.ensureCapacity(100);
-                    final int size = PostingIndexUtils.encodeKeyEF(src, 100, dst, ctx);
-                    Assert.assertEquals(-1, PostingIndexUtils.efHighWordOfOrdinal(dst, size, 5));
-                } finally {
-                    PostingIndexUtils.isEfRankTrailerEnabled = true;
-                }
-            } finally {
-                Unsafe.free(src, (long) maxCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(dst, dstSize, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
     public void testEfLegacyMixed() throws Exception {
         assertFrames(PostingIndexUtils.ENCODING_EF, false, LAYOUT_MIXED, 0);
     }
@@ -177,6 +113,70 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
     @Test
     public void testEfLegacySparse() throws Exception {
         assertFrames(PostingIndexUtils.ENCODING_EF, false, LAYOUT_SPARSE, 0);
+    }
+
+    @Test
+    public void testEfLowerBoundWordMatchesBruteForce() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final int maxCount = 20_000;
+            final long src = Unsafe.malloc((long) maxCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long dstSize = PostingIndexUtils.computeMaxEncodedSize(maxCount);
+            final long dst = Unsafe.malloc(dstSize, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext ctx = new PostingIndexUtils.EncodeContext()) {
+                for (int iter = 0; iter < 60; iter++) {
+                    final int count = 1 + rnd.nextInt(iter < 10 ? 70 : maxCount);
+                    // Mix of tight and sparse gaps plus long consecutive runs, so the high vector
+                    // has empty words, full words and high buckets spanning several words.
+                    long v = rnd.nextInt(1000);
+                    final int gapScale = 1 + rnd.nextInt(5_000);
+                    final long[] values = new long[count];
+                    for (int i = 0; i < count; i++) {
+                        values[i] = v;
+                        Unsafe.putLong(src + (long) i * Long.BYTES, v);
+                        v += rnd.nextInt(10) < 3 ? 1 : 1 + rnd.nextInt(gapScale);
+                    }
+                    ctx.ensureCapacity(count);
+                    final int size = PostingIndexUtils.encodeKeyEF(src, count, dst, ctx);
+                    final int bitsL = Unsafe.getByte(dst + 8) & 0xFF;
+                    final long highStart = dst + 17 + ((((long) count * bitsL + 63) >>> 6) << 3);
+                    final long universe = values[count - 1] + 1;
+                    for (int t = 0; t < 2_000; t++) {
+                        final long target = switch (t % 4) {
+                            case 0 -> values[rnd.nextInt(count)];
+                            case 1 -> values[rnd.nextInt(count)] + 1;
+                            case 2 -> values[rnd.nextInt(count)] - 1;
+                            default -> rnd.nextLong(universe + 2);
+                        };
+                        int expected = 0;
+                        while (expected < count && values[expected] < target) {
+                            expected++;
+                        }
+                        final int ordinal = PostingIndexUtils.efLowerBound(dst, size, target);
+                        Assert.assertEquals("count=" + count + ", target=" + target, expected, ordinal);
+                        if (ordinal < 0 || ordinal >= count) {
+                            continue;
+                        }
+                        final long packed = PostingIndexUtils.efLowerBoundWord(dst, target, ordinal);
+                        final int word = (int) (packed >>> 32);
+                        final int rank = (int) packed;
+                        int bruteRank = 0;
+                        for (int w = 0; w < word; w++) {
+                            bruteRank += Long.bitCount(Unsafe.getLong(highStart + (long) w * Long.BYTES));
+                        }
+                        final String label = "count=" + count + ", target=" + target + ", ordinal=" + ordinal;
+                        Assert.assertEquals(label, bruteRank, rank);
+                        Assert.assertTrue(label, rank <= ordinal && ordinal - rank <= 64);
+                        // the ordinal's own one bit is at or after the start word
+                        final long ordinalBit = (values[ordinal] >>> bitsL) + ordinal;
+                        Assert.assertTrue(label, ordinalBit >= (long) word * 64);
+                    }
+                }
+            } finally {
+                Unsafe.free(src, (long) maxCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(dst, dstSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test

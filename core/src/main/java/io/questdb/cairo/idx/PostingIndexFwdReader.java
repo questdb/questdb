@@ -1000,7 +1000,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          * Positions the EF decode at the high word holding the first ordinal whose value is
          * {@code >= minValue}, so a cursor opened for a page frame in the middle of the key's list
          * does not decode (and discard) every value before the frame. Ranked blobs seek in
-         * O(log n) through the trailer's checkpoints; legacy unranked blobs skip whole high words
+         * O(log n) through the trailer's checkpoints (efLowerBound, then an O(1) step to the
+         * word holding that ordinal); legacy unranked blobs skip whole high words
          * by popcount, which reads one word per 64 high bits instead of decoding each value.
          * Either way the decode resumes at a word boundary with {@code efOutputCount} equal to
          * the ordinals before that word, exactly the state a from-zero decode reaches there, and
@@ -1019,11 +1020,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     word = efNumHighWords;
                     rank = efTotalCount;
                 } else if (ordinal >= 0) {
-                    final long packed = PostingIndexUtils.efHighWordOfOrdinal(blobAddr, encodedSize, ordinal);
-                    if (packed >= 0) {
-                        word = (int) (packed >>> 32);
-                        rank = (int) packed;
-                    }
+                    final long packed = PostingIndexUtils.efLowerBoundWord(blobAddr, minValue, ordinal);
+                    word = (int) (packed >>> 32);
+                    rank = (int) packed;
                 }
             }
             if (word < 0) {

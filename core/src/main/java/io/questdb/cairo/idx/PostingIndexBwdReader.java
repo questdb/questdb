@@ -1048,10 +1048,11 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
          * Positions the reverse EF decode at the high word holding the last ordinal whose value
          * is {@code <= maxValue}, so a cursor opened for a page frame in the middle of the key's
          * list does not decode (and discard) every value after the frame. Ranked blobs seek in
-         * O(log n) through the trailer's checkpoints; legacy unranked blobs, whose rank
+         * O(log n) through the trailer's checkpoints (efLowerBound, then an O(1) step to the
+         * word holding that ordinal); legacy unranked blobs, whose rank
          * directory the caller has just built, skip whole high words from the top. The decode
          * resumes at a word boundary, exactly the state a from-the-top decode reaches there, and
-         * {@link #hasNext()} discards the at most 63 remaining values above maxValue as before.
+         * {@link #hasNext()} discards the at most 64 remaining values above maxValue as before.
          */
         private void seekEF(long baseAddr, int count, int numHighWords) {
             int word;
@@ -1065,17 +1066,18 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 if (end == 0) {
                     word = -1;
                     skipped = count;
-                } else if (end > 0 && end <= count) {
-                    final long packed = PostingIndexUtils.efHighWordOfOrdinal(blobAddr, efBlobSize, end - 1);
-                    if (packed < 0) {
-                        // Unusable trailer: keep the from-the-top walk, whose ranked decode
-                        // reports the corruption.
-                        return;
-                    }
+                } else if (end > 0 && end < count) {
+                    // maxValue < universe - 1, so the last value lies above maxValue and end < count.
+                    // Start at the word holding ordinal end (or the zero that ends maxValue + 1's
+                    // high bucket): ordinal end - 1 is in that word or below it, and the decode
+                    // discards the ones of that word that lie above maxValue.
+                    final long packed = PostingIndexUtils.efLowerBoundWord(blobAddr, maxValue + 1, end);
                     word = (int) (packed >>> 32);
                     final int through = (int) packed + Long.bitCount(Unsafe.getLong(baseAddr + efHighOffset + (long) word * Long.BYTES));
                     skipped = count - Math.min(through, count);
                 } else {
+                    // Unusable trailer: keep the from-the-top walk, whose ranked decode reports
+                    // the corruption.
                     return;
                 }
             } else {

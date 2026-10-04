@@ -526,59 +526,30 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Locates the high-bits word that holds the one bit of EF ordinal {@code ordinal}, using the
-     * ranked trailer's checkpoints. Returns {@code (wordIndex << 32) | rankBeforeWord}, where
-     * {@code rankBeforeWord} is the number of ordinals encoded in the words before
-     * {@code wordIndex}, or {@code -1} for a legacy unranked blob, a malformed/truncated trailer,
-     * or an out-of-range ordinal. A cursor positioned at {@code (wordIndex, rankBeforeWord)}
-     * decodes exactly the ordinals from {@code rankBeforeWord} on, so it can seek to an ordinal
-     * with one checkpoint search plus at most eight high-word reads instead of decoding the list
-     * from ordinal 0.
+     * Converts an EF lower bound into the decode position that reaches it. {@code ordinal} must
+     * be {@code efLowerBound(srcAddr, encodedSize, target)}, with {@code 0 <= ordinal < count}.
+     * Returns {@code (wordIndex << 32) | rankBeforeWord}: the high-bits word that holds bit
+     * position {@code (target >>> L) + ordinal}, and the number of ordinals encoded in the words
+     * before it. A decode started at {@code (wordIndex, rankBeforeWord)} visits only ordinals
+     * from {@code rankBeforeWord} on, and the ordinals from {@code rankBeforeWord} up to (not
+     * including) {@code ordinal} all sit in that word, so it discards at most 63 values below the
+     * target.
+     * <p>
+     * O(1): in the high-bits vector, ordinal {@code i} sits at bit {@code high(i) + i}. When
+     * {@code high(ordinal) == target >>> L} that is the bit above; otherwise every value of the
+     * target's high bucket is below the target, and the bit above is the zero that closes that
+     * bucket, with exactly {@code ordinal} one bits before it. Either way {@code ordinal} one
+     * bits precede the position, so the rank before its word follows from one popcount.
      */
-    public static long efHighWordOfOrdinal(long srcAddr, int encodedSize, int ordinal) {
-        final long trailer = efRankTrailerAddress(srcAddr, encodedSize);
-        if (trailer == 0) {
-            return -1;
-        }
+    public static long efLowerBoundWord(long srcAddr, long target, int ordinal) {
         final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
-        if (ordinal < 0 || ordinal >= count) {
-            return -1;
-        }
         final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
-        final int highWordCount = Unsafe.getInt(trailer + 8);
-        final int checkpointCount = Unsafe.getInt(trailer + 12);
-        int lo = 0;
-        int hi = checkpointCount;
-        while (lo < hi) {
-            final int mid = (lo + hi) >>> 1;
-            final int midRank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, mid);
-            if (midRank < 0) {
-                return -1;
-            }
-            if (midRank <= ordinal) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        final int checkpoint = lo - 1;
-        if (checkpoint < 0 || checkpoint >= checkpointCount - 1) {
-            return -1;
-        }
-        int rank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, checkpoint);
-        if (rank < 0) {
-            return -1;
-        }
-        final long highStart = srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL);
-        final int wordHi = Math.min(highWordCount, (checkpoint + 1) << EF_RANK_CHECKPOINT_SHIFT);
-        for (int wordIndex = checkpoint << EF_RANK_CHECKPOINT_SHIFT; wordIndex < wordHi; wordIndex++) {
-            final int wordRank = Long.bitCount(Unsafe.getLong(highStart + (long) wordIndex * Long.BYTES));
-            if (rank + wordRank > ordinal) {
-                return ((long) wordIndex << 32) | rank;
-            }
-            rank += wordRank;
-        }
-        return -1;
+        final long position = (target >>> bitsL) + ordinal;
+        final int wordIndex = (int) (position >>> 6);
+        final long word = Unsafe.getLong(srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL) + (long) wordIndex * Long.BYTES);
+        final int bit = (int) (position & 63);
+        final int onesBelow = bit == 0 ? 0 : Long.bitCount(word & (-1L >>> (64 - bit)));
+        return ((long) wordIndex << 32) | (ordinal - onesBelow);
     }
 
     /**
