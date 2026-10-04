@@ -540,6 +540,13 @@ public final class PostingIndexUtils {
      * target's high bucket is below the target, and the bit above is the zero that closes that
      * bucket, with exactly {@code ordinal} one bits before it. Either way {@code ordinal} one
      * bits precede the position, so the rank before its word follows from one popcount.
+     * <p>
+     * The word is read without integrity validation. On valid data the rank lies in
+     * {@code [ordinal - 63, ordinal]} and is never negative; a word holding more one bits below
+     * the position than {@code ordinal} contradicts the ordinal, and decoding from a negative
+     * rank would address the low bits outside the blob. That case returns {@code -1}, and the
+     * caller falls back to a seek that does not trust the word. (The rank cannot exceed
+     * {@code ordinal}: a popcount is never negative.)
      */
     public static long efLowerBoundWord(long srcAddr, long target, int ordinal) {
         final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
@@ -549,7 +556,63 @@ public final class PostingIndexUtils {
         final long word = Unsafe.getLong(srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL) + (long) wordIndex * Long.BYTES);
         final int bit = (int) (position & 63);
         final int onesBelow = bit == 0 ? 0 : Long.bitCount(word & (-1L >>> (64 - bit)));
+        if (onesBelow > ordinal) {
+            return -1;
+        }
         return ((long) wordIndex << 32) | (ordinal - onesBelow);
+    }
+
+    /**
+     * Returns the first (smallest) value of an EF blob, or {@code -1} when it is not found
+     * cheaply: a legacy unranked blob whose first one bit lies past the first eight high words,
+     * or a blob that is malformed. The value of ordinal 0 is {@code (p << L) | low(0)}, where
+     * {@code p} is the position of the first one bit in the high vector. The first eight words
+     * are scanned directly; past them, a ranked blob's checkpoint ranks (ascending, so the first
+     * checkpoint with a non-zero rank closes the block holding the first one bit) narrow the scan
+     * to one eight-word block.
+     * <p>
+     * The checkpoint ranks are read without integrity validation: they only choose which block to
+     * scan, every word read stays inside the high vector, and the result is a hint. A forward
+     * cursor uses it only to skip its seek when the whole blob is at or above its lower bound,
+     * which is correct whatever the hint, since the decode discards values below the bound.
+     */
+    public static long efFirstValue(long srcAddr, int encodedSize) {
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
+        final long universe = Unsafe.getLong(srcAddr + 2L * Integer.BYTES + Byte.BYTES);
+        if (count <= 0 || bitsL > 63 || universe <= 0) {
+            return -1;
+        }
+        final long highWordCount = (count + (universe >>> bitsL) + 63) / 64;
+        final long highStart = srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL);
+        long position = efFirstOnePosition(highStart, 0, (int) Math.min(highWordCount, EF_RANK_CHECKPOINT_WORDS));
+        if (position < 0) {
+            final long trailer = efRankTrailerAddress(srcAddr, encodedSize);
+            if (trailer == 0) {
+                return -1;
+            }
+            // Block 0 holds no one bit, so checkpoint 1 has rank 0; find the first checkpoint
+            // with a non-zero rank. The final checkpoint's rank is count > 0.
+            final long checkpoints = trailer + EF_RANK_TRAILER_HEADER_SIZE;
+            int lo = 2;
+            int hi = Unsafe.getInt(trailer + 12) - 1;
+            while (lo < hi) {
+                final int mid = (lo + hi) >>> 1;
+                if (Unsafe.getInt(checkpoints + (long) mid * EF_RANK_CHECKPOINT_ENTRY_SIZE) > 0) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            final int wordLo = (lo - 1) << EF_RANK_CHECKPOINT_SHIFT;
+            position = efFirstOnePosition(highStart, wordLo, (int) Math.min(highWordCount, (long) wordLo + EF_RANK_CHECKPOINT_WORDS));
+            if (position < 0) {
+                return -1;
+            }
+        }
+        final long low = bitsL == 0 ? 0 : Unsafe.getLong(srcAddr + EF_HEADER_SIZE) & ((1L << bitsL) - 1);
+        // ordinal 0 sits at bit high(0) + 0, so its high part is the bit position itself
+        return (position << bitsL) | low;
     }
 
     /**
@@ -2047,6 +2110,16 @@ public final class PostingIndexUtils {
         } catch (NumericException e) {
             return PARSE_FAIL;
         }
+    }
+
+    private static long efFirstOnePosition(long highStart, int wordLo, int wordHi) {
+        for (int wordIndex = wordLo; wordIndex < wordHi; wordIndex++) {
+            final long word = Unsafe.getLong(highStart + (long) wordIndex * Long.BYTES);
+            if (word != 0) {
+                return (long) wordIndex * 64 + Long.numberOfTrailingZeros(word);
+            }
+        }
+        return -1;
     }
 
     private static int efFirstOrdinalForHigh(long srcAddr, long trailer, int bitsL, long high) {

@@ -788,7 +788,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+            final long prefixSumOffset = genLookup.getGenPrefixSumOffset(gen, valueMem);
+            long prefixSumAddr = valueMem.addressOf(prefixSumOffset);
             int k = requestedKey - minKey;
             int start = Unsafe.getInt(prefixSumAddr + (long) k * Integer.BYTES);
             int end = Unsafe.getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
@@ -820,7 +821,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long dataOffset = Unsafe.getLong(offsetsBase + (long) start * Long.BYTES);
             long dataEndOffset = start + 1 < activeKeyCount
                     ? Unsafe.getLong(offsetsBase + (long) (start + 1) * Long.BYTES)
-                    : genLookup.getGenPrefixSumOffset(gen, valueMem) - genFileOffset - headerSize;
+                    : prefixSumOffset - genFileOffset - headerSize;
             this.encodedOffset = genFileOffset + headerSize + dataOffset;
             this.encodedSize = (int) (dataEndOffset - dataOffset);
 
@@ -907,8 +908,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 blockBufferPos = 0;
                 blockBufferEnd = 0;
                 constantDeltaRemaining = 0;
+                // Mirrors the backward reader's maxValue < u - 1 guard: a blob whose first value is
+                // already >= minValue (every generation after the one holding minValue) has nothing
+                // to skip, so it starts at ordinal 0 without paying for the seek.
                 if (minValue > 0) {
-                    seekEF(baseAddr, u);
+                    final long firstValue = PostingIndexUtils.efFirstValue(baseAddr + encodedOffset, encodedSize);
+                    if (firstValue < 0 || minValue > firstValue) {
+                        seekEF(baseAddr, u);
+                    }
                 }
                 return;
             }
@@ -954,8 +961,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
 
             // Only the covered accessors consume the skipped count (via sidecarStrideKeyStart or
-            // sidecarOrdinal, both read only when coverCount > 0), so a plain cursor skips this
-            // O(startBlock) sum; summing it on every frame of a long list cost O(frames * blocks).
+            // sidecarOrdinal, both read only when coverCount > 0), so the cursors of a non-covering
+            // index skip this O(startBlock) sum; summing it on every frame of a long list cost
+            // O(frames * blocks). coverCount is per index, not per cursor: on an INCLUDE index a
+            // query that reads no covered column still pays the sum.
             int skippedValueCount = 0;
             if (coverCount > 0) {
                 for (int b = 0; b < startBlock; b++) {
@@ -1021,8 +1030,13 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     rank = efTotalCount;
                 } else if (ordinal >= 0) {
                     final long packed = PostingIndexUtils.efLowerBoundWord(blobAddr, minValue, ordinal);
-                    word = (int) (packed >>> 32);
-                    rank = (int) packed;
+                    // A negative result means the high word is inconsistent with the validated
+                    // ordinal (corrupt data): decoding from it would address the low bits at a
+                    // negative ordinal, outside the blob, so take the unranked walk instead.
+                    if (packed >= 0) {
+                        word = (int) (packed >>> 32);
+                        rank = (int) packed;
+                    }
                 }
             }
             if (word < 0) {

@@ -1072,10 +1072,18 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     // high bucket): ordinal end - 1 is in that word or below it, and the decode
                     // discards the ones of that word that lie above maxValue.
                     final long packed = PostingIndexUtils.efLowerBoundWord(blobAddr, maxValue + 1, end);
+                    if (packed < 0) {
+                        // The high word is inconsistent with the validated ordinal (corrupt data):
+                        // keep the from-the-top walk, whose ranked decode reports the corruption.
+                        return;
+                    }
                     word = (int) (packed >>> 32);
                     final int through = (int) packed + Long.bitCount(Unsafe.getLong(baseAddr + efHighOffset + (long) word * Long.BYTES));
                     skipped = count - Math.min(through, count);
                 } else {
+                    // end == count cannot happen: the caller seeks only when maxValue < u - 1, the
+                    // last value, so that value lies above maxValue.
+                    assert end != count : "EF lower bound past the last value [end=" + end + ", count=" + count + ']';
                     // Unusable trailer: keep the from-the-top walk, whose ranked decode reports
                     // the corruption.
                     return;
