@@ -1,0 +1,19 @@
+site	kind	file	method	message	decision	instrument
+ColumnTypeConverter.convertFromFixedSize tag switch #1	tag-switch-default	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	convertFromFixedSize	unsupported conversion	implement-pair	refused-at-setup storage.alter
+RelationRules.copier relation kind switch	registration	core/src/main/java/io/questdb/cairo/RelationRules.java	copier		name-yourself	build
+WAL columnar append #13	family-arm	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	unsupportedColumnType	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1	family-opcode	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	copyOpcode	inconvertible types	implement-pair	test RelationCoverageTest
+SAMPLE BY FILL(PREV) #1	family-arm	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	isFixedSizePrevSlotEligible	no family arm for <type> at SAMPLE BY FILL(PREV)	declare-or-admit	refused-at-setup sql.fill_prev
+UNION cast pair switch	pair-switch	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for <type> at UNION	name-yourself	build
+SampleByFillValueRecordCursorFactory.createPlaceHolderFunction family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillValueRecordCursorFactory.java	createPlaceHolderFunction	no family arm for <type> at SAMPLE BY FILL(value)	declare-or-admit	refused-at-setup sql.fill_value
+SAMPLE BY FILL(value)	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillValueRecordCursorFactory.java	createPlaceHolderFunction	no family arm for <type> at SAMPLE BY FILL(value)	declare-or-admit	refused-at-setup sql.fill_value
+CaseCommon.getCaseFunctionConstructor tag table constructors	registration	core/src/main/java/io/questdb/griffin/engine/functions/conditional/CaseCommon.java	getCaseFunctionConstructor	unsupported CASE value type	implement-pair	test RelationCoverageTest
+RecordComparatorCompiler.comparatorOpcode compare arm	compare-arm	core/src/main/java/io/questdb/griffin/engine/orderby/RecordComparatorCompiler.java	comparatorOpcode	no compare arm for <type> at ORDER BY	add-writer-arm	refused-at-setup sql.order_asc
+SortKeyEncoder.keyKind family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	keyKind		implement-pair	test GeneratedAccessorCoverageTest
+TypeManager.getTypeAdapter wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/text/types/TypeManager.java	getTypeAdapter		add-writer-arm	build
+ILP column kind	family-arm	core/src/main/java/io/questdb/cutlass/line/LineUtils.java	columnKind	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineTcpMeasurementEvent.createMeasurementEvent family opcode switch #1	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+QWP WAL append #1	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+QWP WAL append #6	family-arm	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+col_type::movement match	rust-match	core/rust/qdb-core/src/col_type.rs	movement		name-yourself	build
+column_type.h::var_layout switch	c-switch	core/src/main/c/share/column_type.h	var_layout		name-yourself	build

@@ -1,0 +1,537 @@
+site	kind	file	method	message	decision	instrument
+ColumnType.getTimestampType tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/ColumnType.java	getTimestampType		-	not-type-dependent
+ColumnType.pow2SizeOf tag table POW2_SIZE	registration	core/src/main/java/io/questdb/cairo/ColumnType.java	pow2SizeOf		fill-driver-answer	test TypeDriverTest
+ColumnTypeConverter.convertColumn policy switch #1	policy-switch	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	convertColumn		add-writer-arm	build
+ColumnTypeConverter.convertColumn policy switch #2	policy-switch	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	convertColumn		add-writer-arm	build
+ALTER COLUMN TYPE var-size to fixed pair switch	pair-switch	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	getConverterFromVarToFixed		name-yourself	build
+ColumnTypeConverter.convertFromFixedSize tag switch #1	tag-switch-default	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	convertFromFixedSize	unsupported conversion	implement-pair	refused-at-setup storage.alter
+ColumnTypeConverter.convertFromFixedSize tag switch #2	tag-switch-default	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	convertFromFixedSize	unsupported conversion	implement-pair	refused-at-setup storage.alter
+ALTER COLUMN TYPE fixed to var-size pair switch	pair-switch	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	getFixedToVarConverter		name-yourself	build
+ALTER COLUMN TYPE fixed to fixed pair switch	pair-switch	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	convertValues		name-yourself	build
+CursorPrinter.printColumn writer arm	writer-arm	core/src/main/java/io/questdb/cairo/CursorPrinter.java	printColumn		-	not-type-dependent
+CursorPrinter.printOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cairo/CursorPrinter.java	printOpcode		add-writer-arm	build
+DecimalColumnTypeConverter.convertToDecimal tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java	convertToDecimal		-	not-type-dependent
+DecimalColumnTypeConverter.getLoader tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java	getLoader		-	not-type-dependent
+DedupColumnCommitAddresses.setColValues policy switch	policy-switch	core/src/main/java/io/questdb/cairo/DedupColumnCommitAddresses.java	setColValues		add-writer-arm	build
+GeoHashes.getGeoLong tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/GeoHashes.java	getGeoLong		-	not-type-dependent
+IntervalTypeDriver.IntervalTypeDriver tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/IntervalTypeDriver.java	IntervalTypeDriver		-	not-type-dependent
+IntervalTypeDriver.getName tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/IntervalTypeDriver.java	getName		-	not-type-dependent
+LoopingRecordSink.copyColumn tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/LoopingRecordSink.java	copyColumn		manual	manual
+LoopingRecordSink.copyFunction writer arm	writer-arm	core/src/main/java/io/questdb/cairo/LoopingRecordSink.java	copyFunction		-	not-type-dependent
+O3PartitionJob.hasLegacyRequiredNoSentinelColumn policy switch	policy-switch	core/src/main/java/io/questdb/cairo/O3PartitionJob.java	hasLegacyRequiredNoSentinelColumn		add-writer-arm	build
+ParquetColumnTypeConverter.fixedTargetOpcode family switch	family-arm	core/src/main/java/io/questdb/cairo/ParquetColumnTypeConverter.java	fixedTargetOpcode	no family arm for <type> at Parquet conversion	declare-or-admit	refused-at-setup storage.parquet_convert
+ParquetColumnTypeConverter.leadingNullCount policy switch	policy-switch	core/src/main/java/io/questdb/cairo/ParquetColumnTypeConverter.java	leadingNullCount		add-writer-arm	build
+ParquetColumnTypeConverter.maxCharsPerRow wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cairo/ParquetColumnTypeConverter.java	maxCharsPerRow		add-writer-arm	build
+ParquetColumnTypeConverter.maxUtf8BytesPerRow wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cairo/ParquetColumnTypeConverter.java	maxUtf8BytesPerRow		add-writer-arm	build
+ParquetColumnTypeConverter.writeFixedNull writer arm	writer-arm	core/src/main/java/io/questdb/cairo/ParquetColumnTypeConverter.java	writeFixedNull		-	not-type-dependent
+ParquetColumnTypeConverter.writeFixedParsedValue writer arm	writer-arm	core/src/main/java/io/questdb/cairo/ParquetColumnTypeConverter.java	writeFixedParsedValue		-	not-type-dependent
+Parquet conversion	family-arm	core/src/main/java/io/questdb/cairo/ParquetColumnTypeConverter.java	fixedTargetOpcode	no family arm for <type> at Parquet conversion	declare-or-admit	refused-at-setup storage.parquet_convert
+ParquetRowGroupMaterializer.requiresMaterialization policy switch	policy-switch	core/src/main/java/io/questdb/cairo/ParquetRowGroupMaterializer.java	requiresMaterialization		add-writer-arm	build
+RecordSinkFactory.estimateColumnBytecodeSize family switch	family-arm	core/src/main/java/io/questdb/cairo/RecordSinkFactory.java	estimateColumnBytecodeSize		-	not-type-dependent
+RecordSinkFactory.getChunkedInstanceClass writer arm #1	writer-arm	core/src/main/java/io/questdb/cairo/RecordSinkFactory.java	getChunkedInstanceClass		-	not-type-dependent
+RecordSinkFactory.getChunkedInstanceClass writer arm #2	writer-arm	core/src/main/java/io/questdb/cairo/RecordSinkFactory.java	getChunkedInstanceClass		-	not-type-dependent
+RecordSinkFactory.getSingleInstanceClass writer arm #1	writer-arm	core/src/main/java/io/questdb/cairo/RecordSinkFactory.java	getSingleInstanceClass		-	not-type-dependent
+RecordSinkFactory.getSingleInstanceClass writer arm #2	writer-arm	core/src/main/java/io/questdb/cairo/RecordSinkFactory.java	getSingleInstanceClass		-	not-type-dependent
+RecordSinkFactory.estimateColumnBytecodeSize accessorOf	family-arm	core/src/main/java/io/questdb/cairo/RecordSinkFactory.java	estimateColumnBytecodeSize		-	not-type-dependent
+RecordSinkFactory.sinkOpcode accessorOf	family-arm	core/src/main/java/io/questdb/cairo/RecordSinkFactory.java	sinkOpcode		-	not-type-dependent
+RelationRules.alter relation kind switch	registration	core/src/main/java/io/questdb/cairo/RelationRules.java	alter		name-yourself	build
+RelationRules.caseEscalation relation kind switch	registration	core/src/main/java/io/questdb/cairo/RelationRules.java	caseEscalation		name-yourself	build
+RelationRules.copier relation kind switch	registration	core/src/main/java/io/questdb/cairo/RelationRules.java	copier		name-yourself	build
+RelationRules.ctasCastGroup relation kind switch	registration	core/src/main/java/io/questdb/cairo/RelationRules.java	ctasCastGroup		name-yourself	build
+RelationRules.holdsNullOf policy switch #1	policy-switch	core/src/main/java/io/questdb/cairo/RelationRules.java	holdsNullOf		add-writer-arm	build
+RelationRules.holdsNullOf policy switch #2	policy-switch	core/src/main/java/io/questdb/cairo/RelationRules.java	holdsNullOf		add-writer-arm	build
+TableWriter.configureNullSetters policy switch	policy-switch	core/src/main/java/io/questdb/cairo/TableWriter.java	configureNullSetters		add-writer-arm	build
+TableWriter.hasNullsInValues policy switch	policy-switch	core/src/main/java/io/questdb/cairo/TableWriter.java	hasNullsInValues		add-writer-arm	build
+TableWriter.produceNativeFromParquet policy switch	policy-switch	core/src/main/java/io/questdb/cairo/TableWriter.java	produceNativeFromParquet		add-writer-arm	build
+TimestampTypeDriver.getName tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/TimestampTypeDriver.java	getName		-	not-type-dependent
+TypeDrivers.find tag enum switch	registration	core/src/main/java/io/questdb/cairo/TypeDrivers.java	find		name-yourself	build
+VarcharTypeDriver.getName tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/VarcharTypeDriver.java	getName		-	not-type-dependent
+CoveredColumnDecoder.coveredLayout family switch	family-arm	core/src/main/java/io/questdb/cairo/sql/CoveredColumnDecoder.java	coveredLayout		-	not-type-dependent
+CoveredColumnDecoder.coveredOpcode family switch	family-arm	core/src/main/java/io/questdb/cairo/sql/CoveredColumnDecoder.java	coveredOpcode		-	not-type-dependent
+CoveredColumnDecoder.writeCoveredRow tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/sql/CoveredColumnDecoder.java	writeCoveredRow		manual	manual
+CoveredColumnDecoder.writeFixedWidthCovered tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/sql/CoveredColumnDecoder.java	writeFixedWidthCovered		manual	manual
+CoveredColumnDecoder.coveredLayout accessorOf	family-arm	core/src/main/java/io/questdb/cairo/sql/CoveredColumnDecoder.java	coveredLayout		-	not-type-dependent
+CoveredColumnDecoder.coveredOpcode accessorOf	family-arm	core/src/main/java/io/questdb/cairo/sql/CoveredColumnDecoder.java	coveredOpcode		-	not-type-dependent
+OrderedMapFixedSizeRecord.keyHolderOpcode family switch	family-arm	core/src/main/java/io/questdb/cairo/map/OrderedMapFixedSizeRecord.java	keyHolderOpcode		-	not-type-dependent
+OrderedMapFixedSizeRecord.OrderedMapFixedSizeRecord accessorOf	family-arm	core/src/main/java/io/questdb/cairo/map/OrderedMapFixedSizeRecord.java	OrderedMapFixedSizeRecord		-	not-type-dependent
+OrderedMapFixedSizeRecord.keyHolderOpcode accessorOf	family-arm	core/src/main/java/io/questdb/cairo/map/OrderedMapFixedSizeRecord.java	keyHolderOpcode		-	not-type-dependent
+OrderedMapVarSizeRecord.OrderedMapVarSizeRecord family switch	family-arm	core/src/main/java/io/questdb/cairo/map/OrderedMapVarSizeRecord.java	OrderedMapVarSizeRecord		-	not-type-dependent
+OrderedMapVarSizeRecord.OrderedMapVarSizeRecord accessorOf #1	family-arm	core/src/main/java/io/questdb/cairo/map/OrderedMapVarSizeRecord.java	OrderedMapVarSizeRecord		-	not-type-dependent
+OrderedMapVarSizeRecord.OrderedMapVarSizeRecord accessorOf #2	family-arm	core/src/main/java/io/questdb/cairo/map/OrderedMapVarSizeRecord.java	OrderedMapVarSizeRecord		-	not-type-dependent
+RecordValueSinkFactory.getInstance family opcode switch	family-opcode	core/src/main/java/io/questdb/cairo/map/RecordValueSinkFactory.java	getInstance		-	not-type-dependent
+RecordValueSinkFactory.isSupportedColumnType family switch	family-arm	core/src/main/java/io/questdb/cairo/map/RecordValueSinkFactory.java	isSupportedColumnType		-	not-type-dependent
+RecordValueSinkFactory.isSupportedColumnType accessorOf	family-arm	core/src/main/java/io/questdb/cairo/map/RecordValueSinkFactory.java	isSupportedColumnType		-	not-type-dependent
+Unordered4Map.isSupportedKeyType family switch	family-arm	core/src/main/java/io/questdb/cairo/map/Unordered4Map.java	isSupportedKeyType		-	not-type-dependent
+Unordered4Map.isSupportedKeyType accessorOf	family-arm	core/src/main/java/io/questdb/cairo/map/Unordered4Map.java	isSupportedKeyType		-	not-type-dependent
+Unordered4MapRecord.Unordered4MapRecord accessorOf	family-arm	core/src/main/java/io/questdb/cairo/map/Unordered4MapRecord.java	Unordered4MapRecord		-	not-type-dependent
+Unordered8Map.isSupportedKeyType family switch	family-arm	core/src/main/java/io/questdb/cairo/map/Unordered8Map.java	isSupportedKeyType		-	not-type-dependent
+Unordered8Map.isSupportedKeyType accessorOf	family-arm	core/src/main/java/io/questdb/cairo/map/Unordered8Map.java	isSupportedKeyType		-	not-type-dependent
+Unordered8MapRecord.Unordered8MapRecord accessorOf	family-arm	core/src/main/java/io/questdb/cairo/map/Unordered8MapRecord.java	Unordered8MapRecord		-	not-type-dependent
+UnorderedVarcharMapRecord.UnorderedVarcharMapRecord accessorOf	family-arm	core/src/main/java/io/questdb/cairo/map/UnorderedVarcharMapRecord.java	UnorderedVarcharMapRecord		-	not-type-dependent
+CoveringCompressor.codecKind family switch	family-arm	core/src/main/java/io/questdb/cairo/idx/CoveringCompressor.java	codecKind		-	not-type-dependent
+PostingIndexWriter.writeVarValue tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/idx/PostingIndexWriter.java	writeVarValue		manual	manual
+ArrayTypeDriver.resolveAppender tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/arr/ArrayTypeDriver.java	resolveAppender		-	not-type-dependent
+ArrayView.arrayEquals tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/arr/ArrayView.java	arrayEquals		-	not-type-dependent
+FunctionArray.appendToMemFlat tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/arr/FunctionArray.java	appendToMemFlat		-	not-type-dependent
+WAL columnar append #1	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putBooleanToNumericColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #2	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putFixedColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #3	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putFixedToSmallDecimalColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #4	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putFloatToDecimalColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #5	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putFloatToNumericColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #6	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putGeoHashColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #7	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putIntegerToNumericColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #8	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putStringToDecimalColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #9	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putStringToGeoHashColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #10	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	putStringToNumericColumn	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #11	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	writeDecimalNullSentinel	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #12	family-opcode	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	writeDecimalValue	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WAL columnar append #13	family-arm	core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java	unsupportedColumnType	no family arm for <type> at WAL columnar append	declare-or-admit	refused-at-setup ingest.qwp
+WalEventCursor.readDecimal writer arm	writer-arm	core/src/main/java/io/questdb/cairo/wal/WalEventCursor.java	readDecimal		-	not-type-dependent
+WalEventCursor.populateIndexedVariables writer arm	writer-arm	core/src/main/java/io/questdb/cairo/wal/WalEventCursor.java	populateIndexedVariables		-	not-type-dependent
+WalEventCursor.populateNamedVariables writer arm	writer-arm	core/src/main/java/io/questdb/cairo/wal/WalEventCursor.java	populateNamedVariables		-	not-type-dependent
+WalEventWriter.bindValueOpcode family switch	family-arm	core/src/main/java/io/questdb/cairo/wal/WalEventWriter.java	bindValueOpcode		-	not-type-dependent
+WalEventWriter.appendFunctionValue writer arm	writer-arm	core/src/main/java/io/questdb/cairo/wal/WalEventWriter.java	appendFunctionValue		-	not-type-dependent
+WalEventWriter.bindValueOpcode accessorOf	family-arm	core/src/main/java/io/questdb/cairo/wal/WalEventWriter.java	bindValueOpcode		-	not-type-dependent
+WalWriter.configureNullSetters policy switch	policy-switch	core/src/main/java/io/questdb/cairo/wal/WalWriter.java	configureNullSetters		add-writer-arm	build
+WriterRowUtils.putGeoHash tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/wal/WriterRowUtils.java	putGeoHash		-	not-type-dependent
+WriterRowUtils.putNullDecimal tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/wal/WriterRowUtils.java	putNullDecimal		-	not-type-dependent
+WriterRowUtils.putDecimal0 tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/wal/WriterRowUtils.java	putDecimal0		-	not-type-dependent
+LiveViewInMemoryBuffer.isTierSupported family switch	family-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewInMemoryBuffer.java	isTierSupported		-	not-type-dependent
+LiveViewInMemoryBuffer.copyRowFrom writer arm	writer-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewInMemoryBuffer.java	copyRowFrom		-	not-type-dependent
+LiveViewInMemoryBuffer.copyRowFromRecord writer arm	writer-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewInMemoryBuffer.java	copyRowFromRecord		-	not-type-dependent
+LiveViewInMemoryBuffer.copyRowsFrom writer arm	writer-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewInMemoryBuffer.java	copyRowsFrom		-	not-type-dependent
+LiveViewInMemoryBuffer.LiveViewInMemoryBuffer accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewInMemoryBuffer.java	LiveViewInMemoryBuffer		-	not-type-dependent
+LiveViewInMemoryBuffer.isTierSupported accessorOf	family-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewInMemoryBuffer.java	isTierSupported		-	not-type-dependent
+LiveViewRefreshJob.copyReaderRowsToStaging family opcode switch	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewRefreshJob.java	copyReaderRowsToStaging		-	not-type-dependent
+LiveViewRefreshJob.copyReaderRowsToStaging accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewRefreshJob.java	copyReaderRowsToStaging		-	not-type-dependent
+LiveViewSnapshotKeyCodec.readKey family opcode switch #1	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	readKey		-	not-type-dependent
+LiveViewSnapshotKeyCodec.readKey family opcode switch #2	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	readKey		-	not-type-dependent
+LiveViewSnapshotKeyCodec.validateKey family opcode switch	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	validateKey		-	not-type-dependent
+LiveViewSnapshotKeyCodec.readValueSlots family opcode switch #1	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	readValueSlots		-	not-type-dependent
+LiveViewSnapshotKeyCodec.writeKey family opcode switch #1	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	writeKey		-	not-type-dependent
+LiveViewSnapshotKeyCodec.readValueSlots family opcode switch #2	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	readValueSlots		-	not-type-dependent
+LiveViewSnapshotKeyCodec.writeKey family opcode switch #2	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	writeKey		-	not-type-dependent
+LiveViewSnapshotKeyCodec.byteSizeOfType family switch	family-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	byteSizeOfType		-	not-type-dependent
+LiveViewSnapshotKeyCodec.byteSizeOfType accessorOf	family-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	byteSizeOfType		-	not-type-dependent
+LiveViewSnapshotKeyCodec.isSupportedKeyType accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewSnapshotKeyCodec.java	isSupportedKeyType		-	not-type-dependent
+LiveViewWindow.isAnchorType family switch	family-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewWindow.java	isAnchorType		implement-pair	test lv.window_anchor
+LiveViewWindow.readAnchorValue writer arm	writer-arm	core/src/main/java/io/questdb/cairo/lv/LiveViewWindow.java	readAnchorValue		-	not-type-dependent
+LiveViewWindow.LiveViewWindow accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/cairo/lv/LiveViewWindow.java	LiveViewWindow		implement-pair	test lv.window_anchor
+CompiledFilterIRSerializer.bindVariableTypeCode family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	bindVariableTypeCode		manual	manual
+CompiledFilterIRSerializer.columnTypeCode family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	columnTypeCode		manual	manual
+CompiledFilterIRSerializer.isGenuineIntegerType family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	isGenuineIntegerType		manual	manual
+CompiledFilterIRSerializer.isGeoHash tag switch	tag-switch-default	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	isGeoHash		-	not-type-dependent
+CompiledFilterIRSerializer.i4NullOf family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	i4NullOf		manual	manual
+CompiledFilterIRSerializer.isNumeric family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	isNumeric		manual	manual
+CompiledFilterIRSerializer.isWidthSensitiveType family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	isWidthSensitiveType		manual	manual
+CompiledFilterIRSerializer.getPredicatePriority0 family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	getPredicatePriority0		manual	manual
+CompiledFilterIRSerializer.rejectOrderingComparison family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	rejectOrderingComparison		manual	manual
+CompiledFilterIRSerializer.serializeColumn policy switch	policy-switch	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	serializeColumn		add-writer-arm	build
+CompiledFilterIRSerializer.updateType family switch	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	updateType		manual	manual
+CompiledFilterIRSerializer.serializeConstant accessorOf	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	serializeConstant		manual	manual
+DecimalUtil.createDecimalConstant tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	createDecimalConstant		-	not-type-dependent
+DecimalUtil.createNullDecimalConstant tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	createNullDecimalConstant		-	not-type-dependent
+DecimalUtil.getImplicitCastFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	getImplicitCastFunction		-	not-type-dependent
+DecimalUtil.getTypePrecisionScale relation kind switch	registration	core/src/main/java/io/questdb/griffin/DecimalUtil.java	getTypePrecisionScale		name-yourself	build
+DecimalUtil.load tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	load		-	not-type-dependent
+DecimalUtil.store tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	store		-	not-type-dependent
+DecimalUtil.store tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	store		-	not-type-dependent
+DecimalUtil.storeNonNull tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	storeNonNull		-	not-type-dependent
+DecimalUtil.storeNull tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	storeNull		-	not-type-dependent
+FunctionParser.createFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/FunctionParser.java	createFunction		manual	manual
+FunctionParser.createImplicitCastOrNull tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/FunctionParser.java	createImplicitCastOrNull		manual	manual
+FunctionParser.functionToConstant0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/FunctionParser.java	functionToConstant0		manual	manual
+LoopingRecordToRowCopier.copyColumn tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyColumn	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromByte tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromByte	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromChar tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromChar	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromDate tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromDate	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromDecimal tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromDecimal		-	not-type-dependent
+LoopingRecordToRowCopier.copyFromDouble tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromDouble	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromFloat tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromFloat	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromGeoInt tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromGeoInt	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromGeoLong tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromGeoLong	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromInt tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromInt	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromLong tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromLong	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromShort tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromShort	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromString tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromString	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromSymbol tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromSymbol	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromTimestamp tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromTimestamp	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromUuid tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromUuid	inconvertible types	implement-pair	test RelationCoverageTest
+LoopingRecordToRowCopier.copyFromVarchar tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java	copyFromVarchar	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #3	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #4	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #5	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #6	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #7	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #8	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #9	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #10	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #11	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier writer arm	writer-arm	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier		-	not-type-dependent
+RecordToRowCopierUtils.generateChunkedCopier tag switch #12	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #13	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #14	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #15	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateChunkedCopier tag switch #16	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateChunkedCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #3	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #4	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #5	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #6	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #7	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #8	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #9	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #10	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #11	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #12	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #13	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #14	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #15	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #16	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.generateSingleMethodCopier tag switch #17	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	generateSingleMethodCopier	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.hasComplexArm family switch	family-arm	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	hasComplexArm		-	not-type-dependent
+RecordToRowCopierUtils.sameTypeOpcode family switch	family-arm	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	sameTypeOpcode	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.sameTypeOpcode policy switch	policy-switch	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	sameTypeOpcode		add-writer-arm	build
+RecordToRowCopierUtils.transferDecimal tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	transferDecimal		-	not-type-dependent
+RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1	family-opcode	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	copyOpcode	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #2	family-opcode	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	copyOpcode	inconvertible types	implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.hasComplexArm accessorOf	family-arm	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	hasComplexArm		-	not-type-dependent
+memoized virtual column	family-arm	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	memoized	no family arm for <type> at memoized virtual column	declare-or-admit	refused-at-setup sql.memoized
+SAMPLE BY FILL(PREV) #1	family-arm	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	isFixedSizePrevSlotEligible	no family arm for <type> at SAMPLE BY FILL(PREV)	declare-or-admit	refused-at-setup sql.fill_prev
+SqlCodeGenerator.isLatestOnKeyType family switch	family-arm	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	isLatestOnKeyType		implement-pair	test sql.latest_by_key
+SqlCodeGenerator.createSymbolShortCircuit tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	createSymbolShortCircuit		manual	manual
+UNION cast pair switch	pair-switch	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for <type> at UNION	name-yourself	build
+SqlCodeGenerator.generateCastFunction tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #3	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #4	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #5	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #6	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #7	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #8	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #9	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #10	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #11	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #12	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.generateCastFunction tag switch #13	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateCastFunction	no UNION cast for	implement-pair	test RelationCoverageTest
+SqlCodeGenerator.validateSubQueryColumnAndGetGetter tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	validateSubQueryColumnAndGetGetter		manual	manual
+SqlCodeGenerator.generateFill familyArmOpcodeOf	family-opcode	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	generateFill	no family arm for <type> at SAMPLE BY FILL(PREV)	declare-or-admit	refused-at-setup sql.fill_prev
+SqlCompilerImpl.isCompatibleColumnTypeChange tag table columnConversionSupport	registration	core/src/main/java/io/questdb/griffin/SqlCompilerImpl.java	isCompatibleColumnTypeChange		implement-pair	test TypeRelationGoldenTest
+SqlExecutionContextImpl.getNow tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/SqlExecutionContextImpl.java	getNow		-	not-type-dependent
+SqlOptimiser.printRecordColumnOrNull wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/griffin/SqlOptimiser.java	printRecordColumnOrNull		add-writer-arm	build
+SqlOptimiser.preparePivotForSelectSubquery wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/griffin/SqlOptimiser.java	preparePivotForSelectSubquery		add-writer-arm	build
+SqlOptimiser.pushOperationOutsideAgg policy switch	policy-switch	core/src/main/java/io/questdb/griffin/SqlOptimiser.java	pushOperationOutsideAgg		add-writer-arm	build
+SqlOptimiser.checkSimpleIntegerColumn isIntegral	kind-predicate	core/src/main/java/io/questdb/griffin/SqlOptimiser.java	checkSimpleIntegerColumn		-	not-type-dependent
+SqlOptimiser.validateCadenceSeedOrThrow isIntegral	kind-predicate	core/src/main/java/io/questdb/griffin/SqlOptimiser.java	validateCadenceSeedOrThrow		fill-driver-answer	test TypeDriverTest
+SqlOptimiser.isConstantSdtCompdev isIntegralOrFloat	kind-predicate	core/src/main/java/io/questdb/griffin/SqlOptimiser.java	isConstantSdtCompdev		-	not-type-dependent
+SubsampleValidator.validateNumericType isIntegralOrFloat	kind-predicate	core/src/main/java/io/questdb/griffin/SubsampleValidator.java	validateNumericType		-	not-type-dependent
+SubsampleValidator.validatePositionTargetOrThrow isIntegral	kind-predicate	core/src/main/java/io/questdb/griffin/SubsampleValidator.java	validatePositionTargetOrThrow		fill-driver-answer	test sql.subsample_stride
+UpdateOperatorImpl.updateOpcode family switch	family-arm	core/src/main/java/io/questdb/griffin/UpdateOperatorImpl.java	updateOpcode		-	not-type-dependent
+UpdateOperatorImpl.appendRowUpdate writer arm	writer-arm	core/src/main/java/io/questdb/griffin/UpdateOperatorImpl.java	appendRowUpdate		-	not-type-dependent
+UpdateOperatorImpl.updateOpcode accessorOf	family-arm	core/src/main/java/io/questdb/griffin/UpdateOperatorImpl.java	updateOpcode		-	not-type-dependent
+WhereClauseParser.isKeyColumnType family switch	family-arm	core/src/main/java/io/questdb/griffin/WhereClauseParser.java	isKeyColumnType		implement-pair	test sql.where_key
+WhereClauseParser.resolveScalarBound isIntegral	kind-predicate	core/src/main/java/io/questdb/griffin/WhereClauseParser.java	resolveScalarBound		fill-driver-answer	test sql.where_bound_const
+IntervalUtils.getIntervalType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/model/IntervalUtils.java	getIntervalType		-	not-type-dependent
+IntervalUtils.getTimestampTypeByIntervalType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/model/IntervalUtils.java	getTimestampTypeByIntervalType		-	not-type-dependent
+JsonUnnestSource.JsonUnnestSource tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/join/JsonUnnestSource.java	JsonUnnestSource		manual	manual
+GroupByColumnSink.put tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/groupby/GroupByColumnSink.java	put		manual	manual
+GroupByColumnSink.putAt tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/groupby/GroupByColumnSink.java	putAt		manual	manual
+GroupByColumnSink.argTag accessorOf	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/GroupByColumnSink.java	argTag		-	not-type-dependent
+SampleByFillNullRecordCursorFactory.createPlaceHolderFunction family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillNullRecordCursorFactory.java	createPlaceHolderFunction		implement-pair	test sql.fill_null
+SampleByFillRecordCursorFactory.initPrevCacheSlots tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillRecordCursorFactory.java	initPrevCacheSlots	no family arm for <type> at SAMPLE BY FILL(PREV)	declare-or-admit	refused-at-setup sql.fill_prev
+SampleByFillRecordCursorFactory.writePrevCacheSlots tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillRecordCursorFactory.java	writePrevCacheSlots		-	not-type-dependent
+SAMPLE BY FILL(PREV) #2	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillRecordCursorFactory.java	initPrevCacheSlots	no family arm for <type> at SAMPLE BY FILL(PREV)	declare-or-admit	refused-at-setup sql.fill_prev
+SampleByFillValueRecordCursorFactory.createPlaceHolderFunction family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillValueRecordCursorFactory.java	createPlaceHolderFunction	no family arm for <type> at SAMPLE BY FILL(value)	declare-or-admit	refused-at-setup sql.fill_value
+SAMPLE BY FILL(value)	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByFillValueRecordCursorFactory.java	createPlaceHolderFunction	no family arm for <type> at SAMPLE BY FILL(value)	declare-or-admit	refused-at-setup sql.fill_value
+SampleByInterpolateRecordCursorFactory.SampleByInterpolateRecordCursorFactory family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByInterpolateRecordCursorFactory.java	SampleByInterpolateRecordCursorFactory	no family arm for <type> at SAMPLE BY FILL(LINEAR)	declare-or-admit	refused-at-setup sql.fill_linear
+SAMPLE BY FILL(LINEAR)	family-arm	core/src/main/java/io/questdb/griffin/engine/groupby/SampleByInterpolateRecordCursorFactory.java	SampleByInterpolateRecordCursorFactory	no family arm for <type> at SAMPLE BY FILL(LINEAR)	declare-or-admit	refused-at-setup sql.fill_linear
+GroupByRecordCursorFactory.GroupByRecordCursorFactory policy switch	policy-switch	core/src/main/java/io/questdb/griffin/engine/groupby/vect/GroupByRecordCursorFactory.java	GroupByRecordCursorFactory		add-writer-arm	build
+AsyncFilterAtom.preTouchOpcode family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/table/AsyncFilterAtom.java	preTouchOpcode		-	not-type-dependent
+AsyncFilterAtom.preTouchColumns writer arm	writer-arm	core/src/main/java/io/questdb/griffin/engine/table/AsyncFilterAtom.java	preTouchColumns		-	not-type-dependent
+AsyncFilterUtils.writeBindVarFunction family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/table/AsyncFilterUtils.java	writeBindVarFunction		-	not-type-dependent
+ParquetRowGroupFilter.prepareFilterListImpl tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java	prepareFilterListImpl		manual	manual
+ParquetRowGroupFilter.prepareFilterListImpl tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java	prepareFilterListImpl		manual	manual
+ParquetRowGroupFilter.prepareFilterListImpl tag switch #3	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java	prepareFilterListImpl		manual	manual
+PushdownFilterExtractor.isNullOpPushable policy switch	policy-switch	core/src/main/java/io/questdb/griffin/engine/table/PushdownFilterExtractor.java	isNullOpPushable		add-writer-arm	build
+PushdownFilterExtractor.isNullOpPushable family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/table/PushdownFilterExtractor.java	isNullOpPushable		-	not-type-dependent
+PartitionEncoder.populateFromTableReader policy switch	policy-switch	core/src/main/java/io/questdb/griffin/engine/table/parquet/PartitionEncoder.java	populateFromTableReader		add-writer-arm	build
+WindowAccumulatorDescriptor.contributionKindFor tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java	contributionKindFor		manual	manual
+WindowAccumulatorDescriptor.resetState tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java	resetState		manual	manual
+WindowAccumulatorDescriptor.decimalNullPayload tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java	decimalNullPayload		-	not-type-dependent
+WindowAccumulatorDescriptor.decimalStateColumnType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java	decimalStateColumnType		-	not-type-dependent
+WindowAccumulatorDescriptor.isDecimalPayload tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java	isDecimalPayload		-	not-type-dependent
+WindowAccumulatorDescriptor.isLongPayload tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java	isLongPayload		manual	manual
+WindowAccumulatorDescriptor.isWidenedToDouble tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java	isWidenedToDouble		manual	manual
+RuntimeConstFunction.isFoldableType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/RuntimeConstFunction.java	isFoldableType		implement-pair	test FunctionReachTest
+RuntimeConstFunction.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/RuntimeConstFunction.java	newInstance		implement-pair	test FunctionReachTest
+ScalarSubQueryUtils.readDoubleValue tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/ScalarSubQueryUtils.java	readDoubleValue		implement-pair	test FunctionReachTest
+ScalarSubQueryUtils.readIntValue tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/ScalarSubQueryUtils.java	readIntValue		implement-pair	test FunctionReachTest
+ScalarSubQueryUtils.readLongValue tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/ScalarSubQueryUtils.java	readLongValue		implement-pair	test FunctionReachTest
+BetweenTimestampCursorFunctionFactory.assertComparableCursorColumn tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/BetweenTimestampCursorFunctionFactory.java	assertComparableCursorColumn		-	not-type-dependent
+BetweenTimestampCursorFunctionFactory.readCursorBound tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/BetweenTimestampCursorFunctionFactory.java	readCursorBound		-	not-type-dependent
+BetweenTimestampCursorFunctionFactory.resolveLeftTimestampType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/BetweenTimestampCursorFunctionFactory.java	resolveLeftTimestampType		-	not-type-dependent
+between	family-arm	core/src/main/java/io/questdb/griffin/engine/functions/bool/BetweenTimestampFunctionFactory.java	newInstance	no family arm for <type> at between	declare-or-admit	refused-at-setup sql.between_timestamp
+InDoubleFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InDoubleFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+InDoubleFunctionFactory.parseValue tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InDoubleFunctionFactory.java	parseValue		implement-pair	test FunctionReachTest
+InIPv4FunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InIPv4FunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+InIPv4FunctionFactory.addIPv4ToSet tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InIPv4FunctionFactory.java	addIPv4ToSet		implement-pair	test FunctionReachTest
+InLongFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InLongFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+InLongFunctionFactory.parseValue tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InLongFunctionFactory.java	parseValue		implement-pair	test FunctionReachTest
+InLongFunctionFactory.constElementValue tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InLongFunctionFactory.java	constElementValue		implement-pair	test FunctionReachTest
+InLongFunctionFactory.dynamicElementKind tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InLongFunctionFactory.java	dynamicElementKind		implement-pair	test FunctionReachTest
+InStrFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InStrFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+InStrFunctionFactory.parseToString tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InStrFunctionFactory.java	parseToString		implement-pair	test FunctionReachTest
+InSymbolCursorFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InSymbolCursorFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+InSymbolFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InSymbolFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+InSymbolFunctionFactory.init tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InSymbolFunctionFactory.java	init		implement-pair	test FunctionReachTest
+InTimestampTimestampFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InTimestampTimestampFunctionFactory.java	newInstance		-	not-type-dependent
+InTimestampTimestampFunctionFactory.parseDiscreteTimestampValues tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InTimestampTimestampFunctionFactory.java	parseDiscreteTimestampValues		-	not-type-dependent
+InTimestampTimestampFunctionFactory.init tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InTimestampTimestampFunctionFactory.java	init		-	not-type-dependent
+InTimestampTimestampFunctionFactory.init tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InTimestampTimestampFunctionFactory.java	init		-	not-type-dependent
+InTimestampTimestampFunctionFactory.getBool tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InTimestampTimestampFunctionFactory.java	getBool		-	not-type-dependent
+InUuidFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InUuidFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+InUuidFunctionFactory.addUUIDToSet tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InUuidFunctionFactory.java	addUUIDToSet		implement-pair	test FunctionReachTest
+InVarcharFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InVarcharFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+InVarcharFunctionFactory.parseToVarchar tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/InVarcharFunctionFactory.java	parseToVarchar		implement-pair	test FunctionReachTest
+WithinGeohashFunctionFactory.getGeoHashAsLong tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bool/WithinGeohashFunctionFactory.java	getGeoHashAsLong		-	not-type-dependent
+AvgDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/AvgDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+AvgDecimalRescaleGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/AvgDecimalRescaleGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+CountDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/CountDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+CountGeoHashGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/CountGeoHashGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+FirstDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/FirstDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+FirstGeoHashGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/FirstGeoHashGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+FirstNotNullDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/FirstNotNullDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+FirstNotNullGeoHashGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/FirstNotNullGeoHashGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+LastDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/LastDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+LastGeoHashGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/LastGeoHashGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+LastNotNullDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/LastNotNullDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+LastNotNullGeoHashGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/LastNotNullGeoHashGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+MaxDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/MaxDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+MinDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/MinDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+SumDecimalGroupByFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/groupby/SumDecimalGroupByFunctionFactory.java	newInstance		-	not-type-dependent
+GenerateSeriesTimestampStringRecordCursorFactory.getMetadata tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/date/GenerateSeriesTimestampStringRecordCursorFactory.java	getMetadata		-	not-type-dependent
+EqDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/eq/EqDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+= NULL	family-arm	core/src/main/java/io/questdb/griffin/engine/functions/eq/EqDoubleFunctionFactory.java	dispatchUnaryFunc	no family arm for <type> at = NULL	declare-or-admit	refused-at-setup sql.eq_null_double
+EqGeoHashGeoHashFunctionFactory.createBinaryFunc tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/eq/EqGeoHashGeoHashFunctionFactory.java	createBinaryFunc		-	not-type-dependent
+EqGeoHashGeoHashFunctionFactory.createConstCheckFunc tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/eq/EqGeoHashGeoHashFunctionFactory.java	createConstCheckFunc		-	not-type-dependent
+EqNullCursorFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/eq/EqNullCursorFunctionFactory.java	newInstance		-	not-type-dependent
+EqTimestampCursorFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/eq/EqTimestampCursorFunctionFactory.java	newInstance		-	not-type-dependent
+CASE cast pair switch	pair-switch	core/src/main/java/io/questdb/griffin/engine/functions/conditional/CaseCommon.java	castRow		name-yourself	build
+CaseCommon.getCaseFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/conditional/CaseCommon.java	getCaseFunction		-	not-type-dependent
+CaseCommon.getCaseFunctionConstructor tag table constructors	registration	core/src/main/java/io/questdb/griffin/engine/functions/conditional/CaseCommon.java	getCaseFunctionConstructor	unsupported CASE value type	implement-pair	test RelationCoverageTest
+CoalesceFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/conditional/CoalesceFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+NullIfDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/conditional/NullIfDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+SwitchFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/conditional/SwitchFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+Constants.getGeoHashConstantWithType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/constants/Constants.java	getGeoHashConstantWithType		-	not-type-dependent
+IntervalConstant.getIntervalNull tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/constants/IntervalConstant.java	getIntervalNull		-	not-type-dependent
+AbstractDoubleCursorFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/lt/AbstractDoubleCursorFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+AbstractIntCursorFunctionFactory.newInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/lt/AbstractIntCursorFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+AbstractIntCursorFunctionFactory.newInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/lt/AbstractIntCursorFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+AbstractLongCursorFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/lt/AbstractLongCursorFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+GtTimestampCursorFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/lt/GtTimestampCursorFunctionFactory.java	newInstance		-	not-type-dependent
+LtDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/lt/LtDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+LtTimestampCursorFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/lt/LtTimestampCursorFunctionFactory.java	newInstance		-	not-type-dependent
+Decimal128LoaderFunctionFactory.getInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/decimal/Decimal128LoaderFunctionFactory.java	getInstance		-	not-type-dependent
+Decimal256LoaderFunctionFactory.getInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/decimal/Decimal256LoaderFunctionFactory.java	getInstance		-	not-type-dependent
+Decimal64LoaderFunctionFactory.getInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/decimal/Decimal64LoaderFunctionFactory.java	getInstance		-	not-type-dependent
+JsonExtractFunction.JsonExtractFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/json/JsonExtractFunction.java	JsonExtractFunction		implement-pair	test FunctionReachTest
+JsonExtractTypedFunctionFactory.isIntrusivelyOptimized tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/json/JsonExtractTypedFunctionFactory.java	isIntrusivelyOptimized		implement-pair	test FunctionReachTest
+JsonExtractTypedFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/json/JsonExtractTypedFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+AvgDecimalRescaleWindowFunctionFactory.newInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	newInstance		-	not-type-dependent
+AvgDecimalRescaleWindowFunctionFactory.newInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	newInstance		-	not-type-dependent
+AvgDecimalRescaleWindowFunctionFactory.writeSink tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	writeSink		-	not-type-dependent
+AvgDecimalRescaleWindowFunctionFactory.writeNull tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	writeNull		-	not-type-dependent
+AvgDecimalRescaleWindowFunctionFactory.writeNull tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	writeNull		-	not-type-dependent
+AvgDecimalRescaleWindowFunctionFactory.writeNull tag switch #3	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	writeNull		-	not-type-dependent
+AvgDecimalRescaleWindowFunctionFactory.writeNull tag switch #4	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	writeNull		-	not-type-dependent
+AvgDecimalRescaleWindowFunctionFactory.writeNull tag switch #5	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	writeNull		-	not-type-dependent
+AvgDecimalRescaleWindowFunctionFactory.writeNull tag switch #6	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalRescaleWindowFunctionFactory.java	writeNull		-	not-type-dependent
+AvgDecimalWindowFunctionFactory.newInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+AvgDecimalWindowFunctionFactory.newInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/AvgDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+BucketSelectWindowFunction.readLongValue tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/BucketSelectWindowFunction.java	readLongValue		implement-pair	test FunctionReachTest
+CountDecimalWindowFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/CountDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+FirstValueDecimalWindowFunctionFactory.newInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/FirstValueDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+FirstValueDecimalWindowFunctionFactory.newInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/FirstValueDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+LagDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/LagDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+LastValueDecimalWindowFunctionFactory.newInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/LastValueDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+LastValueDecimalWindowFunctionFactory.newInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/LastValueDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+LeadDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/LeadDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+MaxDecimalWindowFunctionFactory.newMaxMinInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/MaxDecimalWindowFunctionFactory.java	newMaxMinInstance		-	not-type-dependent
+MaxDecimalWindowFunctionFactory.newMaxMinInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/MaxDecimalWindowFunctionFactory.java	newMaxMinInstance		-	not-type-dependent
+NthValueDecimalWindowFunctionFactory.newInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/NthValueDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+NthValueDecimalWindowFunctionFactory.newInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/NthValueDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+SumDecimalWindowFunctionFactory.newInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/SumDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+SumDecimalWindowFunctionFactory.newInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/SumDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+SumDecimalWindowFunctionFactory.newInstance tag switch #3	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/window/SumDecimalWindowFunctionFactory.java	newInstance		-	not-type-dependent
+RndDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/rnd/RndDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+RndGeoHashFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/rnd/RndGeoHashFunctionFactory.java	newInstance		-	not-type-dependent
+RndSymbolZipfFunctionFactory.newInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/rnd/RndSymbolZipfFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+RndSymbolZipfFunctionFactory.newInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/rnd/RndSymbolZipfFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+LevelTwoPriceFunctionFactory.allowedColumnType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/finance/LevelTwoPriceFunctionFactory.java	allowedColumnType		implement-pair	test FunctionReachTest
+CastByteToDecimalFunctionFactory.newUnscaledInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastByteToDecimalFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastDecimalToByteFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToByteFunctionFactory.java	newInstance		-	not-type-dependent
+CastDecimalToByteFunctionFactory.newUnscaledInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToByteFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastDecimalToDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+CastDecimalToDecimalFunctionFactory.newUnscaledInstance tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToDecimalFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastDecimalToDecimalFunctionFactory.newUnscaledInstance tag switch #2	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToDecimalFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastDecimalToDoubleFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToDoubleFunctionFactory.java	newInstance		-	not-type-dependent
+CastDecimalToFloatFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToFloatFunctionFactory.java	newInstance		-	not-type-dependent
+CastDecimalToIntFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToIntFunctionFactory.java	newInstance		-	not-type-dependent
+CastDecimalToIntFunctionFactory.newUnscaledInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToIntFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastDecimalToLongFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToLongFunctionFactory.java	newInstance		-	not-type-dependent
+CastDecimalToLongFunctionFactory.newUnscaledInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToLongFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastDecimalToShortFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToShortFunctionFactory.java	newInstance		-	not-type-dependent
+CastDecimalToShortFunctionFactory.newUnscaledInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToShortFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastDecimalToStrFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToStrFunctionFactory.java	newInstance		-	not-type-dependent
+CastDecimalToVarcharFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDecimalToVarcharFunctionFactory.java	newInstance		-	not-type-dependent
+CastDoubleToDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastDoubleToDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+CastFloatToDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastFloatToDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+CastGeoHashToGeoHashFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastGeoHashToGeoHashFunctionFactory.java	newInstance		-	not-type-dependent
+CastGeoHashToGeoHashFunctionFactory.getCastGeoHashToGeoHashFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastGeoHashToGeoHashFunctionFactory.java	getCastGeoHashToGeoHashFunction		-	not-type-dependent
+CastIntToDecimalFunctionFactory.newUnscaledInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastIntToDecimalFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastLongToDecimalFunctionFactory.newUnscaledInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastLongToDecimalFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastLongToGeoHashFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastLongToGeoHashFunctionFactory.java	newInstance		-	not-type-dependent
+CastShortToDecimalFunctionFactory.newUnscaledInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastShortToDecimalFunctionFactory.java	newUnscaledInstance		-	not-type-dependent
+CastStrToDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastStrToDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+CastVarcharToDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/cast/CastVarcharToDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+BindVariableServiceImpl.snapshotIndexedFunction family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	snapshotIndexedFunction	no family arm for <type> at COPY bind snapshot	declare-or-admit	refused-at-setup sql.copy_bind
+BindVariableServiceImpl.snapshotNamedFunction family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	snapshotNamedFunction	no family arm for <type> at COPY bind snapshot	declare-or-admit	refused-at-setup sql.copy_bind
+BindVariableServiceImpl.setArray0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setArray0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setBoolean0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setBoolean0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setByte0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setByte0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setChar0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setChar0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setDate0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setDate0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setDouble0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setDouble0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setFloat0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setFloat0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setGeoHash0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setGeoHash0		-	not-type-dependent
+BindVariableServiceImpl.setInt0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setInt0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setLong0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setLong0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setLong2560 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setLong2560	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setShort0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setShort0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setStr0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setStr0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setTimestamp0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setTimestamp0	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setUuid tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setUuid	bind variable	implement-pair	test sql.bind_value
+BindVariableServiceImpl.setVarchar0 tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	setVarchar0	bind variable	implement-pair	test sql.bind_value
+COPY bind snapshot	family-arm	core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java	checkSnapshotFamilyArm	no family arm for <type> at COPY bind snapshot	declare-or-admit	refused-at-setup sql.copy_bind
+AbsDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/AbsDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+AddDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/AddDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+GreatestNumericFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/GreatestNumericFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+GreatestNumericFunctionFactory.getDecimalGreatestFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/GreatestNumericFunctionFactory.java	getDecimalGreatestFunction		-	not-type-dependent
+LeastNumericFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/LeastNumericFunctionFactory.java	newInstance		implement-pair	test FunctionReachTest
+LeastNumericFunctionFactory.getDecimalLeastFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/LeastNumericFunctionFactory.java	getDecimalLeastFunction		-	not-type-dependent
+NegDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/NegDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+RemDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/RemDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+SignDecimalFunctionFactory.newInstance tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/engine/functions/math/SignDecimalFunctionFactory.java	newInstance		-	not-type-dependent
+RecordComparatorCompiler.comparatorOpcode family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/orderby/RecordComparatorCompiler.java	comparatorOpcode	no compare arm for <type> at ORDER BY	add-writer-arm	refused-at-setup sql.order_asc
+RecordComparatorCompiler.poolFieldArtifacts writer arm	writer-arm	core/src/main/java/io/questdb/griffin/engine/orderby/RecordComparatorCompiler.java	poolFieldArtifacts		-	not-type-dependent
+RecordComparatorCompiler.comparatorOpcode compare arm	compare-arm	core/src/main/java/io/questdb/griffin/engine/orderby/RecordComparatorCompiler.java	comparatorOpcode	no compare arm for <type> at ORDER BY	add-writer-arm	refused-at-setup sql.order_asc
+SortKeyEncoder.keyKind family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	keyKind		implement-pair	test GeneratedAccessorCoverageTest
+SortKeyEncoder.keyShapeOf family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	keyShapeOf		manual	manual
+SortKeyEncoder.appendKeyBytes writer arm	writer-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	appendKeyBytes		-	not-type-dependent
+SortKeyEncoder.encodeFixed8 writer arm	writer-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	encodeFixed8		-	not-type-dependent
+SortKeyEncoder.encodeFixedColumn writer arm	writer-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	encodeFixedColumn		-	not-type-dependent
+SortKeyEncoder.encodeFixedWideBatch writer arm	writer-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	encodeFixedWideBatch		-	not-type-dependent
+SortKeyEncoder.SortKeyEncoder accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	SortKeyEncoder		manual	manual
+SortKeyEncoder.SortKeyEncoder accessorOf	family-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java	SortKeyEncoder		manual	manual
+SortKeyMaterializingRecordCursor.materializeOpcode family switch	family-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyMaterializingRecordCursor.java	materializeOpcode		-	not-type-dependent
+SortKeyMaterializingRecordCursor.appendValue writer arm	writer-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyMaterializingRecordCursor.java	appendValue		-	not-type-dependent
+SortKeyMaterializingRecordCursor.materializeOpcode accessorOf	family-arm	core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyMaterializingRecordCursor.java	materializeOpcode		-	not-type-dependent
+CopyExportRequestTask.getRequiredAlignmentForSimd family switch	family-arm	core/src/main/java/io/questdb/cutlass/parquet/CopyExportRequestTask.java	getRequiredAlignmentForSimd		-	not-type-dependent
+CopyExportRequestTask.getRequiredAlignmentForSimd accessorOf	family-arm	core/src/main/java/io/questdb/cutlass/parquet/CopyExportRequestTask.java	getRequiredAlignmentForSimd		-	not-type-dependent
+HybridColumnMaterializer.exportOpcode family switch	family-arm	core/src/main/java/io/questdb/cutlass/parquet/HybridColumnMaterializer.java	exportOpcode		-	not-type-dependent
+HybridColumnMaterializer.writeColumnValue writer arm	writer-arm	core/src/main/java/io/questdb/cutlass/parquet/HybridColumnMaterializer.java	writeColumnValue		-	not-type-dependent
+HybridColumnMaterializer.writeComputedValue writer arm	writer-arm	core/src/main/java/io/questdb/cutlass/parquet/HybridColumnMaterializer.java	writeComputedValue		-	not-type-dependent
+HybridColumnMaterializer.addColumnData accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/cutlass/parquet/HybridColumnMaterializer.java	addColumnData		-	not-type-dependent
+HybridColumnMaterializer.exportOpcode accessorOf	family-arm	core/src/main/java/io/questdb/cutlass/parquet/HybridColumnMaterializer.java	exportOpcode		-	not-type-dependent
+ParquetExportMode.determineExportMode accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/cutlass/parquet/ParquetExportMode.java	determineExportMode		-	not-type-dependent
+ParquetExportMode.hasComputedBinaryColumn accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/cutlass/parquet/ParquetExportMode.java	hasComputedBinaryColumn		-	not-type-dependent
+PGOids.getTypeOid tag table TYPE_OIDS	registration	core/src/main/java/io/questdb/cutlass/pgwire/PGOids.java	getTypeOid		fill-driver-answer	test TypeDriverTest
+PGPipelineEntry.outColumnOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/pgwire/PGPipelineEntry.java	outColumnOpcode		add-writer-arm	build
+PGPipelineEntry.outRecord writer arm	writer-arm	core/src/main/java/io/questdb/cutlass/pgwire/PGPipelineEntry.java	outRecord		-	not-type-dependent
+PGPipelineEntry.txtAndBinSizesCanBeDifferent wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/pgwire/PGPipelineEntry.java	txtAndBinSizesCanBeDifferent		add-writer-arm	build
+PGUtils.calculateColumnBinSize wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/pgwire/PGUtils.java	calculateColumnBinSize		add-writer-arm	build
+PGUtils.estimateColumnTxtSize wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/pgwire/PGUtils.java	estimateColumnTxtSize		add-writer-arm	build
+ExportQueryProcessor.csvOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/http/processors/ExportQueryProcessor.java	csvOpcode		add-writer-arm	build
+ExportQueryProcessor.putValue writer arm	writer-arm	core/src/main/java/io/questdb/cutlass/http/processors/ExportQueryProcessor.java	putValue		-	not-type-dependent
+JsonQueryProcessorState.jsonOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/http/processors/JsonQueryProcessorState.java	jsonOpcode		add-writer-arm	build
+JsonQueryProcessorState.doQueryRecord writer arm	writer-arm	core/src/main/java/io/questdb/cutlass/http/processors/JsonQueryProcessorState.java	doQueryRecord		-	not-type-dependent
+QwpColumnTypeMapper.toWireType wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/qwp/codec/QwpColumnTypeMapper.java	toWireType		add-writer-arm	build
+QwpColumnTypeMapper.toWireType tag switch	tag-switch-default	core/src/main/java/io/questdb/cutlass/qwp/codec/QwpColumnTypeMapper.java	toWireType		-	not-type-dependent
+QwpResultBatchBuffer.appendPageFrame tag switch	tag-switch-default	core/src/main/java/io/questdb/cutlass/qwp/codec/QwpResultBatchBuffer.java	appendPageFrame		-	not-type-dependent
+QwpResultBatchBuffer.appendOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/qwp/codec/QwpResultBatchBuffer.java	appendOpcode		add-writer-arm	build
+QwpResultBatchBuffer.appendCell tag switch	tag-switch-default	core/src/main/java/io/questdb/cutlass/qwp/codec/QwpResultBatchBuffer.java	appendCell		-	not-type-dependent
+CairoTextWriter.initWriterAndOverrideImportTypes wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/text/CairoTextWriter.java	initWriterAndOverrideImportTypes		manual	manual
+ParallelCsvFileImporter.initWriterAndOverrideImportMetadata wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/text/ParallelCsvFileImporter.java	initWriterAndOverrideImportMetadata		manual	manual
+TextMetadataParser.createImportedType wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/text/TextMetadataParser.java	createImportedType		manual	manual
+TypeManager.getTypeAdapter wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/text/types/TypeManager.java	getTypeAdapter		add-writer-arm	build
+ILP column kind	family-arm	core/src/main/java/io/questdb/cutlass/line/LineUtils.java	columnKind	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineUdpParserImpl.parseValue tag switch	tag-switch-default	core/src/main/java/io/questdb/cutlass/line/udp/LineUdpParserImpl.java	parseValue	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-udp
+LineUdpParserImpl.parseValue columnKind	family-opcode	core/src/main/java/io/questdb/cutlass/line/udp/LineUdpParserImpl.java	parseValue	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-udp
+LineUdpParserSupport.putValue family opcode switch	family-opcode	core/src/main/java/io/questdb/cutlass/line/udp/LineUdpParserSupport.java	putValue	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-udp
+LineUdpParserSupport.putNullValue family opcode switch	family-opcode	core/src/main/java/io/questdb/cutlass/line/udp/LineUdpParserSupport.java	putNullValue	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-udp
+LineTcpEventBuffer.addGeoHash tag switch	tag-switch-default	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpEventBuffer.java	addGeoHash		-	not-type-dependent
+LineTcpMeasurementEvent.createMeasurementEvent family opcode switch #1	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineTcpMeasurementEvent.createMeasurementEvent family opcode switch #2	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineTcpMeasurementEvent.createMeasurementEvent family opcode switch #3	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineTcpMeasurementEvent.createMeasurementEvent family opcode switch #4	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineTcpMeasurementEvent.createMeasurementEvent family opcode switch #5	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineTcpMeasurementEvent.createMeasurementEvent family opcode switch #6	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineTcpMeasurementEvent.createMeasurementEvent family opcode switch #7	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineTcpMeasurementEvent.createMeasurementEvent columnKind	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineTcpMeasurementEvent.java	createMeasurementEvent	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineWalAppender.appendToWal0 family opcode switch #1	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineWalAppender.java	appendToWal0	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineWalAppender.appendToWal0 family opcode switch #2	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineWalAppender.java	appendToWal0	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineWalAppender.appendToWal0 family opcode switch #3	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineWalAppender.java	appendToWal0	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineWalAppender.appendToWal0 family opcode switch #4	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineWalAppender.java	appendToWal0	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineWalAppender.appendToWal0 family opcode switch #5	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineWalAppender.java	appendToWal0	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineWalAppender.appendToWal0 family opcode switch #6	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineWalAppender.java	appendToWal0	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineWalAppender.appendToWal0 family opcode switch #7	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineWalAppender.java	appendToWal0	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+LineWalAppender.appendToWal0 columnKind	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/LineWalAppender.java	appendToWal0	cast error from protocol type	declare-or-admit	refused-at-setup ingest.ilp-tcp
+QWP WAL append #1	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+QwpWalAppender.appendToWalColumnar family opcode switch	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+QWP WAL append #2	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	isFixedTypeCoercionAllowed	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+QWP WAL append #3	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+QWP WAL append #4	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+QWP WAL append #5	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+QWP WAL append #6	family-arm	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
+col_type::movement match	rust-match	core/rust/qdb-core/src/col_type.rs	movement		name-yourself	build
+col_type::null_policy match	rust-match	core/rust/qdb-core/src/col_type.rs	null_policy		name-yourself	build
+col_type::arithmetic match	rust-match	core/rust/qdb-core/src/col_type.rs	arithmetic		name-yourself	build
+col_type::name match	rust-match	core/rust/qdb-core/src/col_type.rs	name		name-yourself	build
+col_type::try_from match	rust-match	core/rust/qdb-core/src/col_type.rs	try_from	unknown QuestDB column tag code	name-yourself	refused-at-setup storage.parquet
+col_type::new_decimal match	rust-match	core/rust/qdb-core/src/col_type.rs	new_decimal		-	not-type-dependent
+mod::try_lookup_driver match	rust-match	core/rust/qdb-core/src/col_driver/mod.rs	try_lookup_driver		name-yourself	build
+row_groups::post_convert match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	post_convert		manual	manual
+row_groups::time_unit_pow10 match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	time_unit_pow10		-	not-type-dependent
+row_groups::convert_decimal_in_place match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	convert_decimal_in_place		-	not-type-dependent
+row_groups::decimal_null_i128 match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	decimal_null_i128		-	not-type-dependent
+row_groups::convert_decimal_narrowing match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	convert_decimal_narrowing		-	not-type-dependent
+row_groups::convert_fixed_to_decimal match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	convert_fixed_to_decimal		-	not-type-dependent
+row_groups::is_int_null match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	is_int_null		name-yourself	build
+row_groups::null_i64_for_decimal match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	null_i64_for_decimal		-	not-type-dependent
+row_groups::decimal_tag_size match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	decimal_tag_size		-	not-type-dependent
+row_groups::plan_decode_conversion match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	plan_decode_conversion		manual	manual
+decimal::decode_fixed_decimal_dict_mode match #1	rust-match	core/rust/qdbr/src/parquet_read/decode/decimal.rs	decode_fixed_decimal_dict_mode		-	not-type-dependent
+decimal::decode_fixed_decimal_dict_mode match #2	rust-match	core/rust/qdbr/src/parquet_read/decode/decimal.rs	decode_fixed_decimal_dict_mode		-	not-type-dependent
+decimal::decode_byte_array_decimal_with_slicer_mode match	rust-match	core/rust/qdbr/src/parquet_read/decode/decimal.rs	decode_byte_array_decimal_with_slicer_mode		-	not-type-dependent
+decimal::decode_fixed_decimal_with_slicer_mode match #1	rust-match	core/rust/qdbr/src/parquet_read/decode/decimal.rs	decode_fixed_decimal_with_slicer_mode		-	not-type-dependent
+decimal::decode_fixed_decimal_with_slicer_mode match #2	rust-match	core/rust/qdbr/src/parquet_read/decode/decimal.rs	decode_fixed_decimal_with_slicer_mode		-	not-type-dependent
+encode::encode_boolean_dispatch match	rust-match	core/rust/qdbr/src/parquet_write/encode.rs	encode_boolean_dispatch		manual	manual
+encode::encode_int32_dispatch match	rust-match	core/rust/qdbr/src/parquet_write/encode.rs	encode_int32_dispatch		manual	manual
+encode::encode_int64_dispatch match	rust-match	core/rust/qdbr/src/parquet_write/encode.rs	encode_int64_dispatch		manual	manual
+encode::encode_byte_array_dispatch match	rust-match	core/rust/qdbr/src/parquet_write/encode.rs	encode_byte_array_dispatch		manual	manual
+encode::encode_fixed_len_dispatch match	rust-match	core/rust/qdbr/src/parquet_write/encode.rs	encode_fixed_len_dispatch		manual	manual
+schema::column_type_to_parquet_type match #1	rust-match	core/rust/qdbr/src/parquet_write/schema.rs	column_type_to_parquet_type		name-yourself	build
+schema::column_type_to_parquet_type match #2	rust-match	core/rust/qdbr/src/parquet_write/schema.rs	column_type_to_parquet_type		manual	manual
+schema::validate_encoding match	rust-match	core/rust/qdbr/src/parquet_write/schema.rs	validate_encoding		manual	manual
+schema::encoding_map match	rust-match	core/rust/qdbr/src/parquet_write/schema.rs	encoding_map		name-yourself	build
+column_type.h::var_layout switch	c-switch	core/src/main/c/share/column_type.h	var_layout		name-yourself	build
+converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch	c-switch	core/src/main/c/share/converters.cpp	Java_io_questdb_griffin_ConvertersNative_fixedToFixed		name-yourself	build
+converters.h::is_fixed_convertible switch	c-switch	core/src/main/c/share/converters.h	is_fixed_convertible		name-yourself	build
+ColumnType tag constants	registration	core/src/main/java/io/questdb/cairo/ColumnType.java			name-yourself	build
+ColumnTypeTag enum	registration	core/src/main/java/io/questdb/cairo/ColumnTypeTag.java			name-yourself	build
+WireKind enum	registration	core/src/main/java/io/questdb/cairo/WireKind.java			name-yourself	build
+Rust ColumnTypeTag enum	registration	core/rust/qdb-core/src/col_type.rs			name-yourself	build
+native ColumnType enum	registration	core/src/main/c/share/column_type.h			name-yourself	build
