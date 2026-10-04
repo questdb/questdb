@@ -57,6 +57,12 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
     private static final String C = "ts, ex, sym, v, size, price, l, d, tt, x";
 
     @Override
+    public void tearDown() throws Exception {
+        AsyncWindowMinMaxFilterRecordCursorFactory.DEBUG_MAX_DENSE_SLOTS = -1;
+        super.tearDown();
+    }
+
+    @Override
     public void setUp() {
         super.setUp();
         sqlExecutionContext.changePageFrameSizes(1, 64);
@@ -93,6 +99,32 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
     @Test
     public void testCancelBeforeTheFilter() throws Exception {
         assertCancellation(true);
+    }
+
+    @Test
+    public void testDenseAndMapLookupsAgree() throws Exception {
+        assertMemoryLeak(() -> {
+            createT(engine, sqlExecutionContext, 5_000);
+            // SYMBOL keys look up a dense array; a zero slot budget sends them to the map
+            for (long budget : new long[]{-1, 0, 50}) {
+                AsyncWindowMinMaxFilterRecordCursorFactory.DEBUG_MAX_DENSE_SLOTS = budget;
+                for (String query : new String[]{taq56(), taq59(), taq60(), taq70(),
+                        "select " + C + ", mn, mx from (select " + C + ", min(tt) over (partition by ex, sym) mn, max(l) over (partition by ex, sym) mx from t) where tt = mn or l = mx"}) {
+                    assertSameAsSerial(query, true);
+                    sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+                    try (RecordCursorFactory factory = select(query)) {
+                        final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                        Assert.assertNotNull(minMax);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            print(cursor, factory);
+                        }
+                        // ex has 3 symbols and NULL, sym 40: 4 x 41 slots
+                        final boolean dense = budget < 0 || (budget == 50 && !query.contains("partition by ex, sym"));
+                        Assert.assertEquals(query + ", budget " + budget, dense ? 1 : 0, minMax.getDenseBuildCount());
+                    }
+                }
+            }
+        });
     }
 
     @Test

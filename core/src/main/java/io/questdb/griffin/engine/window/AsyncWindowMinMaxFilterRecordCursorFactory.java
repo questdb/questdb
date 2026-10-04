@@ -48,6 +48,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
@@ -67,9 +68,12 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -101,6 +105,9 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * the window's comparison in scan order over the base, for those partitions only.
  */
 public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCursorFactory {
+    /** Test hook: the most slots a dense lookup may take, see {@link #buildDense}. */
+    @TestOnly
+    public static volatile long DEBUG_MAX_DENSE_SLOTS = -1;
     public static final int ARG_DATE = 4;
     public static final int ARG_DOUBLE = 0;
     public static final int ARG_FLOAT = 1;
@@ -111,6 +118,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     // scan-order value a replay computes.
     private static final int SLOTS = 3;
     private static final int ROWS_PER_BREAKER_CHECK = 64 * 1024;
+    private static final long MAX_DENSE_SLOTS = 1 << 22;
     private final int[] argColumns;
     private final int[] argKinds;
     private final RecordCursorFactory base;
@@ -119,6 +127,17 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     private final MinMaxCursor cursor;
     private final ObjList<LookupFilter> filters = new ObjList<>();
     private final boolean[] isMin;
+    // per partition key column: its base column, and whether every one is a SYMBOL
+    private final boolean isAllSymbolKeys;
+    private final int[] keyColumnArray;
+    private final int[] symbolCounts;
+    // The dense lookup of an all-SYMBOL key, or 0: per window, one value per combination of
+    // symbol keys, NULL included; see buildDense().
+    private long denseAddr;
+    private long denseSize;
+    private long denseSlots;
+    private int denseBuildCount;
+    private MemoryTracker denseTracker;
     private final OrderedMap lookupMap;
     private final ObjList<CharSequence> windowPlans;
     private final int workerCount;
@@ -169,6 +188,13 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         this.isMin = isMin;
         this.windowPlans = windowPlans;
         this.workerCount = workerCount;
+        this.keyColumnArray = keyColumns.toArray();
+        boolean allSymbols = true;
+        for (int keyColumn : keyColumnArray) {
+            allSymbols &= ColumnType.isSymbol(base.getMetadata().getColumnType(keyColumn));
+        }
+        this.isAllSymbolKeys = allSymbols;
+        this.symbolCounts = new int[keyColumnArray.length];
         final int windowCount = argColumns.length;
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         for (int i = 0; i < windowCount; i++) {
@@ -278,6 +304,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             lookupMap.reopen();
             aggregate(executionContext);
             replay(executionContext);
+            buildDense(memoryTracker);
             final RecordCursor filterCursor = filterFactory.getCursor(executionContext);
             cursor.of(filterCursor, memoryTracker);
             return cursor;
@@ -307,6 +334,12 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     @TestOnly
     public void mergeForTesting(MapValue dest, MapValue src) {
         merge(dest, src);
+    }
+
+    /** Executions that looked window values up in a dense array rather than the map. */
+    @TestOnly
+    public int getDenseBuildCount() {
+        return denseBuildCount;
     }
 
     @TestOnly
@@ -442,6 +475,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             frameSequence.prepareForDispatch();
             frameSequence.getAtom().initPools(frameSequence);
             frameSequence.dispatchAndAwait();
+            readSymbolCounts();
             final Atom atom = frameSequence.getAtom();
             for (int i = 0, n = atom.workerMaps.size(); i < n; i++) {
                 final OrderedMap workerMap = atom.workerMaps.getQuick(i);
@@ -542,8 +576,94 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         }
     }
 
+    /**
+     * For a partition key of SYMBOL columns alone, copies the frozen map into an array indexed by
+     * the symbol keys, so that a lookup is arithmetic on the row's symbol keys rather than a hash
+     * probe. Each key column spans its symbol count plus one slot, for NULL. A window value the map
+     * does not hold reads NULL there, as a miss does. Skipped when the product of the spans is
+     * large, or sparse next to the map, or a key lies outside its table's symbol count; the lookups
+     * then probe the map.
+     */
+    private void buildDense(MemoryTracker memoryTracker) {
+        if (!isAllSymbolKeys || lookupMap.size() == 0) {
+            return;
+        }
+        final long limit = DEBUG_MAX_DENSE_SLOTS >= 0 ? DEBUG_MAX_DENSE_SLOTS : Math.min(MAX_DENSE_SLOTS, 16 * lookupMap.size() + 4096);
+        long slots = 1;
+        for (int count : symbolCounts) {
+            if (count < 0) {
+                return;
+            }
+            slots *= count + 1L;
+            if (slots > limit) {
+                return;
+            }
+        }
+        final int windowCount = argColumns.length;
+        final long size = slots * windowCount * Long.BYTES;
+        final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT, memoryTracker);
+        denseAddr = addr;
+        denseSize = size;
+        denseTracker = memoryTracker;
+        for (int w = 0; w < windowCount; w++) {
+            final long nullBits = argKinds[w] <= ARG_FLOAT ? Double.doubleToRawLongBits(Double.NaN) : Numbers.LONG_NULL;
+            Vect.setMemoryLong(addr + w * slots * Long.BYTES, nullBits, slots);
+        }
+        final int valueCount = windowCount * SLOTS;
+        final MapRecordCursor mapCursor = lookupMap.getCursor();
+        final MapRecord mapRecord = mapCursor.getRecord();
+        while (mapCursor.hasNext()) {
+            long slot = 0;
+            for (int k = 0, n = keyColumnArray.length; k < n; k++) {
+                final long index = denseIndex(mapRecord.getInt(valueCount + k), symbolCounts[k]);
+                if (index < 0) {
+                    freeDense();
+                    return;
+                }
+                slot = slot * (symbolCounts[k] + 1L) + index;
+            }
+            final MapValue value = mapRecord.getValue();
+            for (int w = 0; w < windowCount; w++) {
+                Unsafe.putLong(addr + (w * slots + slot) * Long.BYTES, value.getLong(w * SLOTS));
+            }
+        }
+        denseSlots = slots;
+        denseBuildCount++;
+    }
+
+    // A symbol key's index in its dense span: NULL first, then the keys; -1 outside the table.
+    private static long denseIndex(int key, int count) {
+        if (key == SymbolTable.VALUE_IS_NULL) {
+            return 0;
+        }
+        return key >= 0 && key < count ? key + 1L : -1;
+    }
+
+    private void freeDense() {
+        if (denseAddr != 0) {
+            denseAddr = Unsafe.free(denseAddr, denseSize, MemoryTag.NATIVE_DEFAULT, denseTracker);
+            denseSize = 0;
+            denseSlots = 0;
+            denseTracker = null;
+        }
+    }
+
+    // The table's symbol counts of the key columns, read while phase one's frame cursor is open,
+    // or -1 for a column without a static symbol table.
+    private void readSymbolCounts() {
+        if (!isAllSymbolKeys) {
+            return;
+        }
+        final SymbolTableSource source = frameSequence.getSymbolTableSource();
+        for (int k = 0, n = keyColumnArray.length; k < n; k++) {
+            final SymbolTable table = source.getSymbolTable(keyColumnArray[k]);
+            symbolCounts[k] = table instanceof StaticSymbolTable st ? st.getSymbolCount() : -1;
+        }
+    }
+
     private void releaseLookup() {
         try {
+            freeDense();
             lookupMap.close();
         } finally {
             for (int i = 0, n = filters.size(); i < n; i++) {
@@ -634,6 +754,11 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         final UnorderedPageFrameSequence<Atom> frameSequence = this.frameSequence;
         this.frameSequence = null;
         Throwable failure = Misc.freeBestEffort(null, cursor);
+        try {
+            freeDense();
+        } catch (Throwable th) {
+            failure = th;
+        }
         // the filter factory owns the base and the lookup filters
         failure = Misc.freeBestEffort(failure, filterFactory);
         failure = Misc.freeBestEffort(failure, frameSequence);
@@ -782,14 +907,40 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public double getDouble(int col) {
+            if (denseAddr != 0) {
+                final long slot = denseSlot();
+                if (slot >= 0) {
+                    return Unsafe.getDouble(denseAddr + (col * denseSlots + slot) * Long.BYTES);
+                }
+            }
             final MapValue value = find();
             return value != null ? value.getDouble(col * SLOTS) : Double.NaN;
         }
 
         @Override
         public long getLong(int col) {
+            if (denseAddr != 0) {
+                final long slot = denseSlot();
+                if (slot >= 0) {
+                    return Unsafe.getLong(denseAddr + (col * denseSlots + slot) * Long.BYTES);
+                }
+            }
             final MapValue value = find();
             return value != null ? value.getLong(col * SLOTS) : Numbers.LONG_NULL;
+        }
+
+        // The row's slot of the dense lookup, or -1 when a key lies outside it.
+        private long denseSlot() {
+            long slot = 0;
+            for (int k = 0, n = keyColumnArray.length; k < n; k++) {
+                final int count = symbolCounts[k];
+                final long index = denseIndex(base.getInt(keyColumnArray[k]), count);
+                if (index < 0) {
+                    return -1;
+                }
+                slot = slot * (count + 1L) + index;
+            }
+            return slot;
         }
 
         @Override
