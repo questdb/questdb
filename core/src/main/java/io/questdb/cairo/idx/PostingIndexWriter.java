@@ -4888,7 +4888,8 @@ public class PostingIndexWriter implements IndexWriter {
                 mem.putLong(sidecarNull2);
                 mem.putLong(sidecarNull3);
             }
-            default -> throw CairoException.critical(0).put("unsupported covered value size [size=").put(valueSize).put(']');
+            default ->
+                    throw CairoException.critical(0).put("unsupported covered value size [size=").put(valueSize).put(']');
         }
     }
 
