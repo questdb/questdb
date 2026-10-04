@@ -1095,6 +1095,13 @@ public interface CairoConfiguration {
     long getSqlParallelWindowMaxKeyRows();
 
     /**
+     * Rounds of tasks the parallel window keeps alive at a time: the one whose rows are being
+     * returned and those the workers compute ahead of it. Each holds at most
+     * {@link #getSqlParallelWindowRoundRows()} rows, so this bounds the buffered output. At least 2.
+     */
+    int getSqlParallelWindowMaxRounds();
+
+    /**
      * Rows below which a window stays serial: a table smaller than this plans the serial window,
      * and the parallel window computes this many rows of its scan on the query's own thread before
      * it dispatches anything, so a LIMIT or a small result never waits for a round of tasks.

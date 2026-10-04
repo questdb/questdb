@@ -1415,6 +1415,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelWindowMaxRounds() {
+        return getDelegate().getSqlParallelWindowMaxRounds();
+    }
+
+    @Override
     public long getSqlParallelWindowMinRows() {
         return getDelegate().getSqlParallelWindowMinRows();
     }

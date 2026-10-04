@@ -120,6 +120,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_WINDOW_ENABLED("cairo.sql.parallel.window.enabled"),
     CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS("cairo.sql.parallel.window.task.rows"),
     CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS("cairo.sql.parallel.window.max.key.rows"),
+    CAIRO_SQL_PARALLEL_WINDOW_MAX_ROUNDS("cairo.sql.parallel.window.max.rounds"),
     CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS("cairo.sql.parallel.window.min.rows"),
     CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS("cairo.sql.parallel.window.round.rows"),
     CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD("cairo.sql.horizon.join.bwd.scan.absolute.threshold"),

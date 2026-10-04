@@ -56,12 +56,14 @@ import org.jetbrains.annotations.TestOnly;
 public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory {
     private final AsyncWindowAtom atom;
     private final int keyColumnIndex;
+    private final AsyncWindowSplitPlan splitPlan;
     private final ObjList<WindowFunction> windowFunctions = new ObjList<>();
     private final int workerCount;
     private RecordCursorFactory base;
     private AsyncWindowRecordCursor cursor;
     private ObjList<Function> functions;
-    private UnorderedPageFrameSequence<AsyncWindowAtom> sequence;
+    // one per round that can be alive at a time
+    private ObjList<UnorderedPageFrameSequence<AsyncWindowRecordCursor.RoundAtom>> sequences;
     private ObjList<WindowMapState> windowMapStates;
 
     /**
@@ -87,6 +89,7 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull ObjList<ObjList<Function>> perWorkerFunctions,
             @NotNull ObjList<ObjList<WindowMapState>> perWorkerMapStates,
             @NotNull RecordSink recordSink,
+            @NotNull AsyncWindowSplitPlan splitPlan,
             int keyColumnIndex,
             int workerCount
     ) {
@@ -95,9 +98,10 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         this.functions = functions;
         this.windowMapStates = windowMapStates;
         this.keyColumnIndex = keyColumnIndex;
+        this.splitPlan = splitPlan;
         this.workerCount = workerCount;
         AsyncWindowAtom atom = null;
-        UnorderedPageFrameSequence<AsyncWindowAtom> sequence = null;
+        final ObjList<UnorderedPageFrameSequence<AsyncWindowRecordCursor.RoundAtom>> sequences = new ObjList<>();
         try {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 if (functions.getQuick(i) instanceof WindowFunction wf) {
@@ -106,20 +110,22 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             }
             // takes the worker copies out of the lists as it comes to own them
             atom = new AsyncWindowAtom(configuration, functions, windowMapStates, perWorkerFunctions, perWorkerMapStates);
-            // owns the atom from here, also when its constructor throws
-            sequence = new UnorderedPageFrameSequence<>(
-                    engine,
-                    configuration,
-                    messageBus,
-                    atom,
-                    AsyncWindowRecordCursor.REDUCER,
-                    workerCount
-            );
-            this.cursor = new AsyncWindowRecordCursor(configuration, atom, sequence, metadata, recordSink, workerCount);
+            for (int i = 0, n = Math.max(2, configuration.getSqlParallelWindowMaxRounds()); i < n; i++) {
+                // each owns its round atom, never the shared atom
+                sequences.add(new UnorderedPageFrameSequence<>(
+                        engine,
+                        configuration,
+                        messageBus,
+                        new AsyncWindowRecordCursor.RoundAtom(atom),
+                        AsyncWindowRecordCursor.REDUCER,
+                        workerCount
+                ));
+            }
+            this.cursor = new AsyncWindowRecordCursor(configuration, atom, sequences, metadata, recordSink, splitPlan, workerCount);
         } catch (Throwable th) {
             // The caller keeps base, functions and windowMapStates; free what this built and the
-            // worker copies no atom took. Closing the atom twice, after a failed sequence, is safe.
-            Misc.free(sequence);
+            // worker copies no atom took.
+            Misc.freeObjListAndClear(sequences);
             Misc.free(atom);
             for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerMapStates.getQuiet(i));
@@ -133,7 +139,7 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             throw th;
         }
         this.atom = atom;
-        this.sequence = sequence;
+        this.sequences = sequences;
     }
 
     @Override
@@ -177,6 +183,10 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         return cursor;
     }
 
+    public AsyncWindowSplitPlan getSplitPlan() {
+        return splitPlan;
+    }
+
     public ObjList<WindowFunction> getWindowFunctions() {
         return windowFunctions;
     }
@@ -193,6 +203,9 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.meta("workers").val(workerCount);
         sink.optAttr("functions", windowFunctions, true);
         sink.attr("keyShards").putBaseColumnName(keyColumnIndex);
+        if (splitPlan.getMode() != AsyncWindowSplitPlan.MODE_NONE) {
+            sink.attr("keySplit").val(splitPlan);
+        }
         sink.child(base);
     }
 
@@ -210,8 +223,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     protected void _close() {
         final AsyncWindowRecordCursor cursor = this.cursor;
         this.cursor = null;
-        final UnorderedPageFrameSequence<AsyncWindowAtom> sequence = this.sequence;
-        this.sequence = null;
+        final ObjList<UnorderedPageFrameSequence<AsyncWindowRecordCursor.RoundAtom>> sequences = this.sequences;
+        this.sequences = null;
         final RecordCursorFactory base = this.base;
         this.base = null;
         final ObjList<WindowMapState> windowMapStates = this.windowMapStates;
@@ -219,8 +232,9 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         final ObjList<Function> functions = this.functions;
         this.functions = null;
         Throwable failure = Misc.freeBestEffort(null, cursor);
-        // frees the atom, and with it the worker copies
-        failure = Misc.freeBestEffort(failure, sequence);
+        failure = Misc.freeObjListBestEffort(failure, sequences);
+        // frees the worker copies
+        failure = Misc.freeBestEffort(failure, atom);
         failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeObjListBestEffort(failure, windowMapStates);
         failure = Misc.freeObjListBestEffort(failure, functions);
