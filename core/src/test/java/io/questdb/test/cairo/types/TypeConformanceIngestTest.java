@@ -487,6 +487,15 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
      * read the rows from a table the kit writes with SQL, where every row of a later type is raw
      * bits except the NULL row, so the literal INSERT's error is that row's.
      */
+    // the guarded sites, labelled as the site map labels them, that a path reaches with a value of the type
+    private static String[] guardedSitesOf(String path) {
+        return switch (path) {
+            case "ingest.ilp-http", "ingest.ilp-tcp", "ingest.ilp-udp" -> new String[]{"ILP column kind"};
+            case "ingest.qwp" -> new String[]{"QWP WAL append", "WAL columnar append"};
+            default -> new String[0];
+        };
+    }
+
     private static String nullError(String path, StringSink section) {
         return switch (path) {
             case "ingest.ilp-http", "ingest.qwp" -> rowOutcome(section, "null");
@@ -707,6 +716,9 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
             Assert.assertTrue(TypeConformanceInvariants.context(type, "-", path, mode) + ": a non-WAL table must store nothing", bits.isEmpty());
             return;
         }
+        if (checkDeclaredRefusal(path, mode, section, bits)) {
+            return;
+        }
         final String policy = TypeConformanceInvariants.policyOf(type);
         TypeConformanceValues.Row sentinel = null;
         for (int i = 0, n = rows.size(); i < n; i++) {
@@ -757,6 +769,47 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 bits.get("sentinel"),
                 sentinel.bits
         );
+    }
+
+    /**
+     * The declared-refusal invariant for a type the resource declares refused at a guarded site
+     * the path reaches: no value row is stored. ILP over HTTP and QWP answer each value row with
+     * the site's refusal. ILP over TCP and UDP answer the sender nothing, so there the rows sent
+     * after a refused row must still be stored: every fence and, unless the type is NOT NULL,
+     * the NULL row, which leaves the column out. False when the type declares no site the path
+     * reaches.
+     */
+    private boolean checkDeclaredRefusal(String path, String mode, StringSink section, Map<String, long[]> bits) {
+        final String[] sites = guardedSitesOf(path);
+        if (!TypeConformanceInvariants.isDeclaredRefused(type, sites)) {
+            return false;
+        }
+        final boolean isAnswered = "ingest.ilp-http".equals(path) || "ingest.qwp".equals(path);
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            if (row.isNull()) {
+                continue;
+            }
+            if (bits.containsKey(row.label)) {
+                Assert.fail(TypeConformanceInvariants.context(type, row.label, path, mode) + ": the type is declared refused at "
+                        + type.laterRefusedSites + ", but the value row was stored");
+            }
+            if (isAnswered) {
+                TypeConformanceInvariants.assertDeclaredRefusal(type, row.label, path, mode, rowOutcome(section, row.label), sites);
+            }
+        }
+        if (!isAnswered) {
+            for (String line : section.toString().split("\n")) {
+                if (line.startsWith("error: ")) {
+                    Assert.fail(TypeConformanceInvariants.context(type, "-", path, mode) + ": a row sent after a refused row was lost: " + line);
+                }
+            }
+            if (!TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type)) && !bits.containsKey("null")) {
+                Assert.fail(TypeConformanceInvariants.context(type, "null", path, mode)
+                        + ": the row that leaves the column out, sent among refused rows, was not stored");
+            }
+        }
+        return true;
     }
 
     /**

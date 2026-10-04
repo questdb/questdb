@@ -54,11 +54,14 @@ import java.util.Set;
  * Types registered later: a real tag the list below does not name. It joins the kit by its
  * registration lines alone; the kit reads its declarations, NULL policy and paths from the
  * resource {@link #LATER_TYPES_RESOURCE}, one line each,
- * {@code tag | DDL | NULL policy | paths [| arithmetic tier]}, and checks it with
+ * {@code tag | DDL | NULL policy | paths [| arithmetic tier [| refused sites]]}, and checks it with
  * {@link TypeConformanceInvariants} instead of a recording. The arithmetic tier comes from the
  * type's definition ({@code TypeDriver.getArithmetic()}); a tier on the line, which stood in for
- * that answer before S14b, must agree with it. A later tag without a resource line is still
- * listed, so every kit class fails on it with a message that names it.
+ * that answer before S14b, must agree with it. The refused sites, comma-separated, are the guarded
+ * sites the type is refused at on purpose, labelled as the site map
+ * ({@link TypeConformanceInvariants#SITES_FILE}) labels them: a path that reaches one must fail
+ * with that site's refusal. A later tag without a resource line is still listed, so every kit
+ * class fails on it with a message that names it.
  */
 public final class TypeConformanceTypes {
     public static final ObjList<Entry> ALL = new ObjList<>();
@@ -91,8 +94,47 @@ public final class TypeConformanceTypes {
         return EXISTING_TAGS.contains(tag);
     }
 
+    /**
+     * Parses one declaration line of {@link #LATER_TYPES_RESOURCE},
+     * {@code tag | DDL | NULL policy | paths [| arithmetic tier [| refused sites]]}, into its six
+     * fields, trimmed; a field the line leaves out is empty. Every refused site must be one of
+     * {@code declarableSites}.
+     */
+    static String[] parseLaterTypeLine(String line, Set<String> declarableSites) {
+        final String[] parts = line.split("\\|", -1);
+        if (parts.length < 4 || parts.length > 6) {
+            throw new IllegalStateException("bad line in " + LATER_TYPES_RESOURCE + ": " + line);
+        }
+        final String[] fields = new String[6];
+        for (int i = 0; i < fields.length; i++) {
+            fields[i] = i < parts.length ? parts[i].trim() : "";
+        }
+        final ObjList<String> sites = splitSites(fields[5]);
+        for (int i = 0, n = sites.size(); i < n; i++) {
+            if (!declarableSites.contains(sites.getQuick(i))) {
+                throw new IllegalStateException("bad line in " + LATER_TYPES_RESOURCE + ": " + sites.getQuick(i)
+                        + " is not a guarded site of " + TypeConformanceInvariants.SITES_FILE + ": " + line);
+            }
+        }
+        return fields;
+    }
+
+    /**
+     * The guarded-site labels of a declaration's sixth field, comma-separated; none for an empty
+     * field.
+     */
+    static ObjList<String> splitSites(String field) {
+        final ObjList<String> sites = new ObjList<>();
+        for (String site : field.split(",")) {
+            if (!site.trim().isEmpty()) {
+                sites.add(site.trim());
+            }
+        }
+        return sites;
+    }
+
     private static void addExisting(EnumMap<ColumnTypeTag, Entry> byTag, ColumnTypeTag tag, String label, int columnType, String ddl) {
-        final Entry entry = new Entry(label, columnType, ddl, tag, null, null, null);
+        final Entry entry = new Entry(label, columnType, ddl, tag, null, null, null, new ObjList<>());
         if (tag != null) {
             byTag.put(tag, entry);
         }
@@ -109,13 +151,13 @@ public final class TypeConformanceTypes {
             for (int i = 0, n = lines.size(); i < n; i++) {
                 final String[] line = lines.getQuick(i);
                 if (line[0].equals(tag.name())) {
-                    // tag | ddl | NULL policy | paths [| arithmetic tier]
-                    ALL.add(new Entry(line[1], tag.code(), line[1], tag, line[2], line[3], tierOf(tag, line.length > 4 ? line[4] : null)));
+                    // tag | ddl | NULL policy | paths | arithmetic tier | refused sites
+                    ALL.add(new Entry(line[1], tag.code(), line[1], tag, line[2], line[3], tierOf(tag, line[4]), splitSites(line[5])));
                     isDeclared = true;
                 }
             }
             if (!isDeclared) {
-                ALL.add(new Entry(tag.name(), tag.code(), tag.name(), tag, null, null, null));
+                ALL.add(new Entry(tag.name(), tag.code(), tag.name(), tag, null, null, null, new ObjList<>()));
             }
         }
     }
@@ -139,10 +181,10 @@ public final class TypeConformanceTypes {
     }
 
     private static ObjList<String[]> readLaterTypes() {
-        final ObjList<String[]> lines = new ObjList<>();
+        final ObjList<String> declarations = new ObjList<>();
         try (InputStream in = TypeConformanceTypes.class.getResourceAsStream(LATER_TYPES_RESOURCE)) {
             if (in == null) {
-                return lines;
+                return new ObjList<>();
             }
             final BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
             String line;
@@ -152,18 +194,21 @@ public final class TypeConformanceTypes {
                     // mixing cases belong to TypeConformanceInvariants
                     continue;
                 }
-                // tag | ddl | NULL policy | paths [| arithmetic tier]
-                final String[] parts = line.split("\\|", -1);
-                if (parts.length != 4 && parts.length != 5) {
-                    throw new IllegalStateException("bad line in " + LATER_TYPES_RESOURCE + ": " + line);
-                }
-                for (int i = 0; i < parts.length; i++) {
-                    parts[i] = parts[i].trim();
-                }
-                lines.add(parts);
+                declarations.add(line);
             }
         } catch (IOException e) {
             throw new IllegalStateException(e);
+        }
+        // the site map is read only when a line declares a refused site
+        boolean hasRefusedSites = false;
+        for (int i = 0, n = declarations.size(); i < n; i++) {
+            final String[] parts = declarations.getQuick(i).split("\\|", -1);
+            hasRefusedSites |= parts.length == 6 && !parts[5].isBlank();
+        }
+        final Set<String> declarableSites = hasRefusedSites ? TypeConformanceInvariants.declarableSites() : Set.of();
+        final ObjList<String[]> lines = new ObjList<>();
+        for (int i = 0, n = declarations.size(); i < n; i++) {
+            lines.add(parseLaterTypeLine(declarations.getQuick(i), declarableSites));
         }
         return lines;
     }
@@ -189,6 +234,12 @@ public final class TypeConformanceTypes {
         @Nullable
         public final String laterPolicy;
         /**
+         * For a type registered later: the guarded sites it is refused at on purpose, as the
+         * resource declares them; empty for an existing type and for a later type that declares
+         * none.
+         */
+        public final ObjList<String> laterRefusedSites;
+        /**
          * For a type registered later: its arithmetic tier (I8, I16, I32, I64, U8, U16, U32, F32,
          * F64) as its definition answers it; null for WIDE and NONE, and for an existing type.
          */
@@ -203,7 +254,8 @@ public final class TypeConformanceTypes {
                 ColumnTypeTag tag,
                 @Nullable String laterPolicy,
                 @Nullable String laterPaths,
-                @Nullable String laterTier
+                @Nullable String laterTier,
+                ObjList<String> laterRefusedSites
         ) {
             this.label = label;
             this.columnType = columnType;
@@ -212,6 +264,7 @@ public final class TypeConformanceTypes {
             this.laterPolicy = laterPolicy;
             this.laterPaths = laterPaths;
             this.laterTier = laterTier == null || laterTier.isEmpty() ? null : laterTier;
+            this.laterRefusedSites = laterRefusedSites;
         }
 
         /**
