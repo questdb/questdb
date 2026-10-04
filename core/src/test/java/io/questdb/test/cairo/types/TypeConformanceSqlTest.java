@@ -28,9 +28,14 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RelationKind;
 import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -39,6 +44,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,6 +54,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.mp.TestWorkerPool;
@@ -88,6 +95,12 @@ import java.util.regex.Pattern;
  * variables before it queues the export, which runs on a copy export job driven by the test
  * thread. It runs single-threaded only: the export runs on its own job in every mode.
  * <p>
+ * {@code sql.bind_value} defines a bind variable with the type, as its type driver defines one,
+ * sets it through each value setter of the bind variable service in turn and reads it back with
+ * {@code SELECT $1}. {@code lv.window_anchor} makes the column the ANCHOR EXPRESSION of a live
+ * view's window over a WAL table and refreshes the view with a refresh job driven by the test
+ * thread. Both run single-threaded: neither has a parallel factory.
+ * <p>
  * {@code sql.between_timestamp} compares the column with two TIMESTAMP bounds, which takes the
  * timestamp {@code between} for the types that widen to TIMESTAMP and reads a non-timestamp
  * operand through its timestamp getter; {@code sql.eq_null_double} tests {@code v = NULL}, which
@@ -126,6 +139,11 @@ import java.util.regex.Pattern;
 public class TypeConformanceSqlTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TypeConformanceSqlTest.class);
     private static final Pattern NO_CAST = Pattern.compile("error: \\[(\\d+)] there is no matching function `cast` with the argument types: \\((.*)\\)");
+    // the value setters of the bind variable service, each with one value (setBindValue)
+    private static final String[] BIND_SETTERS = {
+            "setBoolean", "setByte", "setShort", "setChar", "setInt", "setLong", "setFloat", "setDouble", "setDate",
+            "setTimestamp", "setStr", "setVarchar", "setLong256", "setUuid", "setArray"
+    };
     private static final String FORM_BIND = "bind";
     private static final String FORM_CONST = "const";
     private static final String FORM_TEXT = "text";
@@ -148,6 +166,65 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             data.add(new Object[]{TypeConformanceTypes.ALL.getQuick(i).label});
         }
         return data;
+    }
+
+    @Test
+    public void testBindValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String path = "sql.bind_value";
+            final String mode = MODES[0];
+            if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
+                return;
+            }
+            configure(sqlExecutionContext, mode);
+            final BindVariableService service = sqlExecutionContext.getBindVariableService();
+            final StringSink section = new StringSink();
+            try (DirectArray array = new DirectArray(configuration)) {
+                array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                array.setDimLen(0, 1);
+                array.applyShape();
+                array.startMemoryA().putDouble(1.5);
+                for (String setter : BIND_SETTERS) {
+                    service.clear();
+                    section.put(setter).put('\t');
+                    try {
+                        ColumnType.getTypeDriver(type.columnType).defineBindVariable(service, 0, type.columnType, 0);
+                    } catch (Throwable e) {
+                        section.put("define error: ").put(oneLineOf(e)).put('\n');
+                        continue;
+                    }
+                    try {
+                        setBindValue(service, setter, array);
+                    } catch (Throwable e) {
+                        section.put("error: ").put(oneLineOf(e)).put('\n');
+                        continue;
+                    }
+                    final Observation observation = observe(engine, sqlExecutionContext, "SELECT $1 v");
+                    if (observation.error != null) {
+                        section.put(observation.error.replace('\n', ' '));
+                    } else {
+                        final String[] lines = observation.output.split("\n");
+                        section.put(lines.length > 1 ? lines[1] : "");
+                    }
+                    section.put('\n');
+                }
+            } finally {
+                service.clear();
+            }
+            if (!type.isLater()) {
+                assertSection("bind_value", mode, section);
+                return;
+            }
+            // a later type: each setter is refused with an error naming the type, or the value reads back
+            final String name = ColumnType.nameOf(type.columnType);
+            for (String line : section.toString().split("\n")) {
+                final String outcome = line.substring(line.indexOf('\t') + 1);
+                if ((outcome.startsWith("error: ") || outcome.startsWith("define error: ")) && !outcome.contains(name)) {
+                    throw new AssertionError(TypeConformanceInvariants.context(type, line.substring(0, line.indexOf('\t')), path, mode)
+                            + ": a refused bind value must name the type, but: " + outcome);
+                }
+            }
+        });
     }
 
     @Test
@@ -281,6 +358,79 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewAnchor() throws Exception {
+        assertMemoryLeak(() -> {
+            final String path = "lv.window_anchor";
+            final String mode = MODES[0];
+            if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
+                return;
+            }
+            configure(sqlExecutionContext, mode);
+            final StringSink section = new StringSink();
+            // g stays NULL in every row: one window partition, so only the anchor resets the count
+            execute(engine, sqlExecutionContext, "CREATE TABLE lvb (k VARCHAR, g SYMBOL, v " + type.ddl + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", "create", section);
+            if (section.length() > 0) {
+                if (type.isLater()) {
+                    throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + section);
+                }
+                assertSection("window_anchor", mode, section);
+                return;
+            }
+            try {
+                // the view starts from the test clock's now, which the refresh below advances
+                setCurrentMicros(0L);
+                // the anchor resets the window's count each time the column's value changes; the
+                // anchor and the window's keys resolve against the projection
+                execute(engine, sqlExecutionContext, "CREATE LIVE VIEW lva FLUSH EVERY 100ms START FROM NOW AS "
+                        + "SELECT ts, k, g, v, count(*) OVER w AS c FROM lvb WINDOW w AS (PARTITION BY g ORDER BY ts ANCHOR EXPRESSION v)", "create view", section);
+                final boolean isCreated = section.length() == 0;
+                if (isCreated) {
+                    try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                        TypeConformanceValues.writeRows(engine, sqlExecutionContext, "lvb", rows, "", 0, 0, rows.size(), 1, true, section);
+                        // past each flush deadline until the refresh finds no more work
+                        boolean isProgressing = true;
+                        for (int pass = 0; pass < 512 && isProgressing; pass++) {
+                            setCurrentMicros(currentMicros + 250_000L);
+                            drainWalQueue();
+                            isProgressing = false;
+                            for (int i = 0; i < 64 && job.run(); i++) {
+                                isProgressing = true;
+                            }
+                            drainWalQueue();
+                        }
+                    }
+                    section.put(TypeConformanceRecording.escape(printQuietly("SELECT k, c FROM lva ORDER BY ts")));
+                }
+                if (!type.isLater()) {
+                    assertSection("window_anchor", mode, section);
+                    return;
+                }
+                // a later type is an anchor when its family is TIMESTAMP, LONG or INT and it orders as the family does
+                final TypeDriver driver = ColumnType.getTypeDriver(type.columnType);
+                final PhysicalDescriptor.Accessor family = driver.getAccessor();
+                final boolean isAnchorFamily = family == PhysicalDescriptor.Accessor.TIMESTAMP
+                        || family == PhysicalDescriptor.Accessor.LONG || family == PhysicalDescriptor.Accessor.INT;
+                final int namesake = family == PhysicalDescriptor.Accessor.INT ? ColumnType.INT
+                        : family == PhysicalDescriptor.Accessor.LONG ? ColumnType.LONG : ColumnType.TIMESTAMP;
+                final boolean isAnchor = isAnchorFamily && driver.getArithmetic() == ColumnType.getTypeDriver(namesake).getArithmetic();
+                if (isCreated != isAnchor) {
+                    throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
+                            + ": the anchor must be " + (isAnchor ? "accepted" : "refused") + ": " + section);
+                }
+                if (isCreated && (section.toString().contains("error: ") || section.toString().split("\n").length != rows.size() + 1)) {
+                    throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
+                            + ": the view must hold every row of the base table: " + section);
+                }
+            } finally {
+                setCurrentMicros(-1);
+                final StringSink ignored = new StringSink();
+                execute(engine, sqlExecutionContext, "DROP LIVE VIEW IF EXISTS lva", "drop", ignored);
+                execute(engine, sqlExecutionContext, "DROP TABLE IF EXISTS lvb", "drop", ignored);
+            }
+        });
+    }
+
+    @Test
     public void testQueries() throws Exception {
         assertMemoryLeak(() -> runModes((eng, ctx, mode) -> {
             final StringSink steps = new StringSink();
@@ -408,6 +558,31 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     // a row that reads as NULL: the NULL row, and under SENTINEL the sentinel-pattern rows
     private static boolean isNullRow(TypeConformanceValues.Row row, String nullRows) {
         return row.isNull() || nullRows.contains("," + row.label + ",");
+    }
+
+    private static String oneLineOf(Throwable e) {
+        return TypeConformanceRecording.escape(String.valueOf(e.getMessage())).replace('\n', ' ');
+    }
+
+    // sets $1 through one value setter of the service, with that setter's value
+    private static void setBindValue(BindVariableService service, String setter, ArrayView array) throws SqlException {
+        switch (setter) {
+            case "setBoolean" -> service.setBoolean(0, true);
+            case "setByte" -> service.setByte(0, (byte) 1);
+            case "setShort" -> service.setShort(0, (short) 1);
+            case "setChar" -> service.setChar(0, '1');
+            case "setInt" -> service.setInt(0, 1);
+            case "setLong" -> service.setLong(0, 1L);
+            case "setFloat" -> service.setFloat(0, 1.5f);
+            case "setDouble" -> service.setDouble(0, 1.5);
+            case "setDate" -> service.setDate(0, 1L);
+            case "setTimestamp" -> service.setTimestamp(0, 1L);
+            case "setStr" -> service.setStr(0, "1");
+            case "setVarchar" -> service.setVarchar(0, new Utf8String("1"));
+            case "setLong256" -> service.setLong256(0, 1L, 0L, 0L, 0L);
+            case "setUuid" -> service.setUuid(0, 1L, 0L);
+            default -> service.setArray(0, array);
+        }
     }
 
     // a value as SQL text: a number as it is, any other text quoted, a NULL as NULL
@@ -1817,6 +1992,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## eq_null_double
                 props: random_access=true size=known timestamp=none
                 k\tv
+                ## bind_value
+                setBoolean\ttrue
+                setByte\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept TIMESTAMP
+                setStr\tfalse
+                setVarchar\tfalse
+                setLong256\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as BOOLEAN and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got BOOLEAN
                 """);
         rec("BYTE", """
                 ## filter_eq
@@ -2067,6 +2260,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## eq_null_double
                 props: random_access=true size=known timestamp=none
                 k\tv
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as BYTE and cannot accept BOOLEAN
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\terror: [0] bind variable at 0 is defined as BYTE and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as BYTE and cannot accept DOUBLE
+                setDate\t1
+                setTimestamp\t1
+                setStr\t1
+                setVarchar\t1
+                setLong256\terror: [0] bind variable at 0 is defined as BYTE and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as BYTE and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as BYTE and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got BYTE
                 """);
         rec("SHORT", """
                 ## cast
@@ -2317,6 +2528,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## eq_null_double
                 props: random_access=true size=known timestamp=none
                 k\tv
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as SHORT and cannot accept BOOLEAN
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\terror: [0] bind variable at 0 is defined as SHORT and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as SHORT and cannot accept DOUBLE
+                setDate\t1
+                setTimestamp\t1
+                setStr\t1
+                setVarchar\t1
+                setLong256\terror: [0] bind variable at 0 is defined as SHORT and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as SHORT and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as SHORT and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got SHORT
                 """);
         rec("CHAR", """
                 ## cast
@@ -2549,6 +2778,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 min\t
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as CHAR and cannot accept BOOLEAN
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\terror: [0] bind variable at 0 is defined as CHAR and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as CHAR and cannot accept DOUBLE
+                setDate\t1
+                setTimestamp\terror: [0] bind variable at 0 is defined as CHAR and cannot accept TIMESTAMP
+                setStr\t1
+                setVarchar\t1
+                setLong256\terror: [0] bind variable at 0 is defined as CHAR and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as CHAR and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as CHAR and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got CHAR
                 """);
         rec("INT", """
                 ## cast
@@ -2801,6 +3048,28 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\tnull
                 null\tnull
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as INT and cannot accept BOOLEAN
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\terror: [0] bind variable at 0 is defined as INT and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as INT and cannot accept DOUBLE
+                setDate\t1
+                setTimestamp\t1
+                setStr\t1
+                setVarchar\t1
+                setLong256\terror: [0] bind variable at 0 is defined as INT and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as INT and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as INT and cannot accept ARRAY
+                ## window_anchor
+                k\tc
+                min\t1
+                max\t1
+                sentinel\t1
+                null\t2
                 """);
         rec("LONG", """
                 ## cast
@@ -3051,6 +3320,28 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\tnull
                 null\tnull
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as LONG and cannot accept BOOLEAN
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\terror: [0] bind variable at 0 is defined as LONG and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as LONG and cannot accept DOUBLE
+                setDate\t1
+                setTimestamp\t1
+                setStr\t1
+                setVarchar\t1
+                setLong256\terror: [0] bind variable at 0 is defined as LONG and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as LONG and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as LONG and cannot accept ARRAY
+                ## window_anchor
+                k\tc
+                min\t1
+                max\t1
+                sentinel\t1
+                null\t2
                 """);
         rec("DATE", """
                 ## filter_eq
@@ -3288,6 +3579,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\t
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DATE and cannot accept BOOLEAN
+                setByte\t1970-01-01T00:00:00.001Z
+                setShort\t1970-01-01T00:00:00.001Z
+                setChar\t1970-01-01T00:00:00.001Z
+                setInt\t1970-01-01T00:00:00.001Z
+                setLong\t1970-01-01T00:00:00.001Z
+                setFloat\terror: [0] bind variable at 0 is defined as DATE and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DATE and cannot accept DOUBLE
+                setDate\t1970-01-01T00:00:00.001Z
+                setTimestamp\t1970-01-01T00:00:00.000Z
+                setStr\t1970-01-01T00:00:00.001Z
+                setVarchar\t1970-01-01T00:00:00.001Z
+                setLong256\terror: [0] bind variable at 0 is defined as DATE and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DATE and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DATE and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DATE
                 """);
         rec("TIMESTAMP", """
                 ## cast
@@ -3523,6 +3832,28 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\t
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as TIMESTAMP and cannot accept BOOLEAN
+                setByte\t1970-01-01T00:00:00.000001Z
+                setShort\t1970-01-01T00:00:00.000001Z
+                setChar\t1970-01-01T00:00:00.000001Z
+                setInt\t1970-01-01T00:00:00.000001Z
+                setLong\t1970-01-01T00:00:00.000001Z
+                setFloat\terror: [0] bind variable at 0 is defined as TIMESTAMP and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as TIMESTAMP and cannot accept DOUBLE
+                setDate\t1970-01-01T00:00:00.001000Z
+                setTimestamp\t1970-01-01T00:00:00.000001Z
+                setStr\t1970-01-01T00:00:00.000001Z
+                setVarchar\t1970-01-01T00:00:00.000001Z
+                setLong256\terror: [0] bind variable at 0 is defined as TIMESTAMP and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as TIMESTAMP and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as TIMESTAMP and cannot accept ARRAY
+                ## window_anchor
+                k\tc
+                min\t1
+                max\t1
+                sentinel\t1
+                null\t2
                 """);
         rec("FLOAT", """
                 ## filter_eq
@@ -3847,6 +4178,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tnull
                 inf\tnull
                 ninf\tnull
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as FLOAT and cannot accept BOOLEAN
+                setByte\t1.0
+                setShort\t1.0
+                setChar\t1.0
+                setInt\t1.0
+                setLong\t1.0
+                setFloat\t1.5
+                setDouble\t1.5
+                setDate\t1.0
+                setTimestamp\t1.0
+                setStr\t1.0
+                setVarchar\t1.0
+                setLong256\terror: [0] bind variable at 0 is defined as FLOAT and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as FLOAT and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as FLOAT and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got FLOAT
                 """);
         rec("DOUBLE", """
                 ## cast
@@ -4171,6 +4520,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tnull
                 inf\tnull
                 ninf\tnull
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DOUBLE and cannot accept BOOLEAN
+                setByte\t1.0
+                setShort\t1.0
+                setChar\t1.0
+                setInt\t1.0
+                setLong\t1.0
+                setFloat\t1.5
+                setDouble\t1.5
+                setDate\t1.0
+                setTimestamp\t1.0
+                setStr\t1.0
+                setVarchar\t1.0
+                setLong256\terror: [0] bind variable at 0 is defined as DOUBLE and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DOUBLE and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DOUBLE and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DOUBLE
                 """);
         rec("STRING", """
                 ## filter_eq
@@ -4432,6 +4799,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\ttrue
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\t1.5
+                setDouble\t1.5
+                setDate\t1
+                setTimestamp\t1970-01-01T00:00:00.000001Z
+                setStr\t1
+                setVarchar\t1
+                setLong256\t0x01
+                setUuid\t00000000-0000-0000-0000-000000000001
+                setArray\terror: [0] bind variable at 0 is defined as STRING and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got STRING
                 """);
         rec("SYMBOL", """
                 ## filter_eq
@@ -4700,6 +5085,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\ttrue
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\t1.5
+                setDouble\t1.5
+                setDate\t1
+                setTimestamp\t1970-01-01T00:00:00.000001Z
+                setStr\t1
+                setVarchar\t1
+                setLong256\t0x01
+                setUuid\t00000000-0000-0000-0000-000000000001
+                setArray\terror: [0] bind variable at 0 is defined as STRING and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got SYMBOL
                 """);
         rec("LONG256", """
                 ## filter_eq
@@ -4935,6 +5338,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\t
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept TIMESTAMP
+                setStr\t0x01
+                setVarchar\t0x01
+                setLong256\t0x01
+                setUuid\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as LONG256 and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got LONG256
                 """);
         rec("GEOBYTE", """
                 ## filter_eq
@@ -5139,6 +5560,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept SHORT
+                setChar\terror: inconvertible value: 1 [CHAR -> GEOHASH(7b)]
+                setInt\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got GEOHASH(7b)
                 """);
         rec("GEOSHORT", """
                 ## cast
@@ -5349,6 +5788,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got GEOHASH(3c)
                 """);
         rec("GEOINT", """
                 ## filter_eq
@@ -5559,6 +6016,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got GEOHASH(6c)
                 """);
         rec("GEOLONG", """
                 ## cast
@@ -5769,6 +6244,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got GEOHASH(8c)
                 """);
         rec("BINARY", """
                 ## cast
@@ -5933,6 +6426,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as BINARY and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as BINARY and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as BINARY and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as BINARY and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as BINARY and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as BINARY and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as BINARY and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as BINARY and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as BINARY and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as BINARY and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as BINARY and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as BINARY and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as BINARY and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as BINARY and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as BINARY and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got BINARY
                 """);
         rec("UUID", """
                 ## cast
@@ -6166,6 +6677,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\t
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as UUID and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as UUID and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as UUID and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as UUID and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as UUID and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as UUID and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as UUID and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as UUID and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as UUID and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as UUID and cannot accept TIMESTAMP
+                setStr\terror: inconvertible value: `1` [STRING -> UUID]
+                setVarchar\terror: inconvertible value: `1` [STRING -> UUID]
+                setLong256\terror: [0] bind variable at 0 is defined as UUID and cannot accept LONG256
+                setUuid\t00000000-0000-0000-0000-000000000001
+                setArray\terror: [0] bind variable at 0 is defined as UUID and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got UUID
                 """);
         rec("LONG128", """
                 ## cast
@@ -6357,6 +6886,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\t
                 null\t
+                ## bind_value
+                setBoolean\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setByte\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setShort\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setChar\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setInt\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setLong\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setFloat\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setDouble\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setDate\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setTimestamp\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setStr\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setVarchar\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setLong256\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setUuid\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                setArray\tdefine error: [0] bind variable cannot be used [contextType=24, index=0]
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got LONG128
                 """);
         rec("IPv4", """
                 ## cast
@@ -6595,6 +7142,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\t
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept CHAR
+                setInt\t0.0.0.1
+                setLong\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept TIMESTAMP
+                setStr\terror: invalid IPv4 format: 1
+                setVarchar\terror: invalid IPv4 format: 1
+                setLong256\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as IPv4 and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got IPv4
                 """);
         rec("VARCHAR", """
                 ## filter_eq
@@ -6856,6 +7421,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\ttrue
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\t1.5
+                setDouble\t1.5
+                setDate\t1
+                setTimestamp\t1970-01-01T00:00:00.000001Z
+                setStr\t1
+                setVarchar\t1
+                setLong256\t0x01
+                setUuid\t00000000-0000-0000-0000-000000000001
+                setArray\terror: [0] bind variable at 0 is defined as VARCHAR and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got VARCHAR
                 """);
         rec("DOUBLE[]", """
                 ## filter_eq
@@ -7071,6 +7654,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE[]
                 ## eq_null_double
                 error: [27] there is no matching operator `=` with the argument types: DOUBLE[] = NULL
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept TIMESTAMP
+                setStr\terror: inconvertible value: `1` [STRING -> DOUBLE[]]
+                setVarchar\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DOUBLE[] and cannot accept UUID
+                setArray\t[1.5]
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DOUBLE[]
                 """);
         rec("DECIMAL8", """
                 ## cast
@@ -7282,6 +7883,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept TIMESTAMP
+                setStr\t1.0
+                setVarchar\t1.0
+                setLong256\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DECIMAL(2,1) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DECIMAL(2,1)
                 """);
         rec("DECIMAL16", """
                 ## cast
@@ -7493,6 +8112,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept TIMESTAMP
+                setStr\t1.00
+                setVarchar\t1.00
+                setLong256\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DECIMAL(4,2) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DECIMAL(4,2)
                 """);
         rec("DECIMAL32", """
                 ## cast
@@ -7710,6 +8347,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept TIMESTAMP
+                setStr\t1
+                setVarchar\t1
+                setLong256\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DECIMAL(9,0) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DECIMAL(9,0)
                 """);
         rec("DECIMAL64", """
                 ## filter_eq
@@ -7921,6 +8576,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept TIMESTAMP
+                setStr\t1.0000
+                setVarchar\t1.0000
+                setLong256\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DECIMAL(16,4) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DECIMAL(16,4)
                 """);
         rec("DECIMAL128", """
                 ## filter_eq
@@ -8132,6 +8805,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept TIMESTAMP
+                setStr\t1.0000000000
+                setVarchar\t1.0000000000
+                setLong256\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DECIMAL(38,10) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DECIMAL(38,10)
                 """);
         rec("DECIMAL256", """
                 ## cast
@@ -8343,6 +9034,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept TIMESTAMP
+                setStr\t1.00000000000000000000
+                setVarchar\t1.00000000000000000000
+                setLong256\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DECIMAL(76,20) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DECIMAL(76,20)
                 """);
         rec("INTERVAL", """
                 ## filter_eq
@@ -8415,6 +9124,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## eq_null_double
                 error: create: [29] non-persisted type: INTERVAL
+                ## bind_value
+                setBoolean\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setByte\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setShort\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setChar\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setInt\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setLong\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setFloat\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setDouble\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setDate\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setTimestamp\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setStr\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setVarchar\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setLong256\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setUuid\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                setArray\tdefine error: [0] bind variable cannot be used [contextType=39, index=0]
+                ## window_anchor
+                error: create: [41] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
                 ## filter_eq
@@ -8487,6 +9214,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 ## eq_null_double
                 error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## bind_value
+                setBoolean\ttrue
+                setByte\t1
+                setShort\t1
+                setChar\t1
+                setInt\t1
+                setLong\t1
+                setFloat\t1.5
+                setDouble\t1.5
+                setDate\t1
+                setTimestamp\t1970-01-01T00:00:00.000001Z
+                setStr\t1
+                setVarchar\t1
+                setLong256\t0x01
+                setUuid\t00000000-0000-0000-0000-000000000001
+                setArray\terror: [0] bind variable at 0 is defined as VARCHAR and cannot accept ARRAY
+                ## window_anchor
+                error: create: [41] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
                 ## filter_eq
@@ -8731,6 +9476,28 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k\tv
                 sentinel\t
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as TIMESTAMP_NS and cannot accept BOOLEAN
+                setByte\t1970-01-01T00:00:00.000000001Z
+                setShort\t1970-01-01T00:00:00.000000001Z
+                setChar\t1970-01-01T00:00:00.000000001Z
+                setInt\t1970-01-01T00:00:00.000000001Z
+                setLong\t1970-01-01T00:00:00.000000001Z
+                setFloat\terror: [0] bind variable at 0 is defined as TIMESTAMP_NS and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as TIMESTAMP_NS and cannot accept DOUBLE
+                setDate\t1970-01-01T00:00:00.001000000Z
+                setTimestamp\t1970-01-01T00:00:00.000001000Z
+                setStr\t1970-01-01T00:00:00.000000001Z
+                setVarchar\t1970-01-01T00:00:00.000000001Z
+                setLong256\terror: [0] bind variable at 0 is defined as TIMESTAMP_NS and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as TIMESTAMP_NS and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as TIMESTAMP_NS and cannot accept ARRAY
+                ## window_anchor
+                k\tc
+                min\t1
+                max\t1
+                sentinel\t1
+                null\t2
                 """);
         rec("GEOHASH(1c)", """
                 ## filter_eq
@@ -8935,6 +9702,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept SHORT
+                setChar\t1
+                setInt\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got GEOHASH(1c)
                 """);
         rec("GEOHASH(8b)", """
                 ## filter_eq
@@ -9139,6 +9924,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got GEOHASH(8b)
                 """);
         rec("GEOHASH(31b)", """
                 ## filter_eq
@@ -9343,6 +10146,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got GEOHASH(31b)
                 """);
         rec("GEOHASH(12c)", """
                 ## cast
@@ -9553,6 +10374,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept TIMESTAMP
+                setStr\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept STRING
+                setVarchar\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got GEOHASH(12c)
                 """);
         rec("DECIMAL(5,2)", """
                 ## cast
@@ -9764,6 +10603,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept TIMESTAMP
+                setStr\t1.00
+                setVarchar\t1.00
+                setLong256\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DECIMAL(5,2) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DECIMAL(5,2)
                 """);
         rec("DECIMAL(18,3)", """
                 ## filter_eq
@@ -9975,6 +10832,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=unknown timestamp=none
                 k\tv
                 null\t
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept TIMESTAMP
+                setStr\t1.000
+                setVarchar\t1.000
+                setLong256\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept UUID
+                setArray\terror: [0] bind variable at 0 is defined as DECIMAL(18,3) and cannot accept ARRAY
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DECIMAL(18,3)
                 """);
         rec("DOUBLE[][]", """
                 ## filter_eq
@@ -10190,6 +11065,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE[][]
                 ## eq_null_double
                 error: [27] there is no matching operator `=` with the argument types: DOUBLE[][] = NULL
+                ## bind_value
+                setBoolean\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept BOOLEAN
+                setByte\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept BYTE
+                setShort\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept SHORT
+                setChar\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept CHAR
+                setInt\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept INT
+                setLong\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept LONG
+                setFloat\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept FLOAT
+                setDouble\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept DOUBLE
+                setDate\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept DATE
+                setTimestamp\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept TIMESTAMP
+                setStr\terror: inconvertible value: `1` [STRING -> DOUBLE[][]]
+                setVarchar\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept VARCHAR
+                setLong256\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept LONG256
+                setUuid\terror: [0] bind variable at 0 is defined as DOUBLE[][] and cannot accept UUID
+                setArray\terror: [-1] array type mismatch [expected=DOUBLE[][], actual=DOUBLE[]]
+                ## window_anchor
+                error: create view: [147] ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DOUBLE[][]
                 """);
         rec("INTERVAL(us)", """
                 ## filter_eq
@@ -10262,6 +11155,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## eq_null_double
                 error: create: [29] non-persisted type: INTERVAL
+                ## bind_value
+                setBoolean\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setByte\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setShort\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setChar\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setInt\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setLong\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setFloat\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setDouble\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setDate\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setTimestamp\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setStr\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setVarchar\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setLong256\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setUuid\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                setArray\tdefine error: [0] bind variable cannot be used [contextType=131111, index=0]
+                ## window_anchor
+                error: create: [41] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
                 ## cast
@@ -10334,6 +11245,24 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## eq_null_double
                 error: create: [29] non-persisted type: INTERVAL
+                ## bind_value
+                setBoolean\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setByte\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setShort\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setChar\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setInt\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setLong\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setFloat\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setDouble\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setDate\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setTimestamp\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setStr\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setVarchar\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setLong256\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setUuid\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                setArray\tdefine error: [0] bind variable cannot be used [contextType=262183, index=0]
+                ## window_anchor
+                error: create: [41] non-persisted type: INTERVAL
                 """);
     }
     // recordings: end

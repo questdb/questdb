@@ -75,6 +75,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * conversion, read through record cursors and through page frames, over the table shapes of
  * {@link TypeConformanceValues}, and as the key of LATEST ON ... PARTITION BY on each table mode
  * (the SQL path {@code sql.latest_by_key}, run here for the WAL and non-partitioned tables).
+ * {@code storage.parquet_convert} converts a Parquet partition's VARCHAR column into the type: the
+ * values as they print go into a VARCHAR column, the partition goes to Parquet, the column's type
+ * changes to the type, which a read converts on the fly, and the partition comes back to native
+ * storage, which converts it for good.
  * <p>
  * Each path runs in the modes that change it (WAL and non-WAL, in-order and out-of-order,
  * partitioned and not), and every mode must give the one recording made at S12
@@ -91,6 +95,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class TypeConformanceStorageTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
     private static final Pattern INCOMPATIBLE = Pattern.compile("error: alter: \\[(\\d+)] incompatible column type change \\[existing=([^,\\]]+), new=([^\\]]+)]");
+    // the guarded site the conversion of a Parquet partition's column into the type reaches
+    private static final String PARQUET_SITE = "Parquet conversion";
     private static final String[] PARTITIONED_MODES = {"nonwal-day", "wal-day"};
     private static final Map<String, String> RECORDINGS = new HashMap<>();
     private static final long SECOND = TypeConformanceValues.SECOND;
@@ -377,6 +383,85 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     assertSection("parquet-native", mode, back + query("SELECT k, v FROM " + table));
                     assertSection("parquet-native-frames", mode, frames("SELECT k, v FROM " + table));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetConvert() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String mode : PARTITIONED_MODES) {
+                final String path = "storage.parquet_convert";
+                if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
+                    continue;
+                }
+                final String table = "pc_" + code(mode);
+                final StringSink steps = new StringSink();
+                // the values as they print, and which rows read as NULL, from a table of the type
+                final String source = "pcs_" + code(mode);
+                if (!createTable(source, "nonwal-day", "k VARCHAR, v " + type.ddl, steps, "parquet_convert")) {
+                    continue;
+                }
+                if (type.isLater()) {
+                    writeLaterRows(source, "", 0, 0, rows.size(), 1, steps);
+                } else {
+                    insertRows(source, "nonwal-day", "", 0, true, steps);
+                }
+                final Map<String, String> texts = new HashMap<>();
+                final Map<String, long[]> sourceBits = new HashMap<>();
+                if (type.isLater()) {
+                    readLater(source, texts, sourceBits);
+                } else {
+                    final StringSink sink = new StringSink();
+                    printSql("SELECT k, v FROM " + source, sink);
+                    final String[] lines = sink.toString().split("\n");
+                    for (int i = 1; i < lines.length; i++) {
+                        final int tab = lines[i].indexOf('\t');
+                        texts.put(lines[i].substring(0, tab), lines[i].substring(tab + 1));
+                    }
+                }
+                final StringSink nulls = new StringSink();
+                try {
+                    printSql("SELECT k FROM " + source + " WHERE v IS NULL", nulls);
+                } catch (Throwable e) {
+                    // a type without IS NULL (the arrays) has only the NULL row as NULL
+                    nulls.clear();
+                    nulls.put("k\nnull\n");
+                }
+                stepNoDrain("drop", "DROP TABLE " + source, steps);
+                if (!createTable(table, mode, "k VARCHAR, v VARCHAR", steps, "parquet_convert")) {
+                    continue;
+                }
+                final StringSink values = new StringSink();
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    final String label = rows.getQuick(i).label;
+                    final String text = texts.get(label);
+                    values.put(values.length() > 0 ? ", " : "").put("('").put(label).put("', ");
+                    if (text == null || ("\n" + nulls).contains("\n" + label + "\n")) {
+                        values.put("NULL");
+                    } else {
+                        values.put('\'').put(text.replace("'", "''")).put('\'');
+                    }
+                    values.put(", ").put(i * SECOND).put("::TIMESTAMP)");
+                }
+                // a row on the next day keeps the partition of the value rows inactive
+                step("insert", "INSERT INTO " + table + " (k, v, ts) VALUES " + values + ", ('active', NULL, " + DAY + "::TIMESTAMP)", mode, steps);
+                step("to parquet", "ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'", mode, steps);
+                step("alter", "ALTER TABLE " + table + " ALTER COLUMN v TYPE " + type.ddl, mode, steps);
+                final String read = "SELECT k, v FROM " + table + " WHERE ts < '1970-01-02'";
+                // read through the Parquet partition, which converts the column on the fly
+                final String parquetRead = type.isLater() ? null : query(read);
+                final StringSink conversion = new StringSink();
+                step("to native", "ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE WHERE ts < '1970-01-02'", mode, conversion);
+                if (type.isLater()) {
+                    if (TypeConformanceInvariants.assertDeclaredRefusal(type, "-", path, mode, conversion.length() > 0 ? conversion : null, PARQUET_SITE)) {
+                        continue;
+                    }
+                    steps.put(conversion);
+                    checkLaterParquetConvert(table, mode, steps, sourceBits);
+                    continue;
+                }
+                assertSection("parquet_convert", mode, steps + "parquet\n" + parquetRead + conversion + "native\n" + query(read));
             }
         });
     }
@@ -833,6 +918,28 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         if (bits.size() != expected) {
             throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
                     + ": " + bits.size() + " rows, one per key expected (" + expected + "): " + bits.keySet());
+        }
+    }
+
+    /**
+     * {@code storage.parquet_convert} for a type registered later: every step succeeds and every
+     * value row, written as it prints into the VARCHAR column, reads back as written once the
+     * partition is native again.
+     */
+    private void checkLaterParquetConvert(String table, String mode, StringSink steps, Map<String, long[]> sourceBits) throws Exception {
+        final String path = "storage.parquet_convert";
+        if (steps.toString().contains("error: ")) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + steps);
+        }
+        final Map<String, String> texts = new HashMap<>();
+        final Map<String, long[]> bits = new HashMap<>();
+        readLater(table, texts, bits);
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            if (row.isNull() || !sourceBits.containsKey(row.label)) {
+                continue;
+            }
+            TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, sourceBits.get(row.label), bits.get(row.label));
         }
     }
 
@@ -1340,6 +1447,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 k\tv
                 b:max\ttrue
                 b:null\tfalse
+                ## parquet_convert
+                parquet
+                k\tv
+                min\tfalse
+                max\ttrue
+                null\tfalse
+                native
+                k\tv
+                min\tfalse
+                max\ttrue
+                null\tfalse
                 """);
         rec("BYTE", """
                 ## dedup
@@ -1570,6 +1688,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:min\t-128
                 b:null\t0
                 b:other_null\t-1
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-128
+                max\t127
+                other_null\t-1
+                null\t0
+                native
+                k\tv
+                min\t-128
+                max\t127
+                other_null\t-1
+                null\t0
                 """);
         rec("SHORT", """
                 ## parquet
@@ -1800,6 +1931,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:min\t-32768
                 b:null\t0
                 b:other_null\t-1
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-32768
+                max\t32767
+                other_null\t-1
+                null\t0
+                native
+                k\tv
+                min\t-32768
+                max\t32767
+                other_null\t-1
+                null\t0
                 """);
         rec("CHAR", """
                 ## alter
@@ -2024,6 +2168,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 k\tv
                 b:null\t
                 b:other_null\t\\uffff
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t
+                max\t\\uffff
+                other_null\t\\uffff
+                null\t
+                native
+                k\tv
+                min\t
+                max\t\\uffff
+                other_null\t\\uffff
+                null\t
                 """);
         rec("INT", """
                 ## dedup
@@ -2251,6 +2408,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t2147483647
                 b:min\t-2147483647
                 b:null\tnull
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-2147483647
+                max\t2147483647
+                sentinel\tnull
+                null\tnull
+                native
+                k\tv
+                min\t-2147483647
+                max\t2147483647
+                sentinel\tnull
+                null\tnull
                 """);
         rec("LONG", """
                 ## parquet
@@ -2478,6 +2648,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t9223372036854775807
                 b:min\t-9223372036854775807
                 b:null\tnull
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-9223372036854775807
+                max\t9223372036854775807
+                sentinel\tnull
+                null\tnull
+                native
+                k\tv
+                min\t-9223372036854775807
+                max\t9223372036854775807
+                sentinel\tnull
+                null\tnull
                 """);
         rec("DATE", """
                 ## insert
@@ -2705,6 +2888,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t292278994-08-17T07:12:55.807Z
                 b:min\t-292275055-05-16T16:47:04.193Z
                 b:null\t
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t
+                max\t
+                sentinel\t
+                null\t
+                native
+                k\tv
+                min\t
+                max\t
+                sentinel\t
+                null\t
                 """);
         rec("TIMESTAMP", """
                 ## dedup
@@ -2932,6 +3128,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t294247-01-10T04:00:54.775807Z
                 b:min\t-290308-01-01T19:59:05.224193Z
                 b:null\t
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t
+                max\t
+                sentinel\t
+                null\t
+                native
+                k\tv
+                min\t
+                max\t
+                sentinel\t
+                null\t
                 """);
         rec("FLOAT", """
                 ## dedup
@@ -3288,6 +3497,27 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:negzero\t-0.0
                 b:ninf\tnull
                 b:null\tnull
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-3.4028235E38
+                max\t3.4028235E38
+                nan\tnull
+                literal_inf\tnull
+                negzero\t-0.0
+                null\tnull
+                inf\tnull
+                ninf\tnull
+                native
+                k\tv
+                min\t-3.4028235E38
+                max\t3.4028235E38
+                nan\tnull
+                literal_inf\tnull
+                negzero\t-0.0
+                null\tnull
+                inf\tnull
+                ninf\tnull
                 """);
         rec("DOUBLE", """
                 ## alter
@@ -3644,6 +3874,27 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:negzero\t-0.0
                 b:ninf\tnull
                 b:null\tnull
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-1.7976931348623157E308
+                max\t1.7976931348623157E308
+                nan\tnull
+                literal_inf\tnull
+                negzero\t-0.0
+                null\tnull
+                inf\tnull
+                ninf\tnull
+                native
+                k\tv
+                min\t-1.7976931348623157E308
+                max\t1.7976931348623157E308
+                nan\tnull
+                literal_inf\tnull
+                negzero\t-0.0
+                null\tnull
+                inf\tnull
+                ninf\tnull
                 """);
         rec("STRING", """
                 ## parquet
@@ -3908,6 +4159,21 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tü€😀�
                 b:min\t\s
                 b:null\t
+                ## parquet_convert
+                parquet
+                k\tv
+                empty\t
+                min\t\s
+                max\tü€😀�
+                escape\ta"b,c\\d'e
+                null\t
+                native
+                k\tv
+                empty\t
+                min\t\s
+                max\tü€😀�
+                escape\ta"b,c\\d'e
+                null\t
                 """);
         rec("SYMBOL", """
                 ## empty_table
@@ -4181,6 +4447,21 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tü€😀�
                 b:min\t\s
                 b:null\t
+                ## parquet_convert
+                parquet
+                k\tv
+                empty\t
+                min\t\s
+                max\tü€😀�
+                escape\ta"b,c\\d'e
+                null\t
+                native
+                k\tv
+                empty\t
+                min\t\s
+                max\tü€😀�
+                escape\ta"b,c\\d'e
+                null\t
                 """);
         rec("LONG256", """
                 ## dedup
@@ -4408,6 +4689,20 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
                 b:min\t0x00
                 b:null\t
+                ## parquet_convert
+                error: alter: [39] incompatible column type change [existing=VARCHAR, new=LONG256]
+                parquet
+                k\tv
+                min\t0x00
+                max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                sentinel\t
+                null\t
+                native
+                k\tv
+                min\t0x00
+                max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                sentinel\t
+                null\t
                 """);
         rec("GEOBYTE", """
                 ## alter
@@ -4606,6 +4901,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t1111111
                 b:min\t0000000
                 b:null\t
+                ## parquet_convert
+                error: alter: [49] incompatible column type change [existing=VARCHAR, new=GEOHASH(7b)]
+                parquet
+                k\tv
+                min\t0000000
+                max\t1111111
+                null\t
+                native
+                k\tv
+                min\t0000000
+                max\t1111111
+                null\t
                 """);
         rec("GEOSHORT", """
                 ## empty_table
@@ -4804,6 +5111,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tzzz
                 b:min\t000
                 b:null\t
+                ## parquet_convert
+                error: alter: [49] incompatible column type change [existing=VARCHAR, new=GEOHASH(3c)]
+                parquet
+                k\tv
+                min\t000
+                max\tzzz
+                null\t
+                native
+                k\tv
+                min\t000
+                max\tzzz
+                null\t
                 """);
         rec("GEOINT", """
                 ## tops
@@ -5002,6 +5321,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tzzzzzz
                 b:min\t000000
                 b:null\t
+                ## parquet_convert
+                error: alter: [49] incompatible column type change [existing=VARCHAR, new=GEOHASH(6c)]
+                parquet
+                k\tv
+                min\t000000
+                max\tzzzzzz
+                null\t
+                native
+                k\tv
+                min\t000000
+                max\tzzzzzz
+                null\t
                 """);
         rec("GEOLONG", """
                 ## empty_table
@@ -5200,6 +5531,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tzzzzzzzz
                 b:min\t00000000
                 b:null\t
+                ## parquet_convert
+                error: alter: [49] incompatible column type change [existing=VARCHAR, new=GEOHASH(8c)]
+                parquet
+                k\tv
+                min\t00000000
+                max\tzzzzzzzz
+                null\t
+                native
+                k\tv
+                min\t00000000
+                max\tzzzzzzzz
+                null\t
                 """);
         rec("BINARY", """
                 ## dedup
@@ -5395,6 +5738,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## empty_partition-frames
                 ## latest_by_key
                 error: [51] v (BINARY): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                error: alter: [39] incompatible column type change [existing=VARCHAR, new=BINARY]
+                parquet
+                k\tv
+                empty\t
+                max\t00000000 00 01 02 fd fe ff
+                null\t
+                native
+                k\tv
+                empty\t
+                max\t00000000 00 01 02 fd fe ff
+                null\t
                 """);
         rec("UUID", """
                 ## empty_table
@@ -5622,6 +5977,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tffffffff-ffff-ffff-ffff-ffffffffffff
                 b:min\t00000000-0000-0000-0000-000000000000
                 b:null\t
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t00000000-0000-0000-0000-000000000000
+                max\tffffffff-ffff-ffff-ffff-ffffffffffff
+                sentinel\t
+                null\t
+                native
+                k\tv
+                min\t00000000-0000-0000-0000-000000000000
+                max\tffffffff-ffff-ffff-ffff-ffffffffffff
+                sentinel\t
+                null\t
                 """);
         rec("LONG128", """
                 ## tops
@@ -5849,6 +6217,20 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tffffffff-ffff-ffff-ffff-ffffffffffff
                 b:min\t00000000-0000-0000-0000-000000000000
                 b:null\t
+                ## parquet_convert
+                error: alter: [39] incompatible column type change [existing=VARCHAR, new=LONG128]
+                parquet
+                k\tv
+                min\t00000000-0000-0000-0000-000000000000
+                max\tffffffff-ffff-ffff-ffff-ffffffffffff
+                sentinel\t
+                null\t
+                native
+                k\tv
+                min\t00000000-0000-0000-0000-000000000000
+                max\tffffffff-ffff-ffff-ffff-ffffffffffff
+                sentinel\t
+                null\t
                 """);
         rec("IPv4", """
                 ## tops
@@ -6076,6 +6458,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t255.255.255.255
                 b:min\t0.0.0.1
                 b:null\t
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t0.0.0.1
+                max\t255.255.255.255
+                sentinel\t
+                null\t
+                native
+                k\tv
+                min\t0.0.0.1
+                max\t255.255.255.255
+                sentinel\t
+                null\t
                 """);
         rec("VARCHAR", """
                 ## insert
@@ -6340,6 +6735,22 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tü€😀�
                 b:min\t\s
                 b:null\t
+                ## parquet_convert
+                error: alter: [39] column 'v' type is already 'VARCHAR'
+                parquet
+                k\tv
+                empty\t
+                min\t\s
+                max\tü€😀�
+                escape\ta"b,c\\d'e
+                null\t
+                native
+                k\tv
+                empty\t
+                min\t\s
+                max\tü€😀�
+                escape\ta"b,c\\d'e
+                null\t
                 """);
         rec("DOUBLE[]", """
                 ## tops
@@ -6580,6 +6991,22 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
                 ## latest_by_key
                 error: [51] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                error: alter: [46] incompatible column type change [existing=VARCHAR, new=DOUBLE[]]
+                parquet
+                k\tv
+                min\t[-1.7976931348623157E308]
+                max\t[1.7976931348623157E308]
+                empty\t[]
+                specials\t[null,null,null,-0.0]
+                null\t
+                native
+                k\tv
+                min\t[-1.7976931348623157E308]
+                max\t[1.7976931348623157E308]
+                empty\t[]
+                specials\t[null,null,null,-0.0]
+                null\t
                 """);
         rec("DECIMAL8", """
                 ## parquet
@@ -6775,6 +7202,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:null\t80
                 ## latest_by_key
                 error: [51] v (DECIMAL(2,1)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-9.9
+                max\t9.9
+                null\t
+                native
+                k\tv
+                min\t-9.9
+                max\t9.9
+                null\t
                 """);
         rec("DECIMAL16", """
                 ## dedup
@@ -6970,6 +7408,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## empty_partition-frames
                 ## latest_by_key
                 error: [51] v (DECIMAL(4,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-99.99
+                max\t99.99
+                null\t
+                native
+                k\tv
+                min\t-99.99
+                max\t99.99
+                null\t
                 """);
         rec("DECIMAL32", """
                 ## dedup
@@ -7165,6 +7614,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:null\t00000080
                 ## latest_by_key
                 error: [51] v (DECIMAL(9,0)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-999999999
+                max\t999999999
+                null\t
+                native
+                k\tv
+                min\t-999999999
+                max\t999999999
+                null\t
                 """);
         rec("DECIMAL64", """
                 ## parquet
@@ -7360,6 +7820,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
                 ## latest_by_key
                 error: [51] v (DECIMAL(16,4)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-999999999999.9999
+                max\t999999999999.9999
+                null\t
+                native
+                k\tv
+                min\t-999999999999.9999
+                max\t999999999999.9999
+                null\t
                 """);
         rec("DECIMAL128", """
                 ## dedup
@@ -7555,6 +8026,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:null\t00000000000000800000000000000000
                 ## latest_by_key
                 error: [51] v (DECIMAL(38,10)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-9999999999999999999999999999.9999999999
+                max\t9999999999999999999999999999.9999999999
+                null\t
+                native
+                k\tv
+                min\t-9999999999999999999999999999.9999999999
+                max\t9999999999999999999999999999.9999999999
+                null\t
                 """);
         rec("DECIMAL256", """
                 ## insert
@@ -7750,6 +8232,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## empty_partition-frames
                 ## latest_by_key
                 error: [51] v (DECIMAL(76,20)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999
+                max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
+                null\t
+                native
+                k\tv
+                min\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999
+                max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
+                null\t
                 """);
         rec("INTERVAL", """
                 ## empty_table
@@ -7800,6 +8293,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 error: create: [34] non-persisted type: INTERVAL
                 ## latest_by_key
                 error: create: [34] non-persisted type: INTERVAL
+                ## parquet_convert
+                error: create: [35] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
                 ## dedup
@@ -7850,6 +8345,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 error: create: [35] unsupported column type: VARCHAR_SLICE
                 ## latest_by_key
                 error: create: [34] unsupported column type: VARCHAR_SLICE
+                ## parquet_convert
+                error: create: [35] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
                 ## empty_table
@@ -8077,6 +8574,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t2262-04-11T23:47:16.854775807Z
                 b:min\t1677-01-01T00:12:43.145224193Z
                 b:null\t
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t1677-01-01T00:25:26.290448385Z
+                max\t2262-04-11T23:47:16.854775807Z
+                sentinel\t
+                null\t
+                native
+                k\tv
+                min\t1677-01-01T00:25:26.290448385Z
+                max\t2262-04-11T23:47:16.854775807Z
+                sentinel\t
+                null\t
                 """);
         rec("GEOHASH(1c)", """
                 ## tops
@@ -8275,6 +8785,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tz
                 b:min\t0
                 b:null\t
+                ## parquet_convert
+                error: alter: [49] incompatible column type change [existing=VARCHAR, new=GEOHASH(1c)]
+                parquet
+                k\tv
+                min\t0
+                max\tz
+                null\t
+                native
+                k\tv
+                min\t0
+                max\tz
+                null\t
                 """);
         rec("GEOHASH(8b)", """
                 ## empty_table
@@ -8473,6 +8995,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t11111111
                 b:min\t00000000
                 b:null\t
+                ## parquet_convert
+                error: alter: [49] incompatible column type change [existing=VARCHAR, new=GEOHASH(8b)]
+                parquet
+                k\tv
+                min\t00000000
+                max\t11111111
+                null\t
+                native
+                k\tv
+                min\t00000000
+                max\t11111111
+                null\t
                 """);
         rec("GEOHASH(31b)", """
                 ## empty_table
@@ -8671,6 +9205,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\t1111111111111111111111111111111
                 b:min\t0000000000000000000000000000000
                 b:null\t
+                ## parquet_convert
+                error: alter: [50] incompatible column type change [existing=VARCHAR, new=GEOHASH(31b)]
+                parquet
+                k\tv
+                min\t0000000000000000000000000000000
+                max\t1111111111111111111111111111111
+                null\t
+                native
+                k\tv
+                min\t0000000000000000000000000000000
+                max\t1111111111111111111111111111111
+                null\t
                 """);
         rec("GEOHASH(12c)", """
                 ## dedup
@@ -8869,6 +9415,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 b:max\tzzzzzzzzzzzz
                 b:min\t000000000000
                 b:null\t
+                ## parquet_convert
+                error: alter: [50] incompatible column type change [existing=VARCHAR, new=GEOHASH(12c)]
+                parquet
+                k\tv
+                min\t000000000000
+                max\tzzzzzzzzzzzz
+                null\t
+                native
+                k\tv
+                min\t000000000000
+                max\tzzzzzzzzzzzz
+                null\t
                 """);
         rec("DECIMAL(5,2)", """
                 ## empty_table
@@ -9064,6 +9622,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:null\t00000080
                 ## latest_by_key
                 error: [51] v (DECIMAL(5,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-999.99
+                max\t999.99
+                null\t
+                native
+                k\tv
+                min\t-999.99
+                max\t999.99
+                null\t
                 """);
         rec("DECIMAL(18,3)", """
                 ## alter
@@ -9259,6 +9828,17 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:null\t0000000000000080
                 ## latest_by_key
                 error: [51] v (DECIMAL(18,3)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                parquet
+                k\tv
+                min\t-999999999999999.999
+                max\t999999999999999.999
+                null\t
+                native
+                k\tv
+                min\t-999999999999999.999
+                max\t999999999999999.999
+                null\t
                 """);
         rec("DOUBLE[][]", """
                 ## dedup
@@ -9499,6 +10079,22 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:null\taux=50000000000000000000000000000000 data=
                 ## latest_by_key
                 error: [51] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
+                ## parquet_convert
+                error: alter: [48] incompatible column type change [existing=VARCHAR, new=DOUBLE[][]]
+                parquet
+                k\tv
+                min\t[[-1.7976931348623157E308]]
+                max\t[[1.7976931348623157E308]]
+                empty\t[]
+                specials\t[[null,null,null,-0.0]]
+                null\t
+                native
+                k\tv
+                min\t[[-1.7976931348623157E308]]
+                max\t[[1.7976931348623157E308]]
+                empty\t[]
+                specials\t[[null,null,null,-0.0]]
+                null\t
                 """);
         rec("INTERVAL(us)", """
                 ## empty_table
@@ -9549,6 +10145,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 error: create: [35] non-persisted type: INTERVAL
                 ## latest_by_key
                 error: create: [34] non-persisted type: INTERVAL
+                ## parquet_convert
+                error: create: [35] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
                 ## empty_table
@@ -9599,6 +10197,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 *\terror: add column: [34] non-persisted type: INTERVAL error: insert d1:: [25] Invalid column: v
                 ## latest_by_key
                 error: create: [34] non-persisted type: INTERVAL
+                ## parquet_convert
+                error: create: [35] non-persisted type: INTERVAL
                 """);
     }
     // recordings: end
