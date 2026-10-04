@@ -242,6 +242,7 @@ import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsyncHashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
@@ -395,6 +396,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -2953,7 +2955,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slave,
             int joinType,
             Function filter,
-            JoinContext context
+            JoinContext context,
+            IQueryModel slaveModel,
+            SqlExecutionContext executionContext
     ) {
         /*
          * JoinContext provides the following information:
@@ -2979,6 +2983,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             valueTypes.add(INT); // chain tail offset
 
             if (joinType == IQueryModel.JOIN_INNER) {
+                final RecordCursorFactory asyncProbe = createAsyncHashJoinLight(
+                        metadata,
+                        master,
+                        slave,
+                        filter,
+                        context,
+                        slaveModel,
+                        slaveKeyCopier,
+                        masterSymbolKeyCols,
+                        slaveSymbolKeyCols,
+                        executionContext
+                );
+                if (asyncProbe != null) {
+                    return asyncProbe;
+                }
                 // For inner join we can also store per-key count to speed up size calculation.
                 valueTypes.add(INT); // record count for the key
 
@@ -5302,6 +5321,178 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(factory, th);
             throw th;
         }
+    }
+
+    /**
+     * The parallel probe of an inner light hash join, see {@link AsyncHashJoinLightRecordCursorFactory},
+     * or null when the join does not qualify: the build side must be provably unique on the join
+     * key, the master must have page frames and a designated timestamp (so that the light hash
+     * join would not swap its sides), and every master key column must stage without a symbol
+     * table. Call after {@link #convertSymbolJoinKeysToInt}, which settles the key encodings.
+     */
+    private @Nullable RecordCursorFactory createAsyncHashJoinLight(
+            JoinRecordMetadata metadata,
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            @Nullable Function filter,
+            JoinContext context,
+            @Nullable IQueryModel slaveModel,
+            RecordSink slaveKeyCopier,
+            int @Nullable [] masterSymbolKeyCols,
+            int @Nullable [] slaveSymbolKeyCols,
+            SqlExecutionContext executionContext
+    ) {
+        if (!executionContext.isParallelHashJoinProbeEnabled()
+                || filter != null
+                || slaveModel == null
+                || !master.supportsPageFrameCursor()
+                || metadata.getTimestampIndex() < 0
+                || !(AsyncHashJoinLightRecordCursorFactory.DEBUG_ASSUME_UNIQUE_BUILD || isSlaveUniqueOnJoinKeys(slaveModel, context))) {
+            return null;
+        }
+        final RecordMetadata masterMetadata = master.getMetadata();
+        final IntHashSet masterKeyColumns = new IntHashSet();
+        final ListColumnFilter masterKeyFilter = new ListColumnFilter();
+        for (int k = 0, n = listColumnFilterB.getColumnCount(); k < n; k++) {
+            final int column = listColumnFilterB.getColumnIndexFactored(k);
+            if (ColumnType.isSymbol(masterMetadata.getColumnType(column)) && writeSymbolAsStringB.get(column)) {
+                // the workers would resolve the symbol through a table they do not own
+                return null;
+            }
+            masterKeyColumns.add(column);
+            masterKeyFilter.add(listColumnFilterB.getQuick(k));
+        }
+        final BitSet symbolAsString = copyOf(writeSymbolAsStringB);
+        final BitSet stringAsVarchar = copyOf(writeStringAsVarcharB);
+        final BitSet timestampAsNanos = copyOf(writeTimestampAsNanosB);
+        final Class<RecordSink> masterSinkClass = RecordSinkFactory.getInstanceClass(
+                configuration, asm, masterMetadata, masterKeyFilter, null, null, symbolAsString, stringAsVarchar, timestampAsNanos
+        );
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        final ObjList<RecordSink> masterSinks = new ObjList<>(workerCount + 1);
+        for (int i = 0; i <= workerCount; i++) {
+            masterSinks.add(RecordSinkFactory.getInstance(
+                    masterSinkClass, masterMetadata, masterKeyFilter, null, null, symbolAsString, stringAsVarchar, timestampAsNanos
+            ));
+        }
+        final ExpressionNode probeExpr = expressionNodePool.next().of(LITERAL, "hash join probe", 0, 0);
+        return new AsyncHashJoinLightRecordCursorFactory(
+                executionContext.getCairoEngine(),
+                configuration,
+                executionContext.getMessageBus(),
+                metadata,
+                master,
+                slave,
+                keyTypes,
+                masterSinks,
+                slaveKeyCopier,
+                masterMetadata.getColumnCount(),
+                context,
+                masterSymbolKeyCols,
+                slaveSymbolKeyCols,
+                masterKeyColumns,
+                probeExpr,
+                reduceTaskFactory,
+                workerCount
+        );
+    }
+
+    private static BitSet copyOf(BitSet bits) {
+        final BitSet copy = new BitSet();
+        for (int i = 0, n = (int) bits.capacity(); i < n; i++) {
+            if (bits.get(i)) {
+                copy.set(i);
+            }
+        }
+        return copy;
+    }
+
+    /**
+     * Whether the rows of a join's slave are unique on the slave's join key columns: the slave is,
+     * below renames, a GROUP BY or DISTINCT whose every key column is a join key. Filters, ORDER BY
+     * and LIMIT keep uniqueness; joins, unions, SAMPLE BY, LATEST BY and expressions over the keys
+     * do not count.
+     */
+    private boolean isSlaveUniqueOnJoinKeys(IQueryModel slaveModel, JoinContext context) {
+        if (context == null || context.aNames.size() == 0) {
+            return false;
+        }
+        LowerCaseCharSequenceHashSet keys = new LowerCaseCharSequenceHashSet();
+        for (int i = 0, n = context.aNames.size(); i < n; i++) {
+            keys.add(unqualified(context.aNames.getQuick(i)));
+        }
+        IQueryModel m = slaveModel;
+        for (int depth = 0; m != null && depth < 32; depth++) {
+            if (m.getUnionModel() != null || m.getSampleBy() != null || m.getLatestBy().size() > 0
+                    || (depth > 0 && m.getJoinModels().size() > 1)) {
+                return false;
+            }
+            final ObjList<QueryColumn> columns = m.getColumns();
+            final int type = m.getSelectModelType();
+            if (type == IQueryModel.SELECT_MODEL_GROUP_BY || type == IQueryModel.SELECT_MODEL_DISTINCT) {
+                final ObjList<ExpressionNode> groupBy = m.getGroupBy();
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final QueryColumn qc = columns.getQuick(i);
+                    final ExpressionNode ast = qc.getAst();
+                    final boolean isAggregate = type == IQueryModel.SELECT_MODEL_GROUP_BY
+                            && ast.type == FUNCTION
+                            && functionParser.getFunctionFactoryCache().isGroupBy(ast.token);
+                    if (!isAggregate && !keys.contains(qc.getAlias())) {
+                        return false;
+                    }
+                }
+                // an explicit GROUP BY may group by a column it does not select
+                for (int i = 0, n = groupBy.size(); i < n; i++) {
+                    final ExpressionNode g = groupBy.getQuick(i);
+                    boolean selected = false;
+                    for (int j = 0, k = columns.size(); j < k && !selected; j++) {
+                        final QueryColumn qc = columns.getQuick(j);
+                        selected = keys.contains(qc.getAlias())
+                                && (Chars.equalsIgnoreCase(g.token, qc.getAlias())
+                                || (qc.getAst().type == LITERAL && Chars.equalsIgnoreCase(unqualified(g.token), unqualified(qc.getAst().token))));
+                    }
+                    if (!selected) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (type != IQueryModel.SELECT_MODEL_NONE && type != IQueryModel.SELECT_MODEL_CHOOSE) {
+                return false;
+            }
+            if (columns.size() > 0) {
+                final LowerCaseCharSequenceHashSet renamed = new LowerCaseCharSequenceHashSet();
+                for (int i = 0, n = keys.getKeyCount(); i < n; i++) {
+                    final CharSequence key = keys.getKey(i);
+                    if (key == null) {
+                        continue;
+                    }
+                    QueryColumn column = null;
+                    for (int j = 0, k = columns.size(); j < k; j++) {
+                        if (Chars.equalsIgnoreCase(columns.getQuick(j).getAlias(), key)) {
+                            column = columns.getQuick(j);
+                            break;
+                        }
+                    }
+                    if (column == null) {
+                        // a key this level does not select cannot come from below either
+                        continue;
+                    }
+                    if (column.getAst().type != LITERAL) {
+                        return false;
+                    }
+                    renamed.add(unqualified(column.getAst().token));
+                }
+                keys = renamed;
+            }
+            m = m.getNestedModel();
+        }
+        return false;
+    }
+
+    private static CharSequence unqualified(CharSequence name) {
+        final int dot = Chars.indexOfLastUnquoted(name, '.');
+        return dot > -1 ? name.subSequence(dot + 1, name.length()) : name;
     }
 
     private static boolean isWindowMinMaxKeyType(int columnType) {
@@ -8034,7 +8225,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveToFree,
                                         joinType,
                                         joinFilter,
-                                        slaveModel.getJoinContext()
+                                        slaveModel.getJoinContext(),
+                                        slaveModel,
+                                        executionContext
                                 );
                                 masterAlias = null;
                                 break;
