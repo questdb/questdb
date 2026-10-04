@@ -10757,6 +10757,28 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReorderedFirstJoinReadsPlainColumnName() throws Exception {
+        // The optimiser joins t0 a2 to the sub-query a0 first and t2 a1 last. That first join looked up
+        // the key a0.k by its qualified name, which matched the sub-query column named "a0.k" (t0.x)
+        // instead of column k, and the query returned no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (x INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 10), (3, 20)");
+            execute("CREATE TABLE t2 (x INT, k INT)");
+            execute("INSERT INTO t2 VALUES (5, 1), (6, 3)");
+            assertQuery("SELECT * FROM (SELECT x AS \"a0.k\", k FROM t0) a0 CROSS JOIN t2 a1 JOIN t0 a2 ON a1.k = a2.x AND a0.k = a2.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0.k\tk\tx\tk1\tx1\tk2
+                            1\t10\t5\t1\t1\t10
+                            2\t10\t5\t1\t1\t10
+                            3\t20\t6\t3\t3\t20
+                            """);
+        });
+    }
+
+    @Test
     public void testRightJoinAfterOuterJoinOnKeysSharingColumn() throws Exception {
         // The LEFT JOIN f5 keys share b5, so its outer join expression reads f2. Without the ordering edge
         // of the dropped key the optimiser misordered the chain, and the unmatched f3 rows lost their
@@ -10884,6 +10906,66 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\n");
+        });
+    }
+
+    @Test
+    public void testSecondTableJoinedAfterSelfJoinKeepsMovedKey() throws Exception {
+        // Same shape as testSecondTableJoinedAfterSelfJoinResolvesKeyByAlias, plus t1 a3 keyed to a0 and
+        // a2. The a0.x = a3.k key keeps a0.x in the self-join, so every projection failed with
+        // InvalidColumnException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (x INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 10), (3, 20)");
+            execute("CREATE TABLE t1 (x INT, k INT)");
+            execute("INSERT INTO t1 VALUES (10, 1), (10, 3), (20, 2), (20, 3)");
+            execute("CREATE TABLE t2 (x INT, k INT)");
+            execute("INSERT INTO t2 VALUES (5, 1), (6, 3)");
+            final String from = " FROM t0 a0 CROSS JOIN t2 a1 JOIN t0 a2 ON a1.k = a2.x AND a0.k = a2.k JOIN t1 a3 ON a0.x = a3.k AND a2.k = a3.x";
+            assertQuery("SELECT *" + from)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tk\tx1\tk1\tx2\tk2\tx3\tk3
+                            1\t10\t5\t1\t1\t10\t10\t1
+                            3\t20\t6\t3\t3\t20\t20\t3
+                            """);
+            assertQuery("SELECT count(*)" + from)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testSecondTableJoinedAfterSelfJoinResolvesKeyByAlias() throws Exception {
+        // The optimiser joins t0 a2 to t0 a0 first and t2 a1 last, on a1.k = a2.x. Code generation looked
+        // up that key by the plain name x, as if t2 a1 joined t0 a0 alone. The joined a0 and a2 both
+        // have x, so the query failed with InvalidColumnException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (x INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 10), (3, 20)");
+            execute("CREATE TABLE t2 (x INT, k INT)");
+            execute("INSERT INTO t2 VALUES (5, 1), (6, 3)");
+            final String expected = """
+                    x\tk\tx1\tk1\tx2\tk2
+                    1\t10\t5\t1\t1\t10
+                    2\t10\t5\t1\t1\t10
+                    3\t20\t6\t3\t3\t20
+                    """;
+            for (String query : new String[]{
+                    "SELECT * FROM t0 a0 CROSS JOIN t2 a1 JOIN t0 a2 ON a1.k = a2.x AND a0.k = a2.k",
+                    "SELECT * FROM t0 a0, t2 a1, t0 a2 WHERE a1.k = a2.x AND a0.k = a2.k"
+            }) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expected);
+            }
         });
     }
 
