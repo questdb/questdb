@@ -110,7 +110,11 @@ public class RecordChainTest extends AbstractCairoTest {
                 Assert.assertEquals(8 + 21, stride);
                 for (int fill = 0; fill < 3; fill++) {
                     // the first fill grows the chain, the others reuse its memory
-                    chain.rewind(fill * 500);
+                    if (fill == 2) {
+                        chain.clearKeepingMemory(Long.MAX_VALUE);
+                    } else {
+                        chain.rewind(fill * 500);
+                    }
                     long prev = -1;
                     long value = 0;
                     final int total = 1000 + fill;
@@ -156,6 +160,58 @@ public class RecordChainTest extends AbstractCairoTest {
                         Assert.assertEquals(row, Unsafe.getLong(block.getColumnAddress(0) + row * block.getColumnStride(0)));
                         Assert.assertEquals(row / 7.0, Unsafe.getDouble(block.getColumnAddress(3) + row * block.getColumnStride(3)), 0.0);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testClearKeepingMemory() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            entityColumnFilter.of(metadata.getColumnCount());
+            RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter);
+            final long[] x = new long[1];
+            final ObjList<Function> funcs = new ObjList<>();
+            funcs.add(new LongFunction() {
+                @Override
+                public long getLong(Record rec) {
+                    return x[0];
+                }
+            });
+            final VirtualRecord rec = new VirtualRecord(funcs);
+            try (RecordChain chain = new RecordChain(metadata, sink, 4096, Integer.MAX_VALUE)) {
+                final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                for (int fill = 0; fill < 4; fill++) {
+                    long prev = -1;
+                    for (int i = 0; i < 1000; i++) {
+                        x[0] = fill * 10_000L + i;
+                        prev = chain.put(rec, prev);
+                    }
+                    chain.toTop();
+                    long i = 0;
+                    while (chain.hasNext()) {
+                        Assert.assertEquals(fill * 10_000L + i++, chain.getRecord().getLong(0));
+                    }
+                    Assert.assertEquals(1000, i);
+                    final long memFilled = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                    Assert.assertTrue(memFilled > memBefore);
+                    // cleared with its records still to be read: they are gone at once, as with clear()
+                    chain.toTop();
+                    if (fill < 2) {
+                        // within the limit: the records go, the memory stays
+                        chain.clearKeepingMemory(1000 * chain.getFixedRecordStride() * 2);
+                        Assert.assertEquals(memFilled, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                    } else {
+                        // above it: given back, as clear() does
+                        chain.clearKeepingMemory(1000);
+                        Assert.assertEquals(memBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                    }
+                    Assert.assertFalse(chain.hasNext());
+                    chain.toTop();
+                    Assert.assertFalse(chain.hasNext());
+                    Assert.assertNull(chain.peekSequentialRecordBlock(10));
                 }
             }
         });

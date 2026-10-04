@@ -723,9 +723,12 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         if (carry.length > 0 && task.emittedRows > 0) {
             captureCarry(task);
         }
-        // Returned: the output goes back now, so that only the live rounds hold any. The next fill
-        // sizes the chain in one allocation from its row count.
-        task.chain.clear();
+        // Returned. The chain keeps its memory for the task's next fill, which would otherwise
+        // fault every page of it in afresh: the live rounds bound the tasks, and with them what
+        // the chains hold, as they bound the chains being filled. A chain that grew well past a
+        // task's usual size, for a large key, gives its memory back now; the next fill sizes it
+        // in one allocation from its row count.
+        task.chain.clearKeepingMemory(2 * taskRows * task.chain.getFixedRecordStride());
         taskRowsComputed += task.emittedRows;
         emitTask = null;
     }

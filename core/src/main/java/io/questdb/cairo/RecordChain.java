@@ -192,6 +192,21 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         varAppendOffset = 0L;
     }
 
+    /**
+     * Forgets every record like {@link #clear()}, but keeps the memory for the next ones when no
+     * more than {@code maxKeptBytes} of it are allocated, so that refilling the chain does not
+     * fault fresh pages in. Gives it back otherwise.
+     */
+    public void clearKeepingMemory(long maxKeptBytes) {
+        if (mem.size() > maxKeptBytes) {
+            clear();
+            return;
+        }
+        mem.jumpTo(0);
+        nextRecordOffset = -1L;
+        varAppendOffset = 0L;
+    }
+
     @Override
     public void close() {
         clear();
