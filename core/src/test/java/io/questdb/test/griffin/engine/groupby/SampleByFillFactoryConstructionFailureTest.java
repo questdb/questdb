@@ -645,6 +645,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new IntList(),
                     new IntList(),
                     new IntList(),
+                    false,
                     false
             );
 
@@ -687,6 +688,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new IntList(),
                     new IntList(),
                     new IntList(),
+                    false,
                     false
             );
             Assert.assertSame(aliased.failure, Assert.assertThrows(Throwable.class, aliasedFactory::close));
@@ -741,6 +743,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new IntList(),
                     new IntList(),
                     new IntList(),
+                    false,
                     false
             );
 

@@ -1937,6 +1937,50 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullPlan() throws Exception {
+        // FILL(NULL) fills each column with its type's NULL; BYTE and SHORT have no NULL and fill 0.
+        // The plan labels the fill "null" whatever the column types are
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        b BYTE, s SHORT, i INT, l LONG, ip IPV4, u UUID, sym SYMBOL, g GEOHASH(4c),
+                        arr DOUBLE[], dec DECIMAL(10, 2), v VARCHAR, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 2, 3, 4, '1.2.3.4', '11111111-1111-1111-1111-111111111111', 'a', #sp05, ARRAY[1.0], 1.25::DECIMAL(10, 2), 'v', '2024-01-01T00:00:00.000000Z'),
+                    (5, 6, 7, 8, '5.6.7.8', '22222222-2222-2222-2222-222222222222', 'b', #sp06, ARRAY[2.0], 2.5::DECIMAL(10, 2), 'w', '2024-01-01T02:00:00.000000Z')""");
+            assertQuery("""
+                    SELECT first(b) b, first(s) s, first(i) i, first(l) l, first(ip) ip, first(u) u, first(sym) sym,
+                    first(g) g, first(arr) arr, first(dec) dec, first(v) v, ts
+                    FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlan("""
+                            Sample By Fill
+                              stride: '1h'
+                              fill: null
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(b),first(s),first(i),first(l),first(ip),first(u),first(sym),first(g),first(arr),first(dec),first(v)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """)
+                    .returns("""
+                            b\ts\ti\tl\tip\tu\tsym\tg\tarr\tdec\tv\tts
+                            1\t2\t3\t4\t1.2.3.4\t11111111-1111-1111-1111-111111111111\ta\tsp05\t[1.0]\t1.25\tv\t2024-01-01T00:00:00.000000Z
+                            0\t0\tnull\tnull\t\t\t\t\tnull\t\t\t2024-01-01T01:00:00.000000Z
+                            5\t6\t7\t8\t5.6.7.8\t22222222-2222-2222-2222-222222222222\tb\tsp06\t[2.0]\t2.50\tw\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFillThreeWayMixedModes() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(PREV, 42.0, NULL) exercises three distinct fill modes on

@@ -3841,6 +3841,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int columnCount = groupByMetadata.getColumnCount();
             final IntList fillModes = new IntList(columnCount);
             constantFills = new ObjList<>(columnCount);
+            // the plan labels the fill "value" when a column fills with a value other than NULL;
+            // the typed NULL constants of FILL(NULL) do not tell that apart (BYTE's NULL is 0)
+            boolean hasValueFill = false;
 
             final ObjList<QueryColumn> bottomUpCols = model.getBottomUpColumns();
 
@@ -4051,7 +4054,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     .put(ColumnType.nameOf(targetColType));
                         }
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        constantFills.add(NullConstant.NULL);
+                        constantFills.add(Constants.getNullConstant(targetColType));
                     } else {
                         // Reachable only in non-broadcast mode (NULL/bare PREV
                         // handled above), so fillIdx is in range.
@@ -4123,6 +4126,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final Function constFn = fillValues.getQuick(fillIdx);
                         constantFills.add(constFn);
                         fillValues.setQuick(fillIdx, null);
+                        hasValueFill |= !(constFn instanceof NullConstant);
                     }
                 }
                 // Reject cross-column PREV whose source is itself synthesized on gaps:
@@ -4374,7 +4378,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     fixedPrevSrcCols,
                     fixedPrevTypeTags,
                     prevValueSlot,
-                    needsPrevPositioning
+                    needsPrevPositioning,
+                    hasValueFill
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues, e);

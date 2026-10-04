@@ -56,7 +56,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -113,6 +112,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final IntList fillModes;
     private Function fromFunc;
     private final boolean hasPrevFill;
+    private final boolean hasValueFill;
     private Function offsetFunc;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
@@ -160,7 +160,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             IntList fixedPrevSrcCols,
             IntList fixedPrevTypeTags,
             IntList prevValueSlot,
-            boolean isPrevPositioningNeeded
+            boolean isPrevPositioningNeeded,
+            boolean hasValueFill
     ) {
         super(metadata);
         // True if any column uses self-prev or cross-column prev fill.
@@ -220,6 +221,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.constantFills = constantFills;
         this.fillModes = fillModes;
         this.hasPrevFill = localHasPrevFill;
+        this.hasValueFill = hasValueFill;
         this.cursor = cursorLocal;
     }
 
@@ -260,7 +262,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             sink.attr("fill").val("mixed");
         } else if (hasPrevFill) {
             sink.attr("fill").val("prev");
-        } else if (hasAnyNonNullConstantFill()) {
+        } else if (hasValueFill) {
             sink.attr("fill").val("value");
         } else {
             sink.attr("fill").val("null");
@@ -322,20 +324,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
             if (fillModes.getQuick(i) == FILL_CONSTANT) {
                 return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean hasAnyNonNullConstantFill() {
-        // The !(f instanceof NullConstant) filter excludes both NULL fills
-        // and the timestamp slot (always FILL_CONSTANT/NullConstant.NULL).
-        for (int i = 0, n = fillModes.size(); i < n; i++) {
-            if (fillModes.getQuick(i) == FILL_CONSTANT) {
-                Function f = constantFills.getQuick(i);
-                if (f != null && !(f instanceof NullConstant)) {
-                    return true;
-                }
             }
         }
         return false;
