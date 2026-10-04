@@ -725,6 +725,54 @@ public class TypeDriverTest {
     }
 
     @Test
+    public void testSentinelReadOfIntSentinelIsNull() {
+        // INT's own sentinel, read at INT's tier as the WHERE bound, SUBSAMPLE and cadence readers
+        // read it, is NULL; so is LONG's at LONG's tier; any other value is not, and BYTE, which
+        // has no NULL, never reads NULL
+        final TypeDriver intDriver = ColumnType.getTypeDriver(ColumnType.INT);
+        final long intNull = PhysicalDescriptor.getIntegerAtTier(IntConstant.NULL, intDriver);
+        Assert.assertEquals(Numbers.INT_NULL, intNull);
+        Assert.assertTrue(PhysicalDescriptor.isNullAtTier(intDriver, intNull));
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(intDriver, Numbers.LONG_NULL));
+        final long intValue = PhysicalDescriptor.getIntegerAtTier(IntConstant.newInstance(42), intDriver);
+        Assert.assertEquals(42, intValue);
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(intDriver, intValue));
+        final TypeDriver longDriver = ColumnType.getTypeDriver(ColumnType.LONG);
+        final long longNull = PhysicalDescriptor.getIntegerAtTier(LongConstant.NULL, longDriver);
+        Assert.assertEquals(Numbers.LONG_NULL, longNull);
+        Assert.assertTrue(PhysicalDescriptor.isNullAtTier(longDriver, longNull));
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(longDriver, Numbers.INT_NULL));
+        final TypeDriver byteDriver = ColumnType.getTypeDriver(ColumnType.BYTE);
+        final long byteValue = PhysicalDescriptor.getIntegerAtTier(ByteConstant.newInstance((byte) -128), byteDriver);
+        Assert.assertEquals(-128, byteValue);
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(byteDriver, byteValue));
+    }
+
+    @Test
+    public void testSentinelReadOfNonePolicyTypeIsAValue() {
+        // a never-null INT reads INT's sentinel bit pattern as the value Integer.MIN_VALUE, never
+        // as NULL or "not set", and no long, Long.MIN_VALUE included, is its NULL
+        final TypeDriver neverNull = LookAlikeTypeDriver.neverNullInt();
+        final long min = PhysicalDescriptor.getIntegerAtTier(IntConstant.newInstance(Integer.MIN_VALUE), neverNull);
+        Assert.assertEquals(Integer.MIN_VALUE, min);
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(neverNull, min));
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(neverNull, Long.MIN_VALUE));
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(neverNull, 0));
+    }
+
+    @Test
+    public void testSentinelReadOfUnsignedTypeIsUnsigned() {
+        // an unsigned INT reads bit patterns at or above 2^31 as positive values, and INT's
+        // sentinel bit pattern, its own NULL here, as NULL
+        final TypeDriver unsigned = LookAlikeTypeDriver.unsignedInt();
+        Assert.assertEquals(4_294_967_295L, PhysicalDescriptor.getIntegerAtTier(IntConstant.newInstance(-1), unsigned));
+        final long nullValue = PhysicalDescriptor.getIntegerAtTier(IntConstant.newInstance(Numbers.INT_NULL), unsigned);
+        Assert.assertEquals(2_147_483_648L, nullValue);
+        Assert.assertTrue(PhysicalDescriptor.isNullAtTier(unsigned, nullValue));
+        Assert.assertFalse(PhysicalDescriptor.isNullAtTier(unsigned, Integer.MIN_VALUE));
+    }
+
+    @Test
     public void testSetNullWritesTheNullLongs() {
         // the batch fill and the per-long NULL description agree byte for byte, for every fixed type
         final long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);

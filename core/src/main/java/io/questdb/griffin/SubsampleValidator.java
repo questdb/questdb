@@ -24,12 +24,13 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.window.LttbFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 
 final class SubsampleValidator {
     private SubsampleValidator() {
@@ -77,9 +78,9 @@ final class SubsampleValidator {
                     throw SqlException.$(node.position, isCadence ? "integer expected for stride" : "integer expected for target point count");
                 }
                 if (isCadence) {
-                    validateStride(func, tag, node.position);
+                    validateStride(func, node.position);
                 } else {
-                    validateTargetPoints(func, tag, node.position);
+                    validateTargetPoints(func, node.position);
                 }
             }
             // Existing window factories validate runtime constants and binds per execution.
@@ -88,19 +89,12 @@ final class SubsampleValidator {
         }
     }
 
-    private static void validateStride(Function targetFunc, int targetType, int position) throws SqlException {
-        final long value;
-        if (targetType == ColumnType.LONG) {
-            value = targetFunc.getLong(null);
-            if (value == Numbers.LONG_NULL) {
-                throw SqlException.$(position, "stride must be set");
-            }
-        } else {
-            final int intValue = targetFunc.getInt(null);
-            if (intValue == Numbers.INT_NULL) {
-                throw SqlException.$(position, "stride must be set");
-            }
-            value = intValue;
+    // the value reads at its type's tier; only the type's own NULL is "not set"
+    private static void validateStride(Function targetFunc, int position) throws SqlException {
+        final TypeDriver driver = ColumnType.getTypeDriver(targetFunc.getType());
+        final long value = PhysicalDescriptor.getIntegerAtTier(targetFunc, driver);
+        if (PhysicalDescriptor.isNullAtTier(driver, value)) {
+            throw SqlException.$(position, "stride must be set");
         }
         if (value < 1) {
             throw SqlException.$(position, "stride must be at least 1");
@@ -110,19 +104,12 @@ final class SubsampleValidator {
         }
     }
 
-    private static void validateTargetPoints(Function targetFunc, int targetType, int position) throws SqlException {
-        final long value;
-        if (targetType == ColumnType.LONG) {
-            value = targetFunc.getLong(null);
-            if (value == Numbers.LONG_NULL) {
-                throw SqlException.$(position, "target point count must be set");
-            }
-        } else {
-            final int intValue = targetFunc.getInt(null);
-            if (intValue == Numbers.INT_NULL) {
-                throw SqlException.$(position, "target point count must be set");
-            }
-            value = intValue;
+    // the value reads at its type's tier; only the type's own NULL is "not set"
+    private static void validateTargetPoints(Function targetFunc, int position) throws SqlException {
+        final TypeDriver driver = ColumnType.getTypeDriver(targetFunc.getType());
+        final long value = PhysicalDescriptor.getIntegerAtTier(targetFunc, driver);
+        if (PhysicalDescriptor.isNullAtTier(driver, value)) {
+            throw SqlException.$(position, "target point count must be set");
         }
         if (value < 2) {
             throw SqlException.$(position, "target points must be at least 2");

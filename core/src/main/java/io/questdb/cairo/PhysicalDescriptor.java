@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -110,6 +111,24 @@ public final class PhysicalDescriptor {
     }
 
     /**
+     * The value of an integer function at its type's arithmetic tier, as a long: getLong for a
+     * 64-bit tier, getInt for a narrower one, and the unsigned value for an unsigned tier. Unlike
+     * IntFunction's getLong, it keeps a 32-bit value equal to INT's sentinel as that value, so
+     * that {@link #isNullAtTier(TypeDriver, long)} decides by the type's own NULL policy whether
+     * the value is NULL. Reads a constant or runtime-constant function, at setup or once per
+     * execution, never per row.
+     */
+    public static long getIntegerAtTier(Function function, TypeDriver driver) {
+        final Arithmetic arithmetic = driver.getArithmetic();
+        return switch (arithmetic) {
+            case I64 -> function.getLong(null);
+            case I8, I16, I32, U8, U16, U32 -> atTier(arithmetic, function.getInt(null));
+            case F32, F64, WIDE, NONE -> throw CairoException.critical(0).put("not an integer tier [type=")
+                    .put(driver.getTypeName()).put(", arithmetic=").put(arithmetic.name()).put(']');
+        };
+    }
+
+    /**
      * Whether a stored column type reads through an accessor family but has no family arm. A
      * default arm of a switch keyed on {@link #familyArmOpcodeOf(int)} that an existing type can
      * also reach tests this first, so it raises {@link #noFamilyArm(CharSequence, CharSequence)}
@@ -117,6 +136,17 @@ public final class PhysicalDescriptor {
      */
     public static boolean isFamilyArmMissing(int columnType) {
         return accessorOpcodeOf(columnType) != -1 && familyArmOpcodeOf(columnType) == -1;
+    }
+
+    /**
+     * Whether a value read at the type's arithmetic tier
+     * ({@link #getIntegerAtTier(Function, TypeDriver)}) is the type's NULL. Only a type whose NULL
+     * policy is a sentinel has a NULL value, and only its own sentinel is that value; a never-null
+     * type reads every bit pattern, its minimum included, as a value.
+     */
+    public static boolean isNullAtTier(TypeDriver driver, long value) {
+        return driver.getNullPolicy() == NullPolicy.SENTINEL
+                && value == atTier(driver.getArithmetic(), driver.getNullAsLong());
     }
 
     /**
@@ -146,6 +176,16 @@ public final class PhysicalDescriptor {
     public static CairoException noFamilyArm(CharSequence typeName, CharSequence site) {
         return CairoException.critical(0).put("no family arm for ").put(typeName).put(" at ").put(site)
                 .put(": add the arm or declare the type like its namesake");
+    }
+
+    // a sign-extended value of at most 32 bits as the tier reads it: unsigned tiers drop the sign
+    private static long atTier(Arithmetic arithmetic, long value) {
+        return switch (arithmetic) {
+            case U8 -> value & 0xFFL;
+            case U16 -> value & 0xFFFFL;
+            case U32 -> value & 0xFFFF_FFFFL;
+            case I8, I16, I32, I64, F32, F64, WIDE, NONE -> value;
+        };
     }
 
     /**

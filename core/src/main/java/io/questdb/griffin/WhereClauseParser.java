@@ -3871,13 +3871,20 @@ public final class WhereClauseParser implements Mutable {
                     return BOUND_FAIL;
                 }
                 if (bound.isConstant()) {
-                    // int and long bounds both read as long: IntFunction.getLong() widens
-                    // and maps INT_NULL to LONG_NULL.
-                    final long b = isTimestamp
-                            ? getTimestampFromConstFunction(outDriver, bound, boundNode.position, false)
-                            : bound.getLong(null);
-                    if (b == Numbers.LONG_NULL) {
-                        return BOUND_EMPTY;
+                    final long b;
+                    if (isTimestamp) {
+                        b = getTimestampFromConstFunction(outDriver, bound, boundNode.position, false);
+                        if (b == Numbers.LONG_NULL) {
+                            return BOUND_EMPTY;
+                        }
+                    } else {
+                        // an integer bound reads at its type's tier, and only the type's own NULL
+                        // empties the scan: a never-null type's minimum is a value
+                        final TypeDriver driver = ColumnType.getTypeDriver(bound.getType());
+                        b = PhysicalDescriptor.getIntegerAtTier(bound, driver);
+                        if (PhysicalDescriptor.isNullAtTier(driver, b)) {
+                            return BOUND_EMPTY;
+                        }
                     }
                     final short adj = adjustComparison(equalsTo, isLo);
                     if (adj > 0 && b == Long.MAX_VALUE) {
