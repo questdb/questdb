@@ -311,6 +311,7 @@ import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
+import io.questdb.griffin.engine.table.KeyMajorScanFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -349,6 +350,7 @@ import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
+import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowMapGroups;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
@@ -12071,6 +12073,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // bound function's private map stays closed from here on, so this must not
                 // run twice over one function - and it cannot: it runs once per compile.
                 windowMapStates = WindowMapState.createGroups(configuration, asm, windowAccumulatorPlans, baseMetadata);
+                if (!lvCompile && subsampleCalls == null && executionContext.isParallelWindowEnabled()) {
+                    final RecordCursorFactory asyncFactory = generateAsyncWindow(
+                            model,
+                            base,
+                            baseMetadata,
+                            factoryMetadata,
+                            functions,
+                            windowMapStates,
+                            executionContext
+                    );
+                    if (asyncFactory != null) {
+                        windowMapStates = null;
+                        return asyncFactory;
+                    }
+                }
                 final WindowRecordCursorFactory windowFactory = new WindowRecordCursorFactory(
                         base,
                         factoryMetadata,
@@ -12514,6 +12531,286 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(cachedWindowMapGroups);
             Misc.freeObjList(functions);
             Misc.freeObjList(naturalOrderFunctions);
+            Misc.freeObjList(partitionByFunctions);
+            throw th;
+        }
+    }
+
+    /**
+     * Builds the parallel form of a streaming window, see {@link AsyncWindowRecordCursorFactory},
+     * when its base is a key-major index scan and every window function is partitioned by the
+     * scan's key, or returns null. The scan emits each key's rows as one run, in the order the
+     * serial window sees them, and a function partitioned by the key keeps state per key only, so
+     * the workers can compute whole keys independently and the query's thread can return them in
+     * key order. Each worker gets a copy of the functions compiled from the same model. On success
+     * the factory owns {@code base}, {@code functions} and {@code windowMapStates}; on null or a
+     * throw the caller still does.
+     */
+    private @Nullable RecordCursorFactory generateAsyncWindow(
+            IQueryModel model,
+            RecordCursorFactory base,
+            RecordMetadata baseMetadata,
+            GenericRecordMetadata factoryMetadata,
+            ObjList<Function> functions,
+            @Nullable ObjList<WindowMapState> windowMapStates,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        if (workerCount < 1 || !(base instanceof KeyMajorScanFactory keyMajorScan)) {
+            return null;
+        }
+        final int keyColumnIndex = keyMajorScan.getKeyMajorColumnIndex();
+        if (keyColumnIndex < 0) {
+            return null;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        boolean hasWindowFunction = false;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (!qc.isWindowExpression()) {
+                continue;
+            }
+            hasWindowFunction = true;
+            // A SYMBOL result's keys need a symbol table the output can resolve them through,
+            // which a window function's own result does not promise.
+            if (ColumnType.isSymbol(functions.getQuick(i).getType())) {
+                return null;
+            }
+            final ObjList<ExpressionNode> partitionBy = ((WindowExpression) qc).getPartitionBy();
+            boolean isPartitionedByKey = false;
+            for (int j = 0, m = partitionBy.size(); j < m; j++) {
+                final ExpressionNode node = partitionBy.getQuick(j);
+                if (node.type == LITERAL && SqlUtil.getColumnIndexQuiet(baseMetadata, node.token) == keyColumnIndex) {
+                    isPartitionedByKey = true;
+                    break;
+                }
+            }
+            if (!isPartitionedByKey) {
+                return null;
+            }
+            // A random function draws from the query's one Rnd, which is not thread safe, and its
+            // values would depend on which thread computed which key first.
+            if (hasRandomFunction(qc.getAst()) || hasRandomFunction(partitionBy)) {
+                return null;
+            }
+        }
+        if (!hasWindowFunction) {
+            return null;
+        }
+        // A table too small to repay the worker copies compiled below stays serial. The table's
+        // row count overestimates what an IN list selects; the cursor computes min.rows of the scan
+        // on the query's thread before it dispatches anything, which keeps a selective query there.
+        final long minRows = configuration.getSqlParallelWindowMinRows();
+        if (minRows > 0) {
+            final TableToken tableToken = base.getTableToken();
+            if (tableToken == null) {
+                return null;
+            }
+            try (TableReader reader = executionContext.getReader(tableToken)) {
+                long estimatedRows = reader.size();
+                // An IN list reads its keys' share of the table, assuming the keys are about equally
+                // frequent: two symbols of thousands stay serial, a list of most of them does not.
+                final int keyCount = keyMajorScan.getKeyMajorKeyCount();
+                final int tableColumnIndex = reader.getMetadata().getColumnIndexQuiet(baseMetadata.getColumnName(keyColumnIndex));
+                if (keyCount > 0 && tableColumnIndex > -1 && ColumnType.isSymbol(reader.getMetadata().getColumnType(tableColumnIndex))) {
+                    // the NULL key is a value too
+                    final long valueCount = reader.getSymbolMapReader(tableColumnIndex).getSymbolCount() + 1L;
+                    if (keyCount < valueCount) {
+                        estimatedRows = estimatedRows / valueCount * keyCount;
+                    }
+                }
+                if (estimatedRows < minRows) {
+                    return null;
+                }
+            }
+        }
+        final RecordSink recordSink;
+        try {
+            entityColumnFilter.of(factoryMetadata.getColumnCount());
+            recordSink = RecordSinkFactory.getInstance(configuration, asm, factoryMetadata, entityColumnFilter, null);
+        } catch (IllegalArgumentException e) {
+            // an output column type a task's row buffer cannot hold
+            return null;
+        }
+        // A round holds at most about round.rows / task.rows tasks, so more copies than that would
+        // never all be busy: compile, and later open, no more. Workers beyond them share the slots.
+        final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
+        final long roundRows = Math.max(taskRows, configuration.getSqlParallelWindowRoundRows());
+        final int copyCount = (int) Math.min(workerCount, (roundRows + taskRows - 1) / taskRows);
+        final ObjList<ObjList<Function>> perWorkerFunctions = new ObjList<>(copyCount);
+        final ObjList<ObjList<WindowMapState>> perWorkerMapStates = new ObjList<>(copyCount);
+        try {
+            for (int i = 0; i < copyCount; i++) {
+                compileStreamingWindowCopy(model, base, baseMetadata, perWorkerFunctions, perWorkerMapStates, executionContext);
+            }
+        } catch (Throwable th) {
+            for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                Misc.freeObjList(perWorkerMapStates.getQuiet(i));
+                Misc.freeObjList(perWorkerFunctions.getQuick(i));
+            }
+            throw th;
+        }
+        // takes the worker copies, also when it throws
+        return new AsyncWindowRecordCursorFactory(
+                executionContext.getCairoEngine(),
+                configuration,
+                executionContext.getMessageBus(),
+                base,
+                factoryMetadata,
+                functions,
+                windowMapStates,
+                perWorkerFunctions,
+                perWorkerMapStates,
+                recordSink,
+                keyColumnIndex,
+                workerCount
+        );
+    }
+
+    private static boolean hasRandomFunction(ObjList<ExpressionNode> nodes) {
+        for (int i = 0, n = nodes.size(); i < n; i++) {
+            if (hasRandomFunction(nodes.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True when the expression calls a random function, rnd_*() or random().
+    private static boolean hasRandomFunction(@Nullable ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == FUNCTION && (Chars.startsWithIgnoreCase(node.token, "rnd_") || Chars.equalsIgnoreCase(node.token, "random"))) {
+            return true;
+        }
+        return hasRandomFunction(node.lhs) || hasRandomFunction(node.rhs) || hasRandomFunction(node.args);
+    }
+
+    /**
+     * Compiles one more copy of a streaming window's functions, one per output column, the way
+     * the fast path of {@link #generateSelectWindow} compiles the first one, together with that
+     * copy's window Map groups. Appends both to the lists, which own them from then on, also when
+     * this throws. Only for a model the fast path accepted, outside a live-view compile and
+     * without SUBSAMPLE.
+     */
+    private void compileStreamingWindowCopy(
+            IQueryModel model,
+            RecordCursorFactory base,
+            RecordMetadata baseMetadata,
+            ObjList<ObjList<Function>> perWorkerFunctions,
+            ObjList<ObjList<WindowMapState>> perWorkerMapStates,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final int columnCount = columns.size();
+        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        final ObjList<WindowMapSpec> windowMapSpecs = new ObjList<>();
+        final ObjList<Function> functions = new ObjList<>(columnCount);
+        perWorkerFunctions.add(functions);
+        perWorkerMapStates.add(null);
+        ObjList<Function> partitionByFunctions = null;
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                if (!qc.isWindowExpression()) {
+                    functions.extendAndSet(i, functionParser.parseFunction(qc.getAst(), baseMetadata, executionContext));
+                    continue;
+                }
+                final WindowExpression ac = (WindowExpression) qc;
+                final ExpressionNode ast = qc.getAst();
+                final int psz = ac.getPartitionBy().size();
+                VirtualRecord partitionByRecord = null;
+                RecordSink partitionBySink = null;
+                if (psz > 0) {
+                    partitionByFunctions = new ObjList<>(psz);
+                    for (int j = 0; j < psz; j++) {
+                        partitionByFunctions.add(functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext));
+                    }
+                    partitionByRecord = new VirtualRecord(partitionByFunctions);
+                    keyTypes.clear();
+                    for (int j = 0; j < psz; j++) {
+                        keyTypes.add(partitionByFunctions.getQuick(j).getType());
+                    }
+                    entityColumnFilter.of(psz);
+                    partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter, null);
+                }
+                final int osz = ac.getOrderBy().size();
+                final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+                final int timestampIdx = baseMetadata.getTimestampIndex();
+                final int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
+                boolean dismissOrder = base.followedOrderByAdvice() && canDismissWindowOrder(orderHash, ac);
+                if (!dismissOrder && osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
+                    final ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
+                    final int orderByDirection = ac.getOrderByDirection().getQuick(0);
+                    if (SqlUtil.getColumnIndexQuiet(baseMetadata, orderByNode.token) == timestampIdx &&
+                            ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                                    (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
+                        dismissOrder = true;
+                    }
+                }
+                executionContext.configureWindowContext(
+                        partitionByRecord,
+                        partitionBySink,
+                        keyTypes,
+                        osz > 0,
+                        effectiveWindowScanDirection(base, baseMetadata, ac, dismissOrder),
+                        orderByPos,
+                        base.recordCursorSupportsRandomAccess(),
+                        ac.getFramingMode(),
+                        ac.getRowsLo(),
+                        ac.getRowsLoExprTimeUnit(),
+                        ac.getRowsLoExprPos(),
+                        ac.getRowsLoKindPos(),
+                        ac.getRowsHi(),
+                        ac.getRowsHiExprTimeUnit(),
+                        ac.getRowsHiExprPos(),
+                        ac.getRowsHiKindPos(),
+                        ac.getExclusionKind(),
+                        ac.getExclusionKindPos(),
+                        baseMetadata.getTimestampIndex(),
+                        baseMetadata.getTimestampType(),
+                        ac.isIgnoreNulls(),
+                        ac.getNullsDescPos()
+                );
+                try {
+                    final Function f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                    if (!(f instanceof WindowFunction wf) || (osz > 0 && !dismissOrder) || wf.getPassCount() != WindowFunction.ZERO_PASS) {
+                        // the first copy compiled to a streaming function, so this one must too
+                        Misc.free(f);
+                        throw SqlException.$(ast.position, "internal error: a worker copy of a streaming window function does not stream");
+                    }
+                    functions.extendAndSet(i, f);
+                    // the function owns its PARTITION BY terms now
+                    partitionByFunctions = null;
+                    windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
+                            executionContext.getWindowContext(),
+                            ac.getPartitionBy(),
+                            ac.getOrderBy(),
+                            ac.getOrderByDirection(),
+                            dismissOrder,
+                            wf,
+                            baseMetadata,
+                            baseMetadata
+                    ));
+                    wf.setColumnIndex(i);
+                } finally {
+                    executionContext.clearWindowContext();
+                }
+            }
+            final ArrayColumnTypes chainTypes = new ArrayColumnTypes();
+            for (int i = 0; i < columnCount; i++) {
+                if (functions.getQuick(i) instanceof WindowFunction wf) {
+                    final WindowExpression qc = (WindowExpression) columns.getQuick(i);
+                    if (qc.getOrderBy().size() > 0) {
+                        chainTypes.clear();
+                        wf.initRecordComparator(this, baseMetadata, chainTypes, null, qc.getOrderBy(), qc.getOrderByDirection());
+                    }
+                }
+            }
+            final ObjList<WindowAccumulatorPlan> plans = WindowAccumulatorPlanBuilder.compileGroups(functions, windowMapSpecs, baseMetadata);
+            perWorkerMapStates.setQuick(perWorkerMapStates.size() - 1, WindowMapState.createGroups(configuration, asm, plans, baseMetadata));
+        } catch (Throwable th) {
             Misc.freeObjList(partitionByFunctions);
             throw th;
         }

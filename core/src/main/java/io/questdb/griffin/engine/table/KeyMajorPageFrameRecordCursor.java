@@ -26,10 +26,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.ParquetDecodeHint;
@@ -42,12 +42,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -75,9 +75,21 @@ import org.jetbrains.annotations.Nullable;
  * from the index, residual filter included, and touched for nothing.
  */
 public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor {
+    /**
+     * {@link #collectKeyRows} found no key left.
+     */
+    public static final int COLLECT_EXHAUSTED = 2;
+    /**
+     * {@link #collectKeyRows} stopped at the end of a key; the next call starts the next key.
+     */
+    public static final int COLLECT_KEY_END = 0;
+    /**
+     * {@link #collectKeyRows} took its row limit before the key ended; the next call continues it.
+     */
+    public static final int COLLECT_ROW_LIMIT = 1;
     // Row ids drained from the row cursor ahead of emission. Their column cache lines are loaded
-    // in one tight loop (see touch()), which must fit L1 with room to spare: measured best at
-    // 32-64 on a 50M-row table, and worse from 128 up.
+    // in one tight loop (see PageFrameRowToucher), which must fit L1 with room to spare: measured
+    // best at 32-64 on a 50M-row table, and worse from 128 up.
     private static final int PREFETCH_ROWS = 32;
     private final Function filter;
     private final LongList frameHis = new LongList();
@@ -88,6 +100,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     // row ids of the current (key, frame) taken from rowCursor ahead of emission, see fillRowBuf()
     private final long[] rowBuf = new long[PREFETCH_ROWS];
     private final KeyedRowCursorFactory rowCursorFactory;
+    private final PageFrameRowToucher toucher = new PageFrameRowToucher();
     private final boolean walkFramesBackward;
     private boolean areCursorsPrepared;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -102,14 +115,6 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     private int rowBufLen;
     private int rowBufPos;
     private RowCursor rowCursor;
-    // per column of the current frame: the address of row 0, the bytes readable from it and the
-    // row size as a shift; touchCount columns in total, 0 when the frame is not touched
-    private long[] touchAddresses = new long[0];
-    private int touchCount;
-    private long[] touchLimits = new long[0];
-    private int[] touchShifts = new int[0];
-    // sink for the touched bytes, so that the loads are not eliminated
-    private long touchSink;
 
     /**
      * @param frameOrder order of the page frames the partition frame cursor yields,
@@ -135,11 +140,90 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         this.walkFramesBackward = indexForward != framesForward;
     }
 
+    /**
+     * The frame index of a row id from {@link #collectKeyRows}, an index into
+     * {@link #getFrameAddressCache()}.
+     */
+    public static int toFrameIndex(long frameRowId) {
+        return (int) (frameRowId >>> 32);
+    }
+
+    /**
+     * Encodes a row of a frame the way {@link #collectKeyRows} reports it.
+     */
+    public static long toFrameRowId(int frameIndex, long frameRowIndex) {
+        return ((long) frameIndex << 32) | frameRowIndex;
+    }
+
+    /**
+     * The row index within its frame of a row id from {@link #collectKeyRows}.
+     */
+    public static long toFrameRowIndex(long frameRowId) {
+        return frameRowId & 0xFFFF_FFFFL;
+    }
+
     @Override
     public void close() {
         rowCursor = Misc.free(rowCursor);
         frameIndexReaders.clear();
         super.close();
+    }
+
+    /**
+     * Walks the current key the way {@link #hasNext()} would emit it, but appends its rows to
+     * {@code sink} as row ids (see {@link #toFrameRowId}) instead of positioning the record, and
+     * loads no column. Stops at the end of the key, returning {@link #COLLECT_KEY_END}, or once
+     * this call has appended {@code rowLimit} rows, returning {@link #COLLECT_ROW_LIMIT}; the next
+     * call then continues the same key. Returns {@link #COLLECT_EXHAUSTED} when no key is left.
+     * A key that has no rows still ends with {@link #COLLECT_KEY_END}.
+     * <p>
+     * A walk is either collected or emitted: this cursor must not mix the two between
+     * {@link #toTop()} calls.
+     */
+    public int collectKeyRows(DirectLongList sink, long rowLimit) {
+        assert rowBufPos == rowBufLen : "collectKeyRows() mixed with hasNext()";
+        if (isExhausted) {
+            return COLLECT_EXHAUSTED;
+        }
+        try {
+            prepareFrames();
+            if (keyIndex >= keyCount) {
+                rowCursor = Misc.free(rowCursor);
+                isExhausted = true;
+                return COLLECT_EXHAUSTED;
+            }
+            long collected = 0;
+            while (true) {
+                final RowCursor cursor = rowCursor;
+                if (cursor != null) {
+                    final long rowIdBase = toFrameRowId(currentFrameIndex, 0);
+                    while (collected < rowLimit && cursor.hasNext()) {
+                        sink.add(rowIdBase | cursor.next());
+                        collected++;
+                    }
+                    if (collected >= rowLimit) {
+                        return COLLECT_ROW_LIMIT;
+                    }
+                }
+                if (!openNextFrameOfKey(false)) {
+                    keyIndex++;
+                    framePos = 0;
+                    return COLLECT_KEY_END;
+                }
+            }
+        } catch (NoMoreFramesException e) {
+            rowCursor = Misc.free(rowCursor);
+            isExhausted = true;
+            return COLLECT_EXHAUSTED;
+        }
+    }
+
+    /**
+     * The address cache of every page frame of the scan, which row ids from
+     * {@link #collectKeyRows} index into. Complete once {@link #prepareFrames()} has run.
+     */
+    public PageFrameAddressCache getFrameAddressCache() {
+        return frameAddressCache;
     }
 
     public KeyedRowCursorFactory getRowCursorFactory() {
@@ -151,12 +235,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         if (isExhausted) {
             return false;
         }
-        prepareRowCursorFactory();
         try {
-            if (!isFramesCollected) {
-                collectFrames();
-                keyCount = rowCursorFactory.getKeyCount();
-            }
+            prepareFrames();
             while (true) {
                 if (rowBufPos < rowBufLen) {
                     final long rowIndex = rowBuf[rowBufPos++];
@@ -179,9 +259,31 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         return false;
     }
 
+    /**
+     * True when every frame of the scan is a native one that no covering index serves, so that
+     * any thread can read a collected row through its own {@link io.questdb.cairo.sql.PageFrameMemoryPool}
+     * at a stable address. Valid once {@link #prepareFrames()} has run.
+     */
+    public boolean hasOnlyPlainNativeFrames() {
+        for (int i = 0; i < frameCount; i++) {
+            if (frameAddressCache.getFrameFormat(i) != PartitionFormat.NATIVE || frameAddressCache.isFrameCovered(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public boolean isUsingIndex() {
         return true;
+    }
+
+    /**
+     * True once {@link #collectKeyRows} has reported {@link #COLLECT_EXHAUSTED}, or the walk has
+     * otherwise ended, until {@link #toTop()}.
+     */
+    public boolean isWalkExhausted() {
+        return isExhausted;
     }
 
     @Override
@@ -206,6 +308,19 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     @Override
     public long preComputedStateSize() {
         return RecordCursor.fromBool(areCursorsPrepared);
+    }
+
+    /**
+     * Drains the page frame cursor into the frame address cache and resolves the keys, which the
+     * first {@link #hasNext()} or {@link #collectKeyRows} would otherwise do. Idempotent until
+     * {@link #toTop()}.
+     */
+    public void prepareFrames() {
+        prepareRowCursorFactory();
+        if (!isFramesCollected) {
+            collectFrames();
+            keyCount = rowCursorFactory.getKeyCount();
+        }
     }
 
     @Override
@@ -248,26 +363,39 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     // Moves to the next (key, frame) pair and opens its row cursor. Returns false once all keys
     // have been walked across all frames.
     private boolean nextKeyFrame() {
-        rowCursor = Misc.free(rowCursor);
         while (keyIndex < keyCount) {
-            if (framePos < frameCount) {
-                final int frameIndex = walkFramesBackward ? frameCount - 1 - framePos : framePos;
-                framePos++;
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                if (frameAddressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET && hasNoRows(keyIndex, frameIndex)) {
-                    // a Parquet frame is decoded on navigation: skip it when the key has no rows in it
-                    continue;
-                }
-                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-                frameSnapshot.of(frameIndex);
-                rowCursor = rowCursorFactory.getCursor(keyIndex, frameSnapshot, frameMemory);
-                currentFrameIndex = frameIndex;
-                recordA.init(frameMemory);
-                prepareTouch(frameIndex, frameMemory);
+            if (openNextFrameOfKey(true)) {
                 return true;
             }
             keyIndex++;
             framePos = 0;
+        }
+        return false;
+    }
+
+    // Opens the row cursor of the current key in its next frame, skipping a Parquet frame the key
+    // has no rows in. Returns false once the key has been walked across all frames.
+    private boolean openNextFrameOfKey(boolean touch) {
+        rowCursor = Misc.free(rowCursor);
+        while (framePos < frameCount) {
+            final int frameIndex = walkFramesBackward ? frameCount - 1 - framePos : framePos;
+            framePos++;
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            if (frameAddressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET && hasNoRows(keyIndex, frameIndex)) {
+                // a Parquet frame is decoded on navigation: skip it when the key has no rows in it
+                continue;
+            }
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            frameSnapshot.of(frameIndex);
+            rowCursor = rowCursorFactory.getCursor(keyIndex, frameSnapshot, frameMemory);
+            currentFrameIndex = frameIndex;
+            recordA.init(frameMemory);
+            if (touch) {
+                toucher.of(frameAddressCache, frameIndex, frameMemory);
+            } else {
+                toucher.clear();
+            }
+            return true;
         }
         return false;
     }
@@ -283,8 +411,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         }
         rowBufPos = 0;
         rowBufLen = n;
-        if (n > 0 && touchCount > 0) {
-            touch(n);
+        if (n > 0 && toucher.isEnabled()) {
+            toucher.touch(buf, n);
         }
         return n > 0;
     }
@@ -310,51 +438,11 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         }
     }
 
-    // Each key's rows are spread over the whole frame, so nearly every column value of a row is a
-    // cache and TLB miss. Read by the consumer one row at a time, with its own work in between,
-    // those misses are paid one after another; touch() makes them overlap. Only native frames are
-    // touched: their addresses are stable for the query, while a decoded Parquet frame can be
-    // evicted between two calls to hasNext().
-    private void prepareTouch(int frameIndex, PageFrameMemory frameMemory) {
-        touchCount = 0;
-        if (frameMemory.getFrameFormat() != PartitionFormat.NATIVE || frameAddressCache.isFrameCovered(frameIndex)) {
-            return;
-        }
-        final int columnCount = frameMemory.getColumnCount();
-        if (touchAddresses.length < columnCount) {
-            touchAddresses = new long[columnCount];
-            touchLimits = new long[columnCount];
-            touchShifts = new int[columnCount];
-        }
-        final IntList columnTypes = frameAddressCache.getColumnTypes();
-        for (int c = 0; c < columnCount; c++) {
-            final int columnType = columnTypes.getQuick(c);
-            final long address;
-            final long limit;
-            final int shift;
-            if (ColumnType.isVarSize(columnType)) {
-                address = frameMemory.getAuxPageAddress(c);
-                limit = frameMemory.getAuxPageSizes().get(frameMemory.getColumnOffset() + c);
-                shift = Long.numberOfTrailingZeros(ColumnType.getDriver(columnType).getAuxVectorOffset(1));
-            } else {
-                address = frameMemory.getPageAddress(c);
-                limit = frameMemory.getPageSize(c);
-                shift = ColumnType.pow2SizeOf(columnType);
-            }
-            if (address != 0 && shift >= 0 && limit > 0) {
-                touchAddresses[touchCount] = address;
-                touchLimits[touchCount] = limit;
-                touchShifts[touchCount] = shift;
-                touchCount++;
-            }
-        }
-    }
-
     private void resetWalk() {
         rowCursor = Misc.free(rowCursor);
         rowBufPos = 0;
         rowBufLen = 0;
-        touchCount = 0;
+        toucher.clear();
         isExhausted = false;
         isFramesCollected = false;
         frameLos.clear();
@@ -365,30 +453,6 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         framePos = 0;
         currentFrameIndex = -1;
         keyCount = 0;
-    }
-
-    // Loads one byte of every column of the buffered rows in a tight loop. The loads are
-    // independent, so their cache and TLB misses overlap instead of being paid one row at a time.
-    private void touch(int n) {
-        final long[] buf = rowBuf;
-        long sink = 0;
-        for (int c = 0; c < touchCount; c++) {
-            final long address = touchAddresses[c];
-            final long limit = touchLimits[c];
-            final int shift = touchShifts[c];
-            for (int i = 0; i < n; i++) {
-                final long offset = buf[i] << shift;
-                // A touched column has data for every row of the frame, so a row out of range
-                // means the address or the limit was derived wrongly. That loses the prefetch
-                // but changes no result, so only an assertion can catch it. Unsigned, so that a
-                // negative row id can never read below the column.
-                assert Long.compareUnsigned(offset, limit) < 0 : "touch out of range [offset=" + offset + ", limit=" + limit + ']';
-                if (Long.compareUnsigned(offset, limit) < 0) {
-                    sink += Unsafe.getByte(address + offset);
-                }
-            }
-        }
-        touchSink += sink;
     }
 
     /**

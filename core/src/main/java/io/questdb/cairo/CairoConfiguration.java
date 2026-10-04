@@ -1087,6 +1087,32 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    /**
+     * Rows of one key beyond which the parallel window computes that key on the query's own
+     * thread, in chunks, instead of buffering the whole key's output for a worker task. Bounds the
+     * memory a single task holds.
+     */
+    long getSqlParallelWindowMaxKeyRows();
+
+    /**
+     * Rows below which a window stays serial: a table smaller than this plans the serial window,
+     * and the parallel window computes this many rows of its scan on the query's own thread before
+     * it dispatches anything, so a LIMIT or a small result never waits for a round of tasks.
+     */
+    long getSqlParallelWindowMinRows();
+
+    /**
+     * Rows one round of the parallel window's tasks holds at most, past the last key it takes,
+     * whatever the number of workers. Two rounds are live at a time, so this bounds the output
+     * the parallel window buffers.
+     */
+    long getSqlParallelWindowRoundRows();
+
+    /**
+     * Rows a task of the parallel window collects before it closes at the next key boundary.
+     */
+    long getSqlParallelWindowTaskRows();
+
     int getSqlUnorderedMapMaxEntrySize();
 
     long getSqlWindowCacheMaxBytes();
@@ -1413,6 +1439,12 @@ public interface CairoConfiguration {
     boolean isSqlParallelReadParquetEnabled();
 
     boolean isSqlParallelTopKEnabled();
+
+    /**
+     * Whether a window whose every function is partitioned by the key of a key-major index scan
+     * runs on the shared query workers, a batch of whole keys per task.
+     */
+    boolean isSqlParallelWindowEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
 

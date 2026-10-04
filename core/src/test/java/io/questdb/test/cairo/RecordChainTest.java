@@ -41,10 +41,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -134,6 +136,78 @@ public class RecordChainTest extends AbstractCairoTest {
     @Test
     public void testReuseWithReleaseCursor() throws Exception {
         testChainReuseWithClearFunction(RecordChain::close);
+    }
+
+    @Test
+    public void testRewindKeepsMemoryAndReservesUpFront() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("s", ColumnType.STRING));
+            entityColumnFilter.of(metadata.getColumnCount());
+            RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter);
+            final long[] x = new long[1];
+            final ObjList<Function> funcs = new ObjList<>();
+            funcs.add(new LongFunction() {
+                @Override
+                public long getLong(Record rec) {
+                    return x[0];
+                }
+            });
+            funcs.add(new StrFunction() {
+                @Override
+                public CharSequence getStrA(Record rec) {
+                    return x[0] % 3 == 0 ? null : "v" + x[0];
+                }
+
+                @Override
+                public CharSequence getStrB(Record rec) {
+                    return getStrA(rec);
+                }
+            });
+            final VirtualRecord rec = new VirtualRecord(funcs);
+            // 64 KB pages: 1000 records of 8 + 8 + 8 bytes plus strings span several
+            try (RecordChain chain = new RecordChain(metadata, sink, 64 * 1024, Integer.MAX_VALUE)) {
+                long memAfterFirstFill = 0;
+                for (int fill = 0; fill < 3; fill++) {
+                    final int n = 1000 + fill;
+                    chain.rewind(n);
+                    chain.toTop();
+                    Assert.assertFalse(chain.hasNext());
+                    if (fill > 0) {
+                        // the memory of the earlier fill was kept, not freed and allocated again
+                        Assert.assertEquals(memAfterFirstFill, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                    }
+                    long o = -1;
+                    for (int i = 0; i < n; i++) {
+                        x[0] = fill * 10_000L + i;
+                        o = chain.put(rec, o);
+                    }
+                    if (fill == 0) {
+                        memAfterFirstFill = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                    }
+                    chain.toTop();
+                    final Record r = chain.getRecord();
+                    int i = 0;
+                    while (chain.hasNext()) {
+                        final long expected = fill * 10_000L + i;
+                        Assert.assertEquals(expected, r.getLong(0));
+                        TestUtils.assertEquals(expected % 3 == 0 ? null : "v" + expected, r.getStrA(1));
+                        i++;
+                    }
+                    Assert.assertEquals(n, i);
+                }
+                // after clear() the next rewind allocates again and the chain still works
+                chain.clear();
+                chain.rewind(10);
+                x[0] = 7;
+                chain.put(rec, -1);
+                chain.toTop();
+                Assert.assertTrue(chain.hasNext());
+                Assert.assertEquals(7, chain.getRecord().getLong(0));
+                Assert.assertFalse(chain.hasNext());
+            }
+        });
     }
 
     @Test
