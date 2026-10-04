@@ -12566,6 +12566,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final ObjList<QueryColumn> columns = model.getColumns();
         boolean hasWindowFunction = false;
+        // whether no window function is partitioned by more than the key, so that a task's rows
+        // of one key are one partition of every function
+        boolean partitionedByKeyOnly = true;
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             if (!qc.isWindowExpression()) {
@@ -12588,6 +12591,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             if (!isPartitionedByKey) {
                 return null;
+            }
+            if (partitionBy.size() != 1) {
+                partitionedByKeyOnly = false;
             }
             // A random function draws from the query's one Rnd, which is not thread safe, and its
             // values would depend on which thread computed which key first.
@@ -12669,6 +12675,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 recordSink,
                 splitPlan,
                 keyColumnIndex,
+                partitionedByKeyOnly,
                 workerCount
         );
     }

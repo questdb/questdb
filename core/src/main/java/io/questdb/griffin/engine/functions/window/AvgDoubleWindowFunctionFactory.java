@@ -51,6 +51,7 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.KeyRunWindowFunction;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
@@ -66,6 +67,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.Arrays;
 
 public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -1307,7 +1310,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles avg() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    static class AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction, KeyRunWindowFunction {
+        // A run keeps its frame in a heap ring of bufferSize values; a frame larger than this
+        // stays on the map path.
+        private static final int KEY_RUN_MAX_BUFFER_SIZE = 1 << 16;
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
@@ -1342,6 +1348,13 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected double sum;
         private double avg;
+        // The state of a key run, see KeyRunWindowFunction: the partition's map value and ring,
+        // held here instead. Ring cells are indexed like the map path's native ring.
+        private long keyRunCount;
+        private int keyRunLoIdx;
+        private boolean keyRunOpen;
+        private double[] keyRunRing;
+        private double keyRunSum;
         // The two ring slots of the group's fused map value, or -1 when this function owns its
         // state. Installed by bindWindowStateSlots and cleared the same way.
         private int windowStateRingIndexSlot = -1;
@@ -1582,6 +1595,91 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             value.putLong(2, (loIdx + 1) % bufferSize);
             value.putLong(3, startOffset);//not necessary because it doesn't change
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
+        }
+
+        @Override
+        public Function getKeyRunArgument() {
+            return arg;
+        }
+
+        @Override
+        public boolean isKeyRunSupported() {
+            return !liveView && bufferSize > 0 && bufferSize <= KEY_RUN_MAX_BUFFER_SIZE;
+        }
+
+        /**
+         * {@link #computeNext(Record)} for the next row of the run's partition, with the map
+         * value's four fields and the native ring held in fields: the same operations on the same
+         * values in the same order, so the same bits.
+         */
+        @Override
+        public void keyRunNext(Record record) {
+            final double d = arg.getDouble(record);
+            final double[] ring = keyRunRing;
+            final int loIdx;
+            if (!keyRunOpen) {
+                // the partition's first row: computeNext's value.isNew() branch
+                keyRunOpen = true;
+                loIdx = 0;
+                Arrays.fill(ring, Double.NaN);
+                if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
+                    keyRunSum = d;
+                    keyRunCount = 1;
+                    avg = d;
+                    this.sum = d;
+                } else {
+                    keyRunSum = 0.0;
+                    keyRunCount = 0;
+                    avg = Double.NaN;
+                    this.sum = Double.NaN;
+                }
+            } else {
+                loIdx = keyRunLoIdx;
+                double sum = keyRunSum;
+                long count = keyRunCount;
+                final double hiValue;
+                if (frameIncludesCurrentValue) {
+                    hiValue = d;
+                } else {
+                    // (loIdx + frameSize - 1) % bufferSize, with both terms below bufferSize
+                    int hiIdx = loIdx + frameSize - 1;
+                    if (hiIdx >= bufferSize) {
+                        hiIdx -= bufferSize;
+                    }
+                    hiValue = ring[hiIdx];
+                }
+                if (Numbers.isFinite(hiValue)) {
+                    count++;
+                    sum += hiValue;
+                }
+                if (count != 0) {
+                    avg = sum / count;
+                    this.sum = sum;
+                } else {
+                    avg = Double.NaN;
+                    this.sum = Double.NaN;
+                }
+                if (frameLoBounded) {
+                    final double loValue = ring[loIdx];
+                    if (Numbers.isFinite(loValue)) {
+                        sum -= loValue;
+                        count--;
+                    }
+                }
+                keyRunSum = sum;
+                keyRunCount = count;
+            }
+            ring[loIdx] = d;
+            final int nextLoIdx = loIdx + 1;
+            keyRunLoIdx = nextLoIdx == bufferSize ? 0 : nextLoIdx;
+        }
+
+        @Override
+        public void keyRunStart() {
+            keyRunOpen = false;
+            if (keyRunRing == null) {
+                keyRunRing = new double[bufferSize];
+            }
         }
 
         @Override

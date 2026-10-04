@@ -513,7 +513,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             final AsyncWindowAtom.Slot slot = atom.getSlot(slotId);
             // a task starts from clean state: warm-up rows rebuild a key it continues
             slot.toTop();
-            task.lastOffset = slot.compute(task.rows, task.emitFrom, task.chain, circuitBreaker, sequence);
+            task.lastOffset = slot.compute(task.rows, task.keyStarts, task.emitFrom, task.chain, circuitBreaker, sequence);
             slot.countTask();
             atom.countTask(workerId);
         } finally {
@@ -642,6 +642,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         while (emitted < taskLimit) {
             // a key the task continues has its warm-up rows ahead of its new ones
             final long keyStart = first && walkKeyOpen ? 0 : rows.size();
+            task.keyStarts.add(keyStart);
             final long keyLo = rows.size();
             final int status = keyMajorCursor.collectKeyRows(rows, taskLimit - emitted);
             final long collected = rows.size() - keyLo;
@@ -674,6 +675,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             final int keyIndex = keyMajorCursor.getKeyIndex();
             final int status = keyMajorCursor.collectKeyRows(rows, maxKeyRows);
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_KEY_END) {
+                task.keyStarts.add(keyLo);
                 continue;
             }
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
@@ -1067,6 +1069,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
      */
     static class Task implements QuietCloseable {
         private final RecordChain chain;
+        // indexes of rows at which a key starts, ascending, 0 first; the rows between two of them
+        // are one key's, see AsyncWindowAtom.Slot.computeKeyRuns()
+        private final LongList keyStarts = new LongList();
         private final DirectLongList rows;
         // the first key of the task continues from the rows returned before it
         private boolean continuesKey;
@@ -1098,6 +1103,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         private void reuse(long taskRows) {
             shrinkIfOversized(rows, taskRows);
             rows.clear();
+            keyStarts.clear();
             continuesKey = false;
             emitFrom = 0;
             emittedRows = 0;
