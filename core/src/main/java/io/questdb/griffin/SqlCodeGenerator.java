@@ -1841,12 +1841,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * A UNION cast cell the union matrix never produces, asserted as such; in production the
-     * caller adds no cast function for it (PB9).
+     * The error of a UNION cast cell no arm names: a pair the union matrix does not produce for
+     * any existing type. A later type reaches it until its author implements the cast or has the
+     * matrix refuse the pair.
      */
-    private static Function unreachableCast() {
-        assert false;
-        return null;
+    private static CairoException unreachableCast(int fromType, int toType) {
+        return CairoException.critical(0).put("no UNION cast for ").put(ColumnType.nameOf(fromType))
+                .put(" to ").put(ColumnType.nameOf(toType))
+                .put(" at UNION: implement the cast or refuse the pair in the UNION matrix");
     }
 
     private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
@@ -3349,10 +3351,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * The cast that reads column {@code i} of a UNION operand, typed {@code fromType}, as the
      * union's column type {@code toType}. The union type is the one {@link #getUnionCastType}
-     * picks, so every reachable (from, to) pair has a cell; a cell with no cast function is
-     * a pair the union matrix never produces. Such a cell yields null, and the caller then adds
-     * nothing to the cast list (PB9: the list would misalign; unreachable today, kept as is).
-     * A cell that throws is an unsupported cast the matrix does produce.
+     * picks, so every reachable (from, to) pair has a cell: a cast function, or the "unsupported
+     * cast" error for a pair the matrix produces but no cast converts. A pair no arm names
+     * throws {@link #unreachableCast(int, int)}, never an empty cell, since the caller's cast
+     * list must hold one function per column.
      */
     private Function generateCastFunction(
             SqlExecutionContext executionContext,
@@ -3376,19 +3378,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 case BYTE -> ByteColumn.newInstance(i);
                 case CHAR -> new CharColumn(i);
                 case SHORT -> ShortColumn.newInstance(i);
-                default -> null;
+                default -> throw unreachableCast(fromType, toType);
             };
             case CHAR -> switch (fromTag) {
                 case BYTE -> new CastByteToCharFunctionFactory.Func(ByteColumn.newInstance(i));
                 case CHAR -> new CharColumn(i);
-                default -> null;
+                default -> throw unreachableCast(fromType, toType);
             };
             case INT -> switch (fromTag) {
                 case BYTE -> ByteColumn.newInstance(i);
                 case SHORT -> ShortColumn.newInstance(i);
                 case CHAR -> new CharColumn(i);
                 case INT -> IntColumn.newInstance(i);
-                default -> null;
+                default -> throw unreachableCast(fromType, toType);
             };
             case LONG -> switch (fromTag) {
                 case BYTE -> ByteColumn.newInstance(i);
@@ -3470,9 +3472,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     yield new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType));
                 }
-                case BINARY ->
+                // the union matrix picks STRING for LONG128 against most types; no cast converts it
+                case BINARY, LONG128 ->
                         throw SqlException.unsupportedCast(modelPosition, castFromMetadata.getColumnName(i), fromType, toType);
-                default -> null;
+                default -> throw unreachableCast(fromType, toType);
             };
             case SYMBOL ->
                     new CastSymbolToStrFunctionFactory.Func(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i)));
@@ -3568,7 +3571,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case BINARY ->
                         throw SqlException.unsupportedCast(modelPosition, castFromMetadata.getColumnName(i), fromType, toType);
-                default -> unreachableCast();
+                // the union matrix picks VARCHAR for DECIMAL, LONG128 or INTERVAL against an array,
+                // and for LONG128 or INTERVAL against VARCHAR; no cast converts them
+                case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, LONG128, INTERVAL ->
+                        throw SqlException.unsupportedCast(modelPosition, castFromMetadata.getColumnName(i), fromType, toType);
+                default -> throw unreachableCast(fromType, toType);
             };
             case ARRAY -> switch (fromTag) {
                 case ARRAY -> {
@@ -3602,7 +3609,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     yield new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType);
                 }
-                default -> unreachableCast();
+                default -> throw unreachableCast(fromType, toType);
             };
             case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> switch (fromTag) {
                 case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> fromType == toType
@@ -3625,7 +3632,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             };
             case INTERVAL -> IntervalColumn.newInstance(i, toType);
             case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, NULL, UNKNOWN -> unreachableCast();
+                 VARCHAR_SLICE, NULL, UNKNOWN -> throw unreachableCast(fromType, toType);
         };
     }
 
@@ -3644,10 +3651,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // a NULL branch reads as the union type's NULL, which that type's definition answers
                 castFunctions.add(Constants.getNullConstant(toType));
             } else {
-                final Function castFunction = generateCastFunction(executionContext, castFromMetadata, i, fromType, toType, modelPosition);
-                if (castFunction != null) {
-                    castFunctions.add(castFunction);
-                }
+                castFunctions.add(generateCastFunction(executionContext, castFromMetadata, i, fromType, toType, modelPosition));
             }
         }
         return castFunctions;
