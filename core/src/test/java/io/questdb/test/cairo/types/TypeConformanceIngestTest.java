@@ -1606,8 +1606,8 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 +-----------------------------------------------------------------------------------------------------------------+\\u000d
                 k\tv
                 min\t
-                max\t￯
-                other_null\t￯
+                max\t\\uffff
+                other_null\t\\uffff
                 null\t
                 ## qwp-nonwal
                 min\tchar 0\terror: server rejected batch: SCHEMA_MISMATCH (status=0x3) fsn=[0,0] seq=0 - cannot insert into non-WAL table: dst
