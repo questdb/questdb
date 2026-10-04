@@ -34,6 +34,7 @@ import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -411,6 +412,24 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         atom.getSlot(-1).open(baseCursor, executionContext);
     }
 
+    /**
+     * The rest of the task being returned, straight from its chain: workers append a task's rows
+     * one after another. Rows the query's thread streams itself (the prefix, streamed keys and
+     * the serial mode) come through {@link #hasNext()} only.
+     * <p>
+     * A block exposes the chain's memory as it is, not through {@code record}. The rule that
+     * keeps it correct: a task's rows must be final in memory before the task is emitted, that
+     * is, before {@code startEmitting()} sets {@code emitTask}. Any combine a task's rows still
+     * owe must be written in place before then, as {@code applyCarry()} does for a running
+     * window's carry ({@code keySplit: running carry}). Applying it lazily, in a getter or a
+     * wrapping record, would keep {@code hasNext()} correct and make every block wrong.
+     */
+    @Override
+    public RecordBlock peekRecordBlock(int maxRows) {
+        final Task emitTask = this.emitTask;
+        return emitTask != null ? emitTask.chain.peekSequentialRecordBlock(maxRows) : null;
+    }
+
     @Override
     public long preComputedStateSize() {
         return 0;
@@ -422,6 +441,12 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void skipRecordBlock(int rowCount) {
+        assert emitTask != null : "skipRecordBlock() without a block from peekRecordBlock()";
+        emitTask.chain.skipSequentialRecordBlock(rowCount);
+    }
+
+    @Override
     public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         // a window value depends on other rows of its partition, so every row must be computed
         RecordCursor.skipRows(this, rowCount);
@@ -430,6 +455,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     @Override
     public long size() {
         return -1;
+    }
+
+    // the task chains of the parallel mode; a chain with a variable-size column offers none, nor
+    // does the serial mode, both at the cost of a field read per row
+    @Override
+    public boolean supportsRecordBlocks() {
+        return true;
     }
 
     @Override
@@ -490,7 +522,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     }
 
     // Combines the rows of the key the task continues with the key's running values at the end of
-    // the previous rows returned, in place, before they are returned.
+    // the previous rows returned, in place, before they are returned. In place, and before the task
+    // is emitted: peekRecordBlock() exposes the chain's memory, so the rows must be final there.
     private void applyCarry(Task task) {
         final RecordChain chain = task.chain;
         final int n = carry.length;

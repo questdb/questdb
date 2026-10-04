@@ -25,10 +25,14 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -41,11 +45,17 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
+// Final: peekRecordBlock() exposes the frames' column memory as the rows hasNext() returns. A
+// subclass that changed the rows in hasNext() or getRecord() would offer blocks that bypass it.
+public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
+    private FrameBlock block;
+    // the frame peekRecordBlock() last found not to be NATIVE, so that the rows of a Parquet
+    // frame do not each pay for a frame navigation; -1 for none
+    private int blockRefusedFrameIndex = -1;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
@@ -168,6 +178,36 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         return rowCursorFactory.isUsingIndex();
     }
 
+    /**
+     * The rest of a native frame of a plain forward scan: its rows are consecutive row indexes
+     * of the frame's column pages, read at the same addresses the record's getters read.
+     */
+    @Override
+    public RecordBlock peekRecordBlock(int maxRows) {
+        if (isExhausted || !(rowCursor instanceof PageFrameFwdRowCursor fwdCursor)) {
+            return null;
+        }
+        final long rows = Math.min(fwdCursor.remaining(), maxRowsAfterSkip - rowsProducedSinceSkip);
+        if (rows < 1) {
+            return null;
+        }
+        final int frameIndex = frameCount - 1;
+        if (frameIndex == blockRefusedFrameIndex) {
+            return null;
+        }
+        // the record's frame is the scan's current one, as hasNext() leaves it
+        frameMemoryPool.navigateTo(frameIndex, recordA);
+        if (recordA.getFrameFormat() != PartitionFormat.NATIVE) {
+            blockRefusedFrameIndex = frameIndex;
+            return null;
+        }
+        if (block == null) {
+            block = new FrameBlock();
+        }
+        block.of(fwdCursor.peekNext(), (int) Math.min(rows, maxRows));
+        return block;
+    }
+
     @Override
     public void of(PageFrameCursor frameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (this.frameCursor != frameCursor) {
@@ -189,6 +229,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         rowCursor = Misc.free(rowCursor);
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
+        blockRefusedFrameIndex = -1;
         // prepare for page frame iteration
         super.init(sqlExecutionContext.getMemoryTracker());
     }
@@ -207,6 +248,13 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return -1;
         }
         return entityCursor ? frameCursor.size() : -1;
+    }
+
+    @Override
+    public void skipRecordBlock(int rowCount) {
+        assert rowCursor instanceof PageFrameFwdRowCursor;
+        ((PageFrameFwdRowCursor) rowCursor).skip(rowCount);
+        rowsProducedSinceSkip += rowCount;
     }
 
     @Override
@@ -297,6 +345,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
     }
 
+    /**
+     * A plain forward scan, the only one {@link #peekRecordBlock(int)} serves: its row cursors are
+     * {@link PageFrameFwdRowCursor}s, and it evaluates no filter.
+     */
+    @Override
+    public boolean supportsRecordBlocks() {
+        return filter == null && rowCursorFactory instanceof PageFrameRowCursorFactory f && f.isForwardScan();
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Page frame scan");
@@ -311,6 +368,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         isExhausted = false;
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
+        blockRefusedFrameIndex = -1;
         super.toTop();
     }
 
@@ -318,6 +376,44 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (!areCursorsPrepared) {
             rowCursorFactory.prepareCursor(frameCursor);
             areCursorsPrepared = true;
+        }
+    }
+
+    private class FrameBlock implements RecordBlock {
+        private long firstRow;
+        private int rowCount;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            // getPageAddress() gives 0 for a column top over the whole frame and for a column
+            // read with a type cast; both are then read through getRecordAt()
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (ColumnType.isVarSize(columnType)) {
+                return 0;
+            }
+            final long address = recordA.getPageAddress(columnIndex);
+            return address != 0 ? address + firstRow * ColumnType.sizeOf(columnType) : 0;
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return ColumnType.sizeOf(metadata.getColumnType(columnIndex));
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            recordA.setRowIndex(firstRow + row);
+            return recordA;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        void of(long firstRow, int rowCount) {
+            this.firstRow = firstRow;
+            this.rowCount = rowCount;
         }
     }
 }

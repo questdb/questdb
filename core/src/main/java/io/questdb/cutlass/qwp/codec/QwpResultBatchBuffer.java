@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -63,6 +64,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     private static final QwpEgressColumnDef[] EMPTY_DEFS = new QwpEgressColumnDef[0];
     private static final int[] EMPTY_INTS = new int[0];
+    private static final long[] EMPTY_LONGS = new long[0];
     private static final QwpColumnScratch[] EMPTY_SCRATCHES = new QwpColumnScratch[0];
     private static final SymbolTable[] EMPTY_SYMBOL_TABLES = new SymbolTable[0];
     private static final byte[] EMPTY_WIRE_TYPES = new byte[0];
@@ -87,6 +89,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // which is exactly what {@link #emitDeltaSection} needs to ship.
     private int batchDeltaStart;
     private long batchDeltaWireBytesAtStart;
+    // appendBlock's per-SYMBOL-column address and stride pairs
+    private long[] blockSymbolAddresses = EMPTY_LONGS;
     private int columnCount;
     private ObjList<QwpEgressColumnDef> columns;
     // Connection-scoped SYMBOL dictionary. Populated directly from appendRow's SYMBOL
@@ -106,6 +110,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     private int[] qdbTypesArr = EMPTY_INTS;
     private QwpColumnScratch[] scratchesArr = EMPTY_SCRATCHES;
     private int startRow;
+    // SYMBOL columns of the current schema, filled first by appendBlock
+    private int symbolColumnCount;
     private SymbolTable[] symbolTablesArr = EMPTY_SYMBOL_TABLES;
     private byte[] wireTypesArr = EMPTY_WIRE_TYPES;
 
@@ -140,6 +146,95 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             physicalRowCount = 0;
             startRow = 0;
         }
+    }
+
+    /**
+     * Appends the first rows of a cursor's {@link RecordBlock}, column by column, and returns how
+     * many it took. The scratch state, and so the batch's wire bytes, are exactly those of
+     * {@link #appendRow} over the same rows, including where a batch stops for the dictionary:
+     * <ul>
+     *   <li>SYMBOL columns go first, row by row across them, so that the connection
+     *       dictionary assigns its ids in the order the row path would. The fill stops after
+     *       the row whose new entries take {@link #currentBatchDeltaWireBytes()} past
+     *       {@code dictBudgetWireBytes}, the row after which the row path's caller stops;</li>
+     *   <li>every other fixed-width column of a type with a columnar fill, and a non-zero
+     *       block address, is copied in one strided loop over the rows taken;</li>
+     *   <li>any other column is filled row by row through {@link RecordBlock#getRecordAt},
+     *       as {@code appendRow} fills it.</li>
+     * </ul>
+     *
+     * @return the rows taken from the block's start, at least 1
+     */
+    public int appendBlock(RecordBlock block, int dictBudgetWireBytes) {
+        final int n = columnCount;
+        final QwpColumnScratch[] scs = scratchesArr;
+        final byte[] wts = wireTypesArr;
+        final int[] qts = qdbTypesArr;
+        final QwpEgressColumnDef[] defs = defsArr;
+        final SymbolTable[] sts = symbolTablesArr;
+        int rows = block.getRowCount();
+        if (currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+            // Already past the budget, which only a budget below the delta section's fixed bytes
+            // allows: the row path stops after its next row whatever it adds, and so does this.
+            // Otherwise the delta grows only with the dictionary, which the SYMBOL loops check.
+            rows = 1;
+        }
+        if (symbolColumnCount > 0) {
+            rows = appendBlockSymbols(block, rows, dictBudgetWireBytes);
+        }
+        for (int ci = 0; ci < n; ci++) {
+            final byte wt = wts[ci];
+            if (wt == QwpConstants.TYPE_SYMBOL) {
+                continue;
+            }
+            final QwpColumnScratch scratch = scs[ci];
+            final long address = block.getColumnAddress(ci);
+            if (address != 0) {
+                final long stride = block.getColumnStride(ci);
+                switch (wt) {
+                    case QwpConstants.TYPE_LONG:
+                    case QwpConstants.TYPE_DATE:
+                    case QwpConstants.TYPE_TIMESTAMP:
+                    case QwpConstants.TYPE_TIMESTAMP_NANOS:
+                    case QwpConstants.TYPE_DECIMAL64:
+                        scratch.appendColumnLong8WithSentinel(address, rows, stride);
+                        continue;
+                    case QwpConstants.TYPE_DOUBLE:
+                        scratch.appendColumnDouble8(address, rows, stride);
+                        continue;
+                    case QwpConstants.TYPE_INT:
+                        scratch.appendColumnInt4WithSentinel(address, rows, Numbers.INT_NULL, stride);
+                        continue;
+                    case QwpConstants.TYPE_IPV4:
+                        scratch.appendColumnInt4WithSentinel(address, rows, Numbers.IPv4_NULL, stride);
+                        continue;
+                    case QwpConstants.TYPE_FLOAT:
+                        scratch.appendColumnFloat4(address, rows, stride);
+                        continue;
+                    case QwpConstants.TYPE_SHORT:
+                    case QwpConstants.TYPE_CHAR:
+                        scratch.appendColumnFixedNoNull(address, rows, 2, stride);
+                        continue;
+                    case QwpConstants.TYPE_BYTE:
+                        scratch.appendColumnFixedNoNull(address, rows, 1, stride);
+                        continue;
+                    case QwpConstants.TYPE_BOOLEAN:
+                        scratch.appendColumnBoolean(address, rows, stride);
+                        continue;
+                    default:
+                        // GEOHASH, UUID, LONG256, DECIMAL128/256: the row path below
+                }
+            }
+            final int qt = qts[ci];
+            final QwpEgressColumnDef def = defs[ci];
+            final SymbolTable st = sts[ci];
+            for (int r = 0; r < rows; r++) {
+                appendCell(block.getRecordAt(r), ci, scratch, wt, qt, def, st);
+            }
+        }
+        assert physicalRowCount <= Integer.MAX_VALUE - rows : "physicalRowCount int overflow";
+        physicalRowCount += rows;
+        return rows;
     }
 
     /**
@@ -193,7 +288,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows);
+                        scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows, 8);
                     }
                     break;
                 }
@@ -202,7 +297,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnDouble8(base + lo * 8L, rows);
+                        scratch.appendColumnDouble8(base + lo * 8L, rows, 8);
                     }
                     break;
                 }
@@ -211,7 +306,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL);
+                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL, 4);
                     }
                     break;
                 }
@@ -221,7 +316,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL);
+                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL, 4);
                     }
                     break;
                 }
@@ -230,7 +325,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnFloat4(base + lo * 4L, rows);
+                        scratch.appendColumnFloat4(base + lo * 4L, rows, 4);
                     }
                     break;
                 }
@@ -245,7 +340,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // set bits in the null bitmap that the client rejects).
                         scratch.appendColumnFixedZero(rows, 2);
                     } else {
-                        scratch.appendColumnFixedNoNull(base + lo * 2L, rows, 2);
+                        scratch.appendColumnFixedNoNull(base + lo * 2L, rows, 2, 2);
                     }
                     break;
                 }
@@ -256,7 +351,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // SHORT / CHAR case above for the column-top rationale.
                         scratch.appendColumnFixedZero(rows, 1);
                     } else {
-                        scratch.appendColumnFixedNoNull(base + lo, rows, 1);
+                        scratch.appendColumnFixedNoNull(base + lo, rows, 1, 1);
                     }
                     break;
                 }
@@ -268,7 +363,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // null bitmap stays clear.
                         scratch.appendColumnBooleanZero(rows);
                     } else {
-                        scratch.appendColumnBoolean(base + lo, rows);
+                        scratch.appendColumnBoolean(base + lo, rows, 1);
                     }
                     break;
                 }
@@ -351,6 +446,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             qdbTypesArr = new int[cap];
             symbolTablesArr = new SymbolTable[cap];
         }
+        symbolColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
             QwpEgressColumnDef def = columns.getQuick(i);
             QwpColumnScratch scratch = scratches.getQuick(i);
@@ -360,6 +456,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             wireTypesArr[i] = def.getWireType();
             qdbTypesArr[i] = def.getQuestdbColumnType();
             SymbolTable st = null;
+            if (wireTypesArr[i] == QwpConstants.TYPE_SYMBOL) {
+                symbolColumnCount++;
+            }
             if (symbolTables != null && wireTypesArr[i] == QwpConstants.TYPE_SYMBOL) {
                 try {
                     st = symbolTables.getSymbolTable(i);
@@ -795,6 +894,119 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
+     * The SYMBOL columns of {@link #appendBlock}: row by row, every SYMBOL column of a row before
+     * the next row, as {@link #appendRow} assigns connection ids.
+     *
+     * @return the rows filled: {@code rows}, or fewer when a row's new dictionary entries take
+     * the batch's delta past {@code dictBudgetWireBytes}, in which case that row is the last
+     */
+    private int appendBlockSymbols(RecordBlock block, int rows, int dictBudgetWireBytes) {
+        final int n = columnCount;
+        final QwpColumnScratch[] scs = scratchesArr;
+        final byte[] wts = wireTypesArr;
+        final int[] qts = qdbTypesArr;
+        final QwpEgressColumnDef[] defs = defsArr;
+        final SymbolTable[] sts = symbolTablesArr;
+        // a SYMBOL column read from memory: its address and stride; 0 reads it through the record
+        final long[] addresses = blockSymbolAddresses(block);
+        if (symbolColumnCount == 1 && addresses[0] != 0) {
+            for (int ci = 0; ci < n; ci++) {
+                if (wts[ci] == QwpConstants.TYPE_SYMBOL) {
+                    return appendBlockSymbolColumn(scs[ci], addresses[0], addresses[1], rows, sts[ci], dictBudgetWireBytes);
+                }
+            }
+        }
+        int dictSize = connDict.size();
+        for (int r = 0; r < rows; r++) {
+            for (int ci = 0, s = 0; ci < n; ci++) {
+                if (wts[ci] != QwpConstants.TYPE_SYMBOL) {
+                    continue;
+                }
+                final long address = addresses[2 * s];
+                if (address != 0) {
+                    appendSymbolKey(scs[ci], Unsafe.getInt(address + r * addresses[2 * s + 1]), sts[ci]);
+                } else {
+                    appendCell(block.getRecordAt(r), ci, scs[ci], QwpConstants.TYPE_SYMBOL, qts[ci], defs[ci], sts[ci]);
+                }
+                s++;
+            }
+            final int newDictSize = connDict.size();
+            if (newDictSize != dictSize) {
+                dictSize = newDictSize;
+                if (currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+                    return r + 1;
+                }
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * {@link #appendBlockSymbols} for the one SYMBOL column of a schema, read from memory: one
+     * loop over the keys, which looks a key up only when it differs from the previous row's, as
+     * runs of a key are common (a key-ordered result is all runs).
+     */
+    private int appendBlockSymbolColumn(
+            QwpColumnScratch scratch,
+            long address,
+            long stride,
+            int rows,
+            SymbolTable st,
+            int dictBudgetWireBytes
+    ) {
+        scratch.reserveSymbolRows(rows);
+        final IntIntHashMap k2c = scratch.connKeyToConnId;
+        int lastKey = SymbolTable.VALUE_IS_NULL;
+        int lastConnId = -1;
+        for (int r = 0; r < rows; r++) {
+            final int key = Unsafe.getInt(address + r * stride);
+            if (key == SymbolTable.VALUE_IS_NULL) {
+                scratch.appendNull();
+                continue;
+            }
+            if (key == lastKey) {
+                scratch.appendSymbolConnIdReserved(lastConnId);
+                continue;
+            }
+            lastKey = key;
+            final int mapIdx = k2c.keyIndex(key);
+            if (mapIdx < 0) {
+                lastConnId = k2c.valueAt(mapIdx);
+                scratch.appendSymbolConnIdReserved(lastConnId);
+            } else {
+                lastConnId = connDict.addEntry(st.valueOf(key));
+                k2c.putAt(mapIdx, key, lastConnId);
+                scratch.appendSymbolConnIdReserved(lastConnId);
+                if (currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+                    return r + 1;
+                }
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * Fills {@link #blockSymbolAddresses} with each SYMBOL column's block address and stride, in
+     * column order: the address is non-zero only for a column with a key/value symbol table.
+     */
+    private long[] blockSymbolAddresses(RecordBlock block) {
+        long[] addresses = blockSymbolAddresses;
+        if (addresses.length < 2 * symbolColumnCount) {
+            addresses = blockSymbolAddresses = new long[2 * symbolColumnCount];
+        }
+        for (int ci = 0, s = 0, n = columnCount; ci < n; ci++) {
+            if (wireTypesArr[ci] != QwpConstants.TYPE_SYMBOL) {
+                continue;
+            }
+            final long address = symbolTablesArr[ci] != null ? block.getColumnAddress(ci) : 0;
+            addresses[2 * s] = address;
+            addresses[2 * s + 1] = address != 0 ? block.getColumnStride(ci) : 0;
+            s++;
+        }
+        return addresses;
+    }
+
+    /**
      * Appends a single cell (one row, one column) to {@code scratch}. Factored
      * out of {@link #appendRow} so the per-row path and the per-column fallback
      * inside {@link #appendPageFrame} share the switch body. The JIT inlines
@@ -878,24 +1090,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             }
             case QwpConstants.TYPE_SYMBOL: {
                 if (st != null) {
-                    int key = record.getInt(ci);
-                    if (key == SymbolTable.VALUE_IS_NULL) {
-                        scratch.appendNull();
-                    } else {
-                        IntIntHashMap k2c = scratch.connKeyToConnId;
-                        int mapIdx = k2c.keyIndex(key);
-                        int connId;
-                        if (mapIdx < 0) {
-                            connId = k2c.valueAt(mapIdx);
-                        } else {
-                            // First sight of this native key on this connection. Encode the
-                            // UTF-8 bytes once into the shared connection dict and remember
-                            // the assigned conn-id. Subsequent rows hit the cached branch.
-                            connId = connDict.addEntry(st.valueOf(key));
-                            k2c.putAt(mapIdx, key, connId);
-                        }
-                        scratch.appendSymbolConnId(connId);
-                    }
+                    appendSymbolKey(scratch, record.getInt(ci), st);
                 } else {
                     // No efficient key/value SymbolTable is exposed by the cursor. Read text
                     // directly so dynamic symbols do not build a redundant key dictionary;
@@ -969,6 +1164,30 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 throw CairoException.nonCritical()
                         .put("QWP egress append: unsupported wire type [code=")
                         .put(wt & 0xFF).put(']');
+        }
+    }
+
+    /**
+     * A native symbol key into a SYMBOL column with a key/value symbol table: NULL, or the key's
+     * connection id, adding its value to the connection dictionary on first sight.
+     */
+    private void appendSymbolKey(QwpColumnScratch scratch, int key, SymbolTable st) {
+        if (key == SymbolTable.VALUE_IS_NULL) {
+            scratch.appendNull();
+        } else {
+            IntIntHashMap k2c = scratch.connKeyToConnId;
+            int mapIdx = k2c.keyIndex(key);
+            int connId;
+            if (mapIdx < 0) {
+                connId = k2c.valueAt(mapIdx);
+            } else {
+                // First sight of this native key on this connection. Encode the
+                // UTF-8 bytes once into the shared connection dict and remember
+                // the assigned conn-id. Subsequent rows hit the cached branch.
+                connId = connDict.addEntry(st.valueOf(key));
+                k2c.putAt(mapIdx, key, connId);
+            }
+            scratch.appendSymbolConnId(connId);
         }
     }
 

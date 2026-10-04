@@ -353,12 +353,13 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * BOOLEAN column bulk append: reads {@code n} raw bytes from
-     * {@code srcAddr} (QuestDB native layout: 1 byte per row, 0 or 1) and
+     * {@code srcAddr}, {@code stride} bytes apart (QuestDB native layout: 1 byte per row, 0 or 1) and
      * bit-packs them into {@code valuesAddr} starting at the current
-     * {@code nonNullCount}. BOOLEAN has no null representation so rowCount /
+     * {@code nonNullCount}: a byte of 1 is true, any other false, as the record getters
+     * ({@code getBool()}) read it. BOOLEAN has no null representation so rowCount /
      * nonNullCount advance by {@code n}.
      */
-    void appendColumnBoolean(long srcAddr, int n) {
+    void appendColumnBoolean(long srcAddr, int n, long stride) {
         int startBit = nonNullCount;
         int bytesNeeded = (startBit + n + 7) >>> 3;
         ensureValuesCapacity(bytesNeeded);
@@ -370,7 +371,7 @@ final class QwpColumnScratch implements QuietCloseable {
                 // single-row appendBool convention.
                 Unsafe.putByte(byteAddr, (byte) 0);
             }
-            if (Unsafe.getByte(srcAddr + i) != 0) {
+            if (Unsafe.getByte(srcAddr + i * stride) == 1) {
                 byte cur = Unsafe.getByte(byteAddr);
                 Unsafe.putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
             }
@@ -417,19 +418,19 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * DOUBLE / FLOAT-as-double column bulk append: reads {@code n} 8-byte
-     * values from {@code srcAddr} (QuestDB stores DOUBLE NULL as NaN). Values
+     * values from {@code srcAddr}, {@code stride} bytes apart (QuestDB stores DOUBLE NULL as NaN). Values
      * that are NaN go into the null bitmap; non-null values are packed dense
      * into {@code valuesAddr}. Uses {@code v != v} for the NaN test so every
      * NaN bit-pattern is treated as null (spec 11.5).
      */
-    void appendColumnDouble8(long srcAddr, int n) {
+    void appendColumnDouble8(long srcAddr, int n, long stride) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 8);
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            double v = Unsafe.getDouble(srcAddr + i * 8L);
+            double v = Unsafe.getDouble(srcAddr + i * stride);
             if (Double.isNaN(v)) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -447,12 +448,25 @@ final class QwpColumnScratch implements QuietCloseable {
     /**
      * No-null fixed-width column bulk append: BYTE / SHORT / CHAR columns
      * have no sentinel and never contribute to the null bitmap, so we copy
-     * the whole block into {@code valuesAddr} in one {@code memcpy}.
+     * the whole block into {@code valuesAddr}: one {@code memcpy} when the
+     * source values are packed ({@code stride == typeSize}), a gather otherwise.
      */
-    void appendColumnFixedNoNull(long srcAddr, int n, int typeSize) {
+    void appendColumnFixedNoNull(long srcAddr, int n, int typeSize, long stride) {
         int bytes = n * typeSize;
         ensureValuesCapacity(valuesPos + bytes);
-        Vect.memcpy(valuesAddr + valuesPos, srcAddr, bytes);
+        final long dst = valuesAddr + valuesPos;
+        if (stride == typeSize) {
+            Vect.memcpy(dst, srcAddr, bytes);
+        } else if (typeSize == 1) {
+            for (int i = 0; i < n; i++) {
+                Unsafe.putByte(dst + i, Unsafe.getByte(srcAddr + i * stride));
+            }
+        } else {
+            assert typeSize == 2;
+            for (int i = 0; i < n; i++) {
+                Unsafe.putShort(dst + 2L * i, Unsafe.getShort(srcAddr + i * stride));
+            }
+        }
         valuesPos += bytes;
         nonNullCount += n;
         rowCount += n;
@@ -480,17 +494,17 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * FLOAT column bulk append: reads {@code n} 4-byte floats from
-     * {@code srcAddr}. QuestDB stores FLOAT NULL as NaN. NaN values go into
+     * {@code srcAddr}, {@code stride} bytes apart. QuestDB stores FLOAT NULL as NaN. NaN values go into
      * the null bitmap; non-null values pack dense into {@code valuesAddr}.
      */
-    void appendColumnFloat4(long srcAddr, int n) {
+    void appendColumnFloat4(long srcAddr, int n, long stride) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 4);
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            float v = Unsafe.getFloat(srcAddr + i * 4L);
+            float v = Unsafe.getFloat(srcAddr + i * stride);
             if (Float.isNaN(v)) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -507,18 +521,18 @@ final class QwpColumnScratch implements QuietCloseable {
 
     /**
      * INT / IPv4 column bulk append: reads {@code n} 4-byte values from
-     * {@code srcAddr}. Values equal to {@code sentinel} go into the null
+     * {@code srcAddr}, {@code stride} bytes apart. Values equal to {@code sentinel} go into the null
      * bitmap (INT: {@link Numbers#INT_NULL}; IPv4: {@link Numbers#IPv4_NULL},
      * i.e. 0).
      */
-    void appendColumnInt4WithSentinel(long srcAddr, int n, int sentinel) {
+    void appendColumnInt4WithSentinel(long srcAddr, int n, int sentinel, long stride) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 4);
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            int v = Unsafe.getInt(srcAddr + i * 4L);
+            int v = Unsafe.getInt(srcAddr + i * stride);
             if (v == sentinel) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -539,14 +553,14 @@ final class QwpColumnScratch implements QuietCloseable {
      * as the null sentinel. Dense non-null values land in {@code valuesAddr};
      * null positions are marked in the null bitmap.
      */
-    void appendColumnLong8WithSentinel(long srcAddr, int n) {
+    void appendColumnLong8WithSentinel(long srcAddr, int n, long stride) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
         ensureValuesCapacity(valuesPos + n * 8);
         long dst = valuesAddr + valuesPos;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
-            long v = Unsafe.getLong(srcAddr + i * 8L);
+            long v = Unsafe.getLong(srcAddr + i * stride);
             if (v == Numbers.LONG_NULL) {
                 setNullBit(startRow + i);
                 nullCount++;
@@ -812,6 +826,19 @@ final class QwpColumnScratch implements QuietCloseable {
         markNonNullAndAdvanceRow();
     }
 
+    /**
+     * SYMBOL: {@link #appendSymbolConnId} after {@link #reserveSymbolRows} made room, without
+     * the capacity checks.
+     */
+    void appendSymbolConnIdReserved(int connId) {
+        final int slot = nonNullCount;
+        Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);
+        final int prevCum = slot == 0 ? 0 : Unsafe.getInt(symbolBytesCumAddr + 4L * slot);
+        Unsafe.putInt(symbolBytesCumAddr + 4L * (slot + 1), prevCum + QwpVarint.encodedLength(connId));
+        nonNullCount = slot + 1;
+        rowCount++;
+    }
+
     void appendUuid(long lo, long hi) {
         ensureValuesCapacity(valuesPos + 16);
         Unsafe.putLong(valuesAddr + valuesPos, lo);
@@ -911,6 +938,19 @@ final class QwpColumnScratch implements QuietCloseable {
         int prevCum = nonNullCount == 0 ? 0
                 : Unsafe.getInt(symbolBytesCumAddr + 4L * nonNullCount);
         Unsafe.putInt(symbolBytesCumAddr + 4L * slotIdx, prevCum + QwpVarint.encodedLength(connId));
+    }
+
+    /**
+     * SYMBOL: room for {@code n} more non-null values, for {@link #appendSymbolConnIdReserved}.
+     */
+    void reserveSymbolRows(int n) {
+        ensureSymbolIdsCapacity(4 * (nonNullCount + n));
+        final int cumNeeded = 4 * (nonNullCount + n + 1);
+        if (symbolBytesCumCapacity < cumNeeded) {
+            int newCap = Math.max(symbolBytesCumCapacity * 2, Math.max(INITIAL_BYTES, cumNeeded));
+            symbolBytesCumAddr = Unsafe.realloc(symbolBytesCumAddr, symbolBytesCumCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            symbolBytesCumCapacity = newCap;
+        }
     }
 
     /**

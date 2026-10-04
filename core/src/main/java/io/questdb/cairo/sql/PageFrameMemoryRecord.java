@@ -503,6 +503,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return NullMemoryCMR.INSTANCE.getFloat(0);
     }
 
+    public byte getFrameFormat() {
+        return frameFormat;
+    }
+
     public int getFrameIndex() {
         return frameIndex;
     }

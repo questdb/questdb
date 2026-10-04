@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -176,6 +177,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * Used as a fit check when reserving space in the handshake send buffer.
      */
     private static final int WS_HEADER_MAX_BYTES = 10;
+    /**
+     * Test-only: when true, cursor results are filled row by row through
+     * {@code QwpResultBatchBuffer.appendRow} even where the cursor offers
+     * {@link RecordBlock}s, so tests can compare the two fills byte for byte.
+     * Read once per batch.
+     */
+    @TestOnly
+    public static volatile boolean DEBUG_DISABLE_BLOCK_FILL = false;
     /**
      * Test-only. When {@code > 0}, the next entry into {@link #resumeSend} (or
      * {@link #handleCredit} on the credit-suspended resume path) throws a
@@ -2097,12 +2106,39 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 isCursorExhausted = rowsToAdd > 0 && frame == null;
             } else {
                 boolean hasMore = true;
-                while (rowsToAdd > 0 && (hasMore = cursor.hasNext())) {
-                    batchBuffer.appendRow(cursor.getRecord());
-                    rowsToAdd--;
-                    if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
-                        dictCapHit = true;
-                        break;
+                if (state.isStreamingCursorSupportingBlocks() && !DEBUG_DISABLE_BLOCK_FILL) {
+                    // Where the cursor offers a block of its next rows, fill the batch column by
+                    // column from it; otherwise, and for the row each hasNext() returns, row by
+                    // row. Both produce the same bytes and stop at the same row for the dictionary.
+                    int blockRows = 0;
+                    while (rowsToAdd > 0) {
+                        final RecordBlock block = cursor.peekRecordBlock(rowsToAdd);
+                        if (block != null) {
+                            final int taken = batchBuffer.appendBlock(block, dictBudgetWireBytes);
+                            cursor.skipRecordBlock(taken);
+                            rowsToAdd -= taken;
+                            blockRows += taken;
+                        } else if (hasMore = cursor.hasNext()) {
+                            batchBuffer.appendRow(cursor.getRecord());
+                            rowsToAdd--;
+                        } else {
+                            break;
+                        }
+                        if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+                            dictCapHit = true;
+                            break;
+                        }
+                    }
+                    metrics.markBlockFillRows(blockRows);
+                } else {
+                    // a cursor that never offers blocks: row by row, with no per-row peek
+                    while (rowsToAdd > 0 && (hasMore = cursor.hasNext())) {
+                        batchBuffer.appendRow(cursor.getRecord());
+                        rowsToAdd--;
+                        if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+                            dictCapHit = true;
+                            break;
+                        }
                     }
                 }
                 isCursorExhausted = !hasMore;

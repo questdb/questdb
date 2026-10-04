@@ -45,7 +45,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     protected final PageFrameMemoryPool frameMemoryPool;
     protected final PageFrameMemoryRecord recordA;
     protected final PageFrameMemoryRecord recordB;
-    private final RecordMetadata metadata;
+    protected final RecordMetadata metadata;
     protected int frameCount = 0;
     protected PageFrameCursor frameCursor;
 
