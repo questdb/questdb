@@ -49,12 +49,13 @@ import java.util.TreeSet;
 /**
  * The lister of the function library's NULL-policy rule (F35, {@code r3-functions.md} "The rule").
  * A full-range type reaches a factory only when the factory computes its value in a static
- * {@code value(...)} method with no NULL test (step 2) and its function classes call it (step 3),
- * so the full-range type's NOT_NULL and BITMAP wrappers can call the same body. The lister names
+ * {@code value(...)} method with no NULL test (step 2), so the full-range type's NOT_NULL and BITMAP
+ * wrappers can call the same body. The lister checks that a factory declares such a method: it names
  * every factory with an argument of a type that will have a full-range counterpart, a fixed-width
- * type whose NULL is a sentinel, that declares no such method itself. Since S15b every factory in
- * scope has a body or a stated reason, so the list is empty: a new factory in scope without either
- * fails here.
+ * type whose NULL is a sentinel, that declares none itself. It reads declarations only; whether the
+ * factory's function classes call the body is not checked here. Since S15b every factory in scope
+ * declares a body or has a stated reason, so the list is empty: a new factory in scope without
+ * either fails here.
  * <p>
  * Operator aliases ({@code !=}, {@code <>}, swapped arguments) follow their delegate. Factories
  * whose step 2 is empty, because the function has no value computation apart from its NULL
@@ -74,7 +75,7 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = engine.getFunctionFactoryCache().getFactories();
         final TreeSet<String> all = new TreeSet<>();
         final TreeSet<String> aliases = new TreeSet<>();
-        final TreeSet<String> converted = new TreeSet<>();
+        final TreeSet<String> withValueBody = new TreeSet<>();
         final TreeSet<String> noBody = new TreeSet<>();
         final TreeSet<String> toChange = new TreeSet<>();
         final TreeSet<String> toChangeLongDouble = new TreeSet<>();
@@ -108,7 +109,7 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
                     scopeByType.merge(type, 1, Integer::sum);
                 }
                 if (hasValueBody(factory.getClass())) {
-                    converted.add(id);
+                    withValueBody.add(id);
                 } else if (NO_VALUE_BODY.containsKey(id)) {
                     noBody.add(id);
                 } else {
@@ -124,8 +125,8 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         final StringBuilder out = new StringBuilder();
         out.append("factories (class + signature): ").append(all.size()).append('\n');
         out.append("in scope (an argument of a fixed-width sentinel type, aliases excluded): ")
-                .append(converted.size() + noBody.size() + toChange.size()).append('\n');
-        out.append("  converted (a static value(...) on the factory): ").append(converted.size()).append('\n');
+                .append(withValueBody.size() + noBody.size() + toChange.size()).append('\n');
+        out.append("  declares a value body (a static value(...) on the factory): ").append(withValueBody.size()).append('\n');
         out.append("  no value body (listed with the reason): ").append(noBody.size()).append('\n');
         out.append("  to change: ").append(toChange.size()).append('\n');
         out.append("    of which with a LONG or DOUBLE argument: ").append(toChangeLongDouble.size()).append('\n');
@@ -138,13 +139,13 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         toChangeByPackage.forEach((k, v) -> v.forEach(s -> out.append(s).append(toChangeLongDouble.contains(s) ? " *" : "").append('\n')));
         out.append("\n## no value body\n");
         noBody.forEach(s -> out.append(s).append(": ").append(NO_VALUE_BODY.get(s)).append('\n'));
-        out.append("\n## converted\n");
-        converted.forEach(s -> out.append(s).append('\n'));
+        out.append("\n## declares a value body\n");
+        withValueBody.forEach(s -> out.append(s).append('\n'));
         Files.writeString(Paths.get("target", "null-policy-rule-lister.txt"), out);
         System.out.println(out.substring(0, out.indexOf("\n## to change, by package")));
 
         for (String id : NO_VALUE_BODY.keySet()) {
-            Assert.assertTrue("listed without a value body, but not in scope or converted: " + id, noBody.contains(id));
+            Assert.assertTrue("listed without a value body, but not in scope or it declares one: " + id, noBody.contains(id));
         }
         // a new factory in scope without a value body or a reason raises the counts
         Assert.assertEquals(EXPECTED_TO_CHANGE, toChange.size());
