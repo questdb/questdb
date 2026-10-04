@@ -206,19 +206,17 @@ public class RecordComparatorCompiler {
      */
     private static int comparatorOpcode(int columnType) throws SqlException {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
-        if (driver != null) {
-            switch (driver.getAccessor()) {
-                case BOOLEAN, BYTE, DOUBLE, FLOAT, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, INT, IPv4, LONG, DATE, TIMESTAMP,
-                     SHORT, CHAR, STRING, LONG256, UUID, LONG128, VARCHAR, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                     DECIMAL128, DECIMAL256, SYMBOL -> {
-                    return PhysicalDescriptor.compareOpcode(driver);
-                }
-                case BINARY, ARRAY, INTERVAL -> {
-                    // no order
-                }
-            }
+        if (driver == null) {
+            throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));
         }
-        throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));
+        return switch (driver.getAccessor()) {
+            case BOOLEAN, BYTE, DOUBLE, FLOAT, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, INT, IPv4, LONG, DATE, TIMESTAMP,
+                 SHORT, CHAR, STRING, LONG256, UUID, LONG128, VARCHAR, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, SYMBOL -> PhysicalDescriptor.compareOpcode(driver);
+            // no order
+            case BINARY, ARRAY, INTERVAL ->
+                    throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));
+        };
     }
 
     /**

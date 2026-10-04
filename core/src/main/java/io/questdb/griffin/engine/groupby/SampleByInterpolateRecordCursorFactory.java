@@ -157,39 +157,22 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                         // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
                         throw PhysicalDescriptor.noFamilyArm(driver.getTypeName(), "SAMPLE BY FILL(LINEAR)");
                     }
-                    final PhysicalDescriptor.Accessor accessor = driver.getAccessor();
-                    switch (accessor) {
-                        case BYTE -> {
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);
-                        }
-                        case SHORT -> {
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);
-                        }
-                        case INT -> {
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_INT);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);
-                        }
-                        case LONG -> {
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);
-                        }
-                        case DOUBLE -> {
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
-                        }
-                        case FLOAT -> {
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
-                        }
+                    final InterpolationUtil.Steps steps = switch (driver.getAccessor()) {
+                        case BYTE -> InterpolationUtil.Steps.BYTE;
+                        case SHORT -> InterpolationUtil.Steps.SHORT;
+                        case INT -> InterpolationUtil.Steps.INT;
+                        case LONG -> InterpolationUtil.Steps.LONG;
+                        case DOUBLE -> InterpolationUtil.Steps.DOUBLE;
+                        case FLOAT -> InterpolationUtil.Steps.FLOAT;
                         case BOOLEAN, CHAR, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
                              GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
                              DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> {
                             Misc.freeObjList(groupByScalarFunctions);
                             throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
                         }
-                    }
+                    };
+                    storeYFunctions.add(steps.storeY());
+                    interpolatorFunctions.add(steps.interpolator());
                 } else {
                     groupByTwoPointFunctions.add(function);
                 }

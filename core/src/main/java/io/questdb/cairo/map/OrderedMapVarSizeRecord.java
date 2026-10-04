@@ -127,7 +127,19 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             if (accessor == null) {
                 continue;
             }
-            switch (accessor) {
+            final HeapHolder holder = switch (accessor) {
+                case STRING -> HeapHolder.STRING;
+                case VARCHAR -> HeapHolder.VARCHAR;
+                case BINARY -> HeapHolder.BINARY;
+                case LONG256 -> HeapHolder.LONG256;
+                case INTERVAL -> HeapHolder.INTERVAL;
+                case ARRAY -> HeapHolder.ARRAY;
+                // a primitive getter reads the key in place
+                case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, GEOBYTE, GEOSHORT,
+                     GEOINT, GEOLONG, UUID, LONG128, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                     DECIMAL256 -> HeapHolder.NONE;
+            };
+            switch (holder) {
                 case STRING -> {
                     if (csA == null) {
                         csA = new DirectString[nColumns];
@@ -170,10 +182,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
                     }
                     arrays[i + keyIndexOffset] = new BorrowedArray();
                 }
-                case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, GEOBYTE, GEOSHORT,
-                     GEOINT, GEOLONG, UUID, LONG128, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
-                     DECIMAL256 -> {
-                    // a primitive getter reads the key in place
+                case NONE -> {
                 }
             }
         }
@@ -650,5 +659,16 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private Utf8Sequence getVarchar0(int index, DirectUtf8String us) {
         long address = addressOfColumn(index);
         return VarcharTypeDriver.getPlainValue(address, us);
+    }
+
+    // the heap-side holder a key column's getter reads through; NONE reads the key in place
+    private enum HeapHolder {
+        STRING,
+        VARCHAR,
+        BINARY,
+        LONG256,
+        INTERVAL,
+        ARRAY,
+        NONE
     }
 }

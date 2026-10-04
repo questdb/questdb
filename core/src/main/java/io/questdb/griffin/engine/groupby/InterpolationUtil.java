@@ -239,6 +239,18 @@ public class InterpolationUtil {
         void interpolateAndStore(GroupByFunction function, MapValue mapValue, long x, long x1, long x2, long y1Address, long y2Address);
     }
 
+    /**
+     * The store and interpolate steps of one accessor family's values.
+     */
+    record Steps(StoreYFunction storeY, InterpolatorFunction interpolator) {
+        static final Steps BYTE = new Steps(STORE_Y_BYTE, INTERPOLATE_BYTE);
+        static final Steps DOUBLE = new Steps(STORE_Y_DOUBLE, INTERPOLATE_DOUBLE);
+        static final Steps FLOAT = new Steps(STORE_Y_FLOAT, INTERPOLATE_FLOAT);
+        static final Steps INT = new Steps(STORE_Y_INT, INTERPOLATE_INT);
+        static final Steps LONG = new Steps(STORE_Y_LONG, INTERPOLATE_LONG);
+        static final Steps SHORT = new Steps(STORE_Y_SHORT, INTERPOLATE_SHORT);
+    }
+
     @FunctionalInterface
     interface StoreYFunction {
         void store(GroupByFunction function, MapValue mapValue, long targetAddress);
