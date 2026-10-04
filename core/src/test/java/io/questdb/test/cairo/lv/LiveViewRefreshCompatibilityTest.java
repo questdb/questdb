@@ -36,49 +36,36 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
+    // a live view body older releases accepted, before CREATE rejected visibility-dependent functions
+    private static final String LEGACY_SQL = "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts "
+            + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn "
+            + "FROM base WHERE g IN (SELECT table_name FROM tables())";
+
+    @Test
+    public void testIfNotExistsReplayOfPersistedCatalogueDefinitionIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            createBaseAndLiveView();
+            installPersistedLegacySql();
+            // An idempotent schema script replays the DDL an older release accepted: the live view exists,
+            // so the statement is a no-op, which must not compile the body CREATE now rejects first.
+            execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL);
+            Assert.assertEquals(LEGACY_SQL, engine.getLiveViewRegistry().getViewInstance("lv").getDefinition().getViewSql());
+            // IF NOT EXISTS still rejects the body of a live view that does not exist yet
+            assertCreateRejected("CREATE LIVE VIEW IF NOT EXISTS lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL);
+            Assert.assertNull(engine.getTableTokenIfExists("lv2"));
+        });
+    }
+
     @Test
     public void testPersistedCatalogueSubqueryRefreshesAfterRestart() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String legacySql = "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts "
-                    + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn "
-                    + "FROM base WHERE g IN (SELECT table_name FROM tables())";
-            try {
-                execute("CREATE LIVE VIEW rejected FLUSH EVERY 100ms START FROM BEGINNING AS " + legacySql);
-                Assert.fail("CREATE must reject newly restricted catalogue functions");
-            } catch (SqlException e) {
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(),
-                        "administrative function cannot be used in live view: tables"));
-            }
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
-                    + "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts "
-                    + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE g = 'base'");
+            createBaseAndLiveView();
+            assertCreateRejected("CREATE LIVE VIEW rejected FLUSH EVERY 100ms START FROM BEGINNING AS " + LEGACY_SQL);
             execute("INSERT INTO base VALUES ('2026-01-01T00:00:01.000000Z', 10, 'base')");
             drainWalQueue();
-
-            // Install the SQL an older release would have persisted, keeping the CREATE-time
-            // metadata/dependencies. Rebuild the registry from _lv just as startup does.
-            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-            final LiveViewDefinition current = instance.getDefinition();
-            final LiveViewDefinition legacy = new LiveViewDefinition(
-                    current.getViewName(), legacySql, current.getBaseTableName(), current.getBaseTableToken(),
-                    current.getBaseTimestampType(), current.getFlushEveryInterval(), current.getFlushEveryIntervalUnit(),
-                    current.getInMemoryInterval(), current.getInMemoryIntervalUnit(), current.getPartitionBy(),
-                    current.getViewLowerBoundTimestamp(), current.getStartFromKind(), current.getAnchorSpec(),
-                    current.getDependencyColumnNames(), current.getDependencyColumnTypes(), current.getMetadata()
-            );
-            final TableToken token = instance.getLiveViewToken();
-            try (Path path = new Path();
-                 BlockFileWriter writer = new BlockFileWriter(engine.getConfiguration().getFilesFacade(),
-                         engine.getConfiguration().getCommitMode())) {
-                path.of(engine.getConfiguration().getDbRoot()).concat(token)
-                        .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
-                writer.of(path.$());
-                LiveViewDefinition.append(legacy, writer);
-            }
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
+            installPersistedLegacySql();
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
@@ -98,5 +85,47 @@ public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess().returns("view_name\tview_status\nlv\tactive\n");
         });
+    }
+
+    private static void assertCreateRejected(String sql) throws Exception {
+        try {
+            execute(sql);
+            Assert.fail("CREATE must reject newly restricted catalogue functions");
+        } catch (SqlException e) {
+            Assert.assertTrue(Chars.contains(e.getFlyweightMessage(),
+                    "administrative function cannot be used in live view: tables"));
+        }
+    }
+
+    private static void createBaseAndLiveView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts "
+                + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE g = 'base'");
+    }
+
+    // Installs the SQL an older release would have persisted for lv, keeping the CREATE-time
+    // metadata/dependencies, then rebuilds the registry from _lv just as startup does.
+    private static void installPersistedLegacySql() {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        final LiveViewDefinition current = instance.getDefinition();
+        final LiveViewDefinition legacy = new LiveViewDefinition(
+                current.getViewName(), LEGACY_SQL, current.getBaseTableName(), current.getBaseTableToken(),
+                current.getBaseTimestampType(), current.getFlushEveryInterval(), current.getFlushEveryIntervalUnit(),
+                current.getInMemoryInterval(), current.getInMemoryIntervalUnit(), current.getPartitionBy(),
+                current.getViewLowerBoundTimestamp(), current.getStartFromKind(), current.getAnchorSpec(),
+                current.getDependencyColumnNames(), current.getDependencyColumnTypes(), current.getMetadata()
+        );
+        final TableToken token = instance.getLiveViewToken();
+        try (Path path = new Path();
+             BlockFileWriter writer = new BlockFileWriter(engine.getConfiguration().getFilesFacade(),
+                     engine.getConfiguration().getCommitMode())) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token)
+                    .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            writer.of(path.$());
+            LiveViewDefinition.append(legacy, writer);
+        }
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
     }
 }

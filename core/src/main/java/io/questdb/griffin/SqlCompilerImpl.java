@@ -4776,7 +4776,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
             //     already exists" (mirroring "materialized view already exists") instead of
             //     the generic "table exists" createLiveView would otherwise surface.
-            // A same-kind IF NOT EXISTS falls through to createLiveView, which no-ops.
+            // A same-kind IF NOT EXISTS is a no-op, as it is for CREATE MATERIALIZED VIEW. It returns
+            // before createLiveView compiles the body: a live view an earlier release created may use
+            // functions that CREATE now rejects, and replaying its DDL must keep working. The no-op in
+            // createLiveView still covers a live view created concurrently after this check.
             final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
             if (existingToken != null) {
                 if (!existingToken.isLiveView()) {
@@ -4785,6 +4788,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (!op.isIgnoreIfExists()) {
                     throw SqlException.$(op.getViewNamePosition(), "live view already exists");
                 }
+                QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+                return false;
             }
             // validate base table exists and is WAL; a base table the principal may not see fails like a
             // missing one, before the checks below can disclose what kind of object it is
