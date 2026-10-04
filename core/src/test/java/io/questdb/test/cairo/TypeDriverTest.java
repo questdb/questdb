@@ -1084,8 +1084,8 @@ public class TypeDriverTest {
 
     @Test
     public void testVarSizeAsAtS10() {
-        // isVarSize and getDriver answer as s10-done's comparisons and switch did, for every tag
-        // with every value of bits 8 to 23 and for random encodings; every definition on the
+        // isVarSize and getDriver answer by tag, for every tag with every value of bits 8 to 23
+        // and for random encodings; getDriver as s10-done's switch did; every type driver on the
         // var-size tier implements the var-size storage API
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
             if (!PSEUDO_TAGS.contains(ColumnTypeTag.of(tag))) {
@@ -1131,13 +1131,14 @@ public class TypeDriverTest {
     }
 
     private static void assertS10VarSize(int type, boolean isDriverChecked) {
-        final boolean s10VarSize = type == ColumnType.STRING || type == ColumnType.BINARY || type == ColumnType.VARCHAR
-                || type == ColumnType.VARCHAR_SLICE || ColumnType.tagOf(type) == ColumnType.ARRAY;
-        Assert.assertEquals("isVarSize " + type, s10VarSize, ColumnType.isVarSize(type));
+        final short tag = ColumnType.tagOf(type);
+        final boolean isVarSizeTag = tag == ColumnType.STRING || tag == ColumnType.BINARY || tag == ColumnType.VARCHAR
+                || tag == ColumnType.VARCHAR_SLICE || tag == ColumnType.ARRAY;
+        Assert.assertEquals("isVarSize " + type, isVarSizeTag, ColumnType.isVarSize(type));
         if (!isDriverChecked) {
             return;
         }
-        final ColumnTypeDriver s10Driver = switch (ColumnType.tagOf(type)) {
+        final ColumnTypeDriver s10Driver = switch (tag) {
             case ColumnType.STRING -> StringTypeDriver.INSTANCE;
             case ColumnType.BINARY -> BinaryTypeDriver.INSTANCE;
             case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> VarcharTypeDriver.INSTANCE;

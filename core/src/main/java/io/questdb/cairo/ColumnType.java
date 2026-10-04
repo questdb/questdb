@@ -698,10 +698,7 @@ public final class ColumnType {
 
     public static boolean isVarSize(int columnType) {
         final short tag = tagOf(columnType);
-        // Quirk is-var-size-exact-value: STRING, BINARY, VARCHAR and VARCHAR_SLICE answer for
-        // their bare value only, as the comparisons this replaces did, while ARRAY answers for
-        // every encoding of its tag
-        return tag >= 0 && tag <= MAX_TAG && Widths.VAR_SIZE[tag] && (columnType == tag || tag == ARRAY);
+        return tag >= 0 && tag <= MAX_TAG && Widths.VAR_SIZE[tag];
     }
 
     public static boolean isVarchar(int columnType) {
