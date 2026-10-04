@@ -1920,6 +1920,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHashJoinProbeEnabled() {
+        return getDelegate().isSqlParallelHashJoinProbeEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelHorizonJoinEnabled() {
         return getDelegate().isSqlParallelHorizonJoinEnabled();
     }
@@ -1937,6 +1942,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelWindowEnabled() {
         return getDelegate().isSqlParallelWindowEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowMinMaxRewriteEnabled() {
+        return getDelegate().isSqlParallelWindowMinMaxRewriteEnabled();
     }
 
     @Override

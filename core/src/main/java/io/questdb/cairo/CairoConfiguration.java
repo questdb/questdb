@@ -1441,6 +1441,12 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelHashJoinGroupByEnabled();
 
+    /**
+     * Whether an inner hash join whose build side is unique on the join key, such as a GROUP BY on
+     * that key, may probe its other side on the shared query workers.
+     */
+    boolean isSqlParallelHashJoinProbeEnabled();
+
     boolean isSqlParallelHorizonJoinEnabled();
 
     boolean isSqlParallelReadParquetEnabled();
@@ -1452,6 +1458,12 @@ public interface CairoConfiguration {
      * runs on the shared query workers, a batch of whole keys per task.
      */
     boolean isSqlParallelWindowEnabled();
+
+    /**
+     * Whether a filter on {@code min|max(x) OVER (PARTITION BY ...)} may run as a parallel
+     * aggregation per partition followed by a parallel lookup filter.
+     */
+    boolean isSqlParallelWindowMinMaxRewriteEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
 

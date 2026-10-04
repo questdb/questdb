@@ -1900,6 +1900,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHashJoinProbeEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelHorizonJoinEnabled() {
         return true;
     }
@@ -1916,6 +1921,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelWindowEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowMinMaxRewriteEnabled() {
         return true;
     }
 

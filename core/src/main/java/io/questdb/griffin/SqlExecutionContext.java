@@ -309,6 +309,24 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    /**
+     * Whether a filter on {@code min|max(x) OVER (PARTITION BY ...)} may run as a parallel
+     * aggregation per partition followed by a parallel lookup filter. Off unless the configuration
+     * enables it, parallel filters are enabled and there are shared workers.
+     */
+    default boolean isParallelWindowMinMaxRewriteEnabled() {
+        return false;
+    }
+
+    /**
+     * Whether an inner hash join with a build side unique on the join key may probe on the shared
+     * query workers. Off unless the configuration enables it, parallel filters are enabled and
+     * there are shared workers.
+     */
+    default boolean isParallelHashJoinProbeEnabled() {
+        return false;
+    }
+
     boolean isParallelWindowJoinEnabled();
 
     boolean isParquetRowGroupPruningEnabled();
@@ -464,6 +482,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
 
     default void setParallelWindowEnabled(boolean parallelWindowEnabled) {
+    }
+
+    default void setParallelWindowMinMaxRewriteEnabled(boolean enabled) {
+    }
+
+    default void setParallelHashJoinProbeEnabled(boolean enabled) {
     }
 
     void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);

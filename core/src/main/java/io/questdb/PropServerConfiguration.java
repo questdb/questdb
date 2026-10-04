@@ -579,6 +579,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlParallelHashJoinGroupByBuildParallelMinRows;
     private final long sqlParallelHashJoinGroupByBuildRowsPerPartition;
     private final boolean sqlParallelHashJoinGroupByEnabled;
+    private final boolean sqlParallelHashJoinProbeEnabled;
     private final long sqlParallelHashJoinGroupByPayloadCopyMaxSize;
     private final double sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
     private final double sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
@@ -592,6 +593,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlParallelWindowMaxKeyRows;
     private final int sqlParallelWindowMaxRounds;
     private final long sqlParallelWindowMinRows;
+    private final boolean sqlParallelWindowMinMaxRewriteEnabled;
     private final long sqlParallelWindowRoundRows;
     private final long sqlParallelWindowTaskRows;
     private final long sqlParallelWorkStealingSpinTimeout;
@@ -2456,7 +2458,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                         Long.toString(sqlParallelWindowRoundRows));
             }
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelWindowMinMaxRewriteEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MINMAX_REWRITE_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelHashJoinGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelHashJoinProbeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PROBE_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelHashJoinGroupByBuildParallelMinRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
             if (sqlParallelHashJoinGroupByBuildParallelMinRows < 0) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS.getPropertyPath(),
@@ -5960,6 +5964,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlParallelHashJoinProbeEnabled() {
+            return sqlParallelHashJoinProbeEnabled;
+        }
+
+        @Override
         public boolean isSqlParallelHorizonJoinEnabled() {
             return sqlParallelHorizonJoinEnabled;
         }
@@ -6002,6 +6011,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelWindowEnabled() {
             return sqlParallelWindowEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowMinMaxRewriteEnabled() {
+            return sqlParallelWindowMinMaxRewriteEnabled;
         }
 
         @Override
