@@ -256,6 +256,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int efTotalCount;
         private int encodedBlockCount;
         private long encodedOffset;
+        // Byte extent of the key's encoded blob at encodedOffset. The ranked EF seek validates
+        // its trailer against this exact extent, so a wrong size degrades to the unranked seek
+        // instead of reading past the blob.
+        private int encodedSize;
         private long flatBaseValue;
         private int flatBitWidth;
         private long flatDataOffset;
@@ -744,8 +748,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
+            long dataEndOffset = Unsafe.getLong(offsetsBase + (long) (localKey + 1) * Long.BYTES);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
             this.encodedOffset = strideFileOffset + deltaHeaderSize + dataOffset;
+            this.encodedSize = (int) (dataEndOffset - dataOffset);
 
             readDeltaBlockMetadata();
         }
@@ -782,7 +788,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+            final long prefixSumOffset = genLookup.getGenPrefixSumOffset(gen, valueMem);
+            long prefixSumAddr = valueMem.addressOf(prefixSumOffset);
             int k = requestedKey - minKey;
             int start = Unsafe.getInt(prefixSumAddr + (long) k * Integer.BYTES);
             int end = Unsafe.getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
@@ -812,7 +819,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getInt(countsBase + (long) start * Integer.BYTES);
             long dataOffset = Unsafe.getLong(offsetsBase + (long) start * Long.BYTES);
+            long dataEndOffset = start + 1 < activeKeyCount
+                    ? Unsafe.getLong(offsetsBase + (long) (start + 1) * Long.BYTES)
+                    : prefixSumOffset - genFileOffset - headerSize;
             this.encodedOffset = genFileOffset + headerSize + dataOffset;
+            this.encodedSize = (int) (dataEndOffset - dataOffset);
 
             readDeltaBlockMetadata();
         }
@@ -858,7 +869,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getInt(countsBase + (long) idx * Integer.BYTES);
             long dataOffset = Unsafe.getLong(offsetsBase + (long) idx * Long.BYTES);
+            long dataEndOffset = idx + 1 < activeKeyCount
+                    ? Unsafe.getLong(offsetsBase + (long) (idx + 1) * Long.BYTES)
+                    : genLookup.getGenPrefixSumOffset(gen, valueMem) - genFileOffset - headerSize;
             this.encodedOffset = genFileOffset + headerSize + dataOffset;
+            this.encodedSize = (int) (dataEndOffset - dataOffset);
 
             readDeltaBlockMetadata();
         }
@@ -893,6 +908,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 blockBufferPos = 0;
                 blockBufferEnd = 0;
                 constantDeltaRemaining = 0;
+                // Mirrors the backward reader's maxValue < u - 1 guard: a blob whose first value is
+                // already >= minValue (every generation after the one holding minValue) has nothing
+                // to skip, so it starts at ordinal 0 without paying for the seek.
+                if (minValue > 0) {
+                    final long firstValue = PostingIndexUtils.efFirstValue(baseAddr + encodedOffset, encodedSize);
+                    if (firstValue < 0 || minValue > firstValue) {
+                        seekEF(baseAddr, u);
+                    }
+                }
                 return;
             }
             isEFMode = false;
@@ -936,9 +960,16 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 startBlock = lo;
             }
 
+            // Only the covered accessors consume the skipped count (via sidecarStrideKeyStart or
+            // sidecarOrdinal, both read only when coverCount > 0), so the cursors of a non-covering
+            // index skip this O(startBlock) sum; summing it on every frame of a long list cost
+            // O(frames * blocks). coverCount is per index, not per cursor: on an INCLUDE index a
+            // query that reads no covered column still pays the sum.
             int skippedValueCount = 0;
-            for (int b = 0; b < startBlock; b++) {
-                skippedValueCount += Unsafe.getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
+            if (coverCount > 0) {
+                for (int b = 0; b < startBlock; b++) {
+                    skippedValueCount += Unsafe.getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
+                }
             }
             if (startBlock > 0) {
                 packedDataStartOffset += Unsafe.getLong(baseAddr + srcPackedOffsetsOffset + (long) startBlock * Long.BYTES);
@@ -972,6 +1003,69 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.currentBlock = startBlock;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
+        }
+
+        /**
+         * Positions the EF decode at the high word holding the first ordinal whose value is
+         * {@code >= minValue}, so a cursor opened for a page frame in the middle of the key's list
+         * does not decode (and discard) every value before the frame. Ranked blobs seek in
+         * O(log n) through the trailer's checkpoints (efLowerBound, then an O(1) step to the
+         * word holding that ordinal); legacy unranked blobs skip whole high words
+         * by popcount, which reads one word per 64 high bits instead of decoding each value.
+         * Either way the decode resumes at a word boundary with {@code efOutputCount} equal to
+         * the ordinals before that word, exactly the state a from-zero decode reaches there, and
+         * {@link #hasNext()} discards the at most 63 remaining values below minValue as before.
+         */
+        private void seekEF(long baseAddr, long universe) {
+            final long blobAddr = baseAddr + encodedOffset;
+            int word = -1;
+            int rank = 0;
+            if (minValue >= universe) {
+                word = efNumHighWords;
+                rank = efTotalCount;
+            } else {
+                final int ordinal = PostingIndexUtils.efLowerBound(blobAddr, encodedSize, minValue);
+                if (ordinal >= efTotalCount) {
+                    word = efNumHighWords;
+                    rank = efTotalCount;
+                } else if (ordinal >= 0) {
+                    final long packed = PostingIndexUtils.efLowerBoundWord(blobAddr, minValue, ordinal);
+                    // A negative result means the high word is inconsistent with the validated
+                    // ordinal (corrupt data): decoding from it would address the low bits at a
+                    // negative ordinal, outside the blob, so take the unranked walk instead.
+                    if (packed >= 0) {
+                        word = (int) (packed >>> 32);
+                        rank = (int) packed;
+                    }
+                }
+            }
+            if (word < 0) {
+                // Unranked: a word whose last value has a high part below minValue's holds
+                // only values below minValue (value < (high + 1) << L <= minValue).
+                final long targetHigh = minValue >>> efL;
+                final long highAddr = baseAddr + efHighOffset;
+                word = 0;
+                while (word < efNumHighWords && rank < efTotalCount) {
+                    final long bits = Unsafe.getLong(highAddr + (long) word * Long.BYTES);
+                    if (bits != 0) {
+                        final int ones = Long.bitCount(bits);
+                        final long lastHigh = (long) word * 64 + (63 - Long.numberOfLeadingZeros(bits)) - (rank + ones - 1);
+                        if (lastHigh >= targetHigh) {
+                            break;
+                        }
+                        rank += ones;
+                    }
+                    word++;
+                }
+                rank = Math.min(rank, efTotalCount);
+            }
+            efHighWordIdx = word;
+            efOutputCount = rank;
+            // hasNext() advances sidecarOrdinal once per value it discards below minValue; the
+            // seek discards these values without visiting them, so account for them here.
+            if (coverCount > 0) {
+                sidecarOrdinal += rank;
+            }
         }
 
         void of(int key, long minValue, long maxValue) {

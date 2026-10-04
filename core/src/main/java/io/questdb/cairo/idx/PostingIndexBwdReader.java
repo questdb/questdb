@@ -961,6 +961,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     }
                 }
                 efHighWordIdx = efNumHighWords - 1;
+                if (maxValue < u - 1) {
+                    seekEF(baseAddr, efTotalCount, efNumHighWords);
+                }
                 isEFMode = true;
                 encodedBlockCount = 0;
                 isFlatMode = false;
@@ -1039,6 +1042,77 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.currentBlock = endBlock - 1;
             this.minBlock = startBlock;
             this.blockBufferPos = -1;
+        }
+
+        /**
+         * Positions the reverse EF decode at the high word holding the last ordinal whose value
+         * is {@code <= maxValue}, so a cursor opened for a page frame in the middle of the key's
+         * list does not decode (and discard) every value after the frame. Ranked blobs seek in
+         * O(log n) through the trailer's checkpoints (efLowerBound, then an O(1) step to the
+         * word holding that ordinal); legacy unranked blobs, whose rank
+         * directory the caller has just built, skip whole high words from the top. The decode
+         * resumes at a word boundary, exactly the state a from-the-top decode reaches there, and
+         * {@link #hasNext()} discards the at most 64 remaining values above maxValue as before.
+         */
+        private void seekEF(long baseAddr, int count, int numHighWords) {
+            int word;
+            int skipped = 0;
+            if (maxValue < 0) {
+                word = -1;
+                skipped = count;
+            } else if (isEFRanked) {
+                final long blobAddr = baseAddr + efBlobOffset;
+                final int end = PostingIndexUtils.efLowerBound(blobAddr, efBlobSize, maxValue + 1);
+                if (end == 0) {
+                    word = -1;
+                    skipped = count;
+                } else if (end > 0 && end < count) {
+                    // maxValue < universe - 1, so the last value lies above maxValue and end < count.
+                    // Start at the word holding ordinal end (or the zero that ends maxValue + 1's
+                    // high bucket): ordinal end - 1 is in that word or below it, and the decode
+                    // discards the ones of that word that lie above maxValue.
+                    final long packed = PostingIndexUtils.efLowerBoundWord(blobAddr, maxValue + 1, end);
+                    if (packed < 0) {
+                        // The high word is inconsistent with the validated ordinal (corrupt data):
+                        // keep the from-the-top walk, whose ranked decode reports the corruption.
+                        return;
+                    }
+                    word = (int) (packed >>> 32);
+                    final int through = (int) packed + Long.bitCount(Unsafe.getLong(baseAddr + efHighOffset + (long) word * Long.BYTES));
+                    skipped = count - Math.min(through, count);
+                } else {
+                    // end == count cannot happen: the caller seeks only when maxValue < u - 1, the
+                    // last value, so that value lies above maxValue.
+                    assert end != count : "EF lower bound past the last value [end=" + end + ", count=" + count + ']';
+                    // Unusable trailer: keep the from-the-top walk, whose ranked decode reports
+                    // the corruption.
+                    return;
+                }
+            } else {
+                // A word whose first value has a high part above maxValue's holds only values
+                // above maxValue (value >= high << L > maxValue).
+                final long maxHigh = maxValue >>> efL;
+                word = numHighWords - 1;
+                while (word >= 0) {
+                    final long bits = Unsafe.getLong(baseAddr + efHighOffset + (long) word * Long.BYTES);
+                    if (bits != 0) {
+                        final int firstRank = Unsafe.getInt(efRankDirAddr + (long) word * Integer.BYTES);
+                        final long firstHigh = (long) word * 64 + Long.numberOfTrailingZeros(bits) - firstRank;
+                        if (firstHigh <= maxHigh) {
+                            break;
+                        }
+                        skipped += Long.bitCount(bits);
+                    }
+                    word--;
+                }
+                skipped = Math.min(skipped, count);
+            }
+            efHighWordIdx = word;
+            // hasNext() decrements sidecarOrdinal once per value it discards above maxValue; the
+            // seek discards these values without visiting them, so account for them here.
+            if (coverCount > 0) {
+                sidecarOrdinal -= skipped;
+            }
         }
 
         void of(int key, long minValue, long maxValue) {
