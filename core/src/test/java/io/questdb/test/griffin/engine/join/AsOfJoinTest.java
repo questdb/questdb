@@ -1585,15 +1585,61 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE sl (id INT, sy SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO sl VALUES (10, 'A', 1::TIMESTAMP)");
 
+            // each master column compares symbol ids with the one slave column sl.sy, which is safe
             assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.sy1 = sl.sy AND m.sy2 = sl.sy")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
+                    .withPlanContaining("symbolKeyJoin: true")
                     .returns("""
                             id\tid1
                             1\t10
                             2\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnMasterSymbolKeyWithTwoSlavePartners() throws Exception {
+        // ASOF and LT joins keep all four keys, so the master column m.mx is compared with both s.a and
+        // s.c. These assign different symbol ids to the same strings, so m.mx must not translate through
+        // one symbol table for both keys.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (id INT, a SYMBOL, c SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO s VALUES (1, 'X', 'Y', 1::TIMESTAMP), (2, 'Y', 'X', 2::TIMESTAMP), (3, 'X', 'X', 3::TIMESTAMP)");
+            execute("CREATE TABLE m (id INT, mx SYMBOL, my SYMBOL, mz SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO m VALUES (1, 'X', 'X', 'X', 3::TIMESTAMP), (2, 'X', 'X', 'X', 4::TIMESTAMP), (3, 'Y', 'Y', 'Y', 5::TIMESTAMP)");
+
+            final String expectedAsOf = """
+                    id\tid1
+                    1\t3
+                    2\t3
+                    3\tnull
+                    """;
+            final String expectedLt = """
+                    id\tid1
+                    1\tnull
+                    2\t3
+                    3\tnull
+                    """;
+            // the second order of the keys also failed before this PR
+            for (String on : new String[]{
+                    "s.a = m.mx AND s.c = m.mz AND s.c = m.mx AND s.a = m.my",
+                    "s.c = m.mz AND s.c = m.mx AND s.a = m.my AND s.a = m.mx"
+            }) {
+                for (String hint : new String[]{"", "/*+ asof_linear(m s) */ ", "/*+ asof_dense(m s) */ "}) {
+                    assertQuery("SELECT " + hint + "m.id, s.id FROM m ASOF JOIN s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expectedAsOf);
+                }
+                assertQuery("SELECT m.id, s.id FROM m LT JOIN s ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expectedLt);
+            }
         });
     }
 

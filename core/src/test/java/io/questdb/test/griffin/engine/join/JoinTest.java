@@ -2549,6 +2549,43 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinedTableKeepsEveryMovedSymbolKey() throws Exception {
+        // reorderTables moves b2 = b1 from f2 and b3 = b1 from f3 onto the key-less f1, so the hash join
+        // builds f1 on b1 = b2 and b1 = b3. The tables assign different symbol ids to the same strings, so
+        // the f1 key column b1 must not translate through one symbol table for both keys.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT)");
+            execute("INSERT INTO f0 VALUES (1), (2)");
+            execute("CREATE TABLE f1 (b1 SYMBOL)");
+            execute("INSERT INTO f1 VALUES ('x'), ('y')");
+            execute("CREATE TABLE f2 (a2 INT, b2 SYMBOL)");
+            execute("INSERT INTO f2 VALUES (1, 'y'), (2, 'x'), (1, 'x')");
+            execute("CREATE TABLE f3 (a3 INT, b3 SYMBOL)");
+            execute("INSERT INTO f3 VALUES (1, 'x'), (2, 'y'), (1, 'y')");
+            final String expected = """
+                    a0\tb1\ta2\tb2\ta3\tb3
+                    1\ty\t1\ty\t1\ty
+                    1\tx\t1\tx\t1\tx
+                    """;
+            for (String query : new String[]{
+                    "SELECT * FROM f0 CROSS JOIN f1 JOIN f2 ON a2 = a0 AND b2 = b1 JOIN f3 ON a3 = a0 AND b3 = b1",
+                    "SELECT * FROM f0, f1, f2, f3 WHERE a2 = a0 AND b2 = b1 AND a3 = a0 AND b3 = b1"
+            }) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expected);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testCrossJoinedTableSkipsKeyMoveThatClosesCycle() throws Exception {
         // f3 follows f2 through b3 = b2, and f2 follows f1 through b2 = a1. Moving a3 = a1 from f3 onto
         // the key-less f1 would make f1 follow f3 as well, so no join order would exist and the query

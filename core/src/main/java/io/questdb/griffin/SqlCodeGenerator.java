@@ -2629,13 +2629,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * </ul>
      * Must be called after createSymbolShortCircuit() and before createRecordCopierMaster/Slave().
      *
+     * @param isSlaveTranslated true for hash joins, which translate slave key columns; ASOF and LT
+     *                          joins translate only master key columns
      * @return null if no SYMBOL-SYMBOL pairs found, otherwise [masterIndices, slaveIndices]
      */
     private int @Nullable [][] convertSymbolJoinKeysToInt(
             RecordMetadata masterMetadata,
-            RecordMetadata slaveMetadata
+            RecordMetadata slaveMetadata,
+            boolean isSlaveTranslated
     ) {
-        if (hasMixedSymbolIdKeyColumn(masterMetadata, slaveMetadata)) {
+        if (hasMixedSymbolIdKeyColumn(masterMetadata, slaveMetadata)
+                || hasSymbolIdKeyColumnWithTwoPartners(masterMetadata, slaveMetadata, isSlaveTranslated)) {
             return null;
         }
         IntList masterSymbolKeyCols = null;
@@ -2861,7 +2865,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
          */
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
-        final int[][] symbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+        final int[][] symbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, true);
         final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
         final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
         final int[] masterSymbolKeyCols = symbolKeyIndices != null ? symbolKeyIndices[0] : null;
@@ -5907,7 +5911,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         toleranceInterval
                                 );
                             }
-                            int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                            int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
                             return new AsOfJoinDenseRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -5976,7 +5980,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     null
                             );
                         } else {
-                            int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                            int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
                             return new AsOfJoinFastRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -6004,7 +6008,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Misc.freeObjList(slave.getBindVarFunctions());
                         slave.halfClose();
 
-                        int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                        int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
                         return new FilteredAsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
@@ -6046,7 +6050,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 Misc.freeObjList(projectionBase.getBindVarFunctions());
                                 projectionBase.halfClose();
 
-                                int[][] projFilteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                                int[][] projFilteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
                                 return new FilteredAsOfJoinFastRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
@@ -6094,7 +6098,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             null
                     );
                 } else {
-                    int[][] lightSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                    int[][] lightSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
                     return new AsOfJoinLightRecordCursorFactory(
                             configuration,
                             joinMetadata,
@@ -6238,7 +6242,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
         try {
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
-                int[][] ltSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                int[][] ltSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
                 RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
                 RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
                 int columnSplit = masterMetadata.getColumnCount();
@@ -13955,6 +13959,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final int otherMasterColIndex = listColumnFilterB.getColumnIndexFactored(j);
                 if ((slaveColIndex == otherSlaveColIndex || masterColIndex == otherMasterColIndex)
                         && isIntConvertible != isSymbolJoinKeyIntConvertible(masterMetadata, otherMasterColIndex, slaveMetadata, otherSlaveColIndex)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // SymbolTranslatingRecord translates each column through the symbol table of one partner column. A
+    // translated column that compares symbol ids with two different columns would be translated through
+    // the wrong symbol table for one of them, so convertSymbolJoinKeysToInt() keeps every key a string.
+    // ASOF and LT joins translate master columns. Hash joins translate slave columns, and the light hash
+    // joins translate master columns when they swap the build side at runtime.
+    private boolean hasSymbolIdKeyColumnWithTwoPartners(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            boolean isSlaveTranslated
+    ) {
+        for (int k = 1, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+            final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
+            final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
+            for (int j = 0; j < k; j++) {
+                final int otherSlaveColIndex = listColumnFilterA.getColumnIndexFactored(j);
+                final int otherMasterColIndex = listColumnFilterB.getColumnIndexFactored(j);
+                final boolean isMasterWithTwoPartners = masterColIndex == otherMasterColIndex && slaveColIndex != otherSlaveColIndex;
+                final boolean isSlaveWithTwoPartners = slaveColIndex == otherSlaveColIndex && masterColIndex != otherMasterColIndex;
+                // hasMixedSymbolIdKeyColumn() has ruled out a shared column whose keys differ in encoding
+                if ((isMasterWithTwoPartners || (isSlaveTranslated && isSlaveWithTwoPartners))
+                        && isSymbolJoinKeyIntConvertible(masterMetadata, masterColIndex, slaveMetadata, slaveColIndex)) {
                     return true;
                 }
             }
