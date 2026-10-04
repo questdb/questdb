@@ -154,7 +154,10 @@ public interface TypeDriver {
     int getRelationBits();
 
     /**
-     * The class of values the relation rules group this type by (F34); no rule lists a type by tag.
+     * The class of values the relation rules ({@link RelationRules}) group this type by. The type's
+     * own relations to other types derive from this answer, its width and its implicit-cast list;
+     * the relations of the existing types into it come from their lists and the rules' exception
+     * cells, which name tags.
      */
     RelationKind getRelationKind();
 

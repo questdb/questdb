@@ -26,14 +26,19 @@
 package io.questdb.cairo;
 
 import io.questdb.std.IntList;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.ColumnType.*;
 
 /**
  * The pairwise relations between column types, derived by written rules from the facts each type
- * definition declares (F34, PA-7): its relation kind, its value width in bits and its one
- * implicit-cast list. No rule lists a type by tag, so a new type declares its facts and edits
- * nothing here; a new kind of value needs a rule clause.
+ * driver declares: its relation kind, its value width in bits and its one implicit-cast list. A
+ * type's own relations, from it to every other type, derive from its facts. The relations of the
+ * existing types into a type come from the existing types' implicit-cast lists and from the
+ * exception cells below, which name tags; a new kind of value needs a rule clause. W, C, N and
+ * CASE's number rule are answered for one pair at a time, over the two types' tags and type
+ * drivers, so a type no tag resolves to yet can be asked too; the tag-keyed rows below call them.
  * <p>
  * Each family is today's table exactly: the cells where today's rows depart from the rules are
  * listed as exceptions, and {@code TypeRelationGoldenTest} pins every table. The rules read type
@@ -125,15 +130,14 @@ public final class RelationRules {
      * own getter does the conversion.
      */
     public static short[] builtInWidening(short fromTag) {
+        final TypeDriver from = findTypeDriver(fromTag);
         final IntList out = new IntList();
-        if (isValue(fromTag)) {
-            for (short t : implicitCasts(fromTag)) {
-                if (t != fromTag && isGetterKind(kind(t))) {
-                    out.add(t);
-                }
+        for (short t = 0; t <= MAX_TAG; t++) {
+            if (isBuiltInWidening(fromTag, from, t, findTypeDriver(t))) {
+                out.add(t);
             }
         }
-        return apply(fromTag, out, BUILT_IN_ADD, BUILT_IN_REMOVE, false);
+        return toRow(out);
     }
 
     /**
@@ -150,14 +154,12 @@ public final class RelationRules {
         final IntList out = new IntList();
         switch (kind(fromTag)) {
             case INT, FLOAT -> {
+                final TypeDriver from = findTypeDriver(fromTag);
                 for (short o = 0; o <= MAX_TAG; o++) {
-                    final RelationKind ok = kind(o);
-                    if (ok == RelationKind.INT || ok == RelationKind.FLOAT) {
-                        final short common = firstCommon(fromTag, o);
-                        if (common != -1 && (kind(common) == RelationKind.INT || kind(common) == RelationKind.FLOAT)) {
-                            out.add(o);
-                            out.add(common);
-                        }
+                    final short common = caseCommonNumber(fromTag, from, o, findTypeDriver(o));
+                    if (common != -1) {
+                        out.add(o);
+                        out.add(common);
                     }
                 }
             }
@@ -290,6 +292,25 @@ public final class RelationRules {
     }
 
     /**
+     * E for two numbers: the first type of {@code a}'s implicit-cast list that {@code b} is or
+     * reaches, the type CASE escalates the two to; -1 when either is no number (INT or FLOAT
+     * kind), when there is no such type or when it is no number. Over the two types' tags and type
+     * drivers; the exception cells apply to the row ({@link #caseEscalation(int)}).
+     */
+    public static short caseCommonNumber(short aTag, @Nullable TypeDriver a, short bTag, @Nullable TypeDriver b) {
+        if (!isNumber(a) || !isNumber(b)) {
+            return -1;
+        }
+        final short[] reach = b.getImplicitCasts();
+        for (short t : a.getImplicitCasts()) {
+            if (t == bTag || contains(reach, t)) {
+                return isNumber(findTypeDriver(t)) ? t : -1;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * The implicit-cast list of {@code tag}, its overload row: the definition's declared list for a
      * real type. Of the pseudo tags, UNDEFINED (an unbound bind variable) overloads to the types it
      * can be defined as, and CURSOR to itself; the rest overload to nothing.
@@ -309,64 +330,128 @@ public final class RelationRules {
     }
 
     /**
+     * W for one pair: whether a value of {@code fromTag} widens to {@code toTag} without a cast
+     * wrapper. The source's implicit-cast list names the target and the target converts through
+     * its own getter (integer, CHAR, float and temporal targets), with the exception cells
+     * applied. Over the two types' tags and type drivers; a null type driver is a pseudo type.
+     */
+    public static boolean isBuiltInWidening(short fromTag, @Nullable TypeDriver from, short toTag, @Nullable TypeDriver to) {
+        if (from == null || to == null || fromTag == toTag || isCell(BUILT_IN_REMOVE, fromTag, toTag)) {
+            return false;
+        }
+        return isListedWidening(fromTag, from, toTag, to);
+    }
+
+    /**
+     * Whether an exception cell or a rule clause that names a tag decides the relation
+     * {@code relation} ('W', 'C', 'N' or 'E') between the two tags, in either direction. Two types
+     * of one kind and width relate alike to a third type except at such a cell.
+     */
+    @TestOnly
+    public static boolean isNamedCell(char relation, short a, short b) {
+        return switch (relation) {
+            case 'W' -> isCellEitherWay(BUILT_IN_ADD, a, b) || isCellEitherWay(BUILT_IN_REMOVE, a, b);
+            // C4 names TIMESTAMP as the one temporal type text parses into
+            case 'C' -> isCellEitherWay(CAST_ADD, a, b) || isCellEitherWay(CAST_REMOVE, a, b)
+                    || (a == TIMESTAMP && kind(b) == RelationKind.TEXT) || (b == TIMESTAMP && kind(a) == RelationKind.TEXT);
+            // N is the complement of W and C
+            case 'N' -> isCellEitherWay(NARROWING_REMOVE, a, b) || isNamedCell('W', a, b) || isNamedCell('C', a, b);
+            // CASE orders the texts by TEXT_ORDER and meets timestamps at the finer unit
+            case 'E' -> {
+                for (int[] cell : CASE_REPLACE) {
+                    if ((cell[0] == a && cell[1] == b) || (cell[0] == b && cell[1] == a)) {
+                        yield true;
+                    }
+                }
+                yield textRank(a) != -1 || textRank(b) != -1 || a == TIMESTAMP || b == TIMESTAMP;
+            }
+            default -> throw new IllegalArgumentException("no relation " + relation);
+        };
+    }
+
+    /**
+     * N for one pair: whether a value of {@code fromTag} narrows to {@code toTag} with an explicit
+     * cast, which may lose precision or range: a numeric or temporal target that is neither W nor
+     * C, every numeric and temporal target for a text, the decimals for an integer, CHAR or text,
+     * and UUID and the arrays for a text; with the exception cells applied. Over the two types'
+     * tags and type drivers; a null type driver is a pseudo type.
+     */
+    public static boolean isNarrowing(short fromTag, @Nullable TypeDriver from, short toTag, @Nullable TypeDriver to) {
+        if (from == null || fromTag == toTag || isCell(NARROWING_REMOVE, fromTag, toTag)) {
+            return false;
+        }
+        final RelationKind k = from.getRelationKind();
+        if (k != RelationKind.INT && k != RelationKind.CHAR && k != RelationKind.FLOAT && k != RelationKind.TEMPORAL && k != RelationKind.TEXT) {
+            return false;
+        }
+        final boolean isIntoDecimal = k != RelationKind.FLOAT && k != RelationKind.TEMPORAL;
+        if (to == null) {
+            // of the pseudo types, only DECIMAL
+            return isIntoDecimal && toTag == DECIMAL;
+        }
+        final RelationKind tk = to.getRelationKind();
+        return (isGetterKind(tk) && (k == RelationKind.TEXT
+                || (!isBuiltInWidening(fromTag, from, toTag, to) && !isWideningCast(fromTag, from, toTag, to))))
+                || (isIntoDecimal && tk == RelationKind.DECIMAL)
+                || (k == RelationKind.TEXT && (tk == RelationKind.UUID || tk == RelationKind.ARRAY));
+    }
+
+    /**
+     * C for one pair: whether a value of {@code fromTag} converts to {@code toTag}, same or wider,
+     * through a cast wrapper: the rest of the implicit-cast list (C1), integers and CHAR of at most
+     * 16 bits into the temporal types (C2), a geohash into a narrower geohash (C3), text into every
+     * geohash, TIMESTAMP, LONG256, IPv4, SYMBOL and the column texts (C4); with the exception cells
+     * applied. Over the two types' tags and type drivers; a null type driver is a pseudo type.
+     */
+    public static boolean isWideningCast(short fromTag, @Nullable TypeDriver from, short toTag, @Nullable TypeDriver to) {
+        if (fromTag == toTag || isCell(CAST_REMOVE, fromTag, toTag)) {
+            return false;
+        }
+        if (isCell(CAST_ADD, fromTag, toTag)) {
+            return true;
+        }
+        if (from == null || to == null) {
+            return false;
+        }
+        final RelationKind k = from.getRelationKind();
+        final RelationKind tk = to.getRelationKind();
+        // C1
+        if (contains(from.getImplicitCasts(), toTag) && !isGetterKind(tk) && tk != RelationKind.DECIMAL && tk != RelationKind.GEO) {
+            return true;
+        }
+        return ((k == RelationKind.INT || k == RelationKind.CHAR) && from.getRelationBits() <= 16 && tk == RelationKind.TEMPORAL)
+                || (k == RelationKind.GEO && tk == RelationKind.GEO && to.getRelationBits() < from.getRelationBits())
+                || (k == RelationKind.TEXT && (tk == RelationKind.GEO || toTag == TIMESTAMP || tk == RelationKind.LONG256
+                || tk == RelationKind.IPV4 || tk == RelationKind.SYMBOL || (tk == RelationKind.TEXT && isPersisted(toTag))));
+    }
+
+    /**
      * N: the types a value of {@code fromTag} narrows to with an explicit cast, which may lose
      * precision or range.
      */
     public static short[] narrowing(short fromTag) {
-        final RelationKind k = kind(fromTag);
+        final TypeDriver from = findTypeDriver(fromTag);
         final IntList out = new IntList();
-        if (k == RelationKind.INT || k == RelationKind.CHAR || k == RelationKind.FLOAT || k == RelationKind.TEMPORAL || k == RelationKind.TEXT) {
-            final short[] builtIn = builtInWidening(fromTag);
-            final short[] cast = wideningCast(fromTag);
-            for (short t = 0; t <= MAX_TAG; t++) {
-                if (isGetterKind(kind(t)) && (k == RelationKind.TEXT || (t != fromTag && !contains(builtIn, t) && !contains(cast, t)))) {
-                    out.add(t);
-                }
-            }
-            if (k != RelationKind.FLOAT && k != RelationKind.TEMPORAL) {
-                addKind(out, RelationKind.DECIMAL);
-                out.add(DECIMAL);
-            }
-            if (k == RelationKind.TEXT) {
-                addKind(out, RelationKind.UUID);
-                addKind(out, RelationKind.ARRAY);
+        for (short t = 0; t <= MAX_TAG; t++) {
+            if (isNarrowing(fromTag, from, t, findTypeDriver(t))) {
+                out.add(t);
             }
         }
-        return apply(fromTag, out, NO_CELLS, NARROWING_REMOVE, false);
+        return toRow(out);
     }
 
     /**
      * C: the other same-or-wider conversions, the ones that need a cast wrapper.
      */
     public static short[] wideningCast(short fromTag) {
+        final TypeDriver from = findTypeDriver(fromTag);
         final IntList out = new IntList();
-        if (isValue(fromTag)) {
-            final RelationKind k = kind(fromTag);
-            // C1: the rest of the implicit list
-            for (short t : implicitCasts(fromTag)) {
-                final RelationKind tk = kind(t);
-                if (t != fromTag && !isGetterKind(tk) && tk != RelationKind.PSEUDO && tk != RelationKind.DECIMAL && tk != RelationKind.GEO) {
-                    out.add(t);
-                }
-            }
-            // C2: small integers and CHAR into DATE and TIMESTAMP
-            if ((k == RelationKind.INT || k == RelationKind.CHAR) && bits(fromTag) <= 16) {
-                addKind(out, RelationKind.TEMPORAL);
-            }
-            // C3: a geohash into a narrower geohash
-            if (k == RelationKind.GEO) {
-                addGeoUpTo(out, 0, bits(fromTag) - 1);
-            }
-            // C4: text parses into every geohash, TIMESTAMP, LONG256, IPv4 and the other texts
-            if (k == RelationKind.TEXT) {
-                addGeoUpTo(out, 0, Integer.MAX_VALUE);
-                out.add(TIMESTAMP);
-                addKind(out, RelationKind.LONG256);
-                addKind(out, RelationKind.IPV4);
-                addColumnTexts(out);
+        for (short t = 0; t <= MAX_TAG; t++) {
+            if (isWideningCast(fromTag, from, t, findTypeDriver(t))) {
+                out.add(t);
             }
         }
-        return apply(fromTag, out, CAST_ADD, CAST_REMOVE, false);
+        return toRow(out);
     }
 
     /**
@@ -479,17 +564,6 @@ public final class RelationRules {
         return false;
     }
 
-    // the first type of a's implicit list that b is or reaches (PA-7's supertype), or -1
-    private static short firstCommon(short a, short b) {
-        final short[] reach = implicitCasts(b);
-        for (short t : implicitCasts(a)) {
-            if (t == b || contains(reach, t)) {
-                return t;
-            }
-        }
-        return -1;
-    }
-
     private static int indexOf(IntList list, int v) {
         for (int i = 0, n = list.size(); i < n; i++) {
             if (list.getQuick(i) == v) {
@@ -499,13 +573,30 @@ public final class RelationRules {
         return -1;
     }
 
+    private static boolean isCell(short[][] cells, short fromTag, short toTag) {
+        for (short[] cell : cells) {
+            if (cell[0] == fromTag && cell[1] == toTag) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isCellEitherWay(short[][] cells, short a, short b) {
+        return isCell(cells, a, b) || isCell(cells, b, a);
+    }
+
     private static boolean isGetterKind(RelationKind k) {
         return k == RelationKind.INT || k == RelationKind.CHAR || k == RelationKind.FLOAT || k == RelationKind.TEMPORAL;
     }
 
-    private static boolean isValue(short tag) {
-        final RelationKind k = kind(tag);
-        return k != RelationKind.PSEUDO && k != RelationKind.UNDEF && k != RelationKind.NULL;
+    // W by the source's list and the exception cells that add a target
+    private static boolean isListedWidening(short fromTag, TypeDriver from, short toTag, TypeDriver to) {
+        return (isGetterKind(to.getRelationKind()) && contains(from.getImplicitCasts(), toTag)) || isCell(BUILT_IN_ADD, fromTag, toTag);
+    }
+
+    private static boolean isNumber(@Nullable TypeDriver driver) {
+        return driver != null && (driver.getRelationKind() == RelationKind.INT || driver.getRelationKind() == RelationKind.FLOAT);
     }
 
     // CASE's order of CHAR, SYMBOL and the two column texts; -1 for another type
@@ -516,5 +607,13 @@ public final class RelationRules {
             }
         }
         return -1;
+    }
+
+    private static short[] toRow(IntList out) {
+        final short[] row = new short[out.size()];
+        for (int i = 0, n = out.size(); i < n; i++) {
+            row[i] = (short) out.getQuick(i);
+        }
+        return row;
     }
 }

@@ -77,6 +77,13 @@ public final class LookAlikeTypeDriver extends FixedSizeTypeDriver {
     }
 
     /**
+     * A signed 32-bit INT whose NULL is INT's sentinel: INT's facts under another name.
+     */
+    public static LookAlikeTypeDriver sentinelInt() {
+        return new LookAlikeTypeDriver("INT32", PhysicalDescriptor.Arithmetic.I32, NullPolicy.SENTINEL);
+    }
+
+    /**
      * An unsigned 32-bit INT whose NULL is INT's sentinel.
      */
     public static LookAlikeTypeDriver unsignedInt() {
