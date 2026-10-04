@@ -74,6 +74,19 @@ paths = ["storage.*", "sql.*", "ingest.*", "http.*", "pg.*", "lv.*"]   # the kit
 refused_sites = []          # guarded sites the type is refused at on purpose (section 5)
 ```
 
+INT runs every kit path because the kit holds a recording of each for it. A new type has no
+recording, so it runs the paths that hold an invariant, and `init` writes those:
+
+```toml
+paths = ["storage.*", "sql.filter_null", "sql.filter_not_null", "sql.order_*", "sql.union_all",
+         "sql.case_*", "sql.cast", "sql.fill_*", "sql.memoized", "sql.subsample_*", "sql.where_*",
+         "sql.latest_by_key", "sql.copy_bind", "sql.between_timestamp", "sql.eq_null_double",
+         "sql.bind_value", "ingest.*", "http.*", "pg.*", "lv.*"]
+```
+
+The SQL queries that need a literal of the type or introduce NULL (a filter by value, a join, lag,
+GROUP BY) have no invariant yet; a type that names them fails with "no invariant for this query".
+
 `init` copies every field from an existing type's driver and leaves `wire_kind` and
 `signature_char` as `CHANGE-ME`, which the run refuses, so the author decides both. The run checks
 the file against the tree before it writes anything and exits 2 with one line per problem,
@@ -91,7 +104,7 @@ site of `sites.tsv`, a `pg_oid` that names no constant, or a new wire kind whose
 ## 4. Predefined places, by kind
 
 <!-- counts: start -->
-The instrument table lists 536 sites where a type's behaviour could differ from its family's, by kind and by the instrument that names each when a type is added:
+The instrument table lists 555 sites where a type's behaviour could differ from its family's, by kind and by the instrument that names each when a type is added:
 
 | kind | build | test | refused at setup | manual | not type dependent | all |
 |---|---|---|---|---|---|---|
@@ -102,12 +115,12 @@ The instrument table lists 536 sites where a type's behaviour could differ from 
 | kind-predicate | 0 | 3 | 0 | 0 | 3 | 6 |
 | pair-switch | 5 | 0 | 0 | 0 | 0 | 5 |
 | policy-switch | 18 | 0 | 0 | 0 | 0 | 18 |
-| registration | 11 | 4 | 0 | 0 | 0 | 15 |
-| rust-match | 8 | 0 | 1 | 9 | 13 | 31 |
+| registration | 17 | 4 | 0 | 0 | 0 | 21 |
+| rust-match | 12 | 0 | 1 | 18 | 13 | 44 |
 | tag-switch-default | 0 | 114 | 4 | 19 | 137 | 274 |
 | wire-kind-switch | 14 | 0 | 0 | 3 | 0 | 17 |
 | writer-arm | 0 | 0 | 0 | 0 | 30 | 30 |
-| all | 59 | 130 | 62 | 44 | 241 | 536 |
+| all | 69 | 130 | 62 | 53 | 241 | 555 |
 <!-- counts: end -->
 
 - **Registration.** Six places, each marked by a comment `type-registration: <anchor>`: the tag
@@ -120,7 +133,8 @@ The instrument table lists 536 sites where a type's behaviour could differ from 
   (`getTypeName`). A fixed-size type driver is a facts instance: the tool writes its `TypeFacts`
   from the facts file, and the six answers that are code (defining a bind variable, the NULL
   constant, the type constant, the column function, the NULL appender and the NULL fill) are names
-  javac reports until the author writes them. A var-size type driver gets its facts as methods and
+  javac reports until the author writes them. Every run rewrites the facts instance from the facts
+  file and keeps the answers the author wrote. A var-size type driver gets its facts as methods and
   a stub that javac reports for every other answer.
 - **Pair switches.** The exhaustive switches over a pair of types (ALTER COLUMN TYPE from fixed to
   fixed, from fixed to var-size and from var-size to fixed, the UNION cast, the CASE cast): the
@@ -173,12 +187,18 @@ The columns: the site's label, its file and method, and how the site reaches the
 build, the test or kit path, the refusal text) or why it does not depend on the type.
 
 <!-- sites: start -->
-### Listed by the build (59)
+### Listed by the build (69)
 
 The compiler lists the site when a type is added: an exhaustive switch or match with no default arm.
 
 | site | file | method | how |
 |---|---|---|---|
+| ColumnConversionSoundnessTest.ddlTypesOf test tag switch | `core/src/test/java/io/questdb/test/griffin/ColumnConversionSoundnessTest.java` | `ddlTypesOf` | a test's exhaustive switch over the tag, which pins an answer per tag: javac lists it, and the type takes the arm of its answer |
+| OverloadSoundnessTest.callGetter test tag switch | `core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java` | `callGetter` | a test's exhaustive switch over the tag, which pins an answer per tag: javac lists it, and the type takes the arm of its answer |
+| OverloadSoundnessTest.columnTypeOf test tag switch | `core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java` | `columnTypeOf` | a test's exhaustive switch over the tag, which pins an answer per tag: javac lists it, and the type takes the arm of its answer |
+| OverloadSoundnessTest.isExplicitCast test tag switch | `core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java` | `isExplicitCast` | a test's exhaustive switch over the tag, which pins an answer per tag: javac lists it, and the type takes the arm of its answer |
+| OverloadSoundnessTest.isFamilySignature test tag switch | `core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java` | `isFamilySignature` | a test's exhaustive switch over the tag, which pins an answer per tag: javac lists it, and the type takes the arm of its answer |
+| OverloadSoundnessTest.ownSignatureTag test tag switch | `core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java` | `ownSignatureTag` | a test's exhaustive switch over the tag, which pins an answer per tag: javac lists it, and the type takes the arm of its answer |
 | ColumnTypeConverter.convertColumn policy switch #1 | `core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java` | `convertColumn` | an exhaustive switch over NullPolicy: javac lists it for a new policy; a type with an existing policy takes its arm |
 | ColumnTypeConverter.convertColumn policy switch #2 | `core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java` | `convertColumn` | an exhaustive switch over NullPolicy: javac lists it for a new policy; a type with an existing policy takes its arm |
 | ALTER COLUMN TYPE var-size to fixed pair switch | `core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java` | `getConverterFromVarToFixed` | an exhaustive switch over the tag: javac lists it for a new tag, which names itself in a refusal group or implements the pair |
@@ -227,9 +247,13 @@ The compiler lists the site when a type is added: an exhaustive switch or match 
 | col_type::arithmetic match | `core/rust/qdb-core/src/col_type.rs` | `arithmetic` | an exhaustive match: rustc lists it for a tag added to the Rust enum |
 | col_type::name match | `core/rust/qdb-core/src/col_type.rs` | `name` | an exhaustive match: rustc lists it for a tag added to the Rust enum |
 | mod::try_lookup_driver match | `core/rust/qdb-core/src/col_driver/mod.rs` | `try_lookup_driver` | a match on the tag and the accessor with no wildcard arm: rustc lists it for a tag added to the Rust enum (non-exhaustive patterns) |
+| decode::decode_byte_array_dispatch match #1 | `core/rust/qdbr/src/parquet_read/decode.rs` | `decode_byte_array_dispatch` | an exhaustive match over the tag: rustc lists it for a tag added to the Rust enum |
+| decode::sliced_page_row_count match | `core/rust/qdbr/src/parquet_read/decode.rs` | `sliced_page_row_count` | an exhaustive match over the tag: rustc lists it for a tag added to the Rust enum |
+| decode::page_row_count match | `core/rust/qdbr/src/parquet_read/decode.rs` | `page_row_count` | an exhaustive match over the tag: rustc lists it for a tag added to the Rust enum |
 | row_groups::is_int_null match | `core/rust/qdbr/src/parquet_read/row_groups.rs` | `is_int_null` | an exhaustive match: rustc lists it for a tag added to the Rust enum |
 | schema::column_type_to_parquet_type match #1 | `core/rust/qdbr/src/parquet_write/schema.rs` | `column_type_to_parquet_type` | an exhaustive match: rustc lists it for a tag added to the Rust enum |
 | schema::encoding_map match | `core/rust/qdbr/src/parquet_write/schema.rs` | `encoding_map` | an exhaustive match: rustc lists it for a tag added to the Rust enum |
+| update::generate_required_zero_page match | `core/rust/qdbr/src/parquet_write/update.rs` | `generate_required_zero_page` | an exhaustive match over the tag: rustc lists it for a tag added to the Rust enum |
 | column_type.h::var_layout switch | `core/src/main/c/share/column_type.h` | `var_layout` | a switch over the native ColumnType enum under -Wswitch as an error: the C++ build lists it for a new constant |
 | converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch | `core/src/main/c/share/converters.cpp` | `Java_io_questdb_griffin_ConvertersNative_fixedToFixed` | a switch over the native ColumnType enum under -Wswitch as an error: the C++ build lists it for a new constant |
 | converters.h::is_fixed_convertible switch | `core/src/main/c/share/converters.h` | `is_fixed_convertible` | a switch over the native ColumnType enum under -Wswitch as an error: the C++ build lists it for a new constant |
@@ -737,15 +761,24 @@ passes the copy with `--manual-done`.
 33. CairoTextWriter.initWriterAndOverrideImportTypes wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/CairoTextWriter.java`, `initWriterAndOverrideImportTypes`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
 34. ParallelCsvFileImporter.initWriterAndOverrideImportMetadata wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/ParallelCsvFileImporter.java`, `initWriterAndOverrideImportMetadata`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
 35. TextMetadataParser.createImportedType wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/TextMetadataParser.java`, `createImportedType`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
-36. row_groups::post_convert match (`core/rust/qdbr/src/parquet_read/row_groups.rs`, `post_convert`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-37. row_groups::plan_decode_conversion match (`core/rust/qdbr/src/parquet_read/row_groups.rs`, `plan_decode_conversion`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-38. encode::encode_boolean_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_boolean_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-39. encode::encode_int32_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_int32_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-40. encode::encode_int64_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_int64_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-41. encode::encode_byte_array_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-42. encode::encode_fixed_len_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-43. schema::column_type_to_parquet_type match #2 (`core/rust/qdbr/src/parquet_write/schema.rs`, `column_type_to_parquet_type`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-44. schema::validate_encoding match (`core/rust/qdbr/src/parquet_write/schema.rs`, `validate_encoding`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+36. decode::decode_int32_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int32_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+37. decode::decode_int64_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int64_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+38. decode::decode_fixed_len_dispatch match #1 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+39. decode::decode_fixed_len_dispatch match #2 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+40. decode::decode_byte_array_dispatch match #2 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+41. decode::decode_byte_array_dispatch match #3 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+42. decode::decode_int96_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int96_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+43. decode::decode_double_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_double_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+44. decode::decode_other_fixed_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_other_fixed_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+45. row_groups::post_convert match (`core/rust/qdbr/src/parquet_read/row_groups.rs`, `post_convert`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+46. row_groups::plan_decode_conversion match (`core/rust/qdbr/src/parquet_read/row_groups.rs`, `plan_decode_conversion`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+47. encode::encode_boolean_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_boolean_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+48. encode::encode_int32_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_int32_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+49. encode::encode_int64_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_int64_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+50. encode::encode_byte_array_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+51. encode::encode_fixed_len_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+52. schema::column_type_to_parquet_type match #2 (`core/rust/qdbr/src/parquet_write/schema.rs`, `column_type_to_parquet_type`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+53. schema::validate_encoding match (`core/rust/qdbr/src/parquet_write/schema.rs`, `validate_encoding`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
 <!-- manual: end -->
 
 ## 7. The worklist format
@@ -765,6 +798,23 @@ per group, in this order: `build-java`, `build-rust`, `build-c`, `refusal`, `kit
 | location | `` `path:line` `` from the repository root; `` `kit:<path>@<mode>#<value row>` `` for a kit failure; `README "Manual list", item <n>` |
 | message | the first line of the compiler's, the test's or the refusal's text, ASCII, at most 200 characters, `\|` written as `/` |
 | site | the label of the site's row in `sites.tsv`, or `unmapped` when no row matches, which is a defect of the site map |
+
+A refusal maps to the site it names, and the item sits at the site's method.
+
+A kit failure maps to the row whose kept refusal text it holds (of several rows that keep the same
+text, the one whose method the kit's value row names, `setBoolean`:
+`BindVariableServiceImpl.setBoolean0`), else to the row whose instrument names its path, else to the
+layer the path checks: an HTTP export, PG wire or QWP egress path to its writer's wire-kind switch
+(`add-writer-arm`), the CSV import to `TypeManager.getTypeAdapter`, `sql.cast` to the type's
+registration in `TypeDrivers.find` (`implement-pair`), and every other path to that registration as
+`fill-driver-answer`: the type driver's NULL, column function or relations.
+
+A coverage failure maps to the site its message names (a kept refusal text, or `<method>: <type> is
+not handled`) and sits at that site's method; else it maps to the site its test checks and sits at
+the test, so each failing test is an item: the copier test of `RelationCoverageTest` to
+`RecordToRowCopierUtils.copyOpcode`, its CASE and UNION tests to their pair switches, its cast test,
+`FunctionReachTest`'s later-type test, `RelationRulesTest` and `TypeDriverTest` to the type's
+registration; else to the first row its instrument names.
 
 There is one item per location and decision; a compiler error repeated by several builds is one
 item. The kit and the coverage tests run only when every build group is empty, since a build error

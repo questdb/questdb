@@ -17,3 +17,8 @@ QWP WAL append #1	family-opcode	core/src/main/java/io/questdb/cutlass/line/tcp/Q
 QWP WAL append #6	family-arm	core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java	appendToWalColumnar	no family arm for <type> at QWP WAL append	declare-or-admit	refused-at-setup ingest.qwp
 col_type::movement match	rust-match	core/rust/qdb-core/src/col_type.rs	movement		name-yourself	build
 column_type.h::var_layout switch	c-switch	core/src/main/c/share/column_type.h	var_layout		name-yourself	build
+TypeDrivers.find tag enum switch	registration	core/src/main/java/io/questdb/cairo/TypeDrivers.java	find		name-yourself	build
+PGPipelineEntry.outColumnOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/pgwire/PGPipelineEntry.java	outColumnOpcode		add-writer-arm	build
+ExportQueryProcessor.csvOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/http/processors/ExportQueryProcessor.java	csvOpcode		add-writer-arm	build
+JsonQueryProcessorState.jsonOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/http/processors/JsonQueryProcessorState.java	jsonOpcode		add-writer-arm	build
+QwpResultBatchBuffer.appendOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cutlass/qwp/codec/QwpResultBatchBuffer.java	appendOpcode		add-writer-arm	build

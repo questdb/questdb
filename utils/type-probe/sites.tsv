@@ -1,4 +1,10 @@
 site	kind	file	method	message	decision	instrument
+ColumnConversionSoundnessTest.ddlTypesOf test tag switch	registration	core/src/test/java/io/questdb/test/griffin/ColumnConversionSoundnessTest.java	ddlTypesOf		name-yourself	build
+OverloadSoundnessTest.callGetter test tag switch	registration	core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java	callGetter		name-yourself	build
+OverloadSoundnessTest.columnTypeOf test tag switch	registration	core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java	columnTypeOf		name-yourself	build
+OverloadSoundnessTest.isExplicitCast test tag switch	registration	core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java	isExplicitCast		name-yourself	build
+OverloadSoundnessTest.isFamilySignature test tag switch	registration	core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java	isFamilySignature		name-yourself	build
+OverloadSoundnessTest.ownSignatureTag test tag switch	registration	core/src/test/java/io/questdb/test/griffin/OverloadSoundnessTest.java	ownSignatureTag		name-yourself	build
 ColumnType.getTimestampType tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/ColumnType.java	getTimestampType		-	not-type-dependent
 ColumnType.pow2SizeOf tag table POW2_SIZE	registration	core/src/main/java/io/questdb/cairo/ColumnType.java	pow2SizeOf		fill-driver-answer	test TypeDriverTest
 ColumnTypeConverter.convertColumn policy switch #1	policy-switch	core/src/main/java/io/questdb/cairo/ColumnTypeConverter.java	convertColumn		add-writer-arm	build
@@ -503,6 +509,18 @@ col_type::name match	rust-match	core/rust/qdb-core/src/col_type.rs	name		name-yo
 col_type::try_from match	rust-match	core/rust/qdb-core/src/col_type.rs	try_from	unknown QuestDB column tag code	name-yourself	refused-at-setup storage.parquet
 col_type::new_decimal match	rust-match	core/rust/qdb-core/src/col_type.rs	new_decimal		-	not-type-dependent
 mod::try_lookup_driver match	rust-match	core/rust/qdb-core/src/col_driver/mod.rs	try_lookup_driver		name-yourself	build
+decode::decode_int32_dispatch match	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_int32_dispatch		manual	manual
+decode::decode_int64_dispatch match	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_int64_dispatch		manual	manual
+decode::decode_fixed_len_dispatch match #1	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_fixed_len_dispatch		manual	manual
+decode::decode_fixed_len_dispatch match #2	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_fixed_len_dispatch		manual	manual
+decode::decode_byte_array_dispatch match #1	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_byte_array_dispatch		name-yourself	build
+decode::decode_byte_array_dispatch match #2	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_byte_array_dispatch		manual	manual
+decode::decode_byte_array_dispatch match #3	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_byte_array_dispatch		manual	manual
+decode::decode_int96_dispatch match	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_int96_dispatch		manual	manual
+decode::decode_double_dispatch match	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_double_dispatch		manual	manual
+decode::decode_other_fixed_dispatch match	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	decode_other_fixed_dispatch		manual	manual
+decode::sliced_page_row_count match	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	sliced_page_row_count		name-yourself	build
+decode::page_row_count match	rust-match	core/rust/qdbr/src/parquet_read/decode.rs	page_row_count		name-yourself	build
 row_groups::post_convert match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	post_convert		manual	manual
 row_groups::time_unit_pow10 match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	time_unit_pow10		-	not-type-dependent
 row_groups::convert_decimal_in_place match	rust-match	core/rust/qdbr/src/parquet_read/row_groups.rs	convert_decimal_in_place		-	not-type-dependent
@@ -527,6 +545,7 @@ schema::column_type_to_parquet_type match #1	rust-match	core/rust/qdbr/src/parqu
 schema::column_type_to_parquet_type match #2	rust-match	core/rust/qdbr/src/parquet_write/schema.rs	column_type_to_parquet_type		manual	manual
 schema::validate_encoding match	rust-match	core/rust/qdbr/src/parquet_write/schema.rs	validate_encoding		manual	manual
 schema::encoding_map match	rust-match	core/rust/qdbr/src/parquet_write/schema.rs	encoding_map		name-yourself	build
+update::generate_required_zero_page match	rust-match	core/rust/qdbr/src/parquet_write/update.rs	generate_required_zero_page		name-yourself	build
 column_type.h::var_layout switch	c-switch	core/src/main/c/share/column_type.h	var_layout		name-yourself	build
 converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch	c-switch	core/src/main/c/share/converters.cpp	Java_io_questdb_griffin_ConvertersNative_fixedToFixed		name-yourself	build
 converters.h::is_fixed_convertible switch	c-switch	core/src/main/c/share/converters.h	is_fixed_convertible		name-yourself	build

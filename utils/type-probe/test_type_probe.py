@@ -115,6 +115,14 @@ class SiteMapTest(unittest.TestCase):
         self.assertEqual('declare-or-admit', row.decision)
         self.assertEqual('ColumnTypeConverter.convertFromFixedSize tag switch #1', fixture_sites().by_kept_text('error: unsupported conversion').site)
 
+    def test_kept_text_shared_by_several_sites_takes_the_value_rows_method(self):
+        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
+        text = 'bind error: [0] bind variable cannot be used [contextType=41, index=0]'
+        self.assertEqual('BindVariableServiceImpl.setBoolean0 tag switch', sites.by_kept_text(text, 'setBoolean').site)
+        self.assertEqual('BindVariableServiceImpl.setVarchar0 tag switch', sites.by_kept_text(text, 'setVarchar').site)
+        # a value row no method names leaves the first row of the text
+        self.assertEqual(sites.by_kept_text(text).site, sites.by_kept_text(text, 'r2').site)
+
     def test_location_and_instrument(self):
         sites = fixture_sites()
         self.assertEqual(['UNION cast pair switch'], [r.site for r in sites.by_location('core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java', 'generateCastFunction')])
@@ -150,6 +158,16 @@ class FactsTest(unittest.TestCase):
         problems = self.problems(facts)
         self.assertTrue(any('wire_kind: still CHANGE-ME' in p for p in problems), problems)
         self.assertTrue(any('signature_char' in p for p in problems), problems)
+
+    def test_taken_signature_chars(self):
+        taken = self.tree.signature_chars()
+        # DATE's argument list holds a comment with a comma; the pseudo types' come from the descriptor
+        self.assertIn('m', taken)
+        self.assertIn('i', taken)
+        self.assertIn('c', taken)
+        date = self.tree.driver_facts('DATE')
+        self.assertEqual("'m'", date[10])
+        self.assertEqual('PgTypeOids.PG_TIMESTAMP', date[9])
 
     def test_valid_facts(self):
         self.assertEqual([], self.problems(valid_facts(self.tree)))
@@ -257,6 +275,19 @@ class RegistrationTest(unittest.TestCase):
         self.assertEqual([], tp.register(self.tree, self.facts, []))
         tp.write_generated(self.tree, self.facts, [])
         self.assertEqual(before, self.snapshot())
+
+    def test_facts_follow_the_facts_file_and_answers_stay(self):
+        tp.write_generated(self.tree, self.facts, [])
+        driver = self.dir / tp.CAIRO_DIR / 'ProbeIntTypeDriver.java'
+        # the author writes an answer
+        driver.write_text(driver.read_text(encoding='utf-8').replace('                setNull\n', '                (addr, count) -> Vect.setMemoryInt(addr, 0, count)\n'), encoding='utf-8')
+        self.facts['physical']['null_word'] = '0'
+        self.facts['relations']['cast_target'] = 'NEVER'
+        tp.write_generated(self.tree, self.facts, [])
+        text = driver.read_text(encoding='utf-8')
+        self.assertIn('CastTarget.NEVER', text)
+        self.assertNotIn('Numbers.encodeLowHighInts', text)
+        self.assertIn('(addr, count) -> Vect.setMemoryInt(addr, 0, count)', text)
 
     def test_existing_wire_kind_adds_none(self):
         self.facts['physical']['wire_kind'] = 'INT'
@@ -371,8 +402,47 @@ class WorklistTest(unittest.TestCase):
 
     def test_unmapped_failure_is_flagged(self):
         failure = tp.Failure('io.questdb.test.cairo.types.TypeConformanceSqlTest', 'testQueries[UINT32]',
-                             'type=UINT32 row=- path=sql.nowhere mode=single-nojit: odd', '')
+                             'type=UINT32 row=- path=other.nowhere mode=single-nojit: odd', '')
         self.assertEqual('unmapped', tp.failure_items(failure, fixture_sites(), self.facts)[0].site)
+
+    def test_failure_on_a_path_no_row_names_maps_to_its_layer(self):
+        def item(path):
+            failure = tp.Failure('io.questdb.test.cairo.types.TypeConformanceSqlTest', 'testQueries[UINT32]',
+                                 f'type=UINT32 row=null path={path} mode=nonwal-day: the value arrived as NULL', '')
+            found = tp.failure_items(failure, fixture_sites(), self.facts)[0]
+            return found.decision, found.site
+        self.assertEqual(('add-writer-arm', 'PGPipelineEntry.outColumnOpcode wire-kind switch'), item('pg.binary'))
+        self.assertEqual(('add-writer-arm', 'ExportQueryProcessor.csvOpcode wire-kind switch'), item('http.csv'))
+        self.assertEqual(('fill-driver-answer', 'TypeDrivers.find tag enum switch'), item('storage.insert'))
+        self.assertEqual(('implement-pair', 'TypeDrivers.find tag enum switch'), item('sql.cast'))
+        # a path a row names maps to that row
+        self.assertEqual(('declare-or-admit', 'ILP column kind'), item('ingest.ilp-tcp'))
+
+    def test_coverage_failure_maps_to_the_relation_its_test_checks(self):
+        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
+
+        def item(cls, test, message):
+            failure = tp.Failure(f'io.questdb.test.griffin.{cls}', test, message, message)
+            found = tp.failure_items(failure, sites, self.facts)[0]
+            return found.decision, found.location, found.site
+        self.assertEqual(('implement-pair', '`RelationCoverageTest#testCopierHasAnArmForEveryAdmittedPair`',
+                          'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1'),
+                         item('RelationCoverageTest', 'testCopierHasAnArmForEveryAdmittedPair', 'expected:<BYTE -> CHAR'))
+        self.assertEqual(('implement-pair', '`RelationCoverageTest#testCaseEscalationHasAnImplementation`', 'CASE cast pair switch'),
+                         item('RelationCoverageTest', 'testCaseEscalationHasAnImplementation', 'expected:<> but was:<NN_INT -> LONG: no cast'))
+        self.assertEqual(('fill-driver-answer', '`FunctionReachTest#testLaterTypesReachNoOtherTypesFunction`', 'TypeDrivers.find tag enum switch'),
+                         item('FunctionReachTest', 'testLaterTypesReachNoOtherTypesFunction', 'expected:<> but was:<nn_int -> !=(BYTE, nn_int)'))
+        self.assertEqual(('fill-driver-answer', '`TypeDriverTest#testSizesAsAtS10`', 'TypeDrivers.find tag enum switch'),
+                         item('TypeDriverTest', 'testSizesAsAtS10', 'isFixedSize 41 expected:<false> but was:<true>'))
+        # a test with no entry of its own takes the first row its instrument names
+        self.assertEqual('SortKeyEncoder.keyKind family switch',
+                         item('GeneratedAccessorCoverageTest', 'testEveryAccessorHasAKey', 'NN_INT has no key kind')[2])
+
+    def test_every_layer_site_is_in_the_site_map(self):
+        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
+        for prefix, label, decision in tp.LAYER_SITES:
+            self.assertIsNotNone(sites.by_label(label), label)
+            self.assertIn(decision, tp.DECISIONS)
 
     def test_build_items(self):
         sites = fixture_sites()

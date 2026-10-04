@@ -44,7 +44,38 @@ COVERAGE_TESTS = (
     'RelationCoverageTest', 'ProtocolOpcodeCoverageTest', 'GeneratedAccessorCoverageTest', 'FunctionReachTest',
     'RelationRulesTest', 'TypeDriverTest',
 )
-KIT_PATHS = ('storage.*', 'sql.*', 'ingest.*', 'http.*', 'pg.*', 'lv.*')
+# the kit paths that hold an invariant for a type with no recording; the SQL queries that need a
+# literal of the type or introduce NULL (filters by value, joins, lag, GROUP BY) have none yet
+KIT_PATHS = (
+    'storage.*', 'sql.filter_null', 'sql.filter_not_null', 'sql.order_*', 'sql.union_all', 'sql.case_*', 'sql.cast',
+    'sql.fill_*', 'sql.memoized', 'sql.subsample_*', 'sql.where_*', 'sql.latest_by_key', 'sql.copy_bind',
+    'sql.between_timestamp', 'sql.eq_null_double', 'sql.bind_value', 'ingest.*', 'http.*', 'pg.*', 'lv.*',
+)
+# The site a kit or coverage failure maps to when no row of the site map names its path or test:
+# the layer the path or the test checks, (path or test prefix, site label, decision), first match
+# wins. A label missing from the site map is a defect of the tool.
+LAYER_SITES = (
+    ('http.csv', 'ExportQueryProcessor.csvOpcode wire-kind switch', 'add-writer-arm'),
+    ('http.json', 'JsonQueryProcessorState.jsonOpcode wire-kind switch', 'add-writer-arm'),
+    ('pg.', 'PGPipelineEntry.outColumnOpcode wire-kind switch', 'add-writer-arm'),
+    ('ingest.csv', 'TypeManager.getTypeAdapter wire-kind switch', 'add-writer-arm'),
+    ('ingest.qwp-egress', 'QwpResultBatchBuffer.appendOpcode wire-kind switch', 'add-writer-arm'),
+    ('sql.cast', 'TypeDrivers.find tag enum switch', 'implement-pair'),
+    # a coverage test that checks one relation against its implementation, by test method
+    ('RelationCoverageTest#testCaseEscalation', 'CASE cast pair switch', 'implement-pair'),
+    ('RelationCoverageTest#testCopier', 'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1', 'implement-pair'),
+    ('RelationCoverageTest#testUnion', 'UNION cast pair switch', 'implement-pair'),
+    ('RelationCoverageTest#testExplicitCast', 'TypeDrivers.find tag enum switch', 'implement-pair'),
+    ('FunctionReachTest#testLaterTypes', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    ('RelationRulesTest', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    ('TypeDriverTest', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    # the type's own answers: its NULL, its column function, its relations
+    ('storage.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    ('sql.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    ('ingest.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    ('http.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    ('lv.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+)
 MESSAGE_LIMIT = 200
 
 REFUSAL = re.compile(r'\b(no (?:family arm|compare arm|UNION cast)) for (.+?) at (.+?): (.+)$')
@@ -70,29 +101,54 @@ class ToolError(Exception):
 # ------------------------------------------------------------------ the tree's facts
 
 def strip_comments(text):
-    """Java, Rust or C text with comments and string and char literals blanked, offsets kept."""
-    out = []
-    i, n = 0, len(text)
+    """Java, Rust or C text with comments and the insides of string and char literals blanked;
+    every offset and every newline is kept, so line numbers stay true."""
+    out = list(text)
+    n = len(text)
+
+    def blank(a, b):
+        for k in range(a, min(b, n)):
+            if out[k] != '\n':
+                out[k] = ' '
+
+    i = 0
     while i < n:
         c = text[i]
         if text.startswith('//', i):
             j = text.find('\n', i)
             j = n if j < 0 else j
-            out.append(' ' * (j - i))
+            blank(i, j)
             i = j
         elif text.startswith('/*', i):
             j = text.find('*/', i + 2)
             j = n if j < 0 else j + 2
-            out.append(re.sub(r'[^\n]', ' ', text[i:j]))
+            blank(i, j)
             i = j
-        elif c == '"' or (c == "'" and i + 2 < n and (text[i + 2] == "'" or text[i + 1] == '\\')):
+        elif text.startswith('"""', i):
+            j = text.find('"""', i + 3)
+            j = n if j < 0 else j + 3
+            blank(i + 3, j - 3)
+            i = j
+        elif c in 'rb' and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == '_')) and re.match(r'b?r#*"', text[i:i + 40]):
+            # a Rust raw string, r"..." or r#"..."#, which has no escapes
+            m = re.match(r'b?r(#*)"', text[i:i + 40])
+            end = text.find('"' + m.group(1), i + len(m.group(0)))
+            end = n if end < 0 else end
+            blank(i + len(m.group(0)), end)
+            i = end + 1 + len(m.group(1))
+        elif c == '"':
             j = i + 1
-            while j < n and text[j] != c:
+            while j < n and text[j] != '"':
                 j += 2 if text[j] == '\\' else 1
-            out.append(c + ' ' * (j - i - 1) + (c if j < n else ''))
+            blank(i + 1, j)
+            i = j + 1
+        elif c == "'" and i + 2 < n and (text[i + 1] == '\\' or text[i + 2] == "'"):
+            # a char literal; a lifetime ('a, '_) has no closing quote right after its first char
+            j = text.find("'", i + 3) if text[i + 1] == '\\' else i + 2
+            j = n if j < 0 else j
+            blank(i + 1, j)
             i = j + 1
         else:
-            out.append(c)
             i += 1
     return ''.join(out)
 
@@ -127,23 +183,25 @@ def enum_constants(text, name):
 
 
 def split_args(text):
-    """Top-level comma-separated arguments of an argument list, trimmed."""
+    """Top-level comma-separated arguments of an argument list, trimmed, comments removed. The
+    commas are found in the text with comments and literals blanked, so neither splits."""
+    stripped = strip_comments(text)
     args, depth, start = [], 0, 0
-    for i, c in enumerate(text):
+    for i, c in enumerate(stripped):
         if c in '({[':
             depth += 1
         elif c in ')}]':
             depth -= 1
         elif c == ',' and depth == 0:
-            args.append(text[start:i].strip())
+            args.append(text[start:i])
             start = i + 1
-    if text[start:].strip():
-        args.append(text[start:].strip())
-    return args
+    if stripped[start:].strip():
+        args.append(text[start:])
+    return [re.sub(r'//[^\n]*|/\*.*?\*/', ' ', a, flags=re.S).strip() for a in args]
 
 
-def call_args(text, start):
-    """The argument list of the call whose `(` is at or after `start`."""
+def call_span(text, start):
+    """(first, end) of the argument list of the call whose `(` is at or after `start`."""
     i = text.index('(', start)
     stripped = strip_comments(text)
     depth = 0
@@ -153,8 +211,14 @@ def call_args(text, start):
         elif stripped[j] == ')':
             depth -= 1
             if depth == 0:
-                return text[i + 1:j]
+                return i + 1, j
     raise ToolError(f'unbalanced call at offset {start}')
+
+
+def call_args(text, start):
+    """The argument list of the call whose `(` is at or after `start`."""
+    first, end = call_span(text, start)
+    return text[first:end]
 
 
 def camel(name):
@@ -313,11 +377,24 @@ class SiteMap:
         named = [r for r in rows if r.message.endswith(' at ' + site)]
         return (named or rows or [None])[0]
 
-    def by_kept_text(self, text):
-        """The row whose kept refusal text the failure text holds, a declarable row first."""
+    def by_kept_text(self, text, value_row=''):
+        """The row whose kept refusal text the failure text holds, a declarable row first. Of the
+        rows that keep the same text, the one whose method the kit's value row names (setBoolean:
+        setBoolean0) comes first."""
         hits = [r for r in self.rows if r.message and not r.message.startswith('no ') and r.message in text]
-        hits.sort(key=lambda r: (r.decision != 'declare-or-admit', r.kind != 'family-arm', -len(r.message)))
+        hits.sort(key=lambda r: (r.decision != 'declare-or-admit', r.kind != 'family-arm', -len(r.message),
+                                 not (value_row and r.method.startswith(value_row))))
         return hits[0] if hits else None
+
+    def by_layer(self, path):
+        """(row, decision) of the layer a kit path or test checks (LAYER_SITES)."""
+        for prefix, label, decision in LAYER_SITES:
+            if path.startswith(prefix):
+                row = self.by_label(label)
+                if row is None:
+                    raise ToolError(f'{SITES_FILE} has no row "{label}", which the tool maps {prefix} to')
+                return row, decision
+        return None, None
 
     def by_instrument(self, path):
         """The rows whose instrument names the kit path or test, a declarable row first."""
@@ -711,9 +788,25 @@ def write_generated(tree, facts, log):
     """Writes the type driver (once: the author edits it) and the type's later-types.txt line."""
     name = facts['type']['name']
     driver = tree.path(f'{CAIRO_DIR}/{camel(name)}TypeDriver.java')
+    fresh = driver_source(facts, tree=tree)
     if not driver.exists():
-        driver.write_text(driver_source(facts, tree=tree), encoding='utf-8')
+        driver.write_text(fresh, encoding='utf-8')
         log.append(f'wrote {driver.relative_to(tree.root)}')
+    elif facts['type']['storage'] == 'fixed':
+        # the facts instance follows the facts file; the code answers are the author's and stay
+        text = driver.read_text(encoding='utf-8')
+        marker = 'new TypeFacts('
+        if marker in text:
+            first, end = call_span(text, text.index(marker))
+            new_first, new_end = call_span(fresh, fresh.index(marker))
+            updated = text[:first] + fresh[new_first:new_end] + text[end:]
+            missing = [l for l in fresh.splitlines() if l.startswith('import ') and l not in text.splitlines()]
+            if missing:
+                package = updated.index('\n', updated.index('package ')) + 1
+                updated = updated[:package] + '\n' + '\n'.join(missing) + updated[package:]
+            if updated != text:
+                driver.write_text(updated, encoding='utf-8')
+                log.append(f'rewrote the facts of {driver.relative_to(tree.root)}')
     path = tree.path(LATER_TYPES_FILE)
     lines = path.read_text(encoding='utf-8').split('\n') if path.exists() else []
     line = later_types_line(facts)
@@ -762,25 +855,23 @@ JAVAC_FLAGS = ['-proc:none', '-Xmaxerrs', '100000', '-Xmaxwarns', '0', '-nowarn'
 
 
 def javac(tree, out, cp):
-    """javac over core main, then over core test against it; returns the two logs."""
-    logs = []
-    for which, src, module, extra in (
-            ('main', 'core/src/main/java', 'io.questdb', []),
-            ('test', 'core/src/test/java', 'io.questdb.test', None),
-    ):
-        classes = out / f'{which}-classes'
-        shutil.rmtree(classes, ignore_errors=True)
-        classes.mkdir(parents=True)
-        sources = out / f'{which}-sources.txt'
-        sources.write_text('\n'.join(str(p) for p in sorted(tree.path(src).rglob('*.java'))) + '\n', encoding='utf-8')
-        module_path = cp if which == 'main' else f'{out / "main-classes"}{os.pathsep}{cp}'
-        cmd = ['javac', *JAVAC_FLAGS, f'--add-exports=java.base/jdk.internal.vm={module}', '--module-path', module_path,
-               '-d', classes, f'@{sources}']
-        code, text = run_logged(cmd, out / 'logs' / f'javac-{which}.log', tree.root)
-        if code != 0 and not parse_javac(text, tree.root):
-            raise ToolError(f'javac ({which}) failed without a diagnostic it can parse; see {out / "logs" / f"javac-{which}.log"}')
-        logs.append(text)
-    return logs
+    """javac over core main and core test, the two modules in one call, so the test sources'
+    switches report with the main sources' though main does not compile; returns the log."""
+    classes = out / 'classes'
+    shutil.rmtree(classes, ignore_errors=True)
+    classes.mkdir(parents=True)
+    main, test = tree.path('core/src/main/java'), tree.path('core/src/test/java')
+    sources = out / 'sources.txt'
+    files = sorted(main.rglob('*.java')) + sorted(test.rglob('*.java'))
+    sources.write_text('\n'.join(str(p) for p in files) + '\n', encoding='utf-8')
+    cmd = ['javac', *JAVAC_FLAGS, '--add-exports=java.base/jdk.internal.vm=io.questdb,io.questdb.test',
+           '--module-source-path', f'io.questdb={main}', '--module-source-path', f'io.questdb.test={test}',
+           '--module-path', cp, '-d', classes, f'@{sources}']
+    log = out / 'logs' / 'javac.log'
+    code, text = run_logged(cmd, log, tree.root)
+    if code != 0 and not parse_javac(text, tree.root):
+        raise ToolError(f'javac failed without a diagnostic it can parse; see {log}')
+    return text
 
 
 def cargo(tree, out):
@@ -803,7 +894,8 @@ def cmake(tree, out):
     code, text = run_logged(['cmake', '-S', 'core', '-B', build, '-DCMAKE_BUILD_TYPE=Release'], out / 'logs' / 'cmake-configure.log', tree.root)
     if code != 0:
         raise ToolError(f'cmake could not configure the native build; see {out / "logs" / "cmake-configure.log"}')
-    code, text = run_logged(['cmake', '--build', build, '--config', 'Release', '-j', str(os.cpu_count() or 4)], log, tree.root)
+    # keep going past a failing file, so every switch the compiler lists reports in one run
+    code, text = run_logged(['cmake', '--build', build, '--config', 'Release', '-j', str(os.cpu_count() or 4), '--', '-k'], log, tree.root)
     if code != 0 and not parse_cmake(text, tree.root):
         raise ToolError(f'the native build failed without a diagnostic it can parse; see {log}')
     return text
@@ -1062,8 +1154,8 @@ def failure_items(failure, sites, facts, tree=None):
                           f'{lead} for {_type} at {site}: {_decision}', row.site if row else 'unmapped'))
     if items:
         return items
-    kept = sites.by_kept_text(text)
     contexts = KIT_CONTEXT.findall(text)
+    kept = sites.by_kept_text(text, contexts[0][1] if contexts else '')
     if cls.startswith('TypeConformance') and cls != 'TypeConformanceTypesTest':
         if contexts:
             _t, row_label, path, mode = contexts[0]
@@ -1078,17 +1170,26 @@ def failure_items(failure, sites, facts, tree=None):
         if rows:
             row = rows[0]
             return [Item('kit', row.decision if row.decision in DECISIONS else 'implement-pair', location, message, row.site)]
+        row, decision = sites.by_layer(path or cls)
+        if row is not None:
+            return [Item('kit', decision, location, message, row.site)]
         return [Item('kit', 'implement-pair', location, message, 'unmapped')]
     location = f'`{cls}#{test}`'
     message = failure.message or failure.text
+    # a precise match (a kept text, or the function a coverage test names) is located at its site;
+    # a test that only names the layer stays located at itself, so each failing test is an item
     row = kept
     if row is None:
         m = re.search(r'\b([a-z][A-Za-z0-9]*): \S+ is not handled', text)
         if m:
             row = next((r for r in sites.rows if r.method == m.group(1)), None)
+    if row is not None:
+        return [Item('coverage', 'implement-pair', site_location(tree, row) or location, message, row.site)]
+    row, decision = sites.by_layer(f'{cls}#{test}')
     if row is None:
         row = next(iter(sites.by_instrument(cls)), None)
-    return [Item('coverage', 'implement-pair', site_location(tree, row) or location, message, row.site if row else 'unmapped')]
+        decision = row.decision if row is not None and row.decision in DECISIONS else 'implement-pair'
+    return [Item('coverage', decision, location, message, row.site if row else 'unmapped')]
 
 
 def manual_items(readme_text, done_text=None):
@@ -1193,8 +1294,7 @@ def cmd_run(args, tree):
 
     items, notes, skipped = [], [], []
     cp = classpath(tree, out)
-    for group_text in javac(tree, out, cp):
-        items += [build_item('build-java', d, sites, tree, driver_file) for d in parse_javac(group_text, tree.root)]
+    items += [build_item('build-java', d, sites, tree, driver_file) for d in parse_javac(javac(tree, out, cp), tree.root)]
     if args.skip_native:
         skipped += ['build-rust', 'build-c']
         notes.append('build-rust and build-c did not run (--skip-native)')
