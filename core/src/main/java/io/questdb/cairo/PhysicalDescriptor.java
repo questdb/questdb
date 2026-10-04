@@ -70,16 +70,17 @@ public final class PhysicalDescriptor {
      * The per-row arm that compares or sort-encodes values of this type: the accessor family's
      * opcode when the type orders like the family's namesake, which every existing type does
      * because each is its own family's namesake. A type that reads through a family but orders
-     * otherwise (an unsigned type on INT's accessor, for example) has no arm yet: it throws, and
-     * the first such type adds its arm here (F45).
+     * otherwise (an unsigned type on INT's accessor, for example) has no arm yet: it throws,
+     * naming the type, the site and the decision, and the first such type adds its arm here.
+     *
+     * @param site the label of the asking site, as the refusal names it
      */
-    public static short compareOpcode(TypeDriver driver) {
-        final Accessor accessor = driver.getAccessor();
+    public static short compareOpcode(TypeDriver driver, CharSequence site) {
         if (!isOrderedLikeFamily(driver)) {
-            throw CairoException.critical(0).put("no compare arm [accessor=").put(accessor.name())
-                    .put(", arithmetic=").put(driver.getArithmetic().name()).put(']');
+            throw CairoException.critical(0).put("no compare arm for ").put(driver.getTypeName()).put(" at ").put(site)
+                    .put(": add a compare arm or declare the type ordered like its family");
         }
-        return accessor.opcode();
+        return driver.getAccessor().opcode();
     }
 
     /**

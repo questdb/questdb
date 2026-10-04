@@ -212,7 +212,7 @@ public class RecordComparatorCompiler {
         return switch (driver.getAccessor()) {
             case BOOLEAN, BYTE, DOUBLE, FLOAT, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, INT, IPv4, LONG, DATE, TIMESTAMP,
                  SHORT, CHAR, STRING, LONG256, UUID, LONG128, VARCHAR, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                 DECIMAL128, DECIMAL256, SYMBOL -> PhysicalDescriptor.compareOpcode(driver);
+                 DECIMAL128, DECIMAL256, SYMBOL -> PhysicalDescriptor.compareOpcode(driver, "ORDER BY");
             // no order
             case BINARY, ARRAY, INTERVAL ->
                     throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));

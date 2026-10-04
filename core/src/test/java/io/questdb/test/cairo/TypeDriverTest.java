@@ -196,6 +196,25 @@ public class TypeDriverTest {
     }
 
     @Test
+    public void testCompareOpcodeNamesTypeSiteAndDecision() {
+        // an unsigned type on INT's accessor reads through INT's getter but does not order as INT
+        // does, so the compare arm refuses it, naming the type, the site and the decision
+        final TypeDriver unsigned = LookAlikeTypeDriver.unsignedInt();
+        Assert.assertFalse(PhysicalDescriptor.isOrderedLikeFamily(unsigned));
+        try {
+            PhysicalDescriptor.compareOpcode(unsigned, "ORDER BY");
+            Assert.fail("no compare arm expected for " + unsigned.getTypeName());
+        } catch (CairoException e) {
+            TestUtils.assertEquals(
+                    "no compare arm for UINT32 at ORDER BY: add a compare arm or declare the type ordered like its family",
+                    e.getFlyweightMessage()
+            );
+        }
+        // a never-null INT orders as INT does: it takes INT's arm
+        Assert.assertEquals(ColumnType.INT, PhysicalDescriptor.compareOpcode(LookAlikeTypeDriver.neverNullInt(), "ORDER BY"));
+    }
+
+    @Test
     public void testEncodedTypesResolveToTheTagDriver() {
         Assert.assertSame(GeoHashTypeDriver.GEOBYTE, ColumnType.getTypeDriver(ColumnType.getGeoHashTypeWithBits(5)));
         Assert.assertSame(GeoHashTypeDriver.GEOSHORT, ColumnType.getTypeDriver(ColumnType.getGeoHashTypeWithBits(8)));
