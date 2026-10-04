@@ -444,7 +444,9 @@ table is encountered. Per table (`recoverTable`): require
 `_snapshot` → inspect both checksummed slots newest-cut first (the unchecksummed selector may tear) → validate the
 selected generation's manifest, table/txn/column-version identities, payload sizes and
 checksums → use the newest trustworthy candidate (falling back to the previous generation if
-the newest payload or manifest is torn) → restore matching **`_meta`**, then **`_txn`**, then **`_cv`** (`ff.copy`
+the newest payload or manifest is torn) → if the live `_txn`, `_cv` and (metadata-bound) `_meta` are already
+byte-for-byte the epoch copies, which is what a clean shutdown leaves, repair the selector when needed, pin the
+epoch and stop: nothing is copied, fsync'd or counted → otherwise restore matching **`_meta`**, then **`_txn`**, then **`_cv`** (`ff.copy`
 epoch→live) → `fsync` the restored files and directory → repair a reverted/invalid marker selector when needed → `bumpRecoveryIncarnation`. Boot then re‑applies
 the WAL `(epochSeqTxn, frontier]` on top.
 

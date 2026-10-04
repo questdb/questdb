@@ -357,6 +357,11 @@ caveat); epoch-advances at `ApplyWal2TableJob.java:791`; recovery-events at
   next boot (and how much WAL is being retained).
 - **`recoveryIncarnation` / `questdb_wal_adaptive_recovery_events_total`** are your
   crash detector: an unexpected increment means a table was recovered at boot.
+  An orderly shutdown does not increment them: the writer's close epoch leaves the
+  table at its epoch cut, and recovery leaves such a table alone. With
+  `cairo.adaptive.epoch.flush.on.close=false` or a negative
+  `cairo.adaptive.epoch.interval`, a table with an un-epoched tail is still rolled
+  back to its epoch after an orderly shutdown, and counts.
 
 ### Alerting
 

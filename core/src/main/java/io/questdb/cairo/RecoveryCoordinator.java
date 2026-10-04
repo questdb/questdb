@@ -36,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
 /**
@@ -49,7 +50,9 @@ import io.questdb.std.str.Path;
  * matching metadata and copies {@code _txn.epoch}->{@code _txn} / {@code _cv.epoch}->{@code _cv},
  * fsyncing them (and the table dir) BEFORE proceeding, so the table
  * opens at exactly {@code epoch.{seqTxn,txn}}. The existing boot path then idempotently re-applies
- * {@code (epoch.seqTxn, frontier]} from the durable WAL.
+ * {@code (epoch.seqTxn, frontier]} from the durable WAL. A table whose live files are already byte-for-byte
+ * the epoch copies, which is what a clean shutdown leaves, has nothing to restore: recovery only pins its
+ * epoch, and does not count it as a recovery.
  * <p>
  * This is the keystone that makes ADAPTIVE crash-safe end to end: under ADAPTIVE the table apply is
  * LAZY (partition columns are non-durable between epochs — see {@link CommitMode#appliesColumnSync}),
@@ -342,6 +345,37 @@ public class RecoveryCoordinator {
         }
     }
 
+    /**
+     * Whether the live {@code fileName} is byte-for-byte the epoch's copy of it. Any failure to compare
+     * answers {@code false}, which sends the caller down the restore.
+     */
+    private boolean isLiveFileAtEpoch(TableToken token, Path src, Path dst, CharSequence fileName, int epochGeneration) {
+        epochCopyPath(src, token, fileName, epochGeneration);
+        tablePath(dst, token).concat(fileName);
+        final long size = ff.length(src.$());
+        if (size <= 0 || ff.length(dst.$()) != size) {
+            return false;
+        }
+        try (MemoryCMR epochMem = Vm.getCMRInstance(ff, src.$(), size, MemoryTag.MMAP_TABLE_READER);
+             MemoryCMR liveMem = Vm.getCMRInstance(ff, dst.$(), size, MemoryTag.MMAP_TABLE_READER)) {
+            return Vect.memeq(epochMem.addressOf(0), liveMem.addressOf(0), size);
+        } catch (CairoException | CairoError e) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether the table already sits exactly at the selected epoch cut: the live {@code _txn}, {@code _cv}
+     * and, for a metadata-bound generation, {@code _meta} are byte-for-byte the epoch's copies. A clean
+     * shutdown leaves this state. {@code _txn} goes first: every commit after the epoch advances it, so after
+     * a crash it is the file that differs.
+     */
+    private boolean isLiveStateAtEpoch(TableToken token, Path src, Path dst, int epochGeneration, boolean metadataBound) {
+        return isLiveFileAtEpoch(token, src, dst, TableUtils.TXN_FILE_NAME, epochGeneration)
+                && isLiveFileAtEpoch(token, src, dst, TableUtils.COLUMN_VERSION_FILE_NAME, epochGeneration)
+                && (!metadataBound || isLiveFileAtEpoch(token, src, dst, TableUtils.META_FILE_NAME, epochGeneration));
+    }
+
     private boolean isMarkedForRestoreEnrolment(TableToken token, Path dir) {
         tablePath(dir, token).concat(RESTORE_ENROL_FILE_NAME);
         return ff.exists(dir.$());
@@ -458,6 +492,23 @@ public class RecoveryCoordinator {
             throw CairoException.critical(ff.errno())
                     .put("could not repair interrupted metadata swap [table=").put(token.getTableName())
                     .put(", from=").put(prevPath).put(", to=").put(metaPath).put(']');
+        }
+    }
+
+    /**
+     * The selector word is unchecksummed and may have reverted, or its selected generation may have failed
+     * payload validation. Re-publishes the generation recovery selected, which the table now sits on, before
+     * any later epoch can overwrite that last trustworthy payload as the nominally "inactive" generation.
+     */
+    private void republishSelectedGeneration(TableToken token, Path dir, SnapshotMarker.Candidate selected) {
+        tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+            marker.of(dir.$());
+            if (selected.generation == SnapshotMarker.LEGACY_GENERATION) {
+                marker.write(selected.epochSeqTxn, selected.epochTxn, selected.epochTs);
+            } else {
+                marker.write(selected.epochSeqTxn, selected.epochTxn, selected.epochTs, selected.generation);
+            }
         }
     }
 
@@ -583,6 +634,23 @@ public class RecoveryCoordinator {
         // metadata after the epoch. The metadata swap is fsync'd and renamed before pointer restoration.
         final boolean metadataBound = selected.formatVersion != SnapshotMarker.LEGACY_FORMAT_VERSION
                 && DurableEpochManifest.isMetadataBound(configuration, token, epochGeneration);
+
+        // A clean shutdown leaves nothing to restore: the writer's close epoch copies the live files as they
+        // stand, and nothing writes them after it. Restoring identical bytes changes no state, but it rewrote
+        // and fsynced every enrolled table at every boot and counted each one as a recovery. The comparison
+        // is exact, so any difference, a torn live file included, still takes the restore below. Skipping the
+        // fsyncs loses nothing: nothing relies on the live files being durable before the next epoch fsyncs
+        // them, and until then a crash recovers from the immutable epoch copies again.
+        if (isLiveStateAtEpoch(token, src, dst, epochGeneration, metadataBound)) {
+            if (repairMarkerSelector) {
+                republishSelectedGeneration(token, dir, selected);
+            }
+            pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn);
+            LOG.info().$("adaptive epoch matches live state, nothing to restore [table=").$(token)
+                    .$(", epochSeqTxn=").$(epochSeqTxn).I$();
+            return;
+        }
+
         if (metadataBound) {
             restoreMetadataFile(token, src, dst, epochGeneration);
             fsyncDir(token, dir);
@@ -612,18 +680,7 @@ public class RecoveryCoordinator {
         fsyncFile(token, dst, TableUtils.COLUMN_VERSION_FILE_NAME);
         fsyncDir(token, dir);
         if (repairMarkerSelector) {
-            // The selector word is unchecksummed and may have reverted, or its selected generation may have
-            // failed payload validation. Re-publish the generation we actually restored before any later
-            // epoch can overwrite that last trustworthy payload as the nominally "inactive" generation.
-            tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                marker.of(dir.$());
-                if (selected.generation == SnapshotMarker.LEGACY_GENERATION) {
-                    marker.write(selected.epochSeqTxn, selected.epochTxn, selected.epochTs);
-                } else {
-                    marker.write(selected.epochSeqTxn, selected.epochTxn, selected.epochTs, selected.generation);
-                }
-            }
+            republishSelectedGeneration(token, dir, selected);
         }
         if (metadataBound) {
             // epochIsAheadOfLiveTxn and runtime users may have populated pooled/catalogue metadata from the

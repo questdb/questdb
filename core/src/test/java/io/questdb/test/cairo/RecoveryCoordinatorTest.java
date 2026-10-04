@@ -382,6 +382,27 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A clean restart has nothing to recover. The writer's close epoch copies the live {@code _meta},
+     * {@code _cv} and {@code _txn} as they stand, so recovery finds the live files already at the epoch cut.
+     * It must not rewrite or fsync them, and must not count the boot as a recovery, which operators read as
+     * a crash. It still pins the epoch, which protects the cut and bounds WAL purge.
+     */
+    @Test
+    public void testCleanRestartRestoresNothing() throws Exception {
+        assertCleanRestartRestoresNothing("clean_restart", false);
+    }
+
+    /**
+     * {@link #testCleanRestartRestoresNothing()} with the marker's unchecksummed selector reverted to the
+     * previous slot. Recovery has nothing to restore, but must still re-publish the generation the live
+     * state sits on, or a later epoch would overwrite it as the nominally inactive generation.
+     */
+    @Test
+    public void testCleanRestartWithRevertedSelectorRepairsSelector() throws Exception {
+        assertCleanRestartRestoresNothing("reverted_selector", true);
+    }
+
     @Test
     public void testRecoveryRestoresMetadataMatchingEpochTxnAfterStructuralWal() throws Exception {
         assertMemoryLeak(() -> {
@@ -1796,6 +1817,116 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 p.put(suffix);
             }
             return ff.exists(p.$());
+        }
+    }
+
+    private void assertCleanRestartRestoresNothing(String tableName, boolean isSelectorReverted) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + tableName + " VALUES ('2024-09-01T00:00:00.000000Z', 1), ('2024-09-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName(tableName);
+                // The graceful close folds the applied tail into a final epoch at the live cut.
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                final long seqTxn = readTxnSeqTxn(tt);
+                final FilesFacade files = engine.getConfiguration().getFilesFacade();
+                final int generation;
+                try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    marker.of(p.$());
+                    Assert.assertTrue(marker.tryLoad());
+                    Assert.assertEquals("precondition: the close epoch names the live cut", seqTxn, marker.getEpochSeqTxn());
+                    generation = marker.getGeneration();
+                }
+                if (isSelectorReverted) {
+                    final long version;
+                    try (Path p = new Path()) {
+                        p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                        final long fd = files.openRO(p.$());
+                        Assert.assertTrue(fd > -1);
+                        try {
+                            version = files.readNonNegativeLong(fd, SnapshotMarker.OFFSET_VERSION);
+                        } finally {
+                            files.close(fd);
+                        }
+                    }
+                    Assert.assertTrue("precondition: the creation baseline left a previous slot", version > 0);
+                    pokeLong(files, tt, TableUtils.SNAPSHOT_FILE_NAME, SnapshotMarker.OFFSET_VERSION, version - 1);
+                }
+                engine.getTableSequencerAPI().resetForReboot(tt);
+
+                final AtomicInteger rewrites = new AtomicInteger();
+                final AtomicInteger fsyncs = new AtomicInteger();
+                final FilesFacade ffBefore = AbstractCairoTest.ff;
+                AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+                    @Override
+                    public int copy(LPSZ from, LPSZ to) {
+                        rewrites.incrementAndGet();
+                        return super.copy(from, to);
+                    }
+
+                    @Override
+                    public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+                        rewrites.incrementAndGet();
+                        return super.copyData(srcFd, destFd, offsetSrc, length);
+                    }
+
+                    @Override
+                    public void fsync(long fd) {
+                        fsyncs.incrementAndGet();
+                        super.fsync(fd);
+                    }
+
+                    @Override
+                    public void fsyncAndClose(long fd) {
+                        fsyncs.incrementAndGet();
+                        super.fsyncAndClose(fd);
+                    }
+                };
+                final long eventsBefore = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                } finally {
+                    AbstractCairoTest.ff = ffBefore;
+                }
+
+                Assert.assertEquals("live files already at the epoch cut must not be rewritten", 0, rewrites.get());
+                if (!isSelectorReverted) {
+                    Assert.assertEquals("live files already at the epoch cut must not be fsynced", 0, fsyncs.get());
+                }
+                final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                Assert.assertEquals("a clean restart is not a recovery", 0L, tracker.getRecoveryIncarnation());
+                Assert.assertEquals("a clean restart is not a recovery",
+                        eventsBefore, TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total"));
+                Assert.assertEquals("the epoch must still bound WAL purge", seqTxn, tracker.getDurableEpochSeqTxn());
+                Assert.assertTrue("the epoch must still be pinned", tracker.getPinnedEpochTxn() >= 0);
+                Assert.assertEquals(seqTxn, readTxnSeqTxn(tt));
+                try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    marker.of(p.$());
+                    Assert.assertTrue(marker.tryLoad());
+                    Assert.assertTrue("the selector must name the live generation", marker.wasLoadedFromSelector());
+                    Assert.assertEquals(seqTxn, marker.getEpochSeqTxn());
+                    Assert.assertEquals(generation, marker.getGeneration());
+                }
+
+                execute("INSERT INTO " + tableName + " VALUES ('2024-09-03T00:00:00.000000Z', 3)");
+                drainWalQueue();
+                assertQuery("SELECT * FROM " + tableName)
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tv
+                                2024-09-01T00:00:00.000000Z\t1
+                                2024-09-02T00:00:00.000000Z\t2
+                                2024-09-03T00:00:00.000000Z\t3
+                                """);
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         }
     }
 
