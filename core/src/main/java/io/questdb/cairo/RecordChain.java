@@ -512,6 +512,9 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
 
         @Override
         public long getColumnAddress(int columnIndex) {
+            // getOffsetOfColumn() less varOffset, which is 0: peekSequentialRecordBlock() offers no
+            // block over a chain with a variable-size column
+            assert varOffset == 0;
             return mem.addressOf(rowToDataOffset(firstOffset) + columnOffsets[columnIndex]);
         }
 

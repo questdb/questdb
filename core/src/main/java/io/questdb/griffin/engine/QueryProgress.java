@@ -816,6 +816,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public boolean supportsRecordBlocks() {
+            return base.supportsRecordBlocks();
+        }
+
+        @Override
         public void toTop() {
             base.toTop();
         }

@@ -45,12 +45,17 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
+// Final: peekRecordBlock() exposes the frames' column memory as the rows hasNext() returns. A
+// subclass that changed the rows in hasNext() or getRecord() would offer blocks that bypass it.
+public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
     private FrameBlock block;
+    // the frame peekRecordBlock() last found not to be NATIVE, so that the rows of a Parquet
+    // frame do not each pay for a frame navigation; -1 for none
+    private int blockRefusedFrameIndex = -1;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
@@ -186,9 +191,14 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (rows < 1) {
             return null;
         }
+        final int frameIndex = frameCount - 1;
+        if (frameIndex == blockRefusedFrameIndex) {
+            return null;
+        }
         // the record's frame is the scan's current one, as hasNext() leaves it
-        frameMemoryPool.navigateTo(frameCount - 1, recordA);
+        frameMemoryPool.navigateTo(frameIndex, recordA);
         if (recordA.getFrameFormat() != PartitionFormat.NATIVE) {
+            blockRefusedFrameIndex = frameIndex;
             return null;
         }
         if (block == null) {
@@ -219,6 +229,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         rowCursor = Misc.free(rowCursor);
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
+        blockRefusedFrameIndex = -1;
         // prepare for page frame iteration
         super.init(sqlExecutionContext.getMemoryTracker());
     }
@@ -241,6 +252,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void skipRecordBlock(int rowCount) {
+        assert rowCursor instanceof PageFrameFwdRowCursor;
         ((PageFrameFwdRowCursor) rowCursor).skip(rowCount);
         rowsProducedSinceSkip += rowCount;
     }
@@ -333,6 +345,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
     }
 
+    /**
+     * A plain forward scan, the only one {@link #peekRecordBlock(int)} serves: its row cursors are
+     * {@link PageFrameFwdRowCursor}s, and it evaluates no filter.
+     */
+    @Override
+    public boolean supportsRecordBlocks() {
+        return filter == null && rowCursorFactory instanceof PageFrameRowCursorFactory f && f.isForwardScan();
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Page frame scan");
@@ -347,6 +368,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         isExhausted = false;
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
+        blockRefusedFrameIndex = -1;
         super.toTop();
     }
 
@@ -363,6 +385,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
         @Override
         public long getColumnAddress(int columnIndex) {
+            // getPageAddress() gives 0 for a column top over the whole frame and for a column
+            // read with a type cast; both are then read through getRecordAt()
             final int columnType = metadata.getColumnType(columnIndex);
             if (ColumnType.isVarSize(columnType)) {
                 return 0;

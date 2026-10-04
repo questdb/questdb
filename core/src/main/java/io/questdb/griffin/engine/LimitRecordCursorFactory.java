@@ -326,6 +326,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public boolean supportsRecordBlocks() {
+            return base.supportsRecordBlocks();
+        }
+
+        @Override
         public void toTop() {
             ensureBoundsResolved();
             base.toTop();

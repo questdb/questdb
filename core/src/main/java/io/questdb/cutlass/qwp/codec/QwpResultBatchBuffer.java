@@ -173,6 +173,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final QwpEgressColumnDef[] defs = defsArr;
         final SymbolTable[] sts = symbolTablesArr;
         int rows = block.getRowCount();
+        if (currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+            // Already past the budget, which only a budget below the delta section's fixed bytes
+            // allows: the row path stops after its next row whatever it adds, and so does this.
+            // Otherwise the delta grows only with the dictionary, which the SYMBOL loops check.
+            rows = 1;
+        }
         if (symbolColumnCount > 0) {
             rows = appendBlockSymbols(block, rows, dictBudgetWireBytes);
         }

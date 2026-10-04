@@ -355,7 +355,8 @@ final class QwpColumnScratch implements QuietCloseable {
      * BOOLEAN column bulk append: reads {@code n} raw bytes from
      * {@code srcAddr}, {@code stride} bytes apart (QuestDB native layout: 1 byte per row, 0 or 1) and
      * bit-packs them into {@code valuesAddr} starting at the current
-     * {@code nonNullCount}. BOOLEAN has no null representation so rowCount /
+     * {@code nonNullCount}: a byte of 1 is true, any other false, as the record getters
+     * ({@code getBool()}) read it. BOOLEAN has no null representation so rowCount /
      * nonNullCount advance by {@code n}.
      */
     void appendColumnBoolean(long srcAddr, int n, long stride) {
@@ -370,7 +371,7 @@ final class QwpColumnScratch implements QuietCloseable {
                 // single-row appendBool convention.
                 Unsafe.putByte(byteAddr, (byte) 0);
             }
-            if (Unsafe.getByte(srcAddr + i * stride) != 0) {
+            if (Unsafe.getByte(srcAddr + i * stride) == 1) {
                 byte cur = Unsafe.getByte(byteAddr);
                 Unsafe.putByte(byteAddr, (byte) (cur | (1 << (bitIdx & 7))));
             }

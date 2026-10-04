@@ -252,6 +252,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // streamingPageFrameRowHi). Cleared on {@link #endStreaming}.
     private PageFrame streamingCurrentPageFrame;
     private RecordCursor streamingCursor;
+    // streamingCursor.supportsRecordBlocks(), asked once when the cursor is handed over
+    private boolean streamingCursorSupportsBlocks;
     private RecordCursorFactory streamingFactory;
     private PageFrameCursor streamingPageFrameCursor;
     private int streamingPageFrameIndex;
@@ -408,6 +410,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingRequestId = requestId;
         this.streamingFactory = factory;
         this.streamingCursor = cursor;
+        this.streamingCursorSupportsBlocks = cursor != null && cursor.supportsRecordBlocks();
         this.streamingColumnCount = columnCount;
         this.streamingBatchSeq = 0;
         this.streamingBatchSeqCommitted = false;
@@ -648,6 +651,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCurrentPageFrame = null;
         final RecordCursor streamingCursor = this.streamingCursor;
         this.streamingCursor = null;
+        this.streamingCursorSupportsBlocks = false;
         final PageFrameCursor streamingPageFrameCursor = this.streamingPageFrameCursor;
         this.streamingPageFrameCursor = null;
         final RecordCursorFactory streamingFactory = this.streamingFactory;
@@ -877,6 +881,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public boolean isStreamingCreditSuspended() {
         return streamingCreditSuspended;
+    }
+
+    /**
+     * Whether the streaming cursor can offer {@link io.questdb.cairo.sql.RecordBlock}s, see
+     * {@link RecordCursor#supportsRecordBlocks()}, as it answered when streaming began.
+     */
+    public boolean isStreamingCursorSupportingBlocks() {
+        return streamingCursorSupportsBlocks;
     }
 
     public boolean isStreamingFactoryCacheable() {

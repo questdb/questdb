@@ -27,6 +27,8 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 
+import java.nio.ByteOrder;
+
 /**
  * Server-side Gorilla delta-of-delta encoder for timestamp columns in QWP
  * egress {@code RESULT_BATCH} frames. Mirrors the client-side ingress encoder;
@@ -58,7 +60,6 @@ public class QwpGorillaEncoder {
     private static final int BUCKET_7BIT_MIN = -64;
     private static final int BUCKET_9BIT_MAX = 255;
     private static final int BUCKET_9BIT_MIN = -256;
-    private final QwpBitWriter bitWriter = new QwpBitWriter();
 
     public QwpGorillaEncoder() {
     }
@@ -150,34 +151,6 @@ public class QwpGorillaEncoder {
     }
 
     /**
-     * Encodes a single delta-of-delta value using bucket selection.
-     */
-    public void encodeDoD(long deltaOfDelta) {
-        int bucket = getBucket(deltaOfDelta);
-        switch (bucket) {
-            case 0:
-                bitWriter.writeBit(0);
-                break;
-            case 1:
-                bitWriter.writeBits(0b01, 2);
-                bitWriter.writeSigned(deltaOfDelta, 7);
-                break;
-            case 2:
-                bitWriter.writeBits(0b011, 3);
-                bitWriter.writeSigned(deltaOfDelta, 9);
-                break;
-            case 3:
-                bitWriter.writeBits(0b0111, 4);
-                bitWriter.writeSigned(deltaOfDelta, 12);
-                break;
-            default:
-                bitWriter.writeBits(0b1111, 4);
-                bitWriter.writeSigned(deltaOfDelta, 32);
-                break;
-        }
-    }
-
-    /**
      * Encodes {@code count} contiguous int64 timestamps from {@code srcAddress}
      * into {@code destAddress} using Gorilla compression. First two timestamps
      * are uncompressed (8 bytes each); remainder is bit-packed delta-of-delta.
@@ -223,9 +196,11 @@ public class QwpGorillaEncoder {
             return pos;
         }
 
-        // The bits encodeDoD() would write through the bit writer, packed LSB-first into a
-        // 64-bit accumulator: a value's prefix and payload in one step, and 32 bits at a time
-        // to memory, little-endian, which is the byte order the bit writer's bytes have.
+        // The bits a QwpBitWriter would write, packed LSB-first into a 64-bit accumulator: a
+        // value's prefix and payload in one step, and 32 bits at a time to memory. putWord()'s
+        // Unsafe.putInt() stores them little-endian, the byte order of the bit writer's bytes,
+        // on the little-endian platforms QuestDB runs on.
+        assert ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
         long p = destAddress + pos;
         final long limit = destAddress + capacity;
         long bits = 0;

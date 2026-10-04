@@ -32,7 +32,8 @@ package io.questdb.cairo.sql;
  * memory, the value of row {@code r} at {@code address + r * stride}, in the column type's
  * fixed-size storage layout: the same bits the {@link Record} getter of that type returns. A
  * SYMBOL column holds the symbol keys, resolved by the cursor's
- * {@link RecordCursor#getSymbolTable(int) symbol table}; a BOOLEAN one, one byte per row. A
+ * {@link RecordCursor#getSymbolTable(int) symbol table}; a BOOLEAN one, one byte per row, true
+ * when it is 1, as {@link Record#getBool(int)} reads it. A
  * column with address 0 (any variable-size column, and any column the producer does not lay out
  * this way) is read through {@link #getRecordAt(int)}.
  * <p>

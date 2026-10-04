@@ -282,6 +282,9 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * <p>
      * A cursor that returns a block must return exactly the rows, values and symbol keys its
      * {@code hasNext()} and {@link #getRecord()} would. The default offers none.
+     * <p>
+     * A consumer asks {@link #supportsRecordBlocks()} once per cursor open and calls this method
+     * only when it returned true, so that results that never offer a block pay nothing per row.
      *
      * @param maxRows the most rows the consumer wants, at least 1
      * @return the block, or null
@@ -447,6 +450,17 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
         while (rowCount.get() > 0 && hasNext()) {
             rowCount.dec();
         }
+    }
+
+    /**
+     * Whether {@link #peekRecordBlock(int)} can return a block at any point of this cursor's
+     * current open. Constant from {@code getCursor()} until the cursor closes, so a consumer
+     * asks once per open; when false, {@code peekRecordBlock} always returns null and need not be
+     * called. A cursor that offers blocks returns true, and a wrapper that passes its base's
+     * blocks through returns its base's answer. The default is false.
+     */
+    default boolean supportsRecordBlocks() {
+        return false;
     }
 
     /**
