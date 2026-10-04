@@ -37,7 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
-public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory implements KeyMajorScanFactory {
     private KeyMajorPageFrameRecordCursor cursor;
 
     public SortedSymbolIndexRecordCursorFactory(
@@ -71,6 +71,11 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     public boolean followedOrderByAdvice() {
         // the fact this factory is created means we are following order by advice
         return true;
+    }
+
+    @Override
+    public int getKeyMajorColumnIndex() {
+        return cursor.getRowCursorFactory().getIndexColumnIndex();
     }
 
     // This factory exists to serve "ORDER BY symbol[, timestamp]". It walks the symbol

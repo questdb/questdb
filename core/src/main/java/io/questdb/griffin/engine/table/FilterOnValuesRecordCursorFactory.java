@@ -50,7 +50,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory implements KeyMajorScanFactory {
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
@@ -130,6 +130,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     @Override
     public boolean followedOrderByAdvice() {
         return followedOrderByAdvice;
+    }
+
+    @Override
+    public int getKeyMajorColumnIndex() {
+        return cursor instanceof KeyMajorPageFrameRecordCursor ? columnIndex : -1;
     }
 
     @Override

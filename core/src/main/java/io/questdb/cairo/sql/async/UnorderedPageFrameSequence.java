@@ -104,6 +104,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private int queuedCount;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
+    private SymbolTableSource symbolTableSource;
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
 
     public UnorderedPageFrameSequence(
@@ -212,24 +213,71 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      * tasks used.
      */
     public void dispatchRoundAndAwait(UnorderedPageFrameReducer roundReducer, LongList taskRowCounts) {
+        dispatchRound(roundReducer, taskRowCounts);
+        awaitRound();
+    }
+
+    /**
+     * Dispatches a round the way {@link #dispatchRoundAndAwait} does, but returns once the round's
+     * tasks are queued, so the caller can do other work while the workers run them. The tasks the
+     * queue had no room for have run on the calling thread by then. {@link #awaitRound()} must
+     * follow before the next round, before {@link #reset()} and before the caller releases what the
+     * tasks use, also when the caller abandons the round: {@link #cancel(int)} first then makes
+     * the wait short. {@code taskRowCounts} must not change until then. When this throws, no task
+     * of the round is still queued or running, and no {@link #awaitRound()} is due.
+     */
+    public void dispatchRound(UnorderedPageFrameReducer roundReducer, LongList taskRowCounts) {
         assert this.roundReducer == null && (queuedCount == 0 || doneLatch.done(queuedCount));
         this.roundReducer = roundReducer;
         this.roundTaskRowCounts = taskRowCounts;
         try {
-            dispatchAndAwait(taskRowCounts.size());
+            dispatchTasks(taskRowCounts.size());
         } catch (Throwable th) {
-            // The dispatch loop can throw with tasks still queued; they must not outlive the round.
-            try {
-                cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-                await();
-            } catch (Throwable drainFailure) {
-                th.addSuppressed(drainFailure);
+            abandonRound(th);
+            throw th;
+        }
+    }
+
+    /**
+     * Waits for the round {@link #dispatchRound} started, taking queued tasks of it, or of other
+     * sequences, on the calling thread meanwhile. Throws the first error a task raised, or the
+     * cancellation. Whether this returns or throws, no task of the round is still queued or
+     * running.
+     */
+    public void awaitRound() {
+        assert roundReducer != null;
+        try {
+            if (roundTaskRowCounts.size() > 0) {
+                awaitTasks();
             }
-            this.roundReducer = null;
-            this.roundTaskRowCounts = null;
+        } catch (Throwable th) {
+            abandonRound(th);
             throw th;
         }
         // Every task counted down, so the next round or the frames start from a clean latch.
+        endRound();
+    }
+
+    /**
+     * True while a round {@link #dispatchRound} started still waits for its {@link #awaitRound()}.
+     */
+    public boolean isRoundPending() {
+        return roundReducer != null;
+    }
+
+    private void abandonRound(Throwable th) {
+        // The dispatch loop can throw with tasks still queued; they must not outlive the round.
+        try {
+            cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+            await();
+        } catch (Throwable drainFailure) {
+            th.addSuppressed(drainFailure);
+        }
+        this.roundReducer = null;
+        this.roundTaskRowCounts = null;
+    }
+
+    private void endRound() {
         this.roundReducer = null;
         this.roundTaskRowCounts = null;
         doneLatch.reset();
@@ -238,8 +286,17 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     private void dispatchAndAwait(int taskCount) {
+        dispatchTasks(taskCount);
+        if (taskCount > 0) {
+            awaitTasks();
+        }
+    }
+
+    // Phase 1 of a dispatch: queues the tasks, running those the queue has no room for locally.
+    private void dispatchTasks(int taskCount) {
         hasTailSpun = false;
         if (taskCount == 0) {
+            queuedCount = 0;
             return;
         }
 
@@ -346,7 +403,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                 dispatcher.releasePublication();
             }
         }
+    }
 
+    // Phases 2 and 3 of a dispatch: waits for the queued tasks and raises their first error.
+    private void awaitTasks() {
+        final int queued = queuedCount;
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        final boolean canPark = dispatcher != null && isFiberSuspendable();
         // Phase 2: Wait for all queued frames to complete.
         final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         while (true) {
@@ -448,7 +511,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     public SymbolTableSource getSymbolTableSource() {
-        return frameCursor;
+        return symbolTableSource;
     }
 
     /**
@@ -488,6 +551,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
+            symbolTableSource = frameCursor;
             frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             id = ID_SEQ.incrementAndGet();
@@ -500,12 +564,43 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             atom.init(frameCursor, executionContext);
         } catch (TableReferenceOutOfDateException e) {
             frameCursor = Misc.freeIfCloseable(frameCursor);
+            symbolTableSource = null;
             throw e;
         } catch (Throwable th) {
             LOG.error().$("could not initialize unordered page frame sequence [error=").$(th).I$();
             frameCursor = Misc.free(frameCursor);
+            symbolTableSource = null;
             throw th;
         }
+        return this;
+    }
+
+    /**
+     * Prepares a sequence that dispatches only rounds, see {@link #dispatchRound}, over rows its
+     * caller scans itself: it opens no page frame cursor and has no frames. The symbol table
+     * source is the caller's scan, which the rounds' tasks read through. The caller's atom is
+     * initialized here, as {@link #of(RecordCursorFactory, SqlExecutionContext, int)} would.
+     */
+    public UnorderedPageFrameSequence<T> ofRounds(
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        assert frameCursor == null;
+        sqlExecutionContext = executionContext;
+        memoryTracker = executionContext.getMemoryTracker();
+        startTime = clock.getTicks();
+        isUninterruptible = executionContext.isUninterruptible();
+        if (localRecord == null) {
+            localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        }
+        this.symbolTableSource = symbolTableSource;
+        id = ID_SEQ.incrementAndGet();
+        resetCancellation();
+        doneLatch.reset();
+        reduceStartedCounter.set(0);
+        workStealingStrategy.of(reduceStartedCounter);
+        errorState.clear();
+        atom.init(symbolTableSource, executionContext);
         return this;
     }
 
@@ -563,6 +658,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameAddressCacheToFree);
         final PageFrameCursor frameCursorToFree = frameCursor;
         frameCursor = null;
+        symbolTableSource = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameCursorToFree);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }

@@ -51,7 +51,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory implements KeyMajorScanFactory {
     private final int columnIndex;
     private final Comparator<SymbolFunctionRowCursorFactory> comparator;
     private final Comparator<SymbolFunctionRowCursorFactory> comparatorDesc;
@@ -143,6 +143,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     @Override
     public boolean followedOrderByAdvice() {
         return followedOrderByAdvice;
+    }
+
+    @Override
+    public int getKeyMajorColumnIndex() {
+        return cursor instanceof KeyMajorPageFrameRecordCursor ? columnIndex : -1;
     }
 
     @Override

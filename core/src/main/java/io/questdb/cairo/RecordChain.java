@@ -397,6 +397,16 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
      * as the chain's backing has been released first via {@link #clear()} or
      * {@link #close()}.
      */
+    /**
+     * Forgets the records but, unlike {@link #clear()}, keeps the memory for the next ones, so a
+     * chain that is refilled many times grows only once.
+     */
+    public void rewind() {
+        mem.jumpTo(0);
+        nextRecordOffset = -1L;
+        varAppendOffset = 0L;
+    }
+
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         mem.setMemoryTracker(tracker);
     }
