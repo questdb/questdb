@@ -1712,6 +1712,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    // Returns true when every leaf of the expression is a literal constant: no column reference, bind
+    // variable or sub-query. Functions and operators may appear at any level.
+    private static boolean hasOnlyConstantLeaves(ExpressionNode node) {
+        return switch (node.type) {
+            case ExpressionNode.CONSTANT -> true;
+            case ExpressionNode.FUNCTION, ExpressionNode.OPERATION, ExpressionNode.SET_OPERATION -> {
+                if (node.paramCount < 3) {
+                    yield (node.lhs == null || hasOnlyConstantLeaves(node.lhs))
+                            && (node.rhs == null || hasOnlyConstantLeaves(node.rhs));
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    if (!hasOnlyConstantLeaves(node.args.getQuick(i))) {
+                        yield false;
+                    }
+                }
+                yield true;
+            }
+            default -> false;
+        };
+    }
+
     // SymbolTranslatingRecord maps each master key column to one slave symbol table, so a master
     // SYMBOL column that is matched against two slave columns cannot use symbol ids. HORIZON key
     // copiers write each column once, so a slave SYMBOL column matched against a master SYMBOL and
@@ -7215,7 +7236,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 .put("RANGE or LIST must only appear on the last HORIZON JOIN");
                                     }
                                     validateHorizonJoinFilter(model, index, slaveModel);
-                                    validateOuterJoinExpressions(slaveModel, "HORIZON");
+                                    validateHorizonJoinOnClause(slaveModel, executionContext);
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                     if (pendingHorizonSlaves == null) {
@@ -7235,8 +7256,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                 // Validate: WHERE clause can only reference master table columns
                                 validateHorizonJoinFilter(model, index, slaveModel);
-                                // ON accepts only key equalities between left and right columns
-                                validateOuterJoinExpressions(slaveModel, "HORIZON");
+                                // ON accepts only key equalities between left and right columns, and conjuncts
+                                // that fold to TRUE
+                                validateHorizonJoinOnClause(slaveModel, executionContext);
 
                                 // Get parent model for GROUP BY context (may be null for implicit aggregation)
                                 // If parentModel is null, we'll use the join model itself which contains the SELECT columns
@@ -13558,6 +13580,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // Returns true when the expression folds to TRUE at compile time. Bind variables and runtime
+    // constants such as now() don't qualify: a cached factory runs again with other values.
+    private boolean isConstantTrue(ExpressionNode expr, SqlExecutionContext executionContext) throws SqlException {
+        if (!hasOnlyConstantLeaves(expr)) {
+            return false;
+        }
+        final Function function = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
+        try {
+            if (!isBoolean(function.getType()) || !function.isConstant()) {
+                return false;
+            }
+            function.init(null, executionContext);
+            return function.getBool(null);
+        } finally {
+            Misc.free(function);
+        }
+    }
+
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
         // Check if we can simplify ASOF JOIN ON (ts) to ASOF JOIN.
         if (listColumnFilterA.size() == 1 && listColumnFilterB.size() == 1) {
@@ -14360,6 +14400,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (slaveMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
+        }
+    }
+
+    // A leftover ON clause, made of the conjuncts that are not key equalities, keeps every right row
+    // when it folds to TRUE, as 1 = 1 does, so HORIZON JOIN runs without it.
+    // validateOuterJoinExpressions() rejects any other leftover clause.
+    private void validateHorizonJoinOnClause(IQueryModel slaveModel, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode clause = slaveModel.getOuterJoinExpressionClause();
+        if (clause != null && !isConstantTrue(clause, executionContext)) {
+            validateOuterJoinExpressions(slaveModel, "HORIZON");
         }
     }
 
