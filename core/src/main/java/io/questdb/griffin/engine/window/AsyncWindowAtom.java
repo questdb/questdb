@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -44,14 +45,24 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.QuaternaryFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRowToucher;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -86,21 +97,25 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
      *                           the constructor throws
      * @param perWorkerMapStates the window Map groups of each worker list, entries may be null;
      *                           owned like {@code perWorkerFunctions}
+     * @param keyRunColumnIndex  the scan's key column when every window function is partitioned
+     *                           by it alone, so that tasks may compute key runs, see
+     *                           {@link KeyRunWindowFunction}; -1 otherwise
      */
     public AsyncWindowAtom(
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<Function> ownerFunctions,
             @Nullable ObjList<WindowMapState> ownerMapStates,
             @NotNull ObjList<ObjList<Function>> perWorkerFunctions,
-            @NotNull ObjList<ObjList<WindowMapState>> perWorkerMapStates
+            @NotNull ObjList<ObjList<WindowMapState>> perWorkerMapStates,
+            int keyRunColumnIndex
     ) {
         final int workerCount = perWorkerFunctions.size();
         assert perWorkerMapStates.size() == workerCount;
         this.slots = new ObjList<>(workerCount + 1);
         try {
-            slots.add(new Slot(configuration, ownerFunctions, ownerMapStates, false));
+            slots.add(new Slot(configuration, ownerFunctions, ownerMapStates, false, keyRunColumnIndex));
             for (int i = 0; i < workerCount; i++) {
-                slots.add(new Slot(configuration, perWorkerFunctions.getQuick(i), perWorkerMapStates.getQuick(i), true));
+                slots.add(new Slot(configuration, perWorkerFunctions.getQuick(i), perWorkerMapStates.getQuick(i), true, keyRunColumnIndex));
                 // the slot owns them now
                 perWorkerFunctions.setQuick(i, null);
                 perWorkerMapStates.setQuick(i, null);
@@ -207,10 +222,57 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         }
     }
 
+    /**
+     * Tasks computed as key runs, see {@link KeyRunWindowFunction}, since the last
+     * {@link #resetTaskCounts()}.
+     */
+    @TestOnly
+    public long getKeyRunTaskCount() {
+        long count = 0;
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            count += slots.getQuick(i).keyRunTaskCount;
+        }
+        return count;
+    }
+
+    /**
+     * The columns the touch-ahead of a slot that computed key runs loaded from the last frame it
+     * read, the most of any such slot; -1 when no slot computed key runs.
+     */
+    @TestOnly
+    public int getKeyRunLoadedColumnCount() {
+        int count = -1;
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            final Slot slot = slots.getQuick(i);
+            if (slot.keyRunTaskCount > 0) {
+                count = Math.max(count, slot.toucher.getTouchedColumnCount());
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The columns of the scan a key run loads, by column index, or null for all of them; null
+     * also when tasks do not compute key runs.
+     */
+    @TestOnly
+    public boolean @Nullable [] getKeyRunTouchedColumns() {
+        return slots.getQuick(0).keyRunTouchedColumns;
+    }
+
+    /**
+     * Whether the tasks of this atom's query compute key runs, see {@link KeyRunWindowFunction}.
+     * Decided when the query is compiled.
+     */
+    public boolean isKeyRunEnabled() {
+        return slots.getQuick(0).keyRunFunctions != null;
+    }
+
     void resetTaskCounts() {
         workerThreadTaskCount.set(0);
         for (int i = 0, n = slots.size(); i < n; i++) {
             slots.getQuick(i).taskCount = 0;
+            slots.getQuick(i).keyRunTaskCount = 0;
         }
     }
 
@@ -224,10 +286,39 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private static final int BATCH_ROWS = 32;
         // Batches between two checks of the circuit breaker and of the round's cancellation.
         private static final int CHECK_BATCHES = 64;
+        // How a key run writes an output column: the run's key, or the column's function read
+        // through the getter the chain's record sink uses for its type.
+        private static final int OUT_BOOL = 1;
+        private static final int OUT_BYTE = 2;
+        private static final int OUT_CHAR = 3;
+        private static final int OUT_DATE = 4;
+        private static final int OUT_DOUBLE = 5;
+        private static final int OUT_FLOAT = 6;
+        private static final int OUT_GEOBYTE = 7;
+        private static final int OUT_GEOINT = 8;
+        private static final int OUT_GEOLONG = 9;
+        private static final int OUT_GEOSHORT = 10;
+        private static final int OUT_INT = 11;
+        private static final int OUT_IPV4 = 12;
+        private static final int OUT_KEY = 0;
+        private static final int OUT_LONG = 13;
+        private static final int OUT_SHORT = 14;
+        private static final int OUT_TIMESTAMP = 15;
         private final long[] batchRows = new long[BATCH_ROWS];
         private final ObjList<Function> functions;
+        // the scan's key column, which key runs read once per run rather than once per row
+        private final int keyRunColumnIndex;
+        // the window functions as key runs, or null when tasks go through the functions' maps
+        private final KeyRunWindowFunction[] keyRunFunctions;
+        // the keys of the task's runs so far, kept only while assertions are enabled
+        private final IntHashSet keyRunKeys = new IntHashSet();
+        // the columns of a frame a key run reads, by column index, or null for all of them
+        private final boolean[] keyRunTouchedColumns;
         private final ObjList<WindowMapState> mapStates;
         private final int mapStatesCount;
+        // per output column: how a key run writes it, OUT_*, and where in the chain's record
+        private final int[] outputKinds;
+        private final long[] outputOffsets;
         private final boolean ownsFunctions;
         private final PageFrameMemoryPool pool;
         private final PageFrameMemoryRecord record;
@@ -242,13 +333,15 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         // the stream's rows before this index have had their columns loaded
         private long streamTouchedHi;
         // written by the thread that holds the slot, read once the round has been awaited
+        private long keyRunTaskCount;
         private long taskCount;
 
         Slot(
                 CairoConfiguration configuration,
                 ObjList<Function> functions,
                 @Nullable ObjList<WindowMapState> mapStates,
-                boolean ownsFunctions
+                boolean ownsFunctions,
+                int keyRunColumnIndex
         ) {
             this.functions = functions;
             this.mapStates = mapStates;
@@ -260,9 +353,141 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 }
             }
             this.windowFunctionsCount = windowFunctions.size();
+            this.keyRunColumnIndex = keyRunColumnIndex;
+            this.outputKinds = keyRunColumnIndex > -1 ? toOutputKinds(functions, keyRunColumnIndex) : null;
+            if (outputKinds != null) {
+                this.keyRunFunctions = new KeyRunWindowFunction[windowFunctionsCount];
+                for (int i = 0; i < windowFunctionsCount; i++) {
+                    keyRunFunctions[i] = (KeyRunWindowFunction) windowFunctions.getQuick(i);
+                }
+                this.keyRunTouchedColumns = toTouchedColumns(functions, outputKinds);
+                this.outputOffsets = new long[functions.size()];
+            } else {
+                this.keyRunFunctions = null;
+                this.keyRunTouchedColumns = null;
+                this.outputOffsets = null;
+            }
             this.pool = new PageFrameMemoryPool(configuration);
             this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
             this.virtualRecord = new VirtualRecord(functions);
+        }
+
+        // Adds the columns a function reads to the list, when all it is made of is known to read
+        // only the columns of its column references. Returns false for anything else.
+        private static boolean collectColumns(Function function, IntList columns) {
+            if (function instanceof ColumnFunction cf) {
+                columns.add(cf.getColumnIndex());
+                return true;
+            }
+            if (function.isConstant() || function.isRuntimeConstant()) {
+                return true;
+            }
+            if (function instanceof UnaryFunction f) {
+                return collectColumns(f.getArg(), columns);
+            }
+            if (function instanceof BinaryFunction f) {
+                return collectColumns(f.getLeft(), columns) && collectColumns(f.getRight(), columns);
+            }
+            if (function instanceof TernaryFunction f) {
+                return collectColumns(f.getLeft(), columns) && collectColumns(f.getCenter(), columns)
+                        && collectColumns(f.getRight(), columns);
+            }
+            if (function instanceof QuaternaryFunction f) {
+                return collectColumns(f.getFunc0(), columns) && collectColumns(f.getFunc1(), columns)
+                        && collectColumns(f.getFunc2(), columns) && collectColumns(f.getFunc3(), columns);
+            }
+            if (function instanceof MultiArgFunction f) {
+                final ObjList<Function> args = f.args();
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    if (!collectColumns(args.getQuick(i), columns)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * How a key run writes each output column, or null when the slot cannot compute key runs:
+         * every window function must compute runs, and every other column must be a column of the
+         * scan of a fixed-size type, so that a run only reads the frame.
+         */
+        private static int @Nullable [] toOutputKinds(ObjList<Function> functions, int keyColumnIndex) {
+            final int n = functions.size();
+            final int[] kinds = new int[n];
+            for (int i = 0; i < n; i++) {
+                final Function function = functions.getQuick(i);
+                if (function instanceof WindowFunction) {
+                    if (!(function instanceof KeyRunWindowFunction kf) || !kf.isKeyRunSupported()) {
+                        return null;
+                    }
+                } else if (!(function instanceof ColumnFunction)) {
+                    return null;
+                }
+                final int type = function.getType();
+                if (function instanceof ColumnFunction cf && cf.getColumnIndex() == keyColumnIndex && ColumnType.isSymbol(type)) {
+                    kinds[i] = OUT_KEY;
+                    continue;
+                }
+                switch (ColumnType.tagOf(type)) {
+                    case ColumnType.BOOLEAN -> kinds[i] = OUT_BOOL;
+                    case ColumnType.BYTE -> kinds[i] = OUT_BYTE;
+                    case ColumnType.GEOBYTE -> kinds[i] = OUT_GEOBYTE;
+                    case ColumnType.SHORT -> kinds[i] = OUT_SHORT;
+                    case ColumnType.GEOSHORT -> kinds[i] = OUT_GEOSHORT;
+                    case ColumnType.CHAR -> kinds[i] = OUT_CHAR;
+                    // a symbol is written as its key, as the chain's record sink does
+                    case ColumnType.INT, ColumnType.SYMBOL -> kinds[i] = OUT_INT;
+                    case ColumnType.IPv4 -> kinds[i] = OUT_IPV4;
+                    case ColumnType.GEOINT -> kinds[i] = OUT_GEOINT;
+                    case ColumnType.FLOAT -> kinds[i] = OUT_FLOAT;
+                    case ColumnType.LONG -> kinds[i] = OUT_LONG;
+                    case ColumnType.DATE -> kinds[i] = OUT_DATE;
+                    case ColumnType.TIMESTAMP -> kinds[i] = OUT_TIMESTAMP;
+                    case ColumnType.GEOLONG -> kinds[i] = OUT_GEOLONG;
+                    case ColumnType.DOUBLE -> kinds[i] = OUT_DOUBLE;
+                    default -> {
+                        return null;
+                    }
+                }
+            }
+            return kinds;
+        }
+
+        /**
+         * The columns a key run reads: those of the output columns other than the key, and those
+         * of the window functions' arguments. Null, for every column, when a function's columns
+         * are not known.
+         */
+        private static boolean @Nullable [] toTouchedColumns(ObjList<Function> functions, int[] outputKinds) {
+            final IntList columns = new IntList();
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                final Function function = functions.getQuick(i);
+                final boolean known;
+                if (function instanceof KeyRunWindowFunction kf) {
+                    final Function arg = kf.getKeyRunArgument();
+                    known = arg != null && collectColumns(arg, columns);
+                } else {
+                    known = outputKinds[i] == OUT_KEY || collectColumns(function, columns);
+                }
+                if (!known) {
+                    return null;
+                }
+            }
+            int columnCount = 0;
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final int columnIndex = columns.getQuick(i);
+                if (columnIndex < 0) {
+                    return null;
+                }
+                columnCount = Math.max(columnCount, columnIndex + 1);
+            }
+            final boolean[] touched = new boolean[columnCount];
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                touched[columns.getQuick(i)] = true;
+            }
+            return touched;
         }
 
         @Override
@@ -315,11 +540,15 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
          */
         long compute(
                 DirectLongList rows,
+                LongList keyStarts,
                 long emitFrom,
                 RecordChain chain,
                 SqlExecutionCircuitBreaker circuitBreaker,
                 UnorderedPageFrameSequence<?> sequence
         ) {
+            if (keyRunFunctions != null) {
+                return computeKeyRuns(rows, keyStarts, emitFrom, chain, circuitBreaker, sequence);
+            }
             // the record moves to other frames, so a stream on this slot positions it again
             streamFrameIndex = -1;
             chain.rewind(rows.size() - emitFrom);
@@ -370,6 +599,128 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             return prevOffset;
         }
 
+        /**
+         * {@link #compute} for a slot whose window functions compute key runs, see
+         * {@link KeyRunWindowFunction}. {@code keyStarts} holds, in ascending order, the indexes
+         * of {@code rows} at which a key starts, 0 first: each run of rows between two of them
+         * belongs to one key, which no other run of the task continues. A run's functions start
+         * from a new partition, its key is read off its first row, and its output rows are written
+         * straight into the chain, column by column. Only the columns the run reads are loaded.
+         */
+        long computeKeyRuns(
+                DirectLongList rows,
+                LongList keyStarts,
+                long emitFrom,
+                RecordChain chain,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                UnorderedPageFrameSequence<?> sequence
+        ) {
+            streamFrameIndex = -1;
+            keyRunTaskCount++;
+            final long rowCount = rows.size();
+            chain.rewind(rowCount - emitFrom);
+            if (rowCount == 0) {
+                return -1;
+            }
+            assert keyStarts.size() > 0 && keyStarts.getQuick(0) == 0 : "a task's rows start a key";
+            assert clearKeyRunKeys();
+            final long stride = chain.getFixedRecordStride();
+            final long[] offsets = outputOffsets;
+            for (int c = 0, n = offsets.length; c < n; c++) {
+                offsets[c] = chain.getOffsetOfColumn(0, c);
+            }
+            final KeyRunWindowFunction[] functions = keyRunFunctions;
+            final long[] batch = batchRows;
+            final int keyStartCount = keyStarts.size();
+            int keyStartIndex = 0;
+            long nextKeyStart = 0;
+            int key = 0;
+            long prevOffset = -1;
+            int frameIndex = -1;
+            int batches = 0;
+            long batchLo = 0;
+            while (batchLo < rowCount) {
+                if (++batches == CHECK_BATCHES) {
+                    batches = 0;
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    if (!sequence.isActive()) {
+                        // the round was cancelled: its output will never be read
+                        break;
+                    }
+                }
+                final int batchFrameIndex = KeyMajorPageFrameRecordCursor.toFrameIndex(rows.get(batchLo));
+                if (batchFrameIndex != frameIndex) {
+                    frameIndex = batchFrameIndex;
+                    final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
+                    record.init(frameMemory);
+                    toucher.of(frameAddressCache, frameIndex, frameMemory, keyRunTouchedColumns);
+                }
+                final int n = collectBatch(rows, batchLo, frameIndex, batch);
+                // The batch's columns are loaded together, then computed: interleaving the loads
+                // with the computation of the batch before it was measured to be twice as slow,
+                // as the computation leaves the reorder buffer room for far fewer of them.
+                if (toucher.isEnabled()) {
+                    toucher.touch(batch, n);
+                }
+                // the batch's rows from emitFrom on are output, into records appended together
+                final int emitLo = (int) Math.min(n, Math.max(0, emitFrom - batchLo));
+                long address = 0;
+                if (emitLo < n) {
+                    final long first = chain.appendFixedRecords(prevOffset, n - emitLo);
+                    prevOffset = first + (n - emitLo - 1) * stride;
+                    address = chain.addressOf(first);
+                }
+                for (int j = 0; j < n; j++) {
+                    record.setRowIndex(batch[j]);
+                    if (batchLo + j == nextKeyStart) {
+                        // equal starts are keys without rows
+                        do {
+                            keyStartIndex++;
+                            nextKeyStart = keyStartIndex < keyStartCount ? keyStarts.getQuick(keyStartIndex) : Long.MAX_VALUE;
+                        } while (nextKeyStart == batchLo + j);
+                        for (KeyRunWindowFunction function : functions) {
+                            function.keyRunStart();
+                        }
+                        // every row of the run has the key the walk collected it for
+                        key = record.getInt(keyRunColumnIndex);
+                        // A run starts its key afresh, which is right only when no other run of
+                        // the task has that key: the scan's keys are distinct, see
+                        // KeyMajorScanFactory.hasDistinctKeys().
+                        assert keyRunKeys.add(key) : "the walk visits key " + key + " twice in one task";
+                    }
+                    for (KeyRunWindowFunction function : functions) {
+                        function.keyRunNext(record);
+                    }
+                    if (j >= emitLo) {
+                        writeRow(address, key);
+                        address += stride;
+                    }
+                }
+                batchLo += n;
+            }
+            return prevOffset;
+        }
+
+        private boolean clearKeyRunKeys() {
+            keyRunKeys.clear();
+            return true;
+        }
+
+        // The rows of one frame from index lo of rows, at most a batch of them, as frame row
+        // indexes. Returns how many.
+        private static int collectBatch(DirectLongList rows, long lo, int frameIndex, long[] batch) {
+            final long hi = Math.min(rows.size(), lo + batch.length);
+            int n = 0;
+            for (long i = lo; i < hi; i++) {
+                final long rowId = rows.get(i);
+                if (KeyMajorPageFrameRecordCursor.toFrameIndex(rowId) != frameIndex) {
+                    break;
+                }
+                batch[n++] = KeyMajorPageFrameRecordCursor.toFrameRowIndex(rowId);
+            }
+            return n;
+        }
+
         void countTask() {
             taskCount++;
         }
@@ -382,6 +733,36 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             }
             for (int i = 0; i < windowFunctionsCount; i++) {
                 windowFunctions.getQuick(i).computeNext(record);
+            }
+        }
+
+        // Writes the current row's output columns into the record at address, as the chain's
+        // record sink would copy them from the virtual record.
+        private void writeRow(long address, int key) {
+            final int[] kinds = outputKinds;
+            final long[] offsets = outputOffsets;
+            final PageFrameMemoryRecord record = this.record;
+            for (int c = 0, n = kinds.length; c < n; c++) {
+                final long a = address + offsets[c];
+                switch (kinds[c]) {
+                    case OUT_KEY -> Unsafe.putInt(a, key);
+                    case OUT_DOUBLE -> Unsafe.putDouble(a, functions.getQuick(c).getDouble(record));
+                    case OUT_TIMESTAMP -> Unsafe.putLong(a, functions.getQuick(c).getTimestamp(record));
+                    case OUT_LONG -> Unsafe.putLong(a, functions.getQuick(c).getLong(record));
+                    case OUT_INT -> Unsafe.putInt(a, functions.getQuick(c).getInt(record));
+                    case OUT_FLOAT -> Unsafe.putFloat(a, functions.getQuick(c).getFloat(record));
+                    case OUT_DATE -> Unsafe.putLong(a, functions.getQuick(c).getDate(record));
+                    case OUT_IPV4 -> Unsafe.putInt(a, functions.getQuick(c).getIPv4(record));
+                    case OUT_GEOINT -> Unsafe.putInt(a, functions.getQuick(c).getGeoInt(record));
+                    case OUT_GEOLONG -> Unsafe.putLong(a, functions.getQuick(c).getGeoLong(record));
+                    case OUT_SHORT -> Unsafe.putShort(a, functions.getQuick(c).getShort(record));
+                    case OUT_GEOSHORT -> Unsafe.putShort(a, functions.getQuick(c).getGeoShort(record));
+                    case OUT_CHAR -> Unsafe.putChar(a, functions.getQuick(c).getChar(record));
+                    case OUT_BYTE -> Unsafe.putByte(a, functions.getQuick(c).getByte(record));
+                    case OUT_GEOBYTE -> Unsafe.putByte(a, functions.getQuick(c).getGeoByte(record));
+                    case OUT_BOOL -> Unsafe.putByte(a, (byte) (functions.getQuick(c).getBool(record) ? 1 : 0));
+                    default -> throw new AssertionError("unknown output kind " + kinds[c]);
+                }
             }
         }
 

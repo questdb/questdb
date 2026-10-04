@@ -46,4 +46,15 @@ public interface KeyMajorScanFactory {
     default int getKeyMajorKeyCount() {
         return -1;
     }
+
+    /**
+     * Whether the cursor's walk visits each value of the key column at most once, so that all
+     * rows of a value form one run of the walk. A consumer that restarts its per-key state at
+     * each key of the walk, such as a parallel window, relies on this. A factory whose keys may
+     * repeat, for example because they come from bind values, must remove the repeats before it
+     * answers true.
+     */
+    default boolean hasDistinctKeys() {
+        return false;
+    }
 }

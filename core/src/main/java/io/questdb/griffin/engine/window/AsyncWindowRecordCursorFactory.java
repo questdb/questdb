@@ -70,13 +70,16 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
      * Takes ownership of {@code base}, {@code functions} and {@code windowMapStates} once it
      * returns, and of the worker copies also when it throws.
      *
-     * @param functions          the output columns' functions, for the query's own thread
-     * @param windowMapStates    the window Map groups over {@code functions}, or null
-     * @param perWorkerFunctions separately compiled copies of {@code functions}, one per worker slot;
-     *                           there may be fewer slots than workers, which then share them
-     * @param perWorkerMapStates the window Map groups of each copy, entries may be null
-     * @param keyColumnIndex     the base column the scan walks key by key, which every window
-     *                           function is partitioned by
+     * @param functions            the output columns' functions, for the query's own thread
+     * @param windowMapStates      the window Map groups over {@code functions}, or null
+     * @param perWorkerFunctions   separately compiled copies of {@code functions}, one per worker slot;
+     *                             there may be fewer slots than workers, which then share them
+     * @param perWorkerMapStates   the window Map groups of each copy, entries may be null
+     * @param keyColumnIndex       the base column the scan walks key by key, which every window
+     *                             function is partitioned by
+     * @param partitionedByKeyOnly whether every window function is partitioned by that column and
+     *                             no other, so that tasks may compute key runs, see
+     *                             {@link KeyRunWindowFunction}
      */
     public AsyncWindowRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -91,6 +94,7 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull RecordSink recordSink,
             @NotNull AsyncWindowSplitPlan splitPlan,
             int keyColumnIndex,
+            boolean partitionedByKeyOnly,
             int workerCount
     ) {
         super(metadata);
@@ -109,7 +113,14 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
             }
             // takes the worker copies out of the lists as it comes to own them
-            atom = new AsyncWindowAtom(configuration, functions, windowMapStates, perWorkerFunctions, perWorkerMapStates);
+            atom = new AsyncWindowAtom(
+                    configuration,
+                    functions,
+                    windowMapStates,
+                    perWorkerFunctions,
+                    perWorkerMapStates,
+                    partitionedByKeyOnly ? keyColumnIndex : -1
+            );
             for (int i = 0, n = Math.max(2, configuration.getSqlParallelWindowMaxRounds()); i < n; i++) {
                 // each owns its round atom, never the shared atom
                 sequences.add(new UnorderedPageFrameSequence<>(
@@ -210,6 +221,9 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.meta("workers").val(workerCount);
         sink.optAttr("functions", windowFunctions, true);
         sink.attr("keyShards").putBaseColumnName(keyColumnIndex);
+        if (atom.isKeyRunEnabled()) {
+            sink.attr("keyRuns").val(true);
+        }
         if (splitPlan.getMode() != AsyncWindowSplitPlan.MODE_NONE) {
             sink.attr("keySplit").val(splitPlan);
         }

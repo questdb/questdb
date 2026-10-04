@@ -1455,6 +1455,13 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelWindowJoinEnabled();
 
+    /**
+     * Whether a parallel window task whose window functions are all partitioned by the scan's key
+     * alone computes each key as a run, with the partition's state held in the functions rather
+     * than in their maps. Read when the query is compiled; EXPLAIN shows it as {@code keyRuns}.
+     */
+    boolean isSqlParallelWindowKeyRunsEnabled();
+
     boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isSqlWindowCachedLightEnabled();

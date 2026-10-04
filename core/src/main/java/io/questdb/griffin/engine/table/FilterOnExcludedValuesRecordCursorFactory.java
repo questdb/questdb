@@ -158,6 +158,12 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         return SCAN_DIRECTION_OTHER;
     }
 
+    @Override
+    public boolean hasDistinctKeys() {
+        // the included keys are a set
+        return true;
+    }
+
     public void recalculateIncludedValues(PageFrameCursor pageFrameCursor) {
         cursorFactoriesIdx[0] = cursorFactories.size();
         excludedKeys.clear();

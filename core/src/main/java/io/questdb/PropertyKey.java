@@ -118,6 +118,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED("cairo.sql.parallel.horizon.join.enabled"),
     CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED("cairo.sql.parallel.window.join.enabled"),
     CAIRO_SQL_PARALLEL_WINDOW_ENABLED("cairo.sql.parallel.window.enabled"),
+    CAIRO_SQL_PARALLEL_WINDOW_KEY_RUNS_ENABLED("cairo.sql.parallel.window.key.runs.enabled"),
     CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS("cairo.sql.parallel.window.task.rows"),
     CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS("cairo.sql.parallel.window.max.key.rows"),
     CAIRO_SQL_PARALLEL_WINDOW_MAX_ROUNDS("cairo.sql.parallel.window.max.rounds"),

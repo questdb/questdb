@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Loads one byte of every column of a batch of rows of one page frame in a tight loop, ahead of
@@ -55,6 +57,14 @@ public class PageFrameRowToucher {
         count = 0;
     }
 
+    /**
+     * The columns of the current frame this toucher loads.
+     */
+    @TestOnly
+    public int getTouchedColumnCount() {
+        return count;
+    }
+
     public boolean isEnabled() {
         return count > 0;
     }
@@ -64,6 +74,20 @@ public class PageFrameRowToucher {
      * plain native one.
      */
     public void of(PageFrameAddressCache frameAddressCache, int frameIndex, PageFrameMemory frameMemory) {
+        of(frameAddressCache, frameIndex, frameMemory, null);
+    }
+
+    /**
+     * Like {@link #of(PageFrameAddressCache, int, PageFrameMemory)}, but touches only the columns
+     * whose entry in {@code touchedColumns} is true, by the frame's column index: the reader knows
+     * it reads no other. Null touches every column.
+     */
+    public void of(
+            PageFrameAddressCache frameAddressCache,
+            int frameIndex,
+            PageFrameMemory frameMemory,
+            @Nullable boolean[] touchedColumns
+    ) {
         count = 0;
         if (frameMemory.getFrameFormat() != PartitionFormat.NATIVE || frameAddressCache.isFrameCovered(frameIndex)) {
             return;
@@ -76,6 +100,9 @@ public class PageFrameRowToucher {
         }
         final IntList columnTypes = frameAddressCache.getColumnTypes();
         for (int c = 0; c < columnCount; c++) {
+            if (touchedColumns != null && (c >= touchedColumns.length || !touchedColumns[c])) {
+                continue;
+            }
             final int columnType = columnTypes.getQuick(c);
             final long address;
             final long limit;

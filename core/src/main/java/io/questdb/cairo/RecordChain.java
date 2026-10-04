@@ -48,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.DirectUtf8String;
@@ -127,6 +128,39 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         return mem.addressOf(offset);
     }
 
+    /**
+     * Appends {@code rowCount} records to a chain without variable-size columns, linked like
+     * {@code rowCount} calls of {@link #beginRecord}: the first after the record at
+     * {@code prevOffset}, or after none when it is -1, and each after the one before it. Their
+     * columns are left for the caller to write: record {@code r}'s column {@code c} is at
+     * {@code addressOf(first) + r * getFixedRecordStride() + getOffsetOfColumn(0, c)}, where
+     * {@code first} is the offset returned. The records lie one after another in memory, so those
+     * addresses stay valid until the chain grows again.
+     *
+     * @return the offset of the first record appended
+     */
+    public long appendFixedRecords(long prevOffset, int rowCount) {
+        assert varOffset == 0 : "the chain has a variable-size column";
+        assert rowCount > 0;
+        final long stride = getFixedRecordStride();
+        final long first = varAppendOffset;
+        final long end = first + stride * rowCount;
+        final long address = mem.appendAddressFor(first, end - first);
+        final long last = end - stride;
+        for (long offset = first; offset < last; offset += stride) {
+            Unsafe.putLong(address + (offset - first), offset + stride);
+        }
+        // no next record
+        Unsafe.putLong(address + (last - first), -1L);
+        if (prevOffset != -1) {
+            mem.putLong(prevOffset, first);
+        }
+        recordOffset = last;
+        varAppendOffset = end;
+        mem.jumpTo(end);
+        return first;
+    }
+
     public long beginRecord(long prevOffset) {
         // no next record
         mem.putLong(varAppendOffset, -1);
@@ -158,6 +192,25 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         varAppendOffset = 0L;
     }
 
+    /**
+     * Forgets every record like {@link #clear()}, but keeps the memory for the next ones when no
+     * more than {@code maxKeptBytes} of it are allocated, so that refilling the chain does not
+     * fault fresh pages in. Gives it back otherwise.
+     *
+     * @return the bytes kept, 0 when the memory was given back
+     */
+    public long clearKeepingMemory(long maxKeptBytes) {
+        final long size = mem.size();
+        if (size > maxKeptBytes) {
+            clear();
+            return 0;
+        }
+        mem.jumpTo(0);
+        nextRecordOffset = -1L;
+        varAppendOffset = 0L;
+        return size;
+    }
+
     @Override
     public void close() {
         clear();
@@ -175,6 +228,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
      */
     public long getNextRecordOffset(long recordOffset) {
         return mem.getLong(recordOffset);
+    }
+
+    /**
+     * The distance between two records that {@link #appendFixedRecords} appended one after the
+     * other: a record's link to the next one, then its fixed-size columns.
+     */
+    public long getFixedRecordStride() {
+        return rowToDataOffset(0) + fixOffset;
     }
 
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {

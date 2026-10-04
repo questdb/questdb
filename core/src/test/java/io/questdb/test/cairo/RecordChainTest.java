@@ -37,8 +37,11 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -61,6 +64,158 @@ public class RecordChainTest extends AbstractCairoTest {
     public static final long SIZE_4M = 4 * 1024 * 1024L;
     private static final BytecodeAssembler asm = new BytecodeAssembler();
     private static final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+
+    @Test
+    public void testAppendFixedRecords() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("i", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("b", ColumnType.BYTE));
+            metadata.add(new TableColumnMetadata("d", ColumnType.DOUBLE));
+            entityColumnFilter.of(metadata.getColumnCount());
+            RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter);
+            final long[] x = new long[1];
+            final ObjList<Function> funcs = new ObjList<>();
+            funcs.add(new LongFunction() {
+                @Override
+                public long getLong(Record rec) {
+                    return x[0];
+                }
+            });
+            funcs.add(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return (int) (x[0] * 3);
+                }
+            });
+            funcs.add(new ByteFunction() {
+                @Override
+                public byte getByte(Record rec) {
+                    return (byte) x[0];
+                }
+            });
+            funcs.add(new DoubleFunction() {
+                @Override
+                public double getDouble(Record rec) {
+                    return x[0] / 7.0;
+                }
+            });
+            final VirtualRecord rec = new VirtualRecord(funcs);
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            // 4 KB pages: the batches below cross many of them, and the chain grows under them
+            try (RecordChain chain = new RecordChain(metadata, sink, 4096, Integer.MAX_VALUE)) {
+                final long stride = chain.getFixedRecordStride();
+                // a link, then 8 + 4 + 1 + 8 bytes of columns
+                Assert.assertEquals(8 + 21, stride);
+                for (int fill = 0; fill < 3; fill++) {
+                    // the first fill grows the chain, the others reuse its memory
+                    if (fill == 2) {
+                        chain.clearKeepingMemory(Long.MAX_VALUE);
+                    } else {
+                        chain.rewind(fill * 500);
+                    }
+                    long prev = -1;
+                    long value = 0;
+                    final int total = 1000 + fill;
+                    while (value < total) {
+                        if (rnd.nextInt(4) == 0) {
+                            // a record put the usual way, between batches
+                            x[0] = value++;
+                            prev = chain.put(rec, prev);
+                            continue;
+                        }
+                        final int n = (int) Math.min(total - value, 1 + rnd.nextInt(70));
+                        final long first = chain.appendFixedRecords(prev, n);
+                        final long address = chain.addressOf(first);
+                        for (int r = 0; r < n; r++) {
+                            final long v = value++;
+                            final long a = address + r * stride;
+                            Unsafe.putLong(a + chain.getOffsetOfColumn(0, 0), v);
+                            Unsafe.putInt(a + chain.getOffsetOfColumn(0, 1), (int) (v * 3));
+                            Unsafe.putByte(a + chain.getOffsetOfColumn(0, 2), (byte) v);
+                            Unsafe.putDouble(a + chain.getOffsetOfColumn(0, 3), v / 7.0);
+                        }
+                        prev = first + (n - 1) * stride;
+                        // the record a later put links to is the last one appended
+                        Assert.assertEquals(-1, chain.getNextRecordOffset(prev));
+                    }
+                    // read back by the links, by record offset and as one sequential block
+                    chain.toTop();
+                    final Record r = chain.getRecord();
+                    long i = 0;
+                    while (chain.hasNext()) {
+                        Assert.assertEquals(i, r.getLong(0));
+                        Assert.assertEquals((int) (i * 3), r.getInt(1));
+                        Assert.assertEquals((byte) i, r.getByte(2));
+                        Assert.assertEquals(i / 7.0, r.getDouble(3), 0.0);
+                        i++;
+                    }
+                    Assert.assertEquals(total, i);
+                    chain.toTop();
+                    final RecordBlock block = chain.peekSequentialRecordBlock(Integer.MAX_VALUE);
+                    Assert.assertNotNull(block);
+                    Assert.assertEquals(total, block.getRowCount());
+                    for (int row = 0; row < total; row++) {
+                        Assert.assertEquals(row, Unsafe.getLong(block.getColumnAddress(0) + row * block.getColumnStride(0)));
+                        Assert.assertEquals(row / 7.0, Unsafe.getDouble(block.getColumnAddress(3) + row * block.getColumnStride(3)), 0.0);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testClearKeepingMemory() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            entityColumnFilter.of(metadata.getColumnCount());
+            RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter);
+            final long[] x = new long[1];
+            final ObjList<Function> funcs = new ObjList<>();
+            funcs.add(new LongFunction() {
+                @Override
+                public long getLong(Record rec) {
+                    return x[0];
+                }
+            });
+            final VirtualRecord rec = new VirtualRecord(funcs);
+            try (RecordChain chain = new RecordChain(metadata, sink, 4096, Integer.MAX_VALUE)) {
+                final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                for (int fill = 0; fill < 4; fill++) {
+                    long prev = -1;
+                    for (int i = 0; i < 1000; i++) {
+                        x[0] = fill * 10_000L + i;
+                        prev = chain.put(rec, prev);
+                    }
+                    chain.toTop();
+                    long i = 0;
+                    while (chain.hasNext()) {
+                        Assert.assertEquals(fill * 10_000L + i++, chain.getRecord().getLong(0));
+                    }
+                    Assert.assertEquals(1000, i);
+                    final long memFilled = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                    Assert.assertTrue(memFilled > memBefore);
+                    // cleared with its records still to be read: they are gone at once, as with clear()
+                    chain.toTop();
+                    if (fill < 2) {
+                        // within the limit: the records go, the memory stays
+                        Assert.assertEquals(memFilled - memBefore, chain.clearKeepingMemory(1000 * chain.getFixedRecordStride() * 2));
+                        Assert.assertEquals(memFilled, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                    } else {
+                        // above it: given back, as clear() does
+                        Assert.assertEquals(0, chain.clearKeepingMemory(1000));
+                        Assert.assertEquals(memBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                    }
+                    Assert.assertFalse(chain.hasNext());
+                    chain.toTop();
+                    Assert.assertFalse(chain.hasNext());
+                    Assert.assertNull(chain.peekSequentialRecordBlock(10));
+                }
+            }
+        });
+    }
 
     @Test
     public void testClear() throws Exception {
