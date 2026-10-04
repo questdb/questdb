@@ -97,6 +97,13 @@ class ParserTest(unittest.TestCase):
 
 
 class SiteMapTest(unittest.TestCase):
+    def test_refusal_drops_a_stack_frame_on_its_line(self):
+        text = ('expected:<[]> but was:<[comparator: uint32 is not handled: CairoException: [0] no compare arm for '
+                'UINT32 at ORDER BY: add a compare arm or declare the type ordered like its family at '
+                'io.questdb.cairo.CairoException.instance(CairoException.java:622)')
+        self.assertEqual([('no compare arm', 'UINT32', 'ORDER BY',
+                           'add a compare arm or declare the type ordered like its family')], tp.find_refusals(text))
+
     def test_declarable_sites(self):
         self.assertEqual({'ILP column kind', 'QWP WAL append', 'SAMPLE BY FILL(PREV)', 'SAMPLE BY FILL(value)', 'WAL columnar append'},
                          set(fixture_sites().declarable()))

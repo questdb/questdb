@@ -79,6 +79,7 @@ LAYER_SITES = (
 MESSAGE_LIMIT = 200
 
 REFUSAL = re.compile(r'\b(no (?:family arm|compare arm|UNION cast)) for (.+?) at (.+?): (.+)$')
+STACK_FRAME = re.compile(r'\s+at [\w.$]+\([\w.$]+(?::\d+)?\).*$')
 # the kit names the type, the value row, the path and the mode of every failure
 KIT_CONTEXT = re.compile(r'type=(\S+) row=(\S+) path=(\S+) mode=(\S+?):? ')
 FAMILY_ARM_REFUSAL = 'no family arm for <type> at '
@@ -1037,12 +1038,14 @@ def parse_surefire(xml_text):
 
 
 def find_refusals(text):
-    """Every refusal of the three leads in a text: (lead, type, site, decision text)."""
+    """Every refusal of the three leads in a text: (lead, type, site, decision text). A test that
+    prints the exception with its first frame on the same line leaves the frame out."""
     out = []
     for line in text.splitlines():
         m = REFUSAL.search(line)
         if m:
-            out.append(tuple(g.strip() for g in m.groups()))
+            lead, _type, site, decision = (g.strip() for g in m.groups())
+            out.append((lead, _type, site, STACK_FRAME.sub('', decision)))
     return out
 
 
