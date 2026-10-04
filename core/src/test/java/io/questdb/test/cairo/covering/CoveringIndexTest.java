@@ -15969,6 +15969,42 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3CommitIntoPartitionWithCoveredColumnTop() throws Exception {
+        // a covered column added after the partition's first rows has a column top there; an O3
+        // commit into that partition re-writes the covering index, and the rows below the top
+        // still read NULL, in a WAL and a non-WAL table
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"t_o3_ct_wal", "t_o3_ct"}) {
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, sym SYMBOL, qty INT) TIMESTAMP(ts) PARTITION BY DAY "
+                        + (table.endsWith("_wal") ? "WAL" : "BYPASS WAL"));
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00', 'A', 10), ('2024-01-01T02:00:00', 'B', 20)");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ADD COLUMN price DOUBLE");
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T04:00:00', 'A', 30, 100.5)");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                drainWalQueue();
+                // O3: both rows land before the partition's last row
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T01:00:00', 'A', 40, 200.5), ('2024-01-01T03:00:00', 'A', 50, NULL)");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                assertQuery("SELECT sym, qty, price FROM " + table + " WHERE sym = 'A' ORDER BY ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .withPlanContaining("CoveringIndex")
+                        .returns("""
+                                sym\tqty\tprice
+                                A\t10\tnull
+                                A\t40\t200.5
+                                A\t50\tnull
+                                A\t30\t100.5
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testO3MultiPartitionSidecarRebuild() throws Exception {
         // Gap 15/16: O3 affecting multiple partitions. Verifies sidecar rebuild
         // handles multiple O3-affected partitions correctly.

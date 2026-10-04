@@ -318,6 +318,11 @@ public class PostingIndexWriter implements IndexWriter {
     // an empty chain).
     private long sealTxn;
     private MemoryMARW sidecarInfoMem;
+    // the NULL of the covered column being written, as up to four longs, prepared once per column
+    private long sidecarNull0;
+    private long sidecarNull1;
+    private long sidecarNull2;
+    private long sidecarNull3;
     private int spillArraysCapacity;
     private long spillKeyAddrsAddr;
     private long spillKeyCapacitiesAddr;
@@ -2316,19 +2321,6 @@ public class PostingIndexWriter implements IndexWriter {
                     .put(", blockSize=").put(blockSize)
                     .put("]; reduce the rows per index key in a partition");
         }
-    }
-
-    /**
-     * Writes one NULL of the column's type at the append position: the type driver's storage
-     * NULL, except LONG128, which this path has always written as zeros (PB1,
-     * pre-existing-bugs.md; the address path writes LONG_NULL twice). Kept as is.
-     */
-    private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType, TypeDriver driver) {
-        if (ColumnType.tagOf(colType) == ColumnType.LONG128) {
-            for (int i = 0; i < valueSize; i++) mem.putByte((byte) 0);
-            return;
-        }
-        driver.setNull(mem.appendAddressFor(valueSize), 1);
     }
 
     private static void writeVarOffset(MemoryMARW mem, long offsetsStart, int ordinal, long value, boolean longOffsets) {
@@ -4504,6 +4496,23 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
+     * Prepares the NULL {@link #putSidecarNull} writes for a covered column of this type, once per
+     * column: the type driver's storage NULL, except LONG128, which this path has always written as
+     * zeros (the sealing paths write LONG_NULL twice through the type driver).
+     */
+    private void prepareSidecarNull(int colType) {
+        if (ColumnType.tagOf(colType) == ColumnType.LONG128) {
+            sidecarNull0 = sidecarNull1 = sidecarNull2 = sidecarNull3 = 0;
+            return;
+        }
+        final TypeDriver driver = ColumnType.getTypeDriver(colType);
+        sidecarNull0 = driver.getNullLong(0);
+        sidecarNull1 = driver.getNullLong(1);
+        sidecarNull2 = driver.getNullLong(2);
+        sidecarNull3 = driver.getNullLong(3);
+    }
+
+    /**
      * Persist the writer's in-memory state to the v2 chain. Writes the
      * supplied gen-dir entry to the right slot, then either extends the
      * head entry (when the .pv file matches the head's sealTxn) or
@@ -4860,6 +4869,27 @@ public class PostingIndexWriter implements IndexWriter {
             chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
         }
         assert assertGenDirPublished(entryBase, writeFormat, writeCoverCount, overrideGenIndex, newEntry);
+    }
+
+    // one NULL of the prepared type at the append position, the low valueSize bytes of its longs
+    private void putSidecarNull(MemoryMARW mem, int valueSize) {
+        switch (valueSize) {
+            case Byte.BYTES -> mem.putByte((byte) sidecarNull0);
+            case Short.BYTES -> mem.putShort((short) sidecarNull0);
+            case Integer.BYTES -> mem.putInt((int) sidecarNull0);
+            case Long.BYTES -> mem.putLong(sidecarNull0);
+            case 2 * Long.BYTES -> {
+                mem.putLong(sidecarNull0);
+                mem.putLong(sidecarNull1);
+            }
+            case 4 * Long.BYTES -> {
+                mem.putLong(sidecarNull0);
+                mem.putLong(sidecarNull1);
+                mem.putLong(sidecarNull2);
+                mem.putLong(sidecarNull3);
+            }
+            default -> throw CairoException.critical(0).put("unsupported covered value size [size=").put(valueSize).put(']');
+        }
     }
 
     private void rebuildSidecarsByCopy(long newSealTxn) {
@@ -7129,22 +7159,26 @@ public class PostingIndexWriter implements IndexWriter {
                         .put(", decoded=").put(decoded).put(']');
             }
 
-            // Materialise this key's covered values into sidecarBuf, then compress.
+            // Materialise this key's covered values into sidecarBuf, then compress. A run of rows
+            // with no value (below the column top, or past the mapped data) takes one NULL fill.
             long rawOffset = 0;
+            long nullRunOffset = -1;
             for (int i = 0; i < count; i++) {
                 long rowId = Unsafe.getLong(keyBuffer + (long) i * Long.BYTES);
-                if (rowId < colTop) {
-                    driver.setNull(sidecarBuf + rawOffset, 1);
-                } else {
-                    long srcOffset = (rowId - colTop) << shift;
-                    long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
-                    if (addr != 0) {
-                        Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
-                    } else {
-                        driver.setNull(sidecarBuf + rawOffset, 1);
+                long addr = rowId < colTop ? 0 : getCoveredDataReadAddr(c, (rowId - colTop) << shift, valueSize);
+                if (addr != 0) {
+                    if (nullRunOffset >= 0) {
+                        driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
+                        nullRunOffset = -1;
                     }
+                    Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                } else if (nullRunOffset < 0) {
+                    nullRunOffset = rawOffset;
                 }
                 rawOffset += valueSize;
+            }
+            if (nullRunOffset >= 0) {
+                driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
             }
 
             boolean isDesignatedTs = timestampColumnIndex >= 0
@@ -7204,24 +7238,28 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
 
-                // Assemble this key's raw values into sidecarBuf.
+                // Assemble this key's raw values into sidecarBuf. A run of rows with no value
+                // (below the column top, or past the mapped data) takes one NULL fill.
                 long keyOff = keyOffsets[j];
                 long rawOffset = 0;
+                long nullRunOffset = -1;
                 for (int i = 0; i < count; i++) {
                     long rowId = Unsafe.getLong(
                             mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                    if (rowId < colTop) {
-                        driver.setNull(sidecarBuf + rawOffset, 1);
-                    } else {
-                        long srcOffset = (rowId - colTop) << shift;
-                        long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
-                        if (addr != 0) {
-                            Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
-                        } else {
-                            driver.setNull(sidecarBuf + rawOffset, 1);
+                    long addr = rowId < colTop ? 0 : getCoveredDataReadAddr(c, (rowId - colTop) << shift, valueSize);
+                    if (addr != 0) {
+                        if (nullRunOffset >= 0) {
+                            driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
+                            nullRunOffset = -1;
                         }
+                        Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                    } else if (nullRunOffset < 0) {
+                        nullRunOffset = rawOffset;
                     }
                     rawOffset += valueSize;
+                }
+                if (nullRunOffset >= 0) {
+                    driver.setNull(sidecarBuf + nullRunOffset, (rawOffset - nullRunOffset) >> shift);
                 }
 
                 // Compress and write
@@ -7464,7 +7502,7 @@ public class PostingIndexWriter implements IndexWriter {
                 int shift = coveredColumnShifts.getQuick(c);
                 int valueSize = 1 << shift;
                 // once per column: the storage NULL for rows above the column top
-                final TypeDriver driver = ColumnType.getTypeDriver(colType);
+                prepareSidecarNull(colType);
 
                 mem.putInt(totalValues);
 
@@ -7477,14 +7515,14 @@ public class PostingIndexWriter implements IndexWriter {
                         long spillAddr = Unsafe.getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
                         for (int i = 0; i < spillCount; i++) {
                             long rowId = Unsafe.getLong(spillAddr + (long) i * Long.BYTES);
-                            writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType, driver);
+                            writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize);
                         }
                     }
 
                     long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
                     for (int i = 0; i < pendingCount; i++) {
                         long rowId = Unsafe.getLong(keyValuesAddr + (long) i * Long.BYTES);
-                        writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType, driver);
+                        writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize);
                     }
                 }
             }
@@ -7557,18 +7595,16 @@ public class PostingIndexWriter implements IndexWriter {
             long colTop,
             long rowId,
             int shift,
-            int valueSize,
-            int colType,
-            TypeDriver driver
+            int valueSize
     ) {
         if (rowId < colTop) {
-            writeNullSentinel(mem, valueSize, colType, driver);
+            putSidecarNull(mem, valueSize);
         } else {
             long srcOffset = (rowId - colTop) << shift;
             if (coveredColumnNames.size() > 0 || coveredColumnAddrs.size() > 0) {
                 long addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
                 if (addr == 0) {
-                    writeNullSentinel(mem, valueSize, colType, driver);
+                    putSidecarNull(mem, valueSize);
                     return;
                 }
                 putFixedValue(mem, addr, valueSize);
