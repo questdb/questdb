@@ -125,6 +125,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
+    private boolean parallelWindowEnabled;
     private boolean parallelWindowJoinEnabled;
     private long queryRegistryOwnerId = -1;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
@@ -154,6 +155,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
         parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
+        parallelWindowEnabled = cairoConfiguration.isSqlParallelWindowEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         parquetRowGroupPruningEnabled = cairoConfiguration.isSqlParquetRowGroupPruningEnabled();
         telemetry = cairoEngine.getTelemetry();
@@ -493,6 +495,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelWindowEnabled() {
+        return parallelWindowEnabled;
+    }
+
+    @Override
     public boolean isParallelWindowJoinEnabled() {
         return parallelWindowJoinEnabled;
     }
@@ -727,6 +734,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
         this.parallelHorizonJoinEnabled = parallelHorizonJoinEnabled;
+    }
+
+    @Override
+    public void setParallelWindowEnabled(boolean parallelWindowEnabled) {
+        this.parallelWindowEnabled = parallelWindowEnabled;
     }
 
     @Override

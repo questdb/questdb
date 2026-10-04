@@ -108,7 +108,8 @@ public class WorkerPoolUtils {
             sharedPoolQuery.assign(new GroupByLongTopKJob(messageBus));
         }
 
-        if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
+        if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()
+                || configuration.isSqlParallelWindowEnabled()) {
             if (isFiberDispatcherAllowed && sharedPoolQuery.isFiberHost()) {
                 final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                         cairoEngine,

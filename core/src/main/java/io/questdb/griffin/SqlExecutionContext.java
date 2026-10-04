@@ -301,6 +301,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelTopKEnabled();
 
+    /**
+     * Whether a window partitioned by the key of a key-major index scan may run on the shared
+     * query workers. Off unless the configuration enables it and there are shared workers.
+     */
+    default boolean isParallelWindowEnabled() {
+        return false;
+    }
+
     boolean isParallelWindowJoinEnabled();
 
     boolean isParquetRowGroupPruningEnabled();
@@ -454,6 +462,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    default void setParallelWindowEnabled(boolean parallelWindowEnabled) {
+    }
 
     void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 

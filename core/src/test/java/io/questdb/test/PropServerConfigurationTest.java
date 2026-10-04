@@ -314,6 +314,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelTopKEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowEnabled());
+        Assert.assertEquals(131_072, configuration.getCairoConfiguration().getSqlParallelWindowTaskRows());
+        Assert.assertEquals(4_194_304, configuration.getCairoConfiguration().getSqlParallelWindowMaxKeyRows());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
         Assert.assertEquals(256 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());

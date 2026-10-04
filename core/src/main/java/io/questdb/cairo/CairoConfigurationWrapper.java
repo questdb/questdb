@@ -1410,6 +1410,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelWindowMaxKeyRows() {
+        return getDelegate().getSqlParallelWindowMaxKeyRows();
+    }
+
+    @Override
+    public long getSqlParallelWindowTaskRows() {
+        return getDelegate().getSqlParallelWindowTaskRows();
+    }
+
+    @Override
     public int getSqlSortValuePageSize() {
         return getDelegate().getSqlSortValuePageSize();
     }
@@ -1907,6 +1917,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelTopKEnabled() {
         return getDelegate().isSqlParallelTopKEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowEnabled() {
+        return getDelegate().isSqlParallelWindowEnabled();
     }
 
     @Override

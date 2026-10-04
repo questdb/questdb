@@ -1410,6 +1410,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelWindowMaxKeyRows() {
+        return 4_194_304;
+    }
+
+    @Override
+    public long getSqlParallelWindowTaskRows() {
+        return 131_072;
+    }
+
+    @Override
     public int getSqlSortValuePageSize() {
         return Numbers.SIZE_1MB * 16;
     }
@@ -1886,6 +1896,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelTopKEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowEnabled() {
         return true;
     }
 

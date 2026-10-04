@@ -918,6 +918,8 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     }
 
     private long drainAndCountProbes(String query) throws Exception {
+        // the probes of the serial window: the parallel one keeps a map group per worker
+        sqlExecutionContext.setParallelWindowEnabled(false);
         try (RecordCursorFactory factory = select(query)) {
             RecordCursorFactory f = factory;
             while (!(f instanceof WindowRecordCursorFactory)) {
@@ -935,6 +937,8 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
                 Assert.assertEquals(rows, states.getQuick(0).getLookupCount());
                 return states.getQuick(0).getProbeCount();
             }
+        } finally {
+            sqlExecutionContext.setParallelWindowEnabled(configuration.isSqlParallelWindowEnabled());
         }
     }
 
