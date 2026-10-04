@@ -26,8 +26,9 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -66,16 +67,15 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         int fromType = ColumnType.getTimestampType(fromFn.getType());
         int toType = ColumnType.getTimestampType(toFn.getType());
         if (!ColumnType.isTimestamp(argType)) {
-            // an operand that is not a timestamp compares through its getTimestamp, with LONG_MIN as NULL; the
-            // tags are listed, so a new type decides whether that reading holds for it (F110)
-            return switch (ColumnTypeTag.of(arg.getType())) {
-                case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING,
-                     SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG,
-                     RECORD, GEOHASH, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
-                     DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
-                     PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
-                        newRawTimestampFunction(arg, fromFn, toFn, fromType, toType);
-            };
+            // an operand that is not a timestamp compares through its getTimestamp, with LONG_MIN as
+            // NULL, as every existing type and every pseudo type does; a type unlike its family's
+            // namesake may hold its NULL otherwise, so it is refused
+            final TypeDriver driver = ColumnType.findTypeDriver(arg.getType());
+            if (driver != null && !PhysicalDescriptor.isLikeFamilyNamesake(driver)) {
+                // no existing type reaches this refusal; the kit covers its cleanup once a later type declares it
+                throw PhysicalDescriptor.noFamilyArm(driver.getTypeName(), "between");
+            }
+            return newRawTimestampFunction(arg, fromFn, toFn, fromType, toType);
         }
 
 
