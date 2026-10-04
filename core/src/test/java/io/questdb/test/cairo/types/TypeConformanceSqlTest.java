@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -72,6 +73,10 @@ import java.util.regex.Pattern;
  * NULL row as a NULL of the type), and record one line per row: the labels of the rows the query
  * selects, or its error. SUBSAMPLE takes a value of the type as the stride of
  * {@code cadence(...)} and as the target point count of {@code uniform(...)}.
+ * <p>
+ * The memoized path reads a projected function of the column, its identity cast, three times,
+ * which makes the projection cache its value per row; the test base turns that caching off, so
+ * this path turns it on for its own query and records whether the plan memoizes the function.
  * <p>
  * Every query runs in three modes: single-threaded with interpreted filters, and parallel (a
  * worker pool of four, the parallel factories on) with compiled and with interpreted filters. A
@@ -237,15 +242,25 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
                     continue;
                 }
-                if (type.isLater()) {
-                    checkLater(eng, ctx, query[0], query[1], mode);
-                    continue;
+                final boolean isMemoized = "memoized".equals(query[0]);
+                SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = isMemoized;
+                try {
+                    if (type.isLater()) {
+                        checkLater(eng, ctx, query[0], query[1], mode);
+                        continue;
+                    }
+                    final Observation observation = observe(eng, ctx, query[1]);
+                    final String battery = observation.error == null
+                            ? assertReturns(eng, ctx, path, mode, query[1], observation, eng == engine)
+                            : null;
+                    String section = battery == null ? observation.section() : observation.section() + battery + '\n';
+                    if (isMemoized && observation.error == null) {
+                        section += "plan memoizes: " + observe(eng, ctx, "EXPLAIN " + query[1]).output.contains("memoize(") + '\n';
+                    }
+                    assertSection(query[0], mode, section);
+                } finally {
+                    SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
                 }
-                final Observation observation = observe(eng, ctx, query[1]);
-                final String battery = observation.error == null
-                        ? assertReturns(eng, ctx, path, mode, query[1], observation, eng == engine)
-                        : null;
-                assertSection(query[0], mode, battery == null ? observation.section() : observation.section() + battery + '\n');
             }
             for (String[] query : rowQueries()) {
                 final String path = "sql." + query[0];
@@ -419,6 +434,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             }
             case "fill_null", "fill_value", "fill_prev", "fill_linear" -> {
                 checkLaterFill(eng, ctx, name, mode);
+                return;
+            }
+            case "memoized" -> {
+                checkLaterMemoized(eng, ctx, sql, mode);
                 return;
             }
             default -> throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
@@ -811,6 +830,49 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     /**
+     * {@code sql.memoized} for a type registered later: unless the type declares it is refused at
+     * the memoized virtual column, the projection caches the column and every read of it gives the
+     * row's value as written.
+     */
+    private void checkLaterMemoized(CairoEngine eng, SqlExecutionContext ctx, String sql, String mode) {
+        final String path = "sql.memoized";
+        final Map<String, long[]> first = new HashMap<>();
+        final Map<String, long[]> second = new HashMap<>();
+        String error = null;
+        try (
+                SqlCompiler compiler = eng.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(ctx)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final String label = record.getVarcharA(0).toString();
+                first.put(label, TypeConformanceValues.readValue(record, 1, type));
+                second.put(label, TypeConformanceValues.readValue(record, 3, type));
+            }
+        } catch (Throwable e) {
+            error = String.valueOf(e.getMessage());
+        }
+        if (TypeConformanceInvariants.assertDeclaredRefusal(type, "-", path, mode, error, "memoized virtual column")) {
+            return;
+        }
+        if (error != null) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + error);
+        }
+        final String explain = observe(eng, ctx, "EXPLAIN " + sql).output;
+        if (explain == null || !explain.contains("memoize(")) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": the projection does not memoize the column: " + explain);
+        }
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            if (!row.isNull() && first.containsKey(row.label)) {
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, first.get(row.label));
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, second.get(row.label));
+            }
+        }
+    }
+
+    /**
      * The per-row paths for a type registered later, which has no literal: the value is a cast of
      * an INT constant or of NULL to the type. SUBSAMPLE applies to the integral types: for a
      * type of the INT relation kind, the value 2 selects the rows the INT 2 selects, and a NULL
@@ -1068,6 +1130,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 {"fill_null", "SELECT ts, last(v) v FROM g SAMPLE BY 1s FILL(NULL)"},
                 {"fill_value", "SELECT ts, last(v) v FROM g SAMPLE BY 1s FILL(" + (fillValue != null ? fillValue : "NULL") + ")"},
                 {"fill_linear", "SELECT ts, last(v) v FROM g SAMPLE BY 1s FILL(LINEAR)"},
+                // an alias of a plain column is a column selection; the identity cast is a function
+                {"memoized", "SELECT k, CAST(v AS " + type.ddl + ") a, a a2, a a3 FROM t"},
                 {"latest_on", "SELECT k, v FROM (t2 LATEST ON ts PARTITION BY v) ORDER BY k"},
         };
     }
@@ -1444,6 +1508,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\tfalse\tfalse\tfalse
+                max\ttrue\ttrue\ttrue
+                null\tfalse\tfalse\tfalse
+                plan memoizes: true
                 """);
         rec("BYTE", """
                 ## filter_eq
@@ -1661,6 +1732,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\tmin,max,other_null,null
                 other_null\terror: [42] target points must be at least 2
                 null\terror: [38] target points must be at least 2
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-128\t-128\t-128
+                max\t127\t127\t127
+                other_null\t-1\t-1\t-1
+                null\t0\t0\t0
+                plan memoizes: true
                 """);
         rec("SHORT", """
                 ## cast
@@ -1878,6 +1957,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\tmin,max,other_null,null
                 other_null\terror: [42] target points must be at least 2
                 null\terror: [38] target points must be at least 2
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-32768\t-32768\t-32768
+                max\t32767\t32767\t32767
+                other_null\t-1\t-1\t-1
+                null\t0\t0\t0
+                plan memoizes: true
                 """);
         rec("CHAR", """
                 ## cast
@@ -2074,6 +2161,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [43] integer expected for target point count
                 other_null\terror: [42] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t\t\t
+                max\t\\uffff\t\\uffff\t\\uffff
+                other_null\t\\uffff\t\\uffff\t\\uffff
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("INT", """
                 ## cast
@@ -2288,6 +2383,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\tmin,max,sentinel,null
                 sentinel\terror: [51] target point count must be set
                 null\terror: [38] target point count must be set
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-2147483647\t-2147483647\t-2147483647
+                max\t2147483647\t2147483647\t2147483647
+                sentinel\tnull\tnull\tnull
+                null\tnull\tnull\tnull
+                plan memoizes: true
                 """);
         rec("LONG", """
                 ## cast
@@ -2502,6 +2605,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [57] target points exceeds maximum of 2147483647
                 sentinel\terror: [64] target point count must be set
                 null\terror: [38] target point count must be set
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-9223372036854775807\t-9223372036854775807\t-9223372036854775807
+                max\t9223372036854775807\t9223372036854775807\t9223372036854775807
+                sentinel\tnull\tnull\tnull
+                null\tnull\tnull\tnull
+                plan memoizes: true
                 """);
         rec("DATE", """
                 ## filter_eq
@@ -2704,6 +2815,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [57] integer expected for target point count
                 sentinel\terror: [64] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-292275055-05-16T16:47:04.193Z\t-292275055-05-16T16:47:04.193Z\t-292275055-05-16T16:47:04.193Z
+                max\t292278994-08-17T07:12:55.807Z\t292278994-08-17T07:12:55.807Z\t292278994-08-17T07:12:55.807Z
+                sentinel\t\t\t
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("TIMESTAMP", """
                 ## cast
@@ -2906,6 +3025,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [57] integer expected for target point count
                 sentinel\terror: [64] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-290308-01-01T19:59:05.224193Z\t-290308-01-01T19:59:05.224193Z\t-290308-01-01T19:59:05.224193Z
+                max\t294247-01-10T04:00:54.775807Z\t294247-01-10T04:00:54.775807Z\t294247-01-10T04:00:54.775807Z
+                sentinel\t\t\t
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("FLOAT", """
                 ## filter_eq
@@ -3182,6 +3309,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 literal_inf\terror: [48] integer expected for target point count
                 negzero\terror: [44] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-3.4028235E38\t-3.4028235E38\t-3.4028235E38
+                max\t3.4028235E38\t3.4028235E38\t3.4028235E38
+                nan\tnull\tnull\tnull
+                literal_inf\tnull\tnull\tnull
+                negzero\t-0.0\t-0.0\t-0.0
+                null\tnull\tnull\tnull
+                inf\tnull\tnull\tnull
+                ninf\tnull\tnull\tnull
+                plan memoizes: true
                 """);
         rec("DOUBLE", """
                 ## cast
@@ -3458,6 +3597,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 literal_inf\terror: [48] integer expected for target point count
                 negzero\terror: [44] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-1.7976931348623157E308\t-1.7976931348623157E308\t-1.7976931348623157E308
+                max\t1.7976931348623157E308\t1.7976931348623157E308\t1.7976931348623157E308
+                nan\tnull\tnull\tnull
+                literal_inf\tnull\tnull\tnull
+                negzero\t-0.0\t-0.0\t-0.0
+                null\tnull\tnull\tnull
+                inf\tnull\tnull\tnull
+                ninf\tnull\tnull\tnull
+                plan memoizes: true
                 """);
         rec("STRING", """
                 ## filter_eq
@@ -3681,6 +3832,15 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [45] integer expected for target point count
                 escape\terror: [50] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                empty\t\t\t
+                min\t \t \t\s
+                max\tü€😀�\tü€😀�\tü€😀�
+                escape\ta"b,c\\d'e\ta"b,c\\d'e\ta"b,c\\d'e
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("SYMBOL", """
                 ## filter_eq
@@ -3911,6 +4071,15 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [45] integer expected for target point count
                 escape\terror: [50] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                empty\t\t\t
+                min\t \t \t\s
+                max\tü€😀�\tü€😀�\tü€😀�
+                escape\ta"b,c\\d'e\ta"b,c\\d'e\ta"b,c\\d'e
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("LONG256", """
                 ## filter_eq
@@ -4114,6 +4283,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [104] integer expected for target point count
                 sentinel\terror: [104] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t0x00\t0x00\t0x00
+                max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                sentinel\t\t\t
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("GEOBYTE", """
                 ## filter_eq
@@ -4291,6 +4468,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t0000000\t0000000\t0000000
+                max\t1111111\t1111111\t1111111
+                null\t\t\t
+                plan memoizes: false
                 """);
         rec("GEOSHORT", """
                 ## cast
@@ -4474,6 +4658,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t000\t000\t000
+                max\tzzz\tzzz\tzzz
+                null\t\t\t
+                plan memoizes: false
                 """);
         rec("GEOINT", """
                 ## filter_eq
@@ -4657,6 +4848,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t000000\t000000\t000000
+                max\tzzzzzz\tzzzzzz\tzzzzzz
+                null\t\t\t
+                plan memoizes: false
                 """);
         rec("GEOLONG", """
                 ## cast
@@ -4840,6 +5038,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t00000000\t00000000\t00000000
+                max\tzzzzzzzz\tzzzzzzzz\tzzzzzzzz
+                null\t\t\t
+                plan memoizes: false
                 """);
         rec("BINARY", """
                 ## cast
@@ -4982,6 +5187,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 empty\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                error: [20] unsupported cast
                 """);
         rec("UUID", """
                 ## cast
@@ -5180,6 +5387,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [76] integer expected for target point count
                 sentinel\terror: [76] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000
+                max\tffffffff-ffff-ffff-ffff-ffffffffffff\tffffffff-ffff-ffff-ffff-ffffffffffff\tffffffff-ffff-ffff-ffff-ffffffffffff
+                sentinel\t\t\t
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("LONG128", """
                 ## cast
@@ -5345,6 +5560,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [38] integer expected for target point count
                 sentinel\terror: [38] integer expected for target point count
                 null\terror: [51] unsupported cast
+                ## memoized
+                error: [20] unsupported cast
                 """);
         rec("IPv4", """
                 ## cast
@@ -5548,6 +5765,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [55] integer expected for target point count
                 sentinel\terror: [47] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t0.0.0.1\t0.0.0.1\t0.0.0.1
+                max\t255.255.255.255\t255.255.255.255\t255.255.255.255
+                sentinel\t\t\t
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("VARCHAR", """
                 ## filter_eq
@@ -5771,6 +5996,15 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [45] integer expected for target point count
                 escape\terror: [50] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                empty\t\t\t
+                min\t \t \t\s
+                max\tü€😀�\tü€😀�\tü€😀�
+                escape\ta"b,c\\d'e\ta"b,c\\d'e\ta"b,c\\d'e
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("DOUBLE[]", """
                 ## filter_eq
@@ -5951,6 +6185,15 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 empty\terror: [45] integer expected for target point count
                 specials\terror: [43] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t[-1.7976931348623157E308]\t[-1.7976931348623157E308]\t[-1.7976931348623157E308]
+                max\t[1.7976931348623157E308]\t[1.7976931348623157E308]\t[1.7976931348623157E308]
+                empty\t[]\t[]\t[]
+                specials\t[null,null,null,-0.0]\t[null,null,null,-0.0]\t[null,null,null,-0.0]
+                null\tnull\tnull\tnull
+                plan memoizes: true
                 """);
         rec("DECIMAL8", """
                 ## cast
@@ -6132,6 +6375,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [44] integer expected for target point count
                 max\terror: [43] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-9.9\t-9.9\t-9.9
+                max\t9.9\t9.9\t9.9
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("DECIMAL16", """
                 ## cast
@@ -6313,6 +6563,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [46] integer expected for target point count
                 max\terror: [45] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-99.99\t-99.99\t-99.99
+                max\t99.99\t99.99\t99.99
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("DECIMAL32", """
                 ## cast
@@ -6500,6 +6757,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [50] integer expected for target point count
                 max\terror: [49] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-999999999\t-999999999\t-999999999
+                max\t999999999\t999999999\t999999999
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("DECIMAL64", """
                 ## filter_eq
@@ -6681,6 +6945,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [58] integer expected for target point count
                 max\terror: [57] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-999999999999.9999\t-999999999999.9999\t-999999999999.9999
+                max\t999999999999.9999\t999999999999.9999\t999999999999.9999
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("DECIMAL128", """
                 ## filter_eq
@@ -6862,6 +7133,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [80] integer expected for target point count
                 max\terror: [79] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-9999999999999999999999999999.9999999999\t-9999999999999999999999999999.9999999999\t-9999999999999999999999999999.9999999999
+                max\t9999999999999999999999999999.9999999999\t9999999999999999999999999999.9999999999\t9999999999999999999999999999.9999999999
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("DECIMAL256", """
                 ## cast
@@ -7043,6 +7321,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [118] integer expected for target point count
                 max\terror: [117] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999\t-99999999999999999999999999999999999999999999999999999999.99999999999999999999
+                max\t99999999999999999999999999999999999999999999999999999999.99999999999999999999\t99999999999999999999999999999999999999999999999999999999.99999999999999999999\t99999999999999999999999999999999999999999999999999999999.99999999999999999999
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("INTERVAL", """
                 ## filter_eq
@@ -7101,6 +7386,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## subsample_target
                 error: create: [29] non-persisted type: INTERVAL
+                ## memoized
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
                 ## filter_eq
@@ -7158,6 +7445,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## subsample_stride
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 ## subsample_target
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## memoized
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
@@ -7367,6 +7656,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [57] integer expected for target point count
                 sentinel\terror: [64] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t1677-01-01T00:12:43.145224193Z\t1677-01-01T00:12:43.145224193Z\t1677-01-01T00:12:43.145224193Z
+                max\t2262-04-11T23:47:16.854775807Z\t2262-04-11T23:47:16.854775807Z\t2262-04-11T23:47:16.854775807Z
+                sentinel\t\t\t
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("GEOHASH(1c)", """
                 ## filter_eq
@@ -7544,6 +7841,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t0\t0\t0
+                max\tz\tz\tz
+                null\t\t\t
+                plan memoizes: false
                 """);
         rec("GEOHASH(8b)", """
                 ## filter_eq
@@ -7721,6 +8025,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t00000000\t00000000\t00000000
+                max\t11111111\t11111111\t11111111
+                null\t\t\t
+                plan memoizes: false
                 """);
         rec("GEOHASH(31b)", """
                 ## filter_eq
@@ -7898,6 +8209,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t0000000000000000000000000000000\t0000000000000000000000000000000\t0000000000000000000000000000000
+                max\t1111111111111111111111111111111\t1111111111111111111111111111111\t1111111111111111111111111111111
+                null\t\t\t
+                plan memoizes: false
                 """);
         rec("GEOHASH(12c)", """
                 ## cast
@@ -8081,6 +8399,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [38] integer expected for target point count
                 max\terror: [38] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t000000000000\t000000000000\t000000000000
+                max\tzzzzzzzzzzzz\tzzzzzzzzzzzz\tzzzzzzzzzzzz
+                null\t\t\t
+                plan memoizes: false
                 """);
         rec("DECIMAL(5,2)", """
                 ## cast
@@ -8262,6 +8587,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [47] integer expected for target point count
                 max\terror: [46] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-999.99\t-999.99\t-999.99
+                max\t999.99\t999.99\t999.99
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("DECIMAL(18,3)", """
                 ## filter_eq
@@ -8443,6 +8775,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 min\terror: [60] integer expected for target point count
                 max\terror: [59] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t-999999999999999.999\t-999999999999999.999\t-999999999999999.999
+                max\t999999999999999.999\t999999999999999.999\t999999999999999.999
+                null\t\t\t
+                plan memoizes: true
                 """);
         rec("DOUBLE[][]", """
                 ## filter_eq
@@ -8623,6 +8962,15 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 empty\terror: [45] integer expected for target point count
                 specials\terror: [43] integer expected for target point count
                 null\terror: [38] integer expected for target point count
+                ## memoized
+                props: random_access=true size=known timestamp=none
+                k\ta\ta2\ta3
+                min\t[[-1.7976931348623157E308]]\t[[-1.7976931348623157E308]]\t[[-1.7976931348623157E308]]
+                max\t[[1.7976931348623157E308]]\t[[1.7976931348623157E308]]\t[[1.7976931348623157E308]]
+                empty\t[]\t[]\t[]
+                specials\t[[null,null,null,-0.0]]\t[[null,null,null,-0.0]]\t[[null,null,null,-0.0]]
+                null\tnull\tnull\tnull
+                plan memoizes: true
                 """);
         rec("INTERVAL(us)", """
                 ## filter_eq
@@ -8681,6 +9029,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## subsample_target
                 error: create: [29] non-persisted type: INTERVAL
+                ## memoized
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
                 ## cast
@@ -8738,6 +9088,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## subsample_stride
                 error: create: [29] non-persisted type: INTERVAL
                 ## subsample_target
+                error: create: [29] non-persisted type: INTERVAL
+                ## memoized
                 error: create: [29] non-persisted type: INTERVAL
                 """);
     }
