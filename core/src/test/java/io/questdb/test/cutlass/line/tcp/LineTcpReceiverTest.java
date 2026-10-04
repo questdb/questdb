@@ -1261,6 +1261,35 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testStringIntoFiveDimensionArrayRefused() throws Exception {
+        // a 5-dimension array type sets bit 16, the geohash flag, and ILP parsed a string field
+        // for such a column as a geohash; the line is refused and the next one is stored, into a
+        // WAL and a non-WAL table
+        runInContext((_) -> {
+            for (String table : new String[]{"arr5_wal", "arr5_bypass"}) {
+                execute("CREATE TABLE " + table + " (a DOUBLE[][][][][], x DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY "
+                        + (table.endsWith("_wal") ? "WAL" : "BYPASS WAL"));
+                send(table, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                        sender.metric(table).field("a", "u33").field("x", 1.0).$(1000);
+                        sender.metric(table).field("x", 2.0).$(2000);
+                        sender.flush();
+                    }
+                });
+                drainWalQueue();
+                assertQuery("SELECT a, x, timestamp FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("timestamp")
+                        .returns("""
+                                a\tx\ttimestamp
+                                null\t2.0\t1970-01-01T00:00:00.000002Z
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testStringsWithTcpSenderWithNewLineChars() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((_) -> {

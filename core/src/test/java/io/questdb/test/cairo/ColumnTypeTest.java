@@ -127,6 +127,22 @@ public class ColumnTypeTest {
     }
 
     @Test
+    public void testArrayIsNeverGeoHash() {
+        // bit 16, the geohash flag, is also bit 2 of the array dimension field, which an array of
+        // 5 to 8, 13 to 16, 21 to 24 or 29 to 32 dimensions sets; 33 dimensions stay rejected at
+        // the parser (ArrayTest.testUnsupportedDimensionality)
+        for (int n = 1; n <= ColumnType.ARRAY_NDIMS_LIMIT; n++) {
+            final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, n);
+            Assert.assertTrue(n + " dimensions", ColumnType.isArray(type));
+            Assert.assertFalse(n + " dimensions", ColumnType.isGeoHash(type));
+            Assert.assertEquals(n + " dimensions", n, ColumnType.decodeArrayDimensionality(type));
+        }
+        for (int bits = 1; bits <= ColumnType.GEOLONG_MAX_BITS; bits++) {
+            Assert.assertTrue(bits + " bits", ColumnType.isGeoHash(ColumnType.getGeoHashTypeWithBits(bits)));
+        }
+    }
+
+    @Test
     public void testArrayWithWeakDims() {
         int arrayType = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
         Assert.assertTrue(ColumnType.isArray(arrayType));

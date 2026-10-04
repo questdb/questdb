@@ -580,7 +580,9 @@ public final class ColumnType {
     }
 
     public static boolean isGeoHash(int columnType) {
-        return (columnType & TYPE_FLAG_GEO_HASH) != 0;
+        // bit 16 is also bit 2 of the array dimension field (bits 14 to 18), which an array of 5 to
+        // 8, 13 to 16, 21 to 24 or 29 to 32 dimensions sets
+        return (columnType & TYPE_FLAG_GEO_HASH) != 0 && tagOf(columnType) != ARRAY;
     }
 
     public static boolean isGeoType(int colType) {
