@@ -1231,7 +1231,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         final String policy = TypeConformanceInvariants.policyOf(type);
         if (isSubsample) {
             final String refusal = switch (policy) {
-                case TypeConformanceInvariants.POLICY_SENTINEL, TypeConformanceInvariants.POLICY_BITMAP -> "must be set";
+                case TypeConformanceInvariants.POLICY_SENTINEL, TypeConformanceInvariants.POLICY_BITMAP ->
+                        "must be set";
                 case TypeConformanceInvariants.POLICY_NONE -> "must be at least";
                 default -> "";
             };
@@ -1643,7 +1644,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             final String sql;
             switch (form) {
                 case FORM_CONST -> sql = template.replace("<value>", constantOf(row));
-                case FORM_TEXT -> sql = template.replace("<value>", isNullRow(row, nullRows) ? "NULL" : keyConstantOf(texts.get(row.label)));
+                case FORM_TEXT ->
+                        sql = template.replace("<value>", isNullRow(row, nullRows) ? "NULL" : keyConstantOf(texts.get(row.label)));
                 default -> {
                     sql = template.replace("<value>", "$1");
                     final String bindError = bind(ctx, isNullRow(row, nullRows) ? null : texts.get(row.label));
