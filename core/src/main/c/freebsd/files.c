@@ -199,7 +199,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocateRange
         (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong size) {
     // allocate() already reserves only the space past what the file has allocated
-    return Java_io_questdb_std_Files_allocate(e, cl, fd, len);
+    return Java_io_questdb_std_Files_allocate(e, cl, fd, size);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
