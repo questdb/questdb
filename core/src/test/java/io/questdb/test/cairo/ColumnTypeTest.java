@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.std.Decimal128;
@@ -43,6 +44,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -378,6 +380,32 @@ public class ColumnTypeTest {
     }
 
     @Test
+    public void testRustTagAnswersMatchTypeDrivers() throws IOException {
+        // col_type.rs answers, per tag, the data-movement tier, the NULL policy and the arithmetic
+        // tier the Parquet read and write paths key on; each must equal the type driver's answer
+        final Path source = sourceFile("rust/qdb-core/src/col_type.rs");
+        final String text = Files.readString(source, StandardCharsets.UTF_8);
+        final Map<String, String> movements = rustTagAnswers(text, "movement");
+        final Map<String, String> nullPolicies = rustTagAnswers(text, "null_policy");
+        final Map<String, String> arithmetics = rustTagAnswers(text, "arithmetic");
+        final Map<String, Integer> pinned = new HashMap<>();
+        for (int tag = 0; tag < PINNED_TAG_NAMES.length; tag++) {
+            pinned.put(PINNED_TAG_NAMES[tag].replace("_", "").toLowerCase(), tag);
+        }
+        Assert.assertEquals("tags with a movement() arm", movements.keySet(), nullPolicies.keySet());
+        Assert.assertEquals("tags with an arithmetic() arm", movements.keySet(), arithmetics.keySet());
+        for (String rustTag : movements.keySet()) {
+            final Integer tag = pinned.get(rustTag.toLowerCase());
+            Assert.assertNotNull("col_type.rs answers for a tag Java does not have: " + rustTag, tag);
+            final TypeDriver driver = ColumnType.getTypeDriver(tag);
+            Assert.assertEquals("movement() of " + rustTag, driver.getMovement().name(), movements.get(rustTag).toUpperCase());
+            Assert.assertEquals("null_policy() of " + rustTag, driver.getNullPolicy().name(), nullPolicies.get(rustTag).toUpperCase());
+            Assert.assertEquals("arithmetic() of " + rustTag, driver.getArithmetic().name(), arithmetics.get(rustTag).toUpperCase());
+        }
+        Assert.assertEquals(PINNED_TAG_NAMES.length - TAGS_ABSENT_FROM_RUST.size(), movements.size());
+    }
+
+    @Test
     public void testRustColumnTypeTagMatchesJava() throws IOException {
         // core/rust/qdb-core/src/col_type.rs hand-numbers ColumnTypeTag, repeats the numbers in
         // TryFrom<u8>, and counts the variants in VALUES; ENT Rust depends on all three.
@@ -470,6 +498,29 @@ public class ColumnTypeTest {
             pinned.put(PINNED_TAG_NAMES[tag].toUpperCase(), tag);
         }
         return pinned;
+    }
+
+    // the answer of each tag in a col_type.rs "pub const fn <fn>(self) -> ... { match self { ... } }",
+    // by the Rust tag name: arms list tags joined by '|' and end in "=> Enum::Answer"
+    private static Map<String, String> rustTagAnswers(String source, String fn) {
+        final int start = source.indexOf("pub const fn " + fn + "(self)");
+        Assert.assertTrue("no " + fn + "() in col_type.rs", start >= 0);
+        final int end = source.indexOf("\n    }\n", start);
+        final Matcher m = Pattern.compile("ColumnTypeTag::(\\w+)|=>\\s*\\{?\\s*\\w+::(\\w+)").matcher(source.substring(start, end));
+        final Map<String, String> answers = new HashMap<>();
+        final List<String> pending = new ArrayList<>();
+        while (m.find()) {
+            if (m.group(1) != null) {
+                pending.add(m.group(1));
+            } else {
+                for (String tag : pending) {
+                    Assert.assertNull("two arms for " + tag + " in " + fn + "()", answers.put(tag, m.group(2)));
+                }
+                pending.clear();
+            }
+        }
+        Assert.assertTrue("an arm without an answer in " + fn + "(): " + pending, pending.isEmpty());
+        return answers;
     }
 
     // Surefire runs with core/ as the working directory; fall back to the repository root.

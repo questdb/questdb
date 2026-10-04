@@ -53,6 +53,42 @@ pub enum ColumnNullPolicy {
     Sentinel,
 }
 
+/// The arithmetic tier of a column type: width, integer or floating-point representation, and
+/// signedness. The mirror of the Java type drivers' `PhysicalDescriptor.Arithmetic`. `Wide` is a
+/// 16- or 32-byte value with comparators of its own; `None` has no arithmetic order (symbol keys,
+/// var-size values).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ColumnArithmetic {
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    F32,
+    F64,
+    Wide,
+    None,
+}
+
+impl ColumnArithmetic {
+    /// Whether values of this tier are unsigned integers, which compare as unsigned.
+    pub const fn is_unsigned_int(self) -> bool {
+        match self {
+            ColumnArithmetic::U8 | ColumnArithmetic::U16 | ColumnArithmetic::U32 => true,
+            ColumnArithmetic::I8
+            | ColumnArithmetic::I16
+            | ColumnArithmetic::I32
+            | ColumnArithmetic::I64
+            | ColumnArithmetic::F32
+            | ColumnArithmetic::F64
+            | ColumnArithmetic::Wide
+            | ColumnArithmetic::None => false,
+        }
+    }
+}
+
 impl ColumnMovement {
     /// The value width in bytes, or None for a var-size layout.
     pub const fn size(self) -> Option<usize> {
@@ -228,6 +264,50 @@ impl ColumnTypeTag {
             | ColumnTypeTag::Decimal128
             | ColumnTypeTag::Decimal256
             | ColumnTypeTag::VarcharSlice => ColumnNullPolicy::Sentinel,
+        }
+    }
+
+    /// The arithmetic tier of this tag: how its values compute, compare and sort. Every tag has
+    /// an arm, so a new tag stops the build here; the Parquet pruning decides unsigned
+    /// comparison from it.
+    pub const fn arithmetic(self) -> ColumnArithmetic {
+        match self {
+            ColumnTypeTag::Byte | ColumnTypeTag::GeoByte | ColumnTypeTag::Decimal8 => {
+                ColumnArithmetic::I8
+            }
+
+            ColumnTypeTag::Short | ColumnTypeTag::GeoShort | ColumnTypeTag::Decimal16 => {
+                ColumnArithmetic::I16
+            }
+
+            ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::Decimal32 => {
+                ColumnArithmetic::I32
+            }
+
+            ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::GeoLong
+            | ColumnTypeTag::Decimal64 => ColumnArithmetic::I64,
+
+            ColumnTypeTag::Boolean => ColumnArithmetic::U8,
+            ColumnTypeTag::Char => ColumnArithmetic::U16,
+            ColumnTypeTag::IPv4 => ColumnArithmetic::U32,
+            ColumnTypeTag::Float => ColumnArithmetic::F32,
+            ColumnTypeTag::Double => ColumnArithmetic::F64,
+
+            ColumnTypeTag::Long256
+            | ColumnTypeTag::Uuid
+            | ColumnTypeTag::Long128
+            | ColumnTypeTag::Decimal128
+            | ColumnTypeTag::Decimal256 => ColumnArithmetic::Wide,
+
+            ColumnTypeTag::String
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Binary
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Array
+            | ColumnTypeTag::VarcharSlice => ColumnArithmetic::None,
         }
     }
 
@@ -707,6 +787,22 @@ mod tests {
         assert_eq!(ColumnTypeTag::Decimal64.fixed_size(), Some(8));
         assert_eq!(ColumnTypeTag::Decimal128.fixed_size(), Some(16));
         assert_eq!(ColumnTypeTag::Decimal256.fixed_size(), Some(32));
+    }
+
+    #[test]
+    fn test_unsigned_arithmetic_tiers() {
+        // as the Java type drivers answer: BOOLEAN is U8, CHAR U16 and IPv4 U32; every other
+        // tag is signed, floating-point, wide or has no arithmetic order
+        for tag in ColumnTypeTag::VALUES {
+            let expected = matches!(
+                tag,
+                ColumnTypeTag::Boolean | ColumnTypeTag::Char | ColumnTypeTag::IPv4
+            );
+            assert_eq!(tag.arithmetic().is_unsigned_int(), expected, "{tag:?}");
+        }
+        assert_eq!(ColumnTypeTag::IPv4.arithmetic(), ColumnArithmetic::U32);
+        assert_eq!(ColumnTypeTag::Char.arithmetic(), ColumnArithmetic::U16);
+        assert_eq!(ColumnTypeTag::Int.arithmetic(), ColumnArithmetic::I32);
     }
 
     #[test]

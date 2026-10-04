@@ -2690,10 +2690,10 @@ impl ParquetDecoder {
                     let col_type_tag = qdb_column_type & 0xFF;
                     let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
                     let is_date = col_type_tag == ColumnTypeTag::Date as i32;
-                    let is_qdb_unsigned = is_ipv4 || col_type_tag == ColumnTypeTag::Char as i32;
-                    // Skip min/max filtering for third-party unsigned types (not IPv4 or Char).
-                    // QuestDB doesn't support unsigned integers, so filter values are signed
-                    // but third-party Parquet statistics are unsigned - comparison would be incorrect.
+                    let is_qdb_unsigned = Self::is_qdb_unsigned(col_type_tag);
+                    // Skip min/max filtering for third-party unsigned types (no QuestDB unsigned
+                    // tier). QuestDB's signed types take signed filter values, but third-party
+                    // Parquet statistics are unsigned - comparison would be incorrect.
                     let is_third_party_unsigned =
                         !is_qdb_unsigned && Self::is_unsigned_int_type(column_metadata);
                     if !is_third_party_unsigned
@@ -2702,6 +2702,7 @@ impl ParquetDecoder {
                             &filter_desc,
                             has_nulls,
                             is_decimal,
+                            is_qdb_unsigned,
                             is_ipv4,
                             is_date,
                             min_bytes,
@@ -2716,8 +2717,9 @@ impl ParquetDecoder {
                     let col_type_tag = qdb_column_type & 0xFF;
                     let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
                     let is_date = col_type_tag == ColumnTypeTag::Date as i32;
-                    let is_qdb_unsigned = is_ipv4 || col_type_tag == ColumnTypeTag::Char as i32;
-                    // Skip min/max filtering for third-party unsigned types (not IPv4 or Char).
+                    let is_qdb_unsigned = Self::is_qdb_unsigned(col_type_tag);
+                    // Skip min/max filtering for third-party unsigned types (no QuestDB unsigned
+                    // tier).
                     let is_third_party_unsigned =
                         !is_qdb_unsigned && Self::is_unsigned_int_type(column_metadata);
 
@@ -2726,6 +2728,7 @@ impl ParquetDecoder {
                             &physical_type,
                             &filter_desc,
                             is_decimal,
+                            is_qdb_unsigned,
                             is_ipv4,
                             is_date,
                             op,
@@ -2741,6 +2744,16 @@ impl ParquetDecoder {
         }
 
         Ok(false)
+    }
+
+    /// Whether a QuestDB column of this tag holds unsigned integers, by the tag's arithmetic
+    /// tier: its Int32 statistics and filter values then compare as u32. An unknown tag
+    /// answers false.
+    pub(crate) fn is_qdb_unsigned(col_type_tag: i32) -> bool {
+        u8::try_from(col_type_tag)
+            .ok()
+            .and_then(|code| ColumnTypeTag::try_from(code).ok())
+            .is_some_and(|tag| tag.arithmetic().is_unsigned_int())
     }
 
     #[inline]
@@ -3016,6 +3029,8 @@ impl ParquetDecoder {
         }
     }
 
+    /// `is_unsigned` selects the u32 comparison of an unsigned tier; `is_ipv4` selects IPv4's
+    /// NULL, the value 0, where every other Int32 type's NULL is the bit pattern of `i32::MIN`.
     #[allow(clippy::too_many_arguments)]
     #[allow(
         clippy::wildcard_enum_match_arm,
@@ -3026,6 +3041,7 @@ impl ParquetDecoder {
         filter_desc: &ColumnFilterValues,
         has_nulls: bool,
         is_decimal: bool,
+        is_unsigned: bool,
         is_ipv4: bool,
         is_date: bool,
         min_bytes: Option<&[u8]>,
@@ -3038,7 +3054,8 @@ impl ParquetDecoder {
 
         let ptr = filter_desc.ptr as *const u8;
         match physical_type {
-            PhysicalType::Int32 if is_ipv4 => {
+            // Unsigned Int32 (IPv4, Char).
+            PhysicalType::Int32 if is_unsigned => {
                 Self::validate_filter_span(ptr, count, size_of::<u32>(), filter_desc.buf_end)?;
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
@@ -3049,7 +3066,12 @@ impl ParquetDecoder {
                 };
                 for i in 0..count {
                     let v = unsafe { (ptr as *const u32).add(i).read_unaligned() };
-                    if v == 0 {
+                    let is_null = if is_ipv4 {
+                        v == 0
+                    } else {
+                        v == i32::MIN as u32
+                    };
+                    if is_null {
                         if has_nulls {
                             return Ok(false);
                         }
@@ -3063,7 +3085,7 @@ impl ParquetDecoder {
                 }
                 Ok(true)
             }
-            // Signed Int32 (Byte, Short, Char, Int, Date).
+            // Signed Int32 (Byte, Short, Int, Date).
             // DATE: filter values are i64 millis, converted to i32 days.
             // Others: filter values are i32, NULL = i32::MIN.
             PhysicalType::Int32 => {
@@ -3452,6 +3474,8 @@ impl ParquetDecoder {
     ///
     /// For BETWEEN (count=2): auto-swaps bounds, so we compute
     ///   lo=min(a,b), hi=max(a,b) and skip if max_stat < lo || min_stat > hi.
+    ///
+    /// `is_unsigned` and `is_ipv4` as in `all_values_outside_min_max_with_stats`.
     #[allow(clippy::too_many_arguments)]
     #[allow(
         clippy::wildcard_enum_match_arm,
@@ -3461,6 +3485,7 @@ impl ParquetDecoder {
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
         is_decimal: bool,
+        is_unsigned: bool,
         is_ipv4: bool,
         is_date: bool,
         op: u8,
@@ -3479,7 +3504,15 @@ impl ParquetDecoder {
         let ptr = filter_desc.ptr as *const u8;
 
         match physical_type {
-            PhysicalType::Int32 if is_ipv4 => {
+            // Unsigned Int32 (IPv4, Char).
+            PhysicalType::Int32 if is_unsigned => {
+                let is_null = |v: u32| {
+                    if is_ipv4 {
+                        v == 0
+                    } else {
+                        v == i32::MIN as u32
+                    }
+                };
                 Self::validate_filter_span(ptr, count, size_of::<u32>(), filter_desc.buf_end)?;
                 let (min_val, max_val) = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => (
@@ -3491,13 +3524,13 @@ impl ParquetDecoder {
                 if is_between {
                     let a = unsafe { (ptr as *const u32).read_unaligned() };
                     let b = unsafe { (ptr.add(4) as *const u32).read_unaligned() };
-                    if a == 0 || b == 0 {
+                    if is_null(a) || is_null(b) {
                         return Ok(false);
                     }
                     Ok(max_val < a.min(b) || min_val > a.max(b))
                 } else {
                     let v = unsafe { (ptr as *const u32).read_unaligned() };
-                    if v == 0 {
+                    if is_null(v) {
                         return Ok(false);
                     }
                     Ok(match op {
@@ -3509,7 +3542,7 @@ impl ParquetDecoder {
                     })
                 }
             }
-            // Signed Int32 (Byte, Short, Char, Int, Date).
+            // Signed Int32 (Byte, Short, Int, Date).
             // DATE: filter value is i64 millis, converted to i32 days.
             // Others: filter value is i32, NULL = i32::MIN.
             PhysicalType::Int32 => {
@@ -5523,5 +5556,152 @@ mod column_top_zero_tests {
         assert!(ParquetDecoder::writer_undercounts_nulls(packed_char));
         let packed_int = qdb_type(ColumnTypeTag::Int) | (7 << 8);
         assert!(!ParquetDecoder::writer_undercounts_nulls(packed_int));
+    }
+}
+
+#[cfg(test)]
+mod int32_pruning_pin_tests {
+    use super::*;
+    use std::fmt::Write;
+
+    // statistics [min, max] of a row group, and the filter values the pin asks about
+    const STATS: [(i32, i32); 2] = [(1, 0x7FFF), (0x8000, 0xFFFF)];
+    const VALUES: [i32; 4] = [0, 0x7FFF, 0xFFFF, i32::MIN];
+    const EXPECTED: &str = "\
+IPv4 [0x1, 0x7fff] 0x0 nulls=0: eq=1 lt=0 ge=0 bloom=1
+IPv4 [0x1, 0x7fff] 0x0 nulls=1: eq=0 lt=0 ge=0 bloom=0
+IPv4 [0x1, 0x7fff] 0x7fff nulls=0: eq=0 lt=0 ge=0 bloom=1
+IPv4 [0x1, 0x7fff] 0x7fff nulls=1: eq=0 lt=0 ge=0 bloom=1
+IPv4 [0x1, 0x7fff] 0xffff nulls=0: eq=1 lt=0 ge=1 bloom=1
+IPv4 [0x1, 0x7fff] 0xffff nulls=1: eq=1 lt=0 ge=1 bloom=1
+IPv4 [0x1, 0x7fff] 0x80000000 nulls=0: eq=1 lt=0 ge=1 bloom=1
+IPv4 [0x1, 0x7fff] 0x80000000 nulls=1: eq=1 lt=0 ge=1 bloom=1
+IPv4 [0x8000, 0xffff] 0x0 nulls=0: eq=1 lt=0 ge=0 bloom=1
+IPv4 [0x8000, 0xffff] 0x0 nulls=1: eq=0 lt=0 ge=0 bloom=0
+IPv4 [0x8000, 0xffff] 0x7fff nulls=0: eq=1 lt=1 ge=0 bloom=1
+IPv4 [0x8000, 0xffff] 0x7fff nulls=1: eq=1 lt=1 ge=0 bloom=1
+IPv4 [0x8000, 0xffff] 0xffff nulls=0: eq=0 lt=0 ge=0 bloom=1
+IPv4 [0x8000, 0xffff] 0xffff nulls=1: eq=0 lt=0 ge=0 bloom=1
+IPv4 [0x8000, 0xffff] 0x80000000 nulls=0: eq=1 lt=0 ge=1 bloom=1
+IPv4 [0x8000, 0xffff] 0x80000000 nulls=1: eq=1 lt=0 ge=1 bloom=1
+Char [0x1, 0x7fff] 0x0 nulls=0: eq=1 lt=1 ge=0 bloom=1
+Char [0x1, 0x7fff] 0x0 nulls=1: eq=1 lt=1 ge=0 bloom=1
+Char [0x1, 0x7fff] 0x7fff nulls=0: eq=0 lt=0 ge=0 bloom=1
+Char [0x1, 0x7fff] 0x7fff nulls=1: eq=0 lt=0 ge=0 bloom=1
+Char [0x1, 0x7fff] 0xffff nulls=0: eq=1 lt=0 ge=1 bloom=1
+Char [0x1, 0x7fff] 0xffff nulls=1: eq=1 lt=0 ge=1 bloom=1
+Char [0x1, 0x7fff] 0x80000000 nulls=0: eq=1 lt=0 ge=0 bloom=1
+Char [0x1, 0x7fff] 0x80000000 nulls=1: eq=0 lt=0 ge=0 bloom=0
+Char [0x8000, 0xffff] 0x0 nulls=0: eq=1 lt=1 ge=0 bloom=1
+Char [0x8000, 0xffff] 0x0 nulls=1: eq=1 lt=1 ge=0 bloom=1
+Char [0x8000, 0xffff] 0x7fff nulls=0: eq=1 lt=1 ge=0 bloom=1
+Char [0x8000, 0xffff] 0x7fff nulls=1: eq=1 lt=1 ge=0 bloom=1
+Char [0x8000, 0xffff] 0xffff nulls=0: eq=0 lt=0 ge=0 bloom=1
+Char [0x8000, 0xffff] 0xffff nulls=1: eq=0 lt=0 ge=0 bloom=1
+Char [0x8000, 0xffff] 0x80000000 nulls=0: eq=1 lt=0 ge=0 bloom=1
+Char [0x8000, 0xffff] 0x80000000 nulls=1: eq=0 lt=0 ge=0 bloom=0
+Int [0x1, 0x7fff] 0x0 nulls=0: eq=1 lt=1 ge=0 bloom=1
+Int [0x1, 0x7fff] 0x0 nulls=1: eq=1 lt=1 ge=0 bloom=1
+Int [0x1, 0x7fff] 0x7fff nulls=0: eq=0 lt=0 ge=0 bloom=1
+Int [0x1, 0x7fff] 0x7fff nulls=1: eq=0 lt=0 ge=0 bloom=1
+Int [0x1, 0x7fff] 0xffff nulls=0: eq=1 lt=0 ge=1 bloom=1
+Int [0x1, 0x7fff] 0xffff nulls=1: eq=1 lt=0 ge=1 bloom=1
+Int [0x1, 0x7fff] 0x80000000 nulls=0: eq=1 lt=0 ge=0 bloom=1
+Int [0x1, 0x7fff] 0x80000000 nulls=1: eq=0 lt=0 ge=0 bloom=0
+Int [0x8000, 0xffff] 0x0 nulls=0: eq=1 lt=1 ge=0 bloom=1
+Int [0x8000, 0xffff] 0x0 nulls=1: eq=1 lt=1 ge=0 bloom=1
+Int [0x8000, 0xffff] 0x7fff nulls=0: eq=1 lt=1 ge=0 bloom=1
+Int [0x8000, 0xffff] 0x7fff nulls=1: eq=1 lt=1 ge=0 bloom=1
+Int [0x8000, 0xffff] 0xffff nulls=0: eq=0 lt=0 ge=0 bloom=1
+Int [0x8000, 0xffff] 0xffff nulls=1: eq=0 lt=0 ge=0 bloom=1
+Int [0x8000, 0xffff] 0x80000000 nulls=0: eq=1 lt=0 ge=0 bloom=1
+Int [0x8000, 0xffff] 0x80000000 nulls=1: eq=0 lt=0 ge=0 bloom=0
+";
+
+    fn filter(values: &[i32]) -> ColumnFilterValues {
+        ColumnFilterValues {
+            count: values.len() as u32,
+            ptr: values.as_ptr() as u64,
+            buf_end: unsafe { values.as_ptr().add(values.len()) } as u64,
+        }
+    }
+
+    // min/max pruning of `column = value`, with the flags the call sites pass for this tag
+    fn eq_outside(tag: ColumnTypeTag, value: i32, has_nulls: bool, stats: (i32, i32)) -> bool {
+        let values = [value];
+        ParquetDecoder::all_values_outside_min_max_with_stats(
+            &PhysicalType::Int32,
+            &filter(&values),
+            has_nulls,
+            false,
+            ParquetDecoder::is_qdb_unsigned(tag as i32),
+            tag == ColumnTypeTag::IPv4,
+            false,
+            Some(&stats.0.to_le_bytes()),
+            Some(&stats.1.to_le_bytes()),
+        )
+        .unwrap()
+    }
+
+    // min/max pruning of `column <op> value`, with the flags the call sites pass for this tag
+    fn range_outside(tag: ColumnTypeTag, op: u8, value: i32, stats: (i32, i32)) -> bool {
+        let values = [value];
+        ParquetDecoder::value_outside_range(
+            &PhysicalType::Int32,
+            &filter(&values),
+            false,
+            ParquetDecoder::is_qdb_unsigned(tag as i32),
+            tag == ColumnTypeTag::IPv4,
+            false,
+            op,
+            Some(&stats.0.to_le_bytes()),
+            Some(&stats.1.to_le_bytes()),
+        )
+        .unwrap()
+    }
+
+    // bloom pruning of `column = value` against a bloom block that holds no value
+    fn bloom_absent(tag: ColumnTypeTag, value: i32, has_nulls: bool) -> bool {
+        let values = [value];
+        let bitset = [0u8; 32];
+        ParquetDecoder::all_values_absent_from_bloom(
+            &bitset,
+            &PhysicalType::Int32,
+            &filter(&values),
+            has_nulls,
+            false,
+            false,
+            tag as i32,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn int32_pruning_answers_of_ipv4_char_and_int() {
+        // IPv4 compares as u32 and reads 0 as NULL; CHAR and INT read i32::MIN as NULL. The
+        // answers are pinned, so deciding unsigned comparison by the arithmetic tier must keep
+        // every one of them
+        let mut actual = String::new();
+        for tag in [ColumnTypeTag::IPv4, ColumnTypeTag::Char, ColumnTypeTag::Int] {
+            for stats in STATS {
+                for value in VALUES {
+                    for has_nulls in [false, true] {
+                        writeln!(
+                            actual,
+                            "{tag:?} [{:#x}, {:#x}] {value:#x} nulls={}: eq={} lt={} ge={} bloom={}",
+                            stats.0,
+                            stats.1,
+                            has_nulls as u8,
+                            eq_outside(tag, value, has_nulls, stats) as u8,
+                            range_outside(tag, FILTER_OP_LT, value, stats) as u8,
+                            range_outside(tag, FILTER_OP_GE, value, stats) as u8,
+                            bloom_absent(tag, value, has_nulls) as u8,
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+        }
+        assert_eq!(actual, EXPECTED);
     }
 }
