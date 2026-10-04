@@ -66,7 +66,8 @@ public class ProtocolOpcodeCoverageTest {
     public void testOpcodeFunctionsHandleEveryType() throws Exception {
         final Map<String, Set<String>> unhandled = new HashMap<>();
         unhandled.put("printOpcode", Set.of(NOT_STORED));
-        // CSV and PostgreSQL wire have no representation for LONG128: its arm refuses the column
+        // CSV and PostgreSQL wire have no representation for LONG128: CSV refuses the column when it
+        // picks the opcodes, PostgreSQL wire's arm refuses it
         unhandled.put("csvOpcode", Set.of("LONG128", NOT_STORED));
         unhandled.put("outColumnOpcode", Set.of("LONG128", NOT_STORED));
         // BINARY exports through a temporary table (ParquetExportMode.determineExportMode())
@@ -83,7 +84,7 @@ public class ProtocolOpcodeCoverageTest {
         unhandled.put("jsonOpcode", Set.of("LONG128", NOT_STORED));
 
         final Method print = method(CursorPrinter.class, "printOpcode", int.class);
-        final Method csv = method(ExportQueryProcessor.class, "csvOpcode", int.class);
+        final Method csv = method(ExportQueryProcessor.class, "csvOpcode", int.class, CharSequence.class);
         final Method pg = method(PGPipelineEntry.class, "outColumnOpcode", int.class, short.class);
         final Method export = method(HybridColumnMaterializer.class, "exportOpcode", int.class);
         final Method parquet = method(Class.forName("io.questdb.cairo.ParquetColumnTypeConverter"), "fixedTargetOpcode", int.class);
@@ -96,10 +97,7 @@ public class ProtocolOpcodeCoverageTest {
             final TypeConformanceTypes.Entry entry = TypeConformanceTypes.ALL.getQuick(i);
             final int type = entry.columnType;
             check(failures, unhandled, "printOpcode", entry, () -> (int) print.invoke(null, type) == ColumnType.UNDEFINED);
-            check(failures, unhandled, "csvOpcode", entry, () -> {
-                final int opcode = (int) csv.invoke(null, type);
-                return opcode == ColumnType.NULL || opcode == ColumnType.LONG128;
-            });
+            check(failures, unhandled, "csvOpcode", entry, () -> (int) csv.invoke(null, type, "v") == ColumnType.NULL);
             check(failures, unhandled, "outColumnOpcode", entry, () -> {
                 // a type without a wire kind takes the pseudo route, whose raw (format code, tag)
                 // pair outRecord() reports; LONG128's arm refuses the column
