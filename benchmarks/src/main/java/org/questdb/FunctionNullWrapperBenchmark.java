@@ -35,6 +35,8 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -59,10 +61,19 @@ import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Per-row cost of four representative functions (a comparison, an arithmetic operator, an
- * aggregate and a cast) over a LONG column, with and without NULL rows. The functions' NULL
- * handling is what the benchmark measures, so a change to how a function tests its operands
- * for NULL shows here first. The JIT is off, so the filter takes the interpreted path.
+ * Per-row cost of four representative functions over LONG columns, with and without NULL rows.
+ * The functions' NULL handling is what the benchmark measures, so a change to how a function
+ * tests its operands for NULL shows here first. The cells:
+ * <ul>
+ *     <li>{@code lt}: the comparison {@code a < b} in a filter, which tests both operands for NULL
+ *     ({@code =} would not: it compares NULL as a value);</li>
+ *     <li>{@code add}: the operator {@code a + b} under {@code sum}, which tests both operands;</li>
+ *     <li>{@code sum}: the aggregate {@code sum(a)}'s own per-row step, which skips NULL rows;
+ *     parallel GROUP BY is off, so neither the vectorized aggregate nor the batch path takes it,
+ *     and the setup checks the plan;</li>
+ *     <li>{@code cast}: the cast {@code a::DOUBLE} in a filter, which maps NULL to NaN.</li>
+ * </ul>
+ * The JIT is off, so the filters take the interpreted path.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -82,7 +93,7 @@ public class FunctionNullWrapperBenchmark {
     private SqlCompilerImpl compiler;
     private SqlExecutionContextImpl ctx;
     private CairoEngine engine;
-    private RecordCursorFactory eqFactory;
+    private RecordCursorFactory ltFactory;
     private RecordCursorFactory sumFactory;
 
     public static void main(String[] args) throws RunnerException {
@@ -104,8 +115,8 @@ public class FunctionNullWrapperBenchmark {
     }
 
     @Benchmark
-    public long eq() throws SqlException {
-        return firstLong(eqFactory);
+    public long lt() throws SqlException {
+        return firstLong(ltFactory);
     }
 
     @Setup(Level.Trial)
@@ -121,6 +132,8 @@ public class FunctionNullWrapperBenchmark {
                 null
         );
         ctx.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        // the aggregates run their own per-row step, not the vectorized or the batch path
+        ctx.setParallelGroupByEnabled(false);
         compiler = new SqlCompilerImpl(engine);
 
         final boolean hasNulls = switch (column) {
@@ -143,16 +156,16 @@ public class FunctionNullWrapperBenchmark {
         );
         engine.releaseAllWriters();
 
-        eqFactory = compile("SELECT count(*) FROM t WHERE a = b");
+        ltFactory = compile("SELECT count(*) FROM t WHERE a < b");
         addFactory = compile("SELECT sum(a + b) FROM t");
-        sumFactory = compile("SELECT sum(a) FROM t");
+        sumFactory = compileRowByRow("SELECT sum(a) FROM t", "values: [sum(a)]");
         castFactory = compile("SELECT count(*) FROM t WHERE a::DOUBLE = 0.5");
 
-        // NULL = NULL is true, so the NULL rows count as equal
-        final long expectedEq = ROWS / 2;
-        final long eq = firstLong(eqFactory);
-        if (eq != expectedEq) {
-            throw new IllegalStateException("unexpected eq count [column=" + column + ", expected=" + expectedEq + ", actual=" + eq + ']');
+        // a < b on the odd rows; the NULL rows are even rows
+        final long expectedLt = ROWS / 2;
+        final long lt = firstLong(ltFactory);
+        if (lt != expectedLt) {
+            throw new IllegalStateException("unexpected lt count [column=" + column + ", expected=" + expectedLt + ", actual=" + lt + ']');
         }
         final long cast = firstLong(castFactory);
         if (cast != 0) {
@@ -169,7 +182,7 @@ public class FunctionNullWrapperBenchmark {
 
     @TearDown(Level.Trial)
     public void tearDown() throws SqlException {
-        eqFactory.close();
+        ltFactory.close();
         addFactory.close();
         sumFactory.close();
         castFactory.close();
@@ -185,6 +198,23 @@ public class FunctionNullWrapperBenchmark {
             throw new IllegalStateException("JIT filter in " + query);
         }
         return factory;
+    }
+
+    // the plan must show the single-threaded GROUP BY calling the function per row
+    private RecordCursorFactory compileRowByRow(String query, String expectedValues) throws SqlException {
+        final StringSink plan = new StringSink();
+        try (
+                RecordCursorFactory explain = compiler.compile("EXPLAIN " + query, ctx).getRecordCursorFactory();
+                RecordCursor cursor = explain.getCursor(ctx)
+        ) {
+            while (cursor.hasNext()) {
+                plan.put(cursor.getRecord().getStrA(0)).put('\n');
+            }
+        }
+        if (!Chars.startsWith(plan, "GroupBy vectorized: false\n") || !Chars.contains(plan, expectedValues)) {
+            throw new IllegalStateException("unexpected plan for " + query + ":\n" + plan);
+        }
+        return compile(query);
     }
 
     private long firstLong(RecordCursorFactory factory) throws SqlException {
