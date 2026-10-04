@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -35,10 +36,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.window.AsyncWindowAtom;
+import io.questdb.griffin.engine.window.AsyncWindowRecordCursor;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.AsyncWindowSplitPlan;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -110,6 +114,109 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, MAX_KEY_ROWS);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, MIN_ROWS);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, ROUND_ROWS);
+    }
+
+    @Test
+    public void testBlocksOverKeptChains() throws Exception {
+        // tasks large enough against a 64 KB page that a chain a worker filled keeps its memory for
+        // the next fill, slices and whole keys alike; whole-key tasks vary in size, so kept chains
+        // also regrow
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 10_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, 60_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, 40_000);
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 65_536);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+                ctx.changePageFrameSizes(1, 1_000_000);
+                createKeptChainTable(engine, ctx);
+                final String[] queries = {
+                        // keys split: slices of task.rows
+                        "select sym, ts, x, avg(d) over (partition by sym rows between 4 preceding and current row) a from m where sym != 'K0' order by sym",
+                        // the unbounded frame keeps keys whole: tasks of whole keys
+                        "select sym, ts, x, avg(d) over (partition by sym rows between 4 preceding and current row) a, " +
+                                "sum(d) over (partition by sym rows between unbounded preceding and 1 preceding) c from m where sym != 'K0' order by sym",
+                };
+                for (String query : queries) {
+                    final String expected = bits(engine, ctx, query, true, false);
+                    ctx.setParallelWindowEnabled(true);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        Assert.assertTrue(query, findAtom(factory).isKeyRunEnabled());
+                        long keptChains = 0;
+                        // a round may be stolen whole by the query's thread: repeat until workers
+                        // filled chains that kept their memory
+                        for (int attempt = 0; attempt < 10 && keptChains == 0; attempt++) {
+                            // read through blocks, after an early close, and after a rewind
+                            for (int iter = 0; iter < 5; iter++) {
+                                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                    if (iter == 1) {
+                                        for (int i = 0; i < 30_000 && cursor.hasNext(); i++) {
+                                            // early close
+                                        }
+                                        continue;
+                                    }
+                                    if (iter >= 2) {
+                                        for (int i = 0; i < 70_000 * (iter - 1) && cursor.hasNext(); i++) {
+                                            // rewound below
+                                        }
+                                        cursor.toTop();
+                                    }
+                                    final long chainMemory = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                                    final StringSink sink = new StringSink();
+                                    printBlocks(cursor, factory.getMetadata(), sink);
+                                    TestUtils.assertEquals(query + " iter " + iter, expected, sink);
+                                    // the end of the rows gives the kept memory back
+                                    final AsyncWindowRecordCursor asyncCursor = findAsyncFactory(factory).getAsyncCursor();
+                                    Assert.assertEquals(query, 0, asyncCursor.getKeptChainBytes());
+                                    Assert.assertTrue(query, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) <= chainMemory);
+                                    keptChains += asyncCursor.getKeptChainCount();
+                                }
+                            }
+                        }
+                        Assert.assertTrue(query, keptChains > 0);
+                    } finally {
+                        ctx.setParallelWindowEnabled(false);
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testChainMemoryOnTheQueryThread() throws Exception {
+        // Without workers the query's thread computes every task, as on a busy pool. Only the round
+        // being returned has full chains then, and each chain is freed once returned: a chain that
+        // kept its memory would hold every round's, max.rounds times as much.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 5_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, 60_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 0);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, 20_000);
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 65_536);
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 1_000_000);
+            createKeptChainTable(engine, sqlExecutionContext);
+            final String query = "select sym, ts, x, avg(d) over (partition by sym rows between 4 preceding and current row) a from m where sym != 'K0' order by sym";
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                final long base = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    final AsyncWindowRecordCursor asyncCursor = findAsyncFactory(factory).getAsyncCursor();
+                    Assert.assertTrue(asyncCursor.getParallelTaskCount() > 10);
+                    Assert.assertEquals(0, findAtom(factory).getWorkerThreadTaskCount());
+                    Assert.assertEquals(0, asyncCursor.getKeptChainCount());
+                    Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) - base);
+                    Assert.assertTrue(rows > 150_000);
+                }
+            } finally {
+                sqlExecutionContext.setParallelWindowEnabled(false);
+            }
+        });
     }
 
     @Test
@@ -405,6 +512,24 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
         }
     }
 
+    // As printBits(), reading the rows through record blocks wherever the cursor offers them.
+    private static void printBlocks(RecordCursor cursor, RecordMetadata metadata, StringSink sink) {
+        while (true) {
+            final RecordBlock block = cursor.peekRecordBlock(37);
+            if (block != null) {
+                for (int r = 0, n = block.getRowCount(); r < n; r++) {
+                    printRecord(block.getRecordAt(r), metadata, sink);
+                }
+                cursor.skipRecordBlock(block.getRowCount());
+                continue;
+            }
+            if (!cursor.hasNext()) {
+                return;
+            }
+            printRecord(cursor.getRecord(), metadata, sink);
+        }
+    }
+
     private static void printRecord(Record record, RecordMetadata metadata, StringSink sink) {
         final int columnCount = metadata.getColumnCount();
         for (int c = 0; c < columnCount; c++) {
@@ -435,6 +560,13 @@ public class AsyncWindowKeyRunTest extends AbstractCairoTest {
             }
         }
         sink.put('\n');
+    }
+
+    // Table m: 200,000 rows over the 24 keys K<x * x % 47>, interleaved in time, one in nine d NULL.
+    private void createKeptChainTable(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        engine.execute("create table m (sym symbol index type " + indexType + ", d double, x long, ts timestamp) timestamp(ts) partition by NONE", ctx);
+        engine.execute("insert into m select 'K' || ((x * x) % 47), case when x % 9 = 0 then null else rnd_double() end, x, " +
+                "(x * 1_000_000L)::timestamp from long_sequence(200_000)", ctx);
     }
 
     /**

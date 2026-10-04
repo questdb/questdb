@@ -76,7 +76,10 @@ import org.jetbrains.annotations.TestOnly;
  * rounds are alive at a time, each dispatched through a sequence of its own: the one whose rows are
  * being returned, task by task in scan order, and those the workers compute ahead of it. A task's
  * worker computes the window over its rows and writes the complete output rows into the task's
- * {@link RecordChain}, which is freed once its rows have been returned.
+ * {@link RecordChain}. Once its rows have been returned, the chain of a task the query's own thread
+ * computed is freed. The chain of a task a worker computed keeps its memory for the task's next
+ * fill, see {@link #finishEmitting}, within the output of {@code max.rounds} full rounds in all,
+ * until the rows run out or the cursor closes.
  * <p>
  * <b>Splitting keys.</b> When the window allows it, see {@link AsyncWindowSplitPlan}, tasks are
  * plain slices of the walk: a key larger than a task spans several, each computed by any worker,
@@ -138,6 +141,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private boolean isOpen;
     private boolean isParallelPhase;
     private boolean isWorkerSlotsOpen;
+    // chain memory that returned tasks keep for their next fill, see finishEmitting()
+    private long keptChainBytes;
+    private long keptChainCount;
     private KeyMajorPageFrameRecordCursor keyMajorCursor;
     private long largeKeyRowsStreamed;
     private long maxRoundRows;
@@ -240,6 +246,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         for (Round round : rounds) {
             failure = Misc.freeBestEffort(failure, round);
         }
+        keptChainBytes = 0;
         ownerRows = Misc.free(ownerRows);
         warmRows = Misc.free(warmRows);
         keyMajorCursor = null;
@@ -252,6 +259,23 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         executionContext = null;
         circuitBreaker = null;
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Chain memory that returned tasks keep for their next fill now.
+     */
+    @TestOnly
+    public long getKeptChainBytes() {
+        return keptChainBytes;
+    }
+
+    /**
+     * Returned tasks whose chain kept its memory for the next fill, since the cursor opened or
+     * rewound.
+     */
+    @TestOnly
+    public long getKeptChainCount() {
+        return keptChainCount;
     }
 
     /**
@@ -386,6 +410,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (!nextSegment()) {
                 produce();
                 if (!nextSegment()) {
+                    releaseChains();
                     return false;
                 }
             }
@@ -514,6 +539,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             // a task starts from clean state: warm-up rows rebuild a key it continues
             slot.toTop();
             task.lastOffset = slot.compute(task.rows, task.keyStarts, task.emitFrom, task.chain, circuitBreaker, sequence);
+            task.computedByWorker = workerId > -1;
             slot.countTask();
             atom.countTask(workerId);
         } finally {
@@ -723,12 +749,25 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         if (carry.length > 0 && task.emittedRows > 0) {
             captureCarry(task);
         }
-        // Returned. The chain keeps its memory for the task's next fill, which would otherwise
-        // fault every page of it in afresh: the live rounds bound the tasks, and with them what
-        // the chains hold, as they bound the chains being filled. A chain that grew well past a
-        // task's usual size, for a large key, gives its memory back now; the next fill sizes it
-        // in one allocation from its row count.
-        task.chain.clearKeepingMemory(2 * taskRows * task.chain.getFixedRecordStride());
+        // Returned. A chain a worker filled keeps its memory for the task's next fill, which
+        // would otherwise fault every page of it in afresh. Workers fill tasks ahead of the rows
+        // being returned, so their rounds' chains are full at once anyway: keeping their memory
+        // does not raise that peak, and it is capped at the output of max.rounds full rounds.
+        // A chain the query's own thread filled, as it does when the pool is busy, is freed: only
+        // the head round's chains are full at a time then, and keeping every round's memory
+        // would hold max.rounds times that. A chain that grew well past a task's usual size, for
+        // a large key, is freed too; the next fill sizes it in one allocation from its row count.
+        final long stride = task.chain.getFixedRecordStride();
+        final long keepLimit = Math.min(2 * taskRows * stride, rounds.length * roundRows * stride - keptChainBytes);
+        if (task.computedByWorker && keepLimit > 0) {
+            task.keptChainBytes = task.chain.clearKeepingMemory(keepLimit);
+            keptChainBytes += task.keptChainBytes;
+            if (task.keptChainBytes > 0) {
+                keptChainCount++;
+            }
+        } else {
+            task.chain.clear();
+        }
         taskRowsComputed += task.emittedRows;
         emitTask = null;
     }
@@ -889,8 +928,22 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         return ownerRows.size() > 0 || headStreamPos > -1;
     }
 
+    // Every row has been returned: no chain holds a row to return, or is filled again before a
+    // rewind. Frees them all, also the chain of a task the walk's end left without rows.
+    private void releaseChains() {
+        for (Round round : rounds) {
+            for (int i = 0, n = round.tasks.size(); i < n; i++) {
+                final Task task = round.tasks.getQuick(i);
+                task.keptChainBytes = 0;
+                task.chain.clear();
+            }
+        }
+        keptChainBytes = 0;
+    }
+
     private void resetCounters() {
         maxRoundRows = 0;
+        keptChainCount = 0;
         largeKeyRowsStreamed = 0;
         parallelRoundCount = 0;
         parallelTaskCount = 0;
@@ -1057,6 +1110,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 tasks.add(cursor.newTask());
             }
             final Task task = tasks.getQuick(taskCount++);
+            // the memory the chain kept is the fill's now
+            cursor.keptChainBytes -= task.keptChainBytes;
+            task.keptChainBytes = 0;
             task.reuse(cursor.taskRows);
             return task;
         }
@@ -1076,6 +1132,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         // are one key's, see AsyncWindowAtom.Slot.computeKeyRuns()
         private final LongList keyStarts = new LongList();
         private final DirectLongList rows;
+        // a worker thread computed the task, not the query's thread; written by the computing thread
+        private boolean computedByWorker;
         // the first key of the task continues from the rows returned before it
         private boolean continuesKey;
         // rows before this index only rebuild a continued key's state
@@ -1083,6 +1141,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         private long emittedRows;
         // rows of the first key, warm-up excluded
         private long firstKeyRows;
+        // memory the chain kept after the task's rows were returned, see finishEmitting()
+        private long keptChainBytes;
         // a key the walk skipped after this task's rows, for the query's thread to stream
         private int largeKeyIndex = -1;
         // offset of the last record in the chain, written by the task's worker
@@ -1107,6 +1167,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             shrinkIfOversized(rows, taskRows);
             rows.clear();
             keyStarts.clear();
+            computedByWorker = false;
             continuesKey = false;
             emitFrom = 0;
             emittedRows = 0;

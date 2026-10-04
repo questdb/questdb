@@ -201,11 +201,11 @@ public class RecordChainTest extends AbstractCairoTest {
                     chain.toTop();
                     if (fill < 2) {
                         // within the limit: the records go, the memory stays
-                        chain.clearKeepingMemory(1000 * chain.getFixedRecordStride() * 2);
+                        Assert.assertEquals(memFilled - memBefore, chain.clearKeepingMemory(1000 * chain.getFixedRecordStride() * 2));
                         Assert.assertEquals(memFilled, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
                     } else {
                         // above it: given back, as clear() does
-                        chain.clearKeepingMemory(1000);
+                        Assert.assertEquals(0, chain.clearKeepingMemory(1000));
                         Assert.assertEquals(memBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
                     }
                     Assert.assertFalse(chain.hasNext());
