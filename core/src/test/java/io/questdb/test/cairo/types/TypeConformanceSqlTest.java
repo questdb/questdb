@@ -68,6 +68,11 @@ import java.util.regex.Pattern;
  * SAMPLE BY FILL(PREV) over a leading NULL, and SAMPLE BY FILL(NULL), FILL(value) and
  * FILL(LINEAR) over gaps between two values and before a NULL.
  * <p>
+ * Some paths run one query per value row, with the row's value as a constant of the type (the
+ * NULL row as a NULL of the type), and record one line per row: the labels of the rows the query
+ * selects, or its error. SUBSAMPLE takes a value of the type as the stride of
+ * {@code cadence(...)} and as the target point count of {@code uniform(...)}.
+ * <p>
  * Every query runs in three modes: single-threaded with interpreted filters, and parallel (a
  * worker pool of four, the parallel factories on) with compiled and with interpreted filters. A
  * filter compiles only on the parallel path ({@code SqlCodeGenerator} gives the JIT to the async
@@ -216,6 +221,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                         assertSection(query[0], mode, steps);
                     }
                 }
+                for (String[] query : rowQueries()) {
+                    if (TypeConformanceInvariants.isEnabled(type, "sql." + query[0], mode)) {
+                        assertSection(query[0], mode, steps);
+                    }
+                }
                 return;
             }
             if (type.isLater()) {
@@ -236,6 +246,17 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                         ? assertReturns(eng, ctx, path, mode, query[1], observation, eng == engine)
                         : null;
                 assertSection(query[0], mode, battery == null ? observation.section() : observation.section() + battery + '\n');
+            }
+            for (String[] query : rowQueries()) {
+                final String path = "sql." + query[0];
+                if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
+                    continue;
+                }
+                if (type.isLater()) {
+                    checkLaterRowQuery(eng, ctx, query[0], query[1], mode);
+                    continue;
+                }
+                assertSection(query[0], mode, rowSection(eng, ctx, path, mode, query[1]));
             }
             dropTables(eng, ctx);
         }));
@@ -274,6 +295,29 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     private static String mask(CharSequence text) {
         // mask: the database root of the test run
         return text.toString().replace(root, "<dbRoot>");
+    }
+
+    // the first column of every row of the output, comma-separated: the labels of the rows selected
+    private static String labelsOf(Observation observation) {
+        final String[] lines = observation.output.split("\n");
+        final StringSink labels = new StringSink();
+        for (int l = 1; l < lines.length; l++) {
+            final int tab = lines[l].indexOf('\t');
+            labels.put(l > 1 ? "," : "").put(tab > -1 ? lines[l].substring(0, tab) : lines[l]);
+        }
+        return labels.toString();
+    }
+
+    /**
+     * The paths that run one query per value row, {name, sql}: {@code <value>} in the SQL stands
+     * for the row's value as a constant of the type ({@link #constantOf}). The path of each is
+     * {@code sql.<name>}.
+     */
+    private static String[][] rowQueries() {
+        return new String[][]{
+                {"subsample_stride", "SELECT k, ts FROM t SUBSAMPLE cadence(<value>)"},
+                {"subsample_target", "SELECT k, ts FROM t SUBSAMPLE uniform(<value>)"},
+        };
     }
 
 
@@ -766,6 +810,41 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * The per-row paths for a type registered later, which has no literal: the value is a cast of
+     * an INT constant or of NULL to the type. SUBSAMPLE applies to the integral types: for a
+     * type of the INT relation kind, the value 2 selects the rows the INT 2 selects, and a NULL
+     * of the type is refused as not set under SENTINEL and as less than the minimum under NONE,
+     * where it reads as 0; a type of any other kind must be refused as no integer.
+     */
+    private void checkLaterRowQuery(CairoEngine eng, SqlExecutionContext ctx, String name, String sql, String mode) {
+        final String path = "sql." + name;
+        final String two = selection(eng, ctx, sql.replace("<value>", "CAST(2 AS " + type.ddl + ")"));
+        final String nullValue = selection(eng, ctx, sql.replace("<value>", "CAST(NULL AS " + type.ddl + ")"));
+        if (!ColumnType.isIntegral(type.columnType)) {
+            if (!two.startsWith("error: ") || !two.contains("integer expected for")) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "two", path, mode)
+                        + ": SUBSAMPLE takes integers, so a value of a type of another kind must be refused, but gives: " + two);
+            }
+            return;
+        }
+        final String expected = selection(eng, ctx, sql.replace("<value>", "2"));
+        if (!expected.equals(two)) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "two", path, mode)
+                    + ": 2 of the type gives " + two + ", the INT 2 " + expected);
+        }
+        final String policy = TypeConformanceInvariants.policyOf(type);
+        final String refusal = switch (policy) {
+            case TypeConformanceInvariants.POLICY_SENTINEL, TypeConformanceInvariants.POLICY_BITMAP -> "must be set";
+            case TypeConformanceInvariants.POLICY_NONE -> "must be at least";
+            default -> "";
+        };
+        if (!nullValue.startsWith("error: ") || !nullValue.contains(refusal)) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "null", path, mode)
+                    + ": " + policy + ", a NULL of the type must be refused (" + refusal + "), but gives: " + nullValue);
+        }
+    }
+
     // the error compiling the query raises, null when it compiles
     @Nullable
     private String compileError(CairoEngine eng, SqlExecutionContext ctx, String sql) {
@@ -777,6 +856,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         } catch (Throwable e) {
             return String.valueOf(e.getMessage());
         }
+    }
+
+    // a value row as a constant of the type: its literal, and for the NULL row a NULL of the type
+    private String constantOf(TypeConformanceValues.Row row) {
+        return row.isNull() ? "CAST(NULL AS " + type.ddl + ")" : row.literal;
     }
 
     /**
@@ -1046,6 +1130,36 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         return texts;
     }
 
+    /**
+     * One line per value row with a literal: the label, then the labels of the rows the query
+     * selects with the row's value in place of {@code <value>}, comma-separated, or the query's
+     * error. A query that runs is also asserted with the {@code returns} battery.
+     */
+    private String rowSection(CairoEngine eng, SqlExecutionContext ctx, String path, String mode, String template) throws Exception {
+        final StringSink section = new StringSink();
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            if (row.literal == null) {
+                // a row written raw has no literal to put in a query
+                continue;
+            }
+            final String sql = template.replace("<value>", constantOf(row));
+            final Observation observation = observe(eng, ctx, sql);
+            section.put(row.label).put('\t');
+            if (observation.error != null) {
+                section.put(observation.error.replace('\n', ' '));
+            } else {
+                final String battery = assertReturns(eng, ctx, path, mode, sql, observation, eng == engine);
+                section.put(labelsOf(observation));
+                if (battery != null) {
+                    section.put('\t').put(battery);
+                }
+            }
+            section.put('\n');
+        }
+        return section.toString();
+    }
+
     private TypeConformanceValues.Row relabel(TypeConformanceValues.Row row, String label) {
         return new TypeConformanceValues.Row(label, row.literal);
     }
@@ -1079,6 +1193,15 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    // the labels of the rows a query selects (its first column), comma-separated, or its error
+    private String selection(CairoEngine eng, SqlExecutionContext ctx, String sql) {
+        final Observation observation = observe(eng, ctx, sql);
+        if (observation.error != null) {
+            return observation.error.replace('\n', ' ');
+        }
+        return labelsOf(observation);
     }
 
     private long[] sentinelBits() {
@@ -1313,6 +1436,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type STRING cannot fill column of type BOOLEAN
                 ## fill_linear
                 error: [11] Unsupported interpolation type: BOOLEAN
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("BYTE", """
                 ## filter_eq
@@ -1520,6 +1651,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:02.000000Z\t127
                 1970-01-01T00:00:03.000000Z\t63
                 1970-01-01T00:00:04.000000Z\t0
+                ## subsample_stride
+                min\terror: [44] stride must be at least 1
+                max\tmin
+                other_null\terror: [42] stride must be at least 1
+                null\terror: [38] stride must be at least 1
+                ## subsample_target
+                min\terror: [44] target points must be at least 2
+                max\tmin,max,other_null,null
+                other_null\terror: [42] target points must be at least 2
+                null\terror: [38] target points must be at least 2
                 """);
         rec("SHORT", """
                 ## cast
@@ -1727,6 +1868,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:02.000000Z\t32767
                 1970-01-01T00:00:03.000000Z\t16383
                 1970-01-01T00:00:04.000000Z\t0
+                ## subsample_stride
+                min\terror: [46] stride must be at least 1
+                max\tmin
+                other_null\terror: [42] stride must be at least 1
+                null\terror: [38] stride must be at least 1
+                ## subsample_target
+                min\terror: [46] target points must be at least 2
+                max\tmin,max,other_null,null
+                other_null\terror: [42] target points must be at least 2
+                null\terror: [38] target points must be at least 2
                 """);
         rec("CHAR", """
                 ## cast
@@ -1913,6 +2064,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [11] Unsupported interpolation type: CHAR
+                ## subsample_stride
+                min\terror: [39] integer expected for stride
+                max\terror: [43] integer expected for stride
+                other_null\terror: [42] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [39] integer expected for target point count
+                max\terror: [43] integer expected for target point count
+                other_null\terror: [42] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("INT", """
                 ## cast
@@ -2117,6 +2278,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:02.000000Z\t2147483647
                 1970-01-01T00:00:03.000000Z\tnull
                 1970-01-01T00:00:04.000000Z\tnull
+                ## subsample_stride
+                min\terror: [51] stride must be at least 1
+                max\tmin
+                sentinel\terror: [51] stride must be set
+                null\terror: [38] stride must be set
+                ## subsample_target
+                min\terror: [51] target points must be at least 2
+                max\tmin,max,sentinel,null
+                sentinel\terror: [51] target point count must be set
+                null\terror: [38] target point count must be set
                 """);
         rec("LONG", """
                 ## cast
@@ -2321,6 +2492,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:02.000000Z\t9223372036854775807
                 1970-01-01T00:00:03.000000Z\tnull
                 1970-01-01T00:00:04.000000Z\tnull
+                ## subsample_stride
+                min\terror: [60] stride must be at least 1
+                max\terror: [57] stride exceeds maximum of 2147483647
+                sentinel\terror: [64] stride must be set
+                null\terror: [38] stride must be set
+                ## subsample_target
+                min\terror: [60] target points must be at least 2
+                max\terror: [57] target points exceeds maximum of 2147483647
+                sentinel\terror: [64] target point count must be set
+                null\terror: [38] target point count must be set
                 """);
         rec("DATE", """
                 ## filter_eq
@@ -2513,6 +2694,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: inconvertible value: `292278994-08-17T07:12:55.807Z` [STRING -> LONG]
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunction]
+                ## subsample_stride
+                min\terror: [60] integer expected for stride
+                max\terror: [57] integer expected for stride
+                sentinel\terror: [64] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [60] integer expected for target point count
+                max\terror: [57] integer expected for target point count
+                sentinel\terror: [64] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("TIMESTAMP", """
                 ## cast
@@ -2705,6 +2896,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] invalid fill value: '294247-01-10T04:00:54.775807Z'
                 ## fill_linear
                 error: [11] Unsupported interpolation type: TIMESTAMP
+                ## subsample_stride
+                min\terror: [60] integer expected for stride
+                max\terror: [57] integer expected for stride
+                sentinel\terror: [64] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [60] integer expected for target point count
+                max\terror: [57] integer expected for target point count
+                sentinel\terror: [64] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("FLOAT", """
                 ## filter_eq
@@ -2967,6 +3168,20 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:02.000000Z\t3.4028235E38
                 1970-01-01T00:00:03.000000Z\tnull
                 1970-01-01T00:00:04.000000Z\tnull
+                ## subsample_stride
+                min\terror: [62] integer expected for stride
+                max\terror: [59] integer expected for stride
+                nan\terror: [43] integer expected for stride
+                literal_inf\terror: [48] integer expected for stride
+                negzero\terror: [44] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [62] integer expected for target point count
+                max\terror: [59] integer expected for target point count
+                nan\terror: [43] integer expected for target point count
+                literal_inf\terror: [48] integer expected for target point count
+                negzero\terror: [44] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DOUBLE", """
                 ## cast
@@ -3229,6 +3444,20 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:02.000000Z\t1.7976931348623157E308
                 1970-01-01T00:00:03.000000Z\tnull
                 1970-01-01T00:00:04.000000Z\tnull
+                ## subsample_stride
+                min\terror: [63] integer expected for stride
+                max\terror: [60] integer expected for stride
+                nan\terror: [43] integer expected for stride
+                literal_inf\terror: [48] integer expected for stride
+                negzero\terror: [44] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [63] integer expected for target point count
+                max\terror: [60] integer expected for target point count
+                nan\terror: [43] integer expected for target point count
+                literal_inf\terror: [48] integer expected for target point count
+                negzero\terror: [44] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("STRING", """
                 ## filter_eq
@@ -3440,6 +3669,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastStrGroupByFunction]
+                ## subsample_stride
+                empty\terror: [40] integer expected for stride
+                min\terror: [41] integer expected for stride
+                max\terror: [45] integer expected for stride
+                escape\terror: [50] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                empty\terror: [40] integer expected for target point count
+                min\terror: [41] integer expected for target point count
+                max\terror: [45] integer expected for target point count
+                escape\terror: [50] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("SYMBOL", """
                 ## filter_eq
@@ -3658,6 +3899,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 returns: ImplicitCastException: inconvertible value: `ü€😀�` [STRING -> INT]
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastSymbolGroupByFunction]
+                ## subsample_stride
+                empty\terror: [40] integer expected for stride
+                min\terror: [41] integer expected for stride
+                max\terror: [45] integer expected for stride
+                escape\terror: [50] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                empty\terror: [40] integer expected for target point count
+                min\terror: [41] integer expected for target point count
+                max\terror: [45] integer expected for target point count
+                escape\terror: [50] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("LONG256", """
                 ## filter_eq
@@ -3851,6 +4104,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:02.000000Z\t-1
                 1970-01-01T00:00:03.000000Z\tnull
                 1970-01-01T00:00:04.000000Z\tnull
+                ## subsample_stride
+                min\terror: [104] integer expected for stride
+                max\terror: [104] integer expected for stride
+                sentinel\terror: [104] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [104] integer expected for target point count
+                max\terror: [104] integer expected for target point count
+                sentinel\terror: [104] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("GEOBYTE", """
                 ## filter_eq
@@ -4020,6 +4283,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type INT cannot fill column of type GEOHASH(7b)
                 ## fill_linear
                 error: [11] Unsupported interpolation type: GEOHASH(7b)
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("GEOSHORT", """
                 ## cast
@@ -4195,6 +4466,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory$2]
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("GEOINT", """
                 ## filter_eq
@@ -4370,6 +4649,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [11] Unsupported interpolation type: GEOHASH(6c)
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("GEOLONG", """
                 ## cast
@@ -4545,6 +4832,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [11] Unsupported interpolation type: GEOHASH(8c)
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("BINARY", """
                 ## cast
@@ -4679,6 +4974,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [11] there is no matching function `last` with the argument types: (BINARY)
                 ## fill_linear
                 error: [11] there is no matching function `last` with the argument types: (BINARY)
+                ## subsample_stride
+                empty\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                empty\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("UUID", """
                 ## cast
@@ -4867,6 +5170,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastUuidGroupByFunction]
+                ## subsample_stride
+                min\terror: [76] integer expected for stride
+                max\terror: [76] integer expected for stride
+                sentinel\terror: [76] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [76] integer expected for target point count
+                max\terror: [76] integer expected for target point count
+                sentinel\terror: [76] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("LONG128", """
                 ## cast
@@ -5022,6 +5335,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [11] there is no matching function `last` with the argument types: (LONG128)
                 ## fill_linear
                 error: [11] there is no matching function `last` with the argument types: (LONG128)
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                sentinel\terror: [38] integer expected for stride
+                null\terror: [51] unsupported cast
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                sentinel\terror: [38] integer expected for target point count
+                null\terror: [51] unsupported cast
                 """);
         rec("IPv4", """
                 ## cast
@@ -5215,6 +5538,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastIPv4GroupByFunction]
+                ## subsample_stride
+                min\terror: [47] integer expected for stride
+                max\terror: [55] integer expected for stride
+                sentinel\terror: [47] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [47] integer expected for target point count
+                max\terror: [55] integer expected for target point count
+                sentinel\terror: [47] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("VARCHAR", """
                 ## filter_eq
@@ -5426,6 +5759,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastVarcharGroupByFunction]
+                ## subsample_stride
+                empty\terror: [40] integer expected for stride
+                min\terror: [41] integer expected for stride
+                max\terror: [45] integer expected for stride
+                escape\terror: [50] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                empty\terror: [40] integer expected for target point count
+                min\terror: [41] integer expected for target point count
+                max\terror: [45] integer expected for target point count
+                escape\terror: [50] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DOUBLE[]", """
                 ## filter_eq
@@ -5594,6 +5939,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] support for VALUE fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastArrayGroupByFunction]
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastArrayGroupByFunction]
+                ## subsample_stride
+                min\terror: [43] integer expected for stride
+                max\terror: [43] integer expected for stride
+                empty\terror: [45] integer expected for stride
+                specials\terror: [43] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [43] integer expected for target point count
+                max\terror: [43] integer expected for target point count
+                empty\terror: [45] integer expected for target point count
+                specials\terror: [43] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DECIMAL8", """
                 ## cast
@@ -5767,6 +6124,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(2,1)
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal8Func]
+                ## subsample_stride
+                min\terror: [44] integer expected for stride
+                max\terror: [43] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [44] integer expected for target point count
+                max\terror: [43] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DECIMAL16", """
                 ## cast
@@ -5940,6 +6305,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(4,2)
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal16Func]
+                ## subsample_stride
+                min\terror: [46] integer expected for stride
+                max\terror: [45] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [46] integer expected for target point count
+                max\terror: [45] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DECIMAL32", """
                 ## cast
@@ -6119,6 +6492,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal32Func]
+                ## subsample_stride
+                min\terror: [50] integer expected for stride
+                max\terror: [49] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [50] integer expected for target point count
+                max\terror: [49] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DECIMAL64", """
                 ## filter_eq
@@ -6292,6 +6673,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(16,4)
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal64Func]
+                ## subsample_stride
+                min\terror: [58] integer expected for stride
+                max\terror: [57] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [58] integer expected for target point count
+                max\terror: [57] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DECIMAL128", """
                 ## filter_eq
@@ -6465,6 +6854,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(38,10)
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal128Func]
+                ## subsample_stride
+                min\terror: [80] integer expected for stride
+                max\terror: [79] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [80] integer expected for target point count
+                max\terror: [79] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DECIMAL256", """
                 ## cast
@@ -6638,6 +7035,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(76,20)
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal256Func]
+                ## subsample_stride
+                min\terror: [118] integer expected for stride
+                max\terror: [117] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [118] integer expected for target point count
+                max\terror: [117] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("INTERVAL", """
                 ## filter_eq
@@ -6692,6 +7097,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## fill_linear
                 error: create: [29] non-persisted type: INTERVAL
+                ## subsample_stride
+                error: create: [29] non-persisted type: INTERVAL
+                ## subsample_target
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
                 ## filter_eq
@@ -6745,6 +7154,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## fill_value
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 ## fill_linear
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## subsample_stride
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## subsample_target
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
@@ -6944,6 +7357,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [11] Unsupported interpolation type: TIMESTAMP_NS
+                ## subsample_stride
+                min\terror: [60] integer expected for stride
+                max\terror: [57] integer expected for stride
+                sentinel\terror: [64] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [60] integer expected for target point count
+                max\terror: [57] integer expected for target point count
+                sentinel\terror: [64] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("GEOHASH(1c)", """
                 ## filter_eq
@@ -7113,6 +7536,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: null
                 ## fill_linear
                 error: [11] Unsupported interpolation type: GEOHASH(1c)
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("GEOHASH(8b)", """
                 ## filter_eq
@@ -7282,6 +7713,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type INT cannot fill column of type GEOHASH(8b)
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory$2]
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("GEOHASH(31b)", """
                 ## filter_eq
@@ -7451,6 +7890,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type DOUBLE cannot fill column of type GEOHASH(31b)
                 ## fill_linear
                 error: [11] Unsupported interpolation type: GEOHASH(31b)
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("GEOHASH(12c)", """
                 ## cast
@@ -7626,6 +8073,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 1970-01-01T00:00:04.000000Z\t
                 ## fill_linear
                 error: [11] Unsupported interpolation type: GEOHASH(12c)
+                ## subsample_stride
+                min\terror: [38] integer expected for stride
+                max\terror: [38] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [38] integer expected for target point count
+                max\terror: [38] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DECIMAL(5,2)", """
                 ## cast
@@ -7799,6 +8254,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(5,2)
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal32Func]
+                ## subsample_stride
+                min\terror: [47] integer expected for stride
+                max\terror: [46] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [47] integer expected for target point count
+                max\terror: [46] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DECIMAL(18,3)", """
                 ## filter_eq
@@ -7972,6 +8435,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] fill value of type DOUBLE cannot fill column of type DECIMAL(18,3)
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastDecimalGroupByFunctionFactory$Decimal64Func]
+                ## subsample_stride
+                min\terror: [60] integer expected for stride
+                max\terror: [59] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [60] integer expected for target point count
+                max\terror: [59] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("DOUBLE[][]", """
                 ## filter_eq
@@ -8140,6 +8611,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: [46] support for VALUE fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastArrayGroupByFunction]
                 ## fill_linear
                 error: [46] support for LINEAR fill is not yet implemented [function=last(v), class=io.questdb.griffin.engine.functions.groupby.LastArrayGroupByFunction]
+                ## subsample_stride
+                min\terror: [43] integer expected for stride
+                max\terror: [43] integer expected for stride
+                empty\terror: [45] integer expected for stride
+                specials\terror: [43] integer expected for stride
+                null\terror: [38] integer expected for stride
+                ## subsample_target
+                min\terror: [43] integer expected for target point count
+                max\terror: [43] integer expected for target point count
+                empty\terror: [45] integer expected for target point count
+                specials\terror: [43] integer expected for target point count
+                null\terror: [38] integer expected for target point count
                 """);
         rec("INTERVAL(us)", """
                 ## filter_eq
@@ -8194,6 +8677,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## fill_linear
                 error: create: [29] non-persisted type: INTERVAL
+                ## subsample_stride
+                error: create: [29] non-persisted type: INTERVAL
+                ## subsample_target
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
                 ## cast
@@ -8247,6 +8734,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## fill_value
                 error: create: [29] non-persisted type: INTERVAL
                 ## fill_linear
+                error: create: [29] non-persisted type: INTERVAL
+                ## subsample_stride
+                error: create: [29] non-persisted type: INTERVAL
+                ## subsample_target
                 error: create: [29] non-persisted type: INTERVAL
                 """);
     }
