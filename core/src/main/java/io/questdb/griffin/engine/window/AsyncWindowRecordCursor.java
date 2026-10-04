@@ -130,7 +130,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
         // a few tasks per worker, so that the round's tasks balance across the workers
         this.tasksPerRound = Math.max(2, 4 * workerCount);
-        this.chainPageSize = configuration.getSqlSortValuePageSize();
+        // A task's chain holds a task's rows, a few MB, and grows a page at a time: the window
+        // store's page keeps the overshoot small where the sort's page would be most of the chain.
+        // The sort's value cap bounds it, as it bounds the sort's chain that this replaces.
+        this.chainPageSize = configuration.getSqlWindowStorePageSize();
         this.chainMaxPages = Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(chainPageSize));
         final int columnCount = columnTypes.getColumnCount();
         final IntList identity = new IntList(columnCount);
@@ -245,6 +248,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 if (emitTask.chain.hasNext()) {
                     return true;
                 }
+                // Returned: the output goes back now, so that only the rounds in flight hold any.
+                // The next fill sizes the chain in one allocation from its row count.
+                emitTask.chain.clear();
                 this.emitTask = null;
             }
             final Round emitRound = this.emitRound;
@@ -425,7 +431,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             giant = GIANT_ACTIVE;
             owner.toTop();
         } else {
-            giantTask.rows.clear();
+            giantTask.reuse(taskRows);
             final int status = keyMajorCursor.collectKeyRows(giantTask.rows, taskRows);
             if (status != KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
                 giant = GIANT_NONE;
@@ -467,7 +473,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
                     // A key too large for a task: its rows so far move to this thread's chunk.
                     final Task giantTask = getGiantTask();
-                    giantTask.rows.clear();
+                    giantTask.reuse(taskRows);
                     final long keyRows = rows.size() - keyLo;
                     giantTask.rows.ensureCapacity(keyRows);
                     for (long r = keyLo, hi = rows.size(); r < hi; r++) {
@@ -584,7 +590,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 tasks.add(cursor.newTask());
             }
             final Task task = tasks.getQuick(taskCount++);
-            task.rows.clear();
+            task.reuse(cursor.taskRows);
             return task;
         }
     }
@@ -605,6 +611,16 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         public void close() {
             Misc.free(chain);
             Misc.free(rows);
+        }
+
+        // Empties the task for its next round. A task usually holds about taskRows row ids, but
+        // one that took a large key would keep that key's memory for good: give it back when the
+        // last fill was well above the usual size.
+        private void reuse(long taskRows) {
+            if (rows.size() > 2 * taskRows) {
+                rows.resetCapacity();
+            }
+            rows.clear();
         }
     }
 }

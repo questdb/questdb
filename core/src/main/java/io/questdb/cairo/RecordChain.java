@@ -398,10 +398,15 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
      * {@link #close()}.
      */
     /**
-     * Forgets the records but, unlike {@link #clear()}, keeps the memory for the next ones, so a
-     * chain that is refilled many times grows only once.
+     * Forgets the records but, unlike {@link #clear()}, keeps the memory for the next ones, and
+     * makes room for {@code recordCount} records of the fixed part's size in one allocation, so a
+     * chain whose size is known up front does not grow a page at a time.
      */
-    public void rewind() {
+    public void rewind(long recordCount) {
+        if (recordCount > 0) {
+            // a record is its link to the next one, then the var-size offsets, then the fixed part
+            mem.jumpTo(recordCount * (rowToDataOffset(0) + varOffset + fixOffset));
+        }
         mem.jumpTo(0);
         nextRecordOffset = -1L;
         varAppendOffset = 0L;

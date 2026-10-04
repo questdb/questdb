@@ -262,7 +262,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
          * {@code chain}. The rows are row ids of a {@link KeyMajorPageFrameRecordCursor} walk.
          */
         void compute(DirectLongList rows, RecordChain chain, SqlExecutionCircuitBreaker circuitBreaker) {
-            chain.rewind();
+            chain.rewind(rows.size());
             final long[] batch = batchRows;
             final long rowCount = rows.size();
             long prevOffset = -1;
