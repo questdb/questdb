@@ -29,6 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 
 public interface FilesFacade {
     long MAP_FAILED = -1;
@@ -143,10 +144,10 @@ public interface FilesFacade {
      * real barrier afterwards. On ZFS the page-cache model does not match (durability is a txg commit), so
      * the call buys nothing and is skipped rather than risking the known mmap interactions.
      *
-     * @param root a path on the filesystem in question
+     * @param root an existing path on the filesystem in question
      * @return {@code true} if a drain pass is likely to help
      */
-    default boolean isSyncFileRangeEffective(CharSequence root) {
+    default boolean isSyncFileRangeEffective(Utf8Sequence root) {
         return Os.isLinux();
     }
 

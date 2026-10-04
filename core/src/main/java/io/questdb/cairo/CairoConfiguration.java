@@ -1303,7 +1303,7 @@ public interface CairoConfiguration {
      * every file still gets its own {@code fdatasync}, which is what journals the extent conversions an
      * {@code ftruncate}-preallocated mmap append creates. Relying on it as a barrier is the documented
      * ext4 data-loss trap. Because it is advisory, a filesystem where it does nothing (ZFS, gated by
-     * {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(CharSequence)}) simply loses the speedup.
+     * {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(io.questdb.std.str.Utf8Sequence)}) simply loses the speedup.
      *
      * @return {@code true} if the drain pass should run
      */

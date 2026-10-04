@@ -32,10 +32,12 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -791,6 +793,34 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The writeback drain's filesystem probe allocates a native path and costs a statfs, so
+     * {@code WalWriter} resolves it once, on its own WAL directory, when it opens. A commit must not
+     * repeat it, yet the drain itself must still run on every ADAPTIVE commit under {@code W > 0}.
+     */
+    @Test
+    public void testWritebackDrainProbesFilesystemOncePerWriter() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000L);
+        final WritebackDrainFacade ff = new WritebackDrainFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            ff.probeCount = 0;
+            try (WalWriter writer = getWalWriter("x")) {
+                Assert.assertEquals("opening the writer must probe the filesystem once", 1, ff.probeCount);
+                Assert.assertTrue(ff.probedPath, ff.probedPath.endsWith(Files.SEPARATOR + writer.getWalName()));
+                for (int i = 0; i < 3; i++) {
+                    final TableWriter.Row row = writer.newRow(i * 60_000_000L);
+                    row.putLong(1, i);
+                    row.append();
+                    writer.commit();
+                }
+                Assert.assertEquals("a commit must not probe the filesystem", 1, ff.probeCount);
+                Assert.assertTrue("the commits must still drain writeback", ff.syncFileRangeCount > 0);
+            }
+        });
+    }
+
     private int readMarkerGeneration(TableToken token) {
         try (io.questdb.std.str.Path p = new io.questdb.std.str.Path();
              SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
@@ -1238,6 +1268,25 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             if (fd > -1) {
                 fdToPath.put(fd, Utf8String.newInstance(name).toString());
             }
+        }
+    }
+
+    static class WritebackDrainFacade extends TestFilesFacadeImpl {
+        int probeCount, syncFileRangeCount;
+        String probedPath;
+
+        @Override
+        public boolean isSyncFileRangeEffective(Utf8Sequence root) {
+            probeCount++;
+            probedPath = root.toString();
+            // Pin the drain on, so the test runs where the real probe says no: off Linux, or on ZFS.
+            return true;
+        }
+
+        @Override
+        public int syncFileRange(long fd, long offset, long nbytes, int flags) {
+            syncFileRangeCount++;
+            return super.syncFileRange(fd, offset, nbytes, flags);
         }
     }
 }

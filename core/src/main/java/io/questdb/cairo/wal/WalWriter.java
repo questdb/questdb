@@ -126,6 +126,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final int columnsMadviseMode;
     private final DdlListener ddlListener;
     private final AtomicIntList initialSymbolCounts;
+    // Whether to run the advisory writeback drain before the commit's barriers. Gated on the operator switch
+    // and on the filesystem (sync_file_range buys nothing on ZFS). Resolved once: neither changes for the
+    // writer's lifetime, and the filesystem probe allocates and costs a statfs, which the commit path must not.
+    // Probed on the writer's own directory, so a table in a volume is judged by the volume's filesystem.
+    private final boolean isWritebackDrainEnabled;
     private final IntList localSymbolIds;
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
     private final MetadataService metaWriterSvc = new MetadataWriterService();
@@ -210,6 +215,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             lockWal();
             mkWalDir();
+            isWritebackDrainEnabled = configuration.isWalCommitWritebackDrainEnabled() && ff.isSyncFileRangeEffective(path);
 
             metadata = new WalWriterMetadata(ff);
             sequencer.getTableMetadata(tableToken, metadata);
@@ -2578,7 +2584,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // Only under deferDeviceFlush (W>0): events.sync() is then MS_ASYNC, so hoisting it above the
             // column barriers moves no barrier and the data->events->seq fdatasync order below is intact.
             // Under W=0 events.sync() IS a barrier and must stay after the column barriers.
-            final boolean drain = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush && drainWriteback();
+            final boolean drain = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush && isWritebackDrainEnabled;
             if (drain) {
                 events.sync(commitMode); // MS_ASYNC only: makes the event mappings' pages known-dirty
                 for (int i = 0, n = columns.size(); i < n; i++) {
@@ -2619,15 +2625,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 events.barrierFsync();
             }
         }
-    }
-
-    /**
-     * Whether to run the advisory writeback drain before the commit's barriers. Gated on the filesystem
-     * ({@code sync_file_range} buys nothing on ZFS) and on the operator switch.
-     */
-    private boolean drainWriteback() {
-        return configuration.isWalCommitWritebackDrainEnabled()
-                && ff.isSyncFileRangeEffective(configuration.getDbRoot());
     }
 
     /**

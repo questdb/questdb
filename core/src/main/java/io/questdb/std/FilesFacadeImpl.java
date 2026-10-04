@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
@@ -87,7 +88,7 @@ public class FilesFacadeImpl implements FilesFacade {
      * Linux only, and never on ZFS -- same detection {@link #allowMixedIO(CharSequence)} uses.
      */
     @Override
-    public boolean isSyncFileRangeEffective(CharSequence root) {
+    public boolean isSyncFileRangeEffective(Utf8Sequence root) {
         if (root == null || !Os.isLinux()) {
             return false;
         }
