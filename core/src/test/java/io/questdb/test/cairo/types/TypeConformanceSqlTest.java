@@ -88,6 +88,11 @@ import java.util.regex.Pattern;
  * variables before it queues the export, which runs on a copy export job driven by the test
  * thread. It runs single-threaded only: the export runs on its own job in every mode.
  * <p>
+ * {@code sql.between_timestamp} compares the column with two TIMESTAMP bounds, which takes the
+ * timestamp {@code between} for the types that widen to TIMESTAMP and reads a non-timestamp
+ * operand through its timestamp getter; {@code sql.eq_null_double} tests {@code v = NULL}, which
+ * the double equality answers with its family's NULL test.
+ * <p>
  * The memoized path reads a projected function of the column, its identity cast, three times,
  * which makes the projection cache its value per row; the test base turns that caching off, so
  * this path turns it on for its own query and records whether the plan memoizes the function.
@@ -523,6 +528,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 checkLaterMemoized(eng, ctx, sql, mode);
                 return;
             }
+            case "between_timestamp", "eq_null_double" -> {
+                checkLaterNullTest(eng, ctx, name, sql, mode);
+                return;
+            }
             default -> throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
                     + ": no invariant for this query before the stage that converts it");
         }
@@ -956,6 +965,56 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     /**
+     * {@code sql.between_timestamp} and {@code sql.eq_null_double} for a type registered later.
+     * Each must fail at its guarded site with the refusal when the type declares that site
+     * refused. Otherwise {@code v = NULL} selects the rows {@code v IS NULL} selects, and
+     * {@code between} selects, for a type with an integer tier, the rows that are not NULL and
+     * whose value, read at the tier, lies between the two bounds.
+     */
+    private void checkLaterNullTest(CairoEngine eng, SqlExecutionContext ctx, String name, String sql, String mode) {
+        final String path = "sql." + name;
+        final boolean isBetween = "between_timestamp".equals(name);
+        final String selected = selection(eng, ctx, sql);
+        final String error = selected.startsWith("error: ") ? selected : null;
+        if (TypeConformanceInvariants.assertDeclaredRefusal(type, "-", path, mode, error, isBetween ? "between" : "= NULL")) {
+            return;
+        }
+        if (error != null) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + error);
+        }
+        final String nullRows = selection(eng, ctx, "SELECT k FROM t WHERE v IS NULL");
+        if (!isBetween) {
+            if (!nullRows.equals(selected)) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
+                        + ": v = NULL selects " + selected + ", v IS NULL " + nullRows);
+            }
+            return;
+        }
+        if (type.laterTier == null || type.laterTier.startsWith("F")) {
+            return;
+        }
+        final String nulls = "," + nullRows + ",";
+        final String chosen = "," + selected + ",";
+        final boolean isSigned = type.laterTier.startsWith("I");
+        final int bits = Integer.parseInt(type.laterTier.substring(1));
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            if (row.isNull() || nulls.contains("," + row.label + ",") || bits > 64) {
+                continue;
+            }
+            long value = row.bits[0];
+            if (bits < 64) {
+                value = isSigned ? value << (64 - bits) >> (64 - bits) : value & ((1L << bits) - 1);
+            }
+            final boolean isInRange = (isSigned || bits < 64 || value >= 0) && value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE;
+            if (isInRange != chosen.contains("," + row.label + ",")) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, row.label, path, mode)
+                        + ": between the bounds by tier " + type.laterTier + ": " + isInRange + ", selected: " + selected);
+            }
+        }
+    }
+
+    /**
      * The per-row paths for a type registered later, which has no literal: the value is a cast of
      * an INT constant or of NULL to the type, a bind variable of the type set from text, or, for
      * the key column, each value row as it prints.
@@ -1326,6 +1385,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 {"fill_linear", "SELECT ts, last(v) v FROM g SAMPLE BY 1s FILL(LINEAR)"},
                 // an alias of a plain column is a column selection; the identity cast is a function
                 {"memoized", "SELECT k, CAST(v AS " + type.ddl + ") a, a a2, a a3 FROM t"},
+                {"between_timestamp", "SELECT k, v FROM t WHERE v BETWEEN (-2147483648)::TIMESTAMP AND 2147483647::TIMESTAMP"},
+                {"eq_null_double", "SELECT k, v FROM t WHERE v = NULL"},
                 {"latest_on", "SELECT k, v FROM (t2 LATEST ON ts PARTITION BY v) ORDER BY k"},
         };
     }
@@ -1751,6 +1812,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: BOOLEAN
+                ## eq_null_double
+                props: random_access=true size=known timestamp=none
+                k\tv
                 """);
         rec("BYTE", """
                 ## filter_eq
@@ -1996,6 +2062,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: BYTE
+                ## eq_null_double
+                props: random_access=true size=known timestamp=none
+                k\tv
                 """);
         rec("SHORT", """
                 ## cast
@@ -2241,6 +2312,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: SHORT
+                ## eq_null_double
+                props: random_access=true size=known timestamp=none
+                k\tv
                 """);
         rec("CHAR", """
                 ## cast
@@ -2466,6 +2542,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 k
                 max
                 other_null
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: CHAR
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                min\t
+                null\t
                 """);
         rec("INT", """
                 ## cast
@@ -2708,6 +2791,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                min\t-2147483647
+                max\t2147483647
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\tnull
+                null\tnull
                 """);
         rec("LONG", """
                 ## cast
@@ -2950,6 +3043,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\tnull
+                null\tnull
                 """);
         rec("DATE", """
                 ## filter_eq
@@ -3177,6 +3278,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: inconvertible value: `292278994-08-17T07:12:55.807Z` [STRING -> DATE]
+                ## between_timestamp
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                min\t-292275055-05-16T16:47:04.193Z
+                max\t292278994-08-17T07:12:55.807Z
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\t
+                null\t
                 """);
         rec("TIMESTAMP", """
                 ## cast
@@ -3404,6 +3515,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: inconvertible value: `294247-01-10T04:00:54.775807Z` [STRING -> TIMESTAMP]
+                ## between_timestamp
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\t
+                null\t
                 """);
         rec("FLOAT", """
                 ## filter_eq
@@ -3718,6 +3837,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: FLOAT
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                nan\tnull
+                literal_inf\tnull
+                null\tnull
+                inf\tnull
+                ninf\tnull
                 """);
         rec("DOUBLE", """
                 ## cast
@@ -4032,6 +4161,16 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DOUBLE
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                nan\tnull
+                literal_inf\tnull
+                null\tnull
+                inf\tnull
+                ninf\tnull
                 """);
         rec("STRING", """
                 ## filter_eq
@@ -4287,6 +4426,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: inconvertible value: `` [STRING -> TIMESTAMP_NS]
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("SYMBOL", """
                 ## filter_eq
@@ -4549,6 +4694,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: inconvertible value: `` [SYMBOL -> TIMESTAMP_NS]
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("LONG256", """
                 ## filter_eq
@@ -4777,6 +4928,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: inconvertible value: `0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` [STRING -> LONG256]
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: LONG256
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\t
+                null\t
                 """);
         rec("GEOBYTE", """
                 ## filter_eq
@@ -4975,6 +5133,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as GEOHASH(7b) and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: GEOHASH(7b)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("GEOSHORT", """
                 ## cast
@@ -5179,6 +5343,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as GEOHASH(3c) and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: GEOHASH(3c)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("GEOINT", """
                 ## filter_eq
@@ -5383,6 +5553,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as GEOHASH(6c) and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: GEOHASH(6c)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("GEOLONG", """
                 ## cast
@@ -5587,6 +5763,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as GEOHASH(8c) and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: GEOHASH(8c)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("BINARY", """
                 ## cast
@@ -5745,6 +5927,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\terror: [58] v (BINARY): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as BINARY and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: BINARY
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("UUID", """
                 ## cast
@@ -5971,6 +6159,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: UUID
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\t
+                null\t
                 """);
         rec("LONG128", """
                 ## cast
@@ -6155,6 +6350,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable cannot be used [contextType=24, index=0]
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: LONG128
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\t
+                null\t
                 """);
         rec("IPv4", """
                 ## cast
@@ -6386,6 +6588,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: IPv4
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\t
+                null\t
                 """);
         rec("VARCHAR", """
                 ## filter_eq
@@ -6641,6 +6850,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: inconvertible value: `` [VARCHAR -> TIMESTAMP_NS]
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DOUBLE[]", """
                 ## filter_eq
@@ -6852,6 +7067,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 status\tmessage
                 finished\t
                 k
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DOUBLE[]
+                ## eq_null_double
+                error: [27] there is no matching operator `=` with the argument types: DOUBLE[] = NULL
                 """);
         rec("DECIMAL8", """
                 ## cast
@@ -7057,6 +7276,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DECIMAL(2,1)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DECIMAL16", """
                 ## cast
@@ -7262,6 +7487,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DECIMAL(4,2)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DECIMAL32", """
                 ## cast
@@ -7473,6 +7704,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DECIMAL(9,0)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DECIMAL64", """
                 ## filter_eq
@@ -7678,6 +7915,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DECIMAL(16,4)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DECIMAL128", """
                 ## filter_eq
@@ -7883,6 +8126,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DECIMAL(38,10)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DECIMAL256", """
                 ## cast
@@ -8088,6 +8337,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DECIMAL(76,20)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("INTERVAL", """
                 ## filter_eq
@@ -8156,6 +8411,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## copy_bind
                 error: create: [29] non-persisted type: INTERVAL
+                ## between_timestamp
+                error: create: [29] non-persisted type: INTERVAL
+                ## eq_null_double
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
                 ## filter_eq
@@ -8223,6 +8482,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## where_key
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 ## copy_bind
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## between_timestamp
+                error: create: [29] unsupported column type: VARCHAR_SLICE
+                ## eq_null_double
                 error: create: [29] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
@@ -8460,6 +8723,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                sentinel\t
+                null\t
                 """);
         rec("GEOHASH(1c)", """
                 ## filter_eq
@@ -8658,6 +8929,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as GEOHASH(1c) and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: GEOHASH(1c)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("GEOHASH(8b)", """
                 ## filter_eq
@@ -8856,6 +9133,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as GEOHASH(8b) and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: GEOHASH(8b)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("GEOHASH(31b)", """
                 ## filter_eq
@@ -9054,6 +9337,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as GEOHASH(31b) and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: GEOHASH(31b)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("GEOHASH(12c)", """
                 ## cast
@@ -9258,6 +9547,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 null\tb:null
                 ## copy_bind
                 bind error: [0] bind variable at 0 is defined as GEOHASH(12c) and cannot accept STRING
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: GEOHASH(12c)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DECIMAL(5,2)", """
                 ## cast
@@ -9463,6 +9758,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DECIMAL(5,2)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DECIMAL(18,3)", """
                 ## filter_eq
@@ -9668,6 +9969,12 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 finished\t
                 k
                 max
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DECIMAL(18,3)
+                ## eq_null_double
+                props: random_access=true size=unknown timestamp=none
+                k\tv
+                null\t
                 """);
         rec("DOUBLE[][]", """
                 ## filter_eq
@@ -9879,6 +10186,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 status\tmessage
                 finished\t
                 k
+                ## between_timestamp
+                error: [27] there is no matching operator `between` with the argument type: DOUBLE[][]
+                ## eq_null_double
+                error: [27] there is no matching operator `=` with the argument types: DOUBLE[][] = NULL
                 """);
         rec("INTERVAL(us)", """
                 ## filter_eq
@@ -9947,6 +10258,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 error: create: [29] non-persisted type: INTERVAL
                 ## copy_bind
                 error: create: [29] non-persisted type: INTERVAL
+                ## between_timestamp
+                error: create: [29] non-persisted type: INTERVAL
+                ## eq_null_double
+                error: create: [29] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
                 ## cast
@@ -10014,6 +10329,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## where_key
                 error: create: [29] non-persisted type: INTERVAL
                 ## copy_bind
+                error: create: [29] non-persisted type: INTERVAL
+                ## between_timestamp
+                error: create: [29] non-persisted type: INTERVAL
+                ## eq_null_double
                 error: create: [29] non-persisted type: INTERVAL
                 """);
     }
