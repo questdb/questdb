@@ -73,7 +73,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * The storage part of the conformance kit (User Story 4): every kit type through INSERT,
  * out-of-order merge, WAL apply, column tops, dedup, ALTER COLUMN TYPE and partition-to-Parquet
  * conversion, read through record cursors and through page frames, over the table shapes of
- * {@link TypeConformanceValues}.
+ * {@link TypeConformanceValues}, and as the key of LATEST ON ... PARTITION BY on each table mode
+ * (the SQL path {@code sql.latest_by_key}, run here for the WAL and non-partitioned tables).
  * <p>
  * Each path runs in the modes that change it (WAL and non-WAL, in-order and out-of-order,
  * partitioned and not), and every mode must give the one recording made at S12
@@ -300,6 +301,37 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     assertSection(insertSection, mode, steps + query("SELECT k, v FROM " + table));
                     assertSection(framesSection, mode, frames("SELECT k, v FROM " + table));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByKey() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String mode : TABLE_MODES) {
+                final String path = "sql.latest_by_key";
+                if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
+                    continue;
+                }
+                final String table = "lb_" + code(mode);
+                final StringSink steps = new StringSink();
+                if (!createTable(table, mode, "k VARCHAR, v " + type.ddl, steps, "latest_by_key")) {
+                    continue;
+                }
+                // every value row twice: a: first, then b: one second after the last a: row
+                final long base = rows.size() * SECOND;
+                if (type.isLater()) {
+                    writeLaterRows(table, "a:", 0, 0, rows.size(), 1, steps);
+                    writeLaterRows(table, "b:", base, 0, rows.size(), 1, steps);
+                    if (isWal(mode)) {
+                        drainWalQueue();
+                    }
+                    checkLaterLatestByKey(table, mode, steps);
+                    continue;
+                }
+                insertRows(table, mode, "a:", 0, true, steps);
+                insertRows(table, mode, "b:", base, true, steps);
+                assertSection("latest_by_key", mode, steps + query("SELECT k, v FROM (" + table + " LATEST ON ts PARTITION BY v) ORDER BY k"));
             }
         });
     }
@@ -754,6 +786,53 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
             }
         } finally {
             execute("DROP TABLE IF EXISTS " + table);
+        }
+    }
+
+    /**
+     * {@code sql.latest_by_key} for a type registered later: LATEST ON ... PARTITION BY the
+     * column keeps one row per distinct value, the b: copy written last, reading back as written.
+     * Values that are one key (two NULL forms, as dedup tells them) are one partition.
+     */
+    private void checkLaterLatestByKey(String table, String mode, StringSink steps) throws Exception {
+        final String path = "sql.latest_by_key";
+        TypeConformanceInvariants.nullRowWriteError(type, path, mode, steps);
+        final Map<String, long[]> bits = new HashMap<>();
+        try (
+                RecordCursorFactory factory = select("SELECT k, v FROM (" + table + " LATEST ON ts PARTITION BY v)");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                bits.put(record.getVarcharA(0).toString(), TypeConformanceValues.readValue(record, 1, type));
+            }
+        } catch (Throwable e) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + e.getMessage(), e);
+        }
+        // the rows the table holds, and of each group of one key, the last of them
+        int expected = 0;
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            boolean isLastOfKey = !(row.isNull() && TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type)));
+            for (int j = i + 1; j < n && isLastOfKey; j++) {
+                isLastOfKey = !isOneKey(row, rows.getQuick(j));
+            }
+            if (!isLastOfKey) {
+                continue;
+            }
+            expected++;
+            final long[] read = bits.get("b:" + row.label);
+            if (read == null) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, row.label, path, mode)
+                        + ": the latest row of this key, b:" + row.label + ", is missing: " + bits.keySet());
+            }
+            if (!row.isNull()) {
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, read);
+            }
+        }
+        if (bits.size() != expected) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
+                    + ": " + bits.size() + " rows, one per key expected (" + expected + "): " + bits.keySet());
         }
     }
 
@@ -1257,6 +1336,10 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 dup:max\t01
                 shift:max\t00
                 shift:null\t00
+                ## latest_by_key
+                k\tv
+                b:max\ttrue
+                b:null\tfalse
                 """);
         rec("BYTE", """
                 ## dedup
@@ -1481,6 +1564,12 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=BYTE, new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                k\tv
+                b:max\t127
+                b:min\t-128
+                b:null\t0
+                b:other_null\t-1
                 """);
         rec("SHORT", """
                 ## parquet
@@ -1705,6 +1794,12 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=SHORT, new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                k\tv
+                b:max\t32767
+                b:min\t-32768
+                b:null\t0
+                b:other_null\t-1
                 """);
         rec("CHAR", """
                 ## alter
@@ -1925,6 +2020,10 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 k\tv
                 k\tv
                 ## empty_partition-frames
+                ## latest_by_key
+                k\tv
+                b:null\t
+                b:other_null\t\\uffff
                 """);
         rec("INT", """
                 ## dedup
@@ -2147,6 +2246,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 k\tv
                 k\tv
                 ## empty_partition-frames
+                ## latest_by_key
+                k\tv
+                b:max\t2147483647
+                b:min\t-2147483647
+                b:null\tnull
                 """);
         rec("LONG", """
                 ## parquet
@@ -2369,6 +2473,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:max\tffffffffffffff7f
                 d2:sentinel\t0000000000000080
                 d2:null\t0000000000000080
+                ## latest_by_key
+                k\tv
+                b:max\t9223372036854775807
+                b:min\t-9223372036854775807
+                b:null\tnull
                 """);
         rec("DATE", """
                 ## insert
@@ -2591,6 +2700,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:max\tffffffffffffff7f
                 d1:sentinel\t0000000000000080
                 d1:null\t0000000000000080
+                ## latest_by_key
+                k\tv
+                b:max\t292278994-08-17T07:12:55.807Z
+                b:min\t-292275055-05-16T16:47:04.193Z
+                b:null\t
                 """);
         rec("TIMESTAMP", """
                 ## dedup
@@ -2813,6 +2927,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 max\tffffffffffffff7f
                 sentinel\t0000000000000080
                 null\t0000000000000080
+                ## latest_by_key
+                k\tv
+                b:max\t294247-01-10T04:00:54.775807Z
+                b:min\t-290308-01-01T19:59:05.224193Z
+                b:null\t
                 """);
         rec("FLOAT", """
                 ## dedup
@@ -3161,6 +3280,14 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=FLOAT, new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                k\tv
+                b:inf\tnull
+                b:max\t3.4028235E38
+                b:min\t-3.4028235E38
+                b:negzero\t-0.0
+                b:ninf\tnull
+                b:null\tnull
                 """);
         rec("DOUBLE", """
                 ## alter
@@ -3509,6 +3636,14 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 null\t000000000000f87f
                 inf\t000000000000f07f
                 ninf\t000000000000f0ff
+                ## latest_by_key
+                k\tv
+                b:inf\tnull
+                b:max\t1.7976931348623157E308
+                b:min\t-1.7976931348623157E308
+                b:negzero\t-0.0
+                b:ninf\tnull
+                b:null\tnull
                 """);
         rec("STRING", """
                 ## parquet
@@ -3766,6 +3901,13 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 max\taux=0a00000000000000 data=05000000fc00ac203dd800defdff
                 escape\taux=1800000000000000 data=090000006100220062002c0063005c00640027006500
                 null\taux=2e00000000000000 data=ffffffff
+                ## latest_by_key
+                k\tv
+                b:empty\t
+                b:escape\ta"b,c\\d'e
+                b:max\tü€😀�
+                b:min\t\s
+                b:null\t
                 """);
         rec("SYMBOL", """
                 ## empty_table
@@ -4032,6 +4174,13 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=SYMBOL, new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                k\tv
+                b:empty\t
+                b:escape\ta"b,c\\d'e
+                b:max\tü€😀�
+                b:min\t\s
+                b:null\t
                 """);
         rec("LONG256", """
                 ## dedup
@@ -4254,6 +4403,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=LONG256, new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                k\tv
+                b:max\t0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                b:min\t0x00
+                b:null\t
                 """);
         rec("GEOBYTE", """
                 ## alter
@@ -4447,6 +4601,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:min\t00
                 d2:max\t7f
                 d2:null\tff
+                ## latest_by_key
+                k\tv
+                b:max\t1111111
+                b:min\t0000000
+                b:null\t
                 """);
         rec("GEOSHORT", """
                 ## empty_table
@@ -4640,6 +4799,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 shift:max\tffff
                 dup:null\tffff
                 shift:null\t0000
+                ## latest_by_key
+                k\tv
+                b:max\tzzz
+                b:min\t000
+                b:null\t
                 """);
         rec("GEOINT", """
                 ## tops
@@ -4833,6 +4997,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 shift:max\tffffffff
                 dup:null\tffffffff
                 shift:null\t00000000
+                ## latest_by_key
+                k\tv
+                b:max\tzzzzzz
+                b:min\t000000
+                b:null\t
                 """);
         rec("GEOLONG", """
                 ## empty_table
@@ -5026,6 +5195,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 shift:max\tffffffffffffffff
                 dup:null\tffffffffffffffff
                 shift:null\t0000000000000000
+                ## latest_by_key
+                k\tv
+                b:max\tzzzzzzzz
+                b:min\t00000000
+                b:null\t
                 """);
         rec("BINARY", """
                 ## dedup
@@ -5219,6 +5393,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 k\tv
                 k\tv
                 ## empty_partition-frames
+                ## latest_by_key
+                error: [51] v (BINARY): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("UUID", """
                 ## empty_table
@@ -5441,6 +5617,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=UUID, new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                k\tv
+                b:max\tffffffff-ffff-ffff-ffff-ffffffffffff
+                b:min\t00000000-0000-0000-0000-000000000000
+                b:null\t
                 """);
         rec("LONG128", """
                 ## tops
@@ -5663,6 +5844,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 max\tffffffffffffffffffffffffffffffff
                 sentinel\t00000000000000800000000000000080
                 null\t00000000000000800000000000000080
+                ## latest_by_key
+                k\tv
+                b:max\tffffffff-ffff-ffff-ffff-ffffffffffff
+                b:min\t00000000-0000-0000-0000-000000000000
+                b:null\t
                 """);
         rec("IPv4", """
                 ## tops
@@ -5885,6 +6071,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 k\tv
                 k\tv
                 ## empty_partition-frames
+                ## latest_by_key
+                k\tv
+                b:max\t255.255.255.255
+                b:min\t0.0.0.1
+                b:null\t
                 """);
         rec("VARCHAR", """
                 ## insert
@@ -6142,6 +6333,13 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:max\taux=c0000000c3bce282acf0000000000000 data=c3bce282acf09f9880efbfbd
                 d2:escape\taux=936122622c635c6427650c0000000000 data=
                 d2:null\taux=040000000000000000000c0000000000 data=
+                ## latest_by_key
+                k\tv
+                b:empty\t
+                b:escape\ta"b,c\\d'e
+                b:max\tü€😀�
+                b:min\t\s
+                b:null\t
                 """);
         rec("DOUBLE[]", """
                 ## tops
@@ -6380,6 +6578,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=DOUBLE[], new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                error: [51] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL8", """
                 ## parquet
@@ -6573,6 +6773,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:min\t9d
                 d2:max\t63
                 d2:null\t80
+                ## latest_by_key
+                error: [51] v (DECIMAL(2,1)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL16", """
                 ## dedup
@@ -6766,6 +6968,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 k\tv
                 k\tv
                 ## empty_partition-frames
+                ## latest_by_key
+                error: [51] v (DECIMAL(4,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL32", """
                 ## dedup
@@ -6959,6 +7163,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:min\t013665c4
                 d2:max\tffc99a3b
                 d2:null\t00000080
+                ## latest_by_key
+                error: [51] v (DECIMAL(9,0)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL64", """
                 ## parquet
@@ -7152,6 +7358,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=DECIMAL(16,4), new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                error: [51] v (DECIMAL(16,4)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL128", """
                 ## dedup
@@ -7345,6 +7553,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:min\t853b79a557b3c4b401000000c0dd75f6
                 d2:max\t7ac4865aa84c3b4bffffffff3f228a09
                 d2:null\t00000000000000800000000000000000
+                ## latest_by_key
+                error: [51] v (DECIMAL(38,10)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL256", """
                 ## insert
@@ -7538,6 +7748,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 k\tv
                 k\tv
                 ## empty_partition-frames
+                ## latest_by_key
+                error: [51] v (DECIMAL(76,20)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("INTERVAL", """
                 ## empty_table
@@ -7585,6 +7797,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## parquet-native
                 error: create: [34] non-persisted type: INTERVAL
                 ## parquet-native-frames
+                error: create: [34] non-persisted type: INTERVAL
+                ## latest_by_key
                 error: create: [34] non-persisted type: INTERVAL
                 """);
         rec("VARCHAR_SLICE", """
@@ -7634,6 +7848,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 error: create: [35] unsupported column type: VARCHAR_SLICE
                 ## frames-o3
                 error: create: [35] unsupported column type: VARCHAR_SLICE
+                ## latest_by_key
+                error: create: [34] unsupported column type: VARCHAR_SLICE
                 """);
         rec("TIMESTAMP_NS", """
                 ## empty_table
@@ -7856,6 +8072,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:max\tffffffffffffff7f
                 d2:sentinel\t0000000000000080
                 d2:null\t0000000000000080
+                ## latest_by_key
+                k\tv
+                b:max\t2262-04-11T23:47:16.854775807Z
+                b:min\t1677-01-01T00:12:43.145224193Z
+                b:null\t
                 """);
         rec("GEOHASH(1c)", """
                 ## tops
@@ -8049,6 +8270,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=GEOHASH(1c), new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                k\tv
+                b:max\tz
+                b:min\t0
+                b:null\t
                 """);
         rec("GEOHASH(8b)", """
                 ## empty_table
@@ -8242,6 +8468,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 min\t0000
                 max\tff00
                 null\tffff
+                ## latest_by_key
+                k\tv
+                b:max\t11111111
+                b:min\t00000000
+                b:null\t
                 """);
         rec("GEOHASH(31b)", """
                 ## empty_table
@@ -8435,6 +8666,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 DOUBLE[][]\terror: alter: [50] incompatible column type change [existing=GEOHASH(31b), new=DOUBLE[][]]
                 INTERVAL(us)\terror: alter: [41] non-persisted type: INTERVAL
                 INTERVAL(ns)\terror: alter: [41] non-persisted type: INTERVAL
+                ## latest_by_key
+                k\tv
+                b:max\t1111111111111111111111111111111
+                b:min\t0000000000000000000000000000000
+                b:null\t
                 """);
         rec("GEOHASH(12c)", """
                 ## dedup
@@ -8628,6 +8864,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:min\t0000000000000000
                 d2:max\tffffffffffffff0f
                 d2:null\tffffffffffffffff
+                ## latest_by_key
+                k\tv
+                b:max\tzzzzzzzzzzzz
+                b:min\t000000000000
+                b:null\t
                 """);
         rec("DECIMAL(5,2)", """
                 ## empty_table
@@ -8821,6 +9062,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:min\t6179feff
                 d1:max\t9f860100
                 d1:null\t00000080
+                ## latest_by_key
+                error: [51] v (DECIMAL(5,2)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DECIMAL(18,3)", """
                 ## alter
@@ -9014,6 +9257,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d2:min\t01009c584c491ff2
                 d2:max\tffff63a7b3b6e00d
                 d2:null\t0000000000000080
+                ## latest_by_key
+                error: [51] v (DECIMAL(18,3)): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("DOUBLE[][]", """
                 ## dedup
@@ -9252,6 +9497,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 d1:empty\taux=20000000000000000800000000000000 data=0000000000000000
                 d1:specials\taux=28000000000000002800000000000000 data=0100000004000000000000000000f87f000000000000f87f000000000000f87f0000000000000080
                 d1:null\taux=50000000000000000000000000000000 data=
+                ## latest_by_key
+                error: [51] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 """);
         rec("INTERVAL(us)", """
                 ## empty_table
@@ -9300,6 +9547,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 error: create: [35] non-persisted type: INTERVAL
                 ## frames-o3
                 error: create: [35] non-persisted type: INTERVAL
+                ## latest_by_key
+                error: create: [34] non-persisted type: INTERVAL
                 """);
         rec("INTERVAL(ns)", """
                 ## empty_table
@@ -9348,6 +9597,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 ## alter
                 target\td0:max|d0:null|d1:max|d1:null
                 *\terror: add column: [34] non-persisted type: INTERVAL error: insert d1:: [25] Invalid column: v
+                ## latest_by_key
+                error: create: [34] non-persisted type: INTERVAL
                 """);
     }
     // recordings: end
