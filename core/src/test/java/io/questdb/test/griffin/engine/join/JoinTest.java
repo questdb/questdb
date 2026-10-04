@@ -2586,6 +2586,31 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinedTableKeyedToTablesSharingColumnName() throws Exception {
+        // #7716: the optimiser moves c.k = d.k and c.k = e.k onto the CROSS-joined c and joins c last,
+        // after a, d and e. Code generation looked up those keys by the plain name k, as if c joined a
+        // alone. d and e both have k, so the query failed with InvalidColumnException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT)");
+            execute("INSERT INTO ta VALUES (1), (2)");
+            execute("CREATE TABLE tc (k INT)");
+            execute("INSERT INTO tc VALUES (1), (2)");
+            execute("CREATE TABLE td (k INT, x INT)");
+            execute("INSERT INTO td VALUES (1, 1), (2, 2), (1, 2)");
+            execute("CREATE TABLE te (k INT, x INT)");
+            execute("INSERT INTO te VALUES (1, 1), (2, 1), (2, 2)");
+            assertQuery("SELECT * FROM ta a CROSS JOIN tc c JOIN td d ON d.k = c.k AND d.x = a.x JOIN te e ON e.k = c.k AND e.x = a.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tk\tk1\tx1\tk2\tx2
+                            1\t1\t1\t1\t1\t1
+                            2\t2\t2\t2\t2\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinedTableSkipsKeyMoveThatClosesCycle() throws Exception {
         // f3 follows f2 through b3 = b2, and f2 follows f1 through b2 = a1. Moving a3 = a1 from f3 onto
         // the key-less f1 would make f1 follow f3 as well, so no join order would exist and the query
