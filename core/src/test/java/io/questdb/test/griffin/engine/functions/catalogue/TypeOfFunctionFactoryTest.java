@@ -184,4 +184,15 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                 }
         );
     }
+
+    @Test
+    public void testTypeOfLong128AndArrays() throws Exception {
+        // the types the old name table left out answer their names; typeOf failed for them
+        assertQuery("select typeOf(to_long128(1, 2)) l, typeOf(ARRAY[1.0]) a1, typeOf(ARRAY[[1.0]]) a2")
+                .expectSize()
+                .returns("""
+                        l\ta1\ta2
+                        LONG128\tDOUBLE[]\tDOUBLE[][]
+                        """);
+    }
 }
