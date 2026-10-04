@@ -3057,7 +3057,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 k\tv
                 null\t
                 ## csv
-                error: /exp: [11] peer disconnect [errno=]
+                error: /exp status 400: {"query":"SELECT k, v, ts FROM src","error":"[-1] column type not supported [column=v, type=LONG128]","position":0}
                 ## ilp-http-nonwal
                 min\tstring 00000000-0000-0000-0000-000000000000\terror: Could not flush buffer: failed to parse line protocol:errors encountered on line(s):\\u000aerror in line 1: table: dst; cannot insert in non-WAL table [http-status=400, id: <id>, code: invalid, line: 1]
                 max\tstring ffffffff-ffff-ffff-ffff-ffffffffffff\terror: Could not flush buffer: failed to parse line protocol:errors encountered on line(s):\\u000aerror in line 1: table: dst; cannot insert in non-WAL table [http-status=400, id: <id>, code: invalid, line: 1]

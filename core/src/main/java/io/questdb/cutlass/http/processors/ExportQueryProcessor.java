@@ -284,7 +284,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
-                    computeColumnOpcodes(state);
+                    if (!isParquet) {
+                        // the opcodes pick the CSV writer's arms; the Parquet encoder writes every
+                        // column, LONG128 included, without them
+                        computeColumnOpcodes(state);
+                    }
                     doResumeSend(context);
                 } catch (CairoException e) {
                     if (state.isQueryCacheable()) {
@@ -389,16 +393,17 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private static void computeColumnOpcodes(ExportQueryProcessorState state) {
         state.columnOpcodes.clear();
         for (int i = 0, n = state.metadata.getColumnCount(); i < n; i++) {
-            state.columnOpcodes.add(csvOpcode(state.metadata.getColumnType(i)));
+            state.columnOpcodes.add(csvOpcode(state.metadata.getColumnType(i), state.metadata.getColumnName(i)));
         }
     }
 
     /**
-     * Picks the {@link #putValue} arm for a column from its wire kind (F41), once per export rather
-     * than per cell. Every kind is named, so adding one makes javac stop here. LONG128 keeps its
-     * arm, which throws.
+     * Picks the {@link #putValue} arm for a column from its wire kind, once per export rather than
+     * per cell. Every kind is named, so adding one makes javac stop here. LONG128 has no CSV form:
+     * its arm refuses the column, as the JSON endpoint does, and the export's handler answers 400
+     * because no byte of the response has gone out yet.
      */
-    private static int csvOpcode(int columnType) {
+    private static int csvOpcode(int columnType, CharSequence columnName) {
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
             // PB8: the unlabelled default of putValue() was `assert false`, which writes an empty
@@ -426,7 +431,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case GEOLONG -> ColumnType.GEOLONG;
             case BINARY -> ColumnType.BINARY;
             case UUID -> ColumnType.UUID;
-            case LONG128 -> ColumnType.LONG128;
+            case LONG128 -> throw CairoException.nonCritical().put("column type not supported [column=").put(columnName)
+                    .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
             case IPV4 -> ColumnType.IPv4;
             case VARCHAR -> ColumnType.VARCHAR;
             case ARRAY -> ColumnType.ARRAY;
@@ -1351,8 +1357,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.UUID:
                 putUuidOrNull(response, rec.getLong128Lo(columnIndex), rec.getLong128Hi(columnIndex));
                 break;
-            case ColumnType.LONG128:
-                throw new UnsupportedOperationException();
             case ColumnType.IPv4:
                 putIPv4Value(response, rec, columnIndex);
                 break;

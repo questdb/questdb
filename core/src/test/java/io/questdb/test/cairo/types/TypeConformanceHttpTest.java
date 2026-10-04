@@ -2187,7 +2187,14 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 """);
         rec("LONG128", """
                 ## http.csv
-                error: peer disconnect [errno=<errno>]
+                status\t400 Bad request
+                header\tServer: questDB/1.0
+                header\tDate: <date>
+                header\tTransfer-Encoding: chunked
+                header\tContent-Type: application/json; charset=utf-8
+                header\tKeep-Alive: timeout=5, max=10000
+                {"query":"SELECT k\t{"query":"SELECT k, v FROM t","error":"[-1] column type not supported [column=v, type=LONG128]","position":0}
+                eof\tno newline
                 ## http.json
                 status\t400 Bad request
                 header\tServer: questDB/1.0
