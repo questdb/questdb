@@ -378,7 +378,8 @@ public class TypeDriverTest {
             final long buf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-                    if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag)) {
+                    // the writers write a SYMBOL NULL through the symbol map, and its generic appender refuses
+                    if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag) || tag == ColumnType.SYMBOL) {
                         continue;
                     }
                     final FixedSizeTypeDriver driver = (FixedSizeTypeDriver) ColumnType.getTypeDriver(tag);

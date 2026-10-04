@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.types;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.FixedSizeTypeDriver;
@@ -44,10 +45,15 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -407,6 +413,24 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 } else {
                     assertSection(TypeConformanceValues.SHAPE_EMPTY_PARTITION, mode, steps + query(between) + query(inside));
                     assertSection(TypeConformanceValues.SHAPE_EMPTY_PARTITION + "-frames", mode, frames(between) + frames(inside));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolNullAppenderRefuses() throws Exception {
+        // the table and WAL writers write a SYMBOL NULL themselves, the key and the symbol map's
+        // NULL flag together; the type driver's generic appender, which would write the key alone,
+        // refuses to be built
+        Assume.assumeTrue("the symbol map exists for SYMBOL only", type.columnType == ColumnType.SYMBOL);
+        assertMemoryLeak(() -> {
+            try (MemoryCARW mem = Vm.getCARWInstance(4096, 1, MemoryTag.NATIVE_DEFAULT)) {
+                try {
+                    ColumnType.getTypeDriver(type.columnType).newNullAppender(mem, null);
+                    Assert.fail("a generic SYMBOL NULL appender must refuse");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "through the symbol map");
                 }
             }
         });

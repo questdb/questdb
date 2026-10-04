@@ -36,8 +36,10 @@ import io.questdb.std.Vect;
  * <p>
  * The data vector is a 4-byte symbol key; the symbol table is a separate facet.
  * {@link ColumnType#isFixedSize(int)} reports SYMBOL as not fixed-size; this driver only
- * states the data vector width. Writers wrap {@link #newNullAppender} to also raise the
- * symbol map's null flag.
+ * states the data vector width. The table and WAL writers write a SYMBOL NULL themselves
+ * ({@code TableWriter} and {@code WalWriter} build its appender): the NULL key and the symbol
+ * map's NULL flag together. {@link #newNullAppender} refuses, since an appender that wrote the
+ * key alone would leave the flag unset.
  */
 public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     public static final SymbolTypeDriver INSTANCE = new SymbolTypeDriver();
@@ -73,7 +75,10 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
                 (columnIndex, columnType) -> {
                     throw new UnsupportedOperationException("SYMBOL column functions are built by the caller, which has the symbol table");
                 },
-                (dataMem, auxMem) -> () -> dataMem.putInt(SymbolTable.VALUE_IS_NULL),
+                (dataMem, auxMem) -> {
+                    throw CairoException.critical(0)
+                            .put("no generic SYMBOL NULL appender: the table and WAL writers write a SYMBOL NULL through the symbol map");
+                },
                 (addr, count) -> Vect.setMemoryInt(addr, SymbolTable.VALUE_IS_NULL, count)
         );
     }
