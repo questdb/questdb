@@ -61,9 +61,11 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
+    // Write the master columns at the key positions that share a slave column, see
+    // SqlCodeGenerator.createSharedKeyCopier(). Both are null when no slave key column repeats.
+    private final @Nullable RecordSink earliestSharedKeySink;
+    private final @Nullable RecordSink laterSharedKeySink;
     private final RecordSink masterKeySink;
-    // writes the master key with the key positions that share a slave column rotated, null when none do
-    private final @Nullable RecordSink rotatedMasterKeySink;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final RecordSink slaveKeySink;
     private final long toleranceInterval;
@@ -101,13 +103,15 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable RecordSink rotatedMasterKeySink
+            @Nullable RecordSink earliestSharedKeySink,
+            @Nullable RecordSink laterSharedKeySink
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
         this.masterKeySink = masterKeySink;
-        this.rotatedMasterKeySink = rotatedMasterKeySink;
+        this.earliestSharedKeySink = earliestSharedKeySink;
+        this.laterSharedKeySink = laterSharedKeySink;
         this.slaveKeySink = slaveKeySink;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
         final SingleRecordSink masterSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
@@ -116,7 +120,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 SingleRecordSink.CONFIG_KEYS_ASOF_JOIN);
         // Only a join whose keys share a slave column gets the cursor that checks the master key
         // before it moves the slave cursor, so every other join keeps the plain cursor.
-        if (rotatedMasterKeySink == null) {
+        if (earliestSharedKeySink == null) {
             this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
                     columnSplit,
                     slaveNullRecord,
@@ -139,7 +143,8 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                     masterFactory.getMetadata().getTimestampType(),
                     slaveFactory.getMetadata().getTimestampType(),
                     configuration.getSqlAsOfJoinLookAhead(),
-                    rotatedMasterKeySink
+                    earliestSharedKeySink,
+                    laterSharedKeySink
             );
         }
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
@@ -201,7 +206,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
-        if (rotatedMasterKeySink != null) {
+        if (earliestSharedKeySink != null) {
             sink.attr("sharedKeyCheck").val(true);
         }
         sink.child(masterFactory);
@@ -221,7 +226,8 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
     }
 
     private class FilteredAsOfJoinKeyedFastCheckedRecordCursor extends FilteredAsOfJoinKeyedFastRecordCursor {
-        private final RecordSink rotatedMasterKeySink;
+        private final RecordSink earliestSharedKeySink;
+        private final RecordSink laterSharedKeySink;
 
         public FilteredAsOfJoinKeyedFastCheckedRecordCursor(
                 int columnSplit,
@@ -233,10 +239,12 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 int masterTimestampType,
                 int slaveTimestampType,
                 int lookahead,
-                RecordSink rotatedMasterKeySink
+                RecordSink earliestSharedKeySink,
+                RecordSink laterSharedKeySink
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, masterSinkTarget, slaveTimestampIndex, slaveSinkTarget, masterTimestampType, slaveTimestampType, lookahead);
-            this.rotatedMasterKeySink = rotatedMasterKeySink;
+            this.earliestSharedKeySink = earliestSharedKeySink;
+            this.laterSharedKeySink = laterSharedKeySink;
         }
 
         @Override
@@ -253,22 +261,20 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             return findSlaveRecord();
         }
 
-        // A slave row writes one value at all key positions that share its column, so it matches
-        // only a master key that equals its rotated copy. The method leaves the master key in
-        // masterSinkTarget and its rotated copy in slaveSinkTarget, and findSlaveRecord() writes
-        // both sinks again before it reads them.
+        // A slave row writes one value at all key positions that share its column, so it matches only
+        // a master row whose values at those positions encode the same. The method writes the shared
+        // master columns into both sinks, and the key matching writes both sinks again before it
+        // reads them. A shared SYMBOL value that does not occur in the slave table matches no row.
         private boolean isMasterKeyMatchable() {
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.resetNonExistentKeyFlag();
             }
             masterSinkTarget.clear();
-            masterKeySink.copy(masterKeyRecord, masterSinkTarget);
-            if (symbolTranslatingRecord != null && symbolTranslatingRecord.hadNonExistentKey()) {
-                return false;
-            }
+            earliestSharedKeySink.copy(masterKeyRecord, masterSinkTarget);
             slaveSinkTarget.clear();
-            rotatedMasterKeySink.copy(masterKeyRecord, slaveSinkTarget);
-            return masterSinkTarget.memeq(slaveSinkTarget);
+            laterSharedKeySink.copy(masterKeyRecord, slaveSinkTarget);
+            return masterSinkTarget.memeq(slaveSinkTarget)
+                    && (symbolTranslatingRecord == null || !symbolTranslatingRecord.hadNonExistentKey());
         }
     }
 

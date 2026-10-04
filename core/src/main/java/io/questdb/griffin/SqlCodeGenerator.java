@@ -3110,43 +3110,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // A slave row writes one value at every key position that compares the same slave column, so it
-    // matches only a master row whose values at those positions encode the same. The copier writes
-    // the master key with the master columns of each such group of positions rotated by one. The
-    // master key equals its rotated copy exactly when every group agrees, so a master row whose key
-    // differs from the rotated copy has no match. Returns null when no slave key column repeats.
-    // Like createRecordCopierMaster(), call it after convertSymbolJoinKeysToInt(), so both copiers
-    // encode the master columns the same way.
-    private @Nullable RecordSink createRotatedMasterKeyCopier(RecordMetadata masterMetadata) {
-        final int keyCount = listColumnFilterA.getColumnCount();
-        ListColumnFilter rotatedFilter = null;
-        for (int k = 0; k < keyCount; k++) {
+    // matches only a master row whose values at those positions encode the same. For every key
+    // position whose slave column occurs at an earlier position, the copier writes the master column
+    // of the earliest such position when isEarliestPosition is true, and the master column of the
+    // position itself otherwise. The two copies are equal exactly when every group of positions
+    // agrees. Returns null when no slave key column repeats. Like createRecordCopierMaster(), call it
+    // after convertSymbolJoinKeysToInt(), so both copiers encode the master columns the same way.
+    private @Nullable RecordSink createSharedKeyCopier(RecordMetadata masterMetadata, boolean isEarliestPosition) {
+        ListColumnFilter filter = null;
+        for (int k = 1, n = listColumnFilterA.getColumnCount(); k < n; k++) {
             final int slaveColumnIndex = listColumnFilterA.getColumnIndexFactored(k);
-            int next = k;
-            for (int j = 1; j < keyCount; j++) {
-                final int candidate = (k + j) % keyCount;
-                if (listColumnFilterA.getColumnIndexFactored(candidate) == slaveColumnIndex) {
-                    next = candidate;
+            for (int j = 0; j < k; j++) {
+                if (listColumnFilterA.getColumnIndexFactored(j) == slaveColumnIndex) {
+                    if (filter == null) {
+                        filter = new ListColumnFilter();
+                    }
+                    filter.add(listColumnFilterB.getQuick(isEarliestPosition ? j : k));
                     break;
                 }
             }
-            if (next != k && rotatedFilter == null) {
-                rotatedFilter = new ListColumnFilter(keyCount);
-                for (int j = 0; j < k; j++) {
-                    rotatedFilter.add(listColumnFilterB.getQuick(j));
-                }
-            }
-            if (rotatedFilter != null) {
-                rotatedFilter.add(listColumnFilterB.getQuick(next));
-            }
         }
-        if (rotatedFilter == null) {
+        if (filter == null) {
             return null;
         }
         return RecordSinkFactory.getInstance(
                 configuration,
                 asm,
                 masterMetadata,
-                rotatedFilter,
+                filter,
                 writeSymbolAsStringB,
                 writeStringAsVarcharB,
                 writeTimestampAsNanosB
@@ -6022,6 +6013,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     toleranceInterval,
                                     null,
                                     null,
+                                    null,
                                     null
                             );
                         } else {
@@ -6039,7 +6031,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     toleranceInterval,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[0] : null,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null,
-                                    createRotatedMasterKeyCopier(masterMetadata)
+                                    createSharedKeyCopier(masterMetadata, true),
+                                    createSharedKeyCopier(masterMetadata, false)
                             );
                         }
                     } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
@@ -6070,7 +6063,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 toleranceInterval,
                                 filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
                                 filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null,
-                                createRotatedMasterKeyCopier(masterMetadata)
+                                createSharedKeyCopier(masterMetadata, true),
+                                createSharedKeyCopier(masterMetadata, false)
                         );
                     } else if (slave.isProjection()) {
                         RecordCursorFactory projectionBase = slave.getBaseFactory();
@@ -6113,7 +6107,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         toleranceInterval,
                                         projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[0] : null,
                                         projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[1] : null,
-                                        createRotatedMasterKeyCopier(masterMetadata)
+                                        createSharedKeyCopier(masterMetadata, true),
+                                        createSharedKeyCopier(masterMetadata, false)
                                 );
                             }
                         }
