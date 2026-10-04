@@ -492,10 +492,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         final int fromGroup = RelationRules.ctasCastGroup(ColumnType.tagOf(from));
         final int toGroup = RelationRules.ctasCastGroup(ColumnType.tagOf(to));
         if (fromGroup == -1 || toGroup == -1) {
-            // No group covers the decimal, array, interval and NULL tags: no single group could
-            // express a decimal's precision and scale or an array's dimensionality. INSERT ... SELECT
-            // gates the very same record copier on isConvertibleFrom, so deferring to it admits
-            // exactly the pairs the copier implements.
+            // No group covers LONG256, the geohashes, UUID, LONG128, IPv4, the decimals, the arrays,
+            // INTERVAL, NULL or the pseudo types: no single group could express a geohash's bits, a
+            // decimal's precision and scale or an array's dimensionality. Their casts follow
+            // isConvertibleFrom, as INSERT ... SELECT into the very same record copier does.
             return ColumnType.isConvertibleFrom(from, to);
         }
         return fromGroup == toGroup;

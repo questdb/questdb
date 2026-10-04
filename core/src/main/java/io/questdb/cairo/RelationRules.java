@@ -285,12 +285,7 @@ public final class RelationRules {
             case TEXT -> isPersisted(tag) ? 3 : -1;
             case SYMBOL -> 3;
             case BINARY -> 4;
-            // Quirk sql-ctas-cast-group-zero: the group table these rules replace stopped at VARCHAR,
-            // and its unset slots read as one group, 0: these kinds and the pseudo tags below VARCHAR
-            // are mutually compatible
-            case LONG256, GEO, UUID, LONG128, IPV4, UNDEF -> 0;
-            case PSEUDO -> tag < VARCHAR ? 0 : -1;
-            case DECIMAL, ARRAY, INTERVAL, NULL -> -1;
+            case LONG256, GEO, UUID, LONG128, IPV4, DECIMAL, ARRAY, INTERVAL, UNDEF, PSEUDO, NULL -> -1;
         };
     }
 

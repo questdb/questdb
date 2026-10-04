@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoError;
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -201,6 +202,39 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     @Test
     public void testCreatePartitionedTableAtomicAsSelectTimestampNoOrder() throws Exception {
         createPartitionedTableAtomicAsSelectWithOrderBy("");
+    }
+
+    @Test
+    public void testCtasCastLong256ToUuidFails() throws Exception {
+        assertException(
+                "CREATE TABLE dst AS (SELECT rnd_long256() l256 FROM long_sequence(3)), CAST(l256 AS UUID)",
+                76,
+                "unsupported cast [column=l256, from=LONG256, to=UUID]"
+        );
+    }
+
+    @Test
+    public void testCtasCastUuidToStringAndVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (s UUID, v UUID)");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'),
+                        (NULL, NULL)
+                    """);
+            execute("CREATE TABLE dst AS (SELECT * FROM src), CAST(s AS STRING), CAST(v AS VARCHAR)");
+
+            assertQuery("dst")
+                    .noLeakCheck()
+                    .columnType(0, ColumnType.STRING)
+                    .columnType(1, ColumnType.VARCHAR)
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            11111111-1111-1111-1111-111111111111\t22222222-2222-2222-2222-222222222222
+                            \t
+                            """);
+        });
     }
 
     private void createPartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {
