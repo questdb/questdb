@@ -33,6 +33,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
@@ -42,6 +43,7 @@ import io.questdb.griffin.engine.window.AsyncWindowAtom;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursor;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.AsyncWindowSplitPlan;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
@@ -120,7 +122,7 @@ public class AsyncWindowTest extends AbstractCairoTest {
                 + "avg(bid) over (partition by sym rows between 3 preceding and 1 preceding) p, lag(x, 3) over (partition by sym) g";
         final String u = " over (partition by sym rows between unbounded preceding and current row)";
         LK_PREFIX_COLUMNS = "sym, x, sum(x)" + u + " sx, sum(bid)" + u + " sb, count()" + u + " c, count(bid)" + u + " cb, "
-                + "min(bid)" + u + " mn, max(x)" + u + " mx, min(bsize)" + u + " mi, max(bsize)" + u + " ma, first_value(bid)" + u + " f, "
+                + "max(x)" + u + " mx, min(x)" + u + " mnx, min(bsize)" + u + " mi, max(bsize)" + u + " ma, first_value(bid)" + u + " f, "
                 + "first_value(bsize)" + u + " fi, row_number() over (partition by sym) rn";
     }
 
@@ -447,6 +449,27 @@ public class AsyncWindowTest extends AbstractCairoTest {
             TestUtils.assertEquals(expected, printToString(query));
             sqlExecutionContext.setParallelWindowEnabled(false);
         });
+    }
+
+    @Test
+    public void testFloatingRunningMinMaxStayWhole() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 100);
+        // The serial running min treats values within 1e-10 as equal, so where it stands depends
+        // on the path to it, and the running max ranks -0.0 below 0.0: a running carry would
+        // reproduce neither, so these keep keys whole. Integer min and max still split.
+        assertMemoryLeak(() -> {
+            createMinMaxRepro(engine, sqlExecutionContext);
+            assertMinMaxRepro(engine, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testFloatingRunningMinMaxStayWholeOnWorkerPool() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 100);
+        assertMemoryLeak(() -> inPool((engine, ctx) -> {
+            createMinMaxRepro(engine, ctx);
+            assertMinMaxRepro(engine, ctx);
+        }));
     }
 
     @Test
@@ -949,14 +972,37 @@ public class AsyncWindowTest extends AbstractCairoTest {
     }
 
     /**
-     * Split keys may sum floating-point values in another order than the serial window: those
-     * columns must agree within a relative 1e-12, every other value exactly.
+     * Split keys may add floating-point values in another order than the serial window: the
+     * {@code sum} and {@code avg} columns of a plan that splits keys must agree within a relative
+     * 1e-12 of the largest magnitude in their column, which bounds what reordering the additions
+     * can change. Every other value, also of a split plan, must be the serial one exactly.
      */
     private static void assertSameWithinUlps(String query, RecordCursorFactory factory, String expected, String actual) {
         final String[] expectedLines = expected.split("\n");
         final String[] actualLines = actual.split("\n");
         Assert.assertEquals(query, expectedLines.length, actualLines.length);
-        final int columnCount = factory.getMetadata().getColumnCount();
+        final RecordMetadata metadata = factory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+        final AsyncWindowRecordCursorFactory asyncFactory = findAsyncFactory(factory);
+        final boolean splits = asyncFactory.getSplitPlan().getMode() != AsyncWindowSplitPlan.MODE_NONE;
+        final boolean[] tolerant = new boolean[columnCount];
+        final double[] magnitude = new double[columnCount];
+        for (int c = 0; c < columnCount; c++) {
+            final int asyncColumn = asyncFactory.getMetadata().getColumnIndexQuiet(metadata.getColumnName(c));
+            if (splits && asyncColumn > -1 && asyncFactory.getFunctions().getQuick(asyncColumn) instanceof WindowFunction wf) {
+                final int type = ColumnType.tagOf(metadata.getColumnType(c));
+                tolerant[c] = (type == ColumnType.DOUBLE || type == ColumnType.FLOAT)
+                        && ("sum".equals(wf.getName()) || "avg".equals(wf.getName()));
+            }
+        }
+        for (int i = 1; i < expectedLines.length; i++) {
+            final String[] e = expectedLines[i].split("\t", -1);
+            for (int c = 0; c < columnCount; c++) {
+                if (tolerant[c] && !"null".equals(e[c])) {
+                    magnitude[c] = Math.max(magnitude[c], Math.abs(Double.parseDouble(e[c])));
+                }
+            }
+        }
         for (int i = 0; i < expectedLines.length; i++) {
             if (expectedLines[i].equals(actualLines[i])) {
                 continue;
@@ -968,17 +1014,10 @@ public class AsyncWindowTest extends AbstractCairoTest {
                 if (e[c].equals(a[c])) {
                     continue;
                 }
-                final int type = ColumnType.tagOf(factory.getMetadata().getColumnType(c));
-                if (type != ColumnType.DOUBLE && type != ColumnType.FLOAT) {
-                    Assert.fail(query + " line " + i + " column " + c + ": expected " + e[c] + " but was " + a[c]);
-                }
-                final double ev = Double.parseDouble(e[c]);
-                final double av = Double.parseDouble(a[c]);
-                final double tolerance = 1e-12 * Math.max(Math.abs(ev), Math.abs(av));
-                Assert.assertTrue(
-                        query + " line " + i + " column " + c + ": expected " + e[c] + " but was " + a[c],
-                        Math.abs(ev - av) <= tolerance
-                );
+                final String message = query + " line " + i + " column " + c + ": expected " + e[c] + " but was " + a[c];
+                Assert.assertTrue(message, tolerant[c] && !"null".equals(e[c]) && !"null".equals(a[c]));
+                final double difference = Math.abs(Double.parseDouble(e[c]) - Double.parseDouble(a[c]));
+                Assert.assertTrue(message, difference <= 1e-12 * magnitude[c]);
             }
         }
     }
@@ -1075,6 +1114,53 @@ public class AsyncWindowTest extends AbstractCairoTest {
             workerTasks += assertMatchesSerial(engine, ctx, query);
         }
         return workerTasks;
+    }
+
+    private void assertMinMaxRepro(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        final String u = " over (partition by sym rows between unbounded preceding and current row)";
+        final String where = " from mm where sym in ('K', 'J') order by sym";
+        for (String columns : new String[]{"sym, x, min(v)" + u + " m", "sym, x, max(z)" + u + " m", "sym, x, min(z)" + u + " m"}) {
+            final String query = "select " + columns + where;
+            ctx.setParallelWindowEnabled(true);
+            try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                Assert.assertEquals(query, AsyncWindowSplitPlan.MODE_NONE, findAsyncFactory(factory).getSplitPlan().getMode());
+            }
+            // keys whole: exactly the serial values
+            assertMatchesSerial(engine, ctx, query);
+        }
+        // the bounded-frame versions split, and are exact
+        for (String columns : new String[]{
+                "sym, x, min(v) over (partition by sym rows between 3 preceding and current row) m",
+                "sym, x, max(z) over (partition by sym rows between 3 preceding and current row) m"}) {
+            final String query = "select " + columns + where;
+            ctx.setParallelWindowEnabled(true);
+            try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                Assert.assertEquals(query, AsyncWindowSplitPlan.MODE_WARMUP, findAsyncFactory(factory).getSplitPlan().getMode());
+            }
+            assertMatchesSerial(engine, ctx, query);
+        }
+        // integer min and max still carry
+        final String query = "select sym, x, min(x)" + u + " a, max(x)" + u + " b" + where;
+        ctx.setParallelWindowEnabled(true);
+        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+            Assert.assertEquals(query, AsyncWindowSplitPlan.MODE_PREFIX, findAsyncFactory(factory).getSplitPlan().getMode());
+        }
+        assertMatchesSerial(engine, ctx, query);
+    }
+
+    /**
+     * Table {@code mm}, the review's repro: key K of 1,000 consecutive rows with
+     * v = 1.0 - x * 3.5e-11 (steps below the serial comparator's 1e-10 tolerance) and z = -0.0
+     * for its first 150 rows, then 0.0; key J of 200 rows after it, which comes first in the walk
+     * and is the prefix. With task.rows of 100, K spans 10 tasks.
+     */
+    private void createMinMaxRepro(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        engine.execute("create table mm (sym symbol index type " + indexType + ", v double, z double, x long, ts timestamp) timestamp(ts) partition by DAY", ctx);
+        engine.execute(
+                "insert into mm select case when x <= 1_000 then 'K' else 'J' end, 1.0 - x * 3.5e-11," +
+                        " case when x <= 150 then -0.0 else 0.0 end, x, (x * 60_000_000L)::timestamp from long_sequence(1_200)",
+                ctx
+        );
     }
 
     private void inPool(PoolTest test) throws Exception {

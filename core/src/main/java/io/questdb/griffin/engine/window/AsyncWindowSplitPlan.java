@@ -41,7 +41,8 @@ import io.questdb.std.Numbers;
  *     that continues a key starts {@link #getWarmupRows()} rows early, which rebuilds the frame,
  *     and returns only its own rows.</li>
  *     <li>{@link #MODE_PREFIX}: every function is a running aggregate from UNBOUNDED PRECEDING to
- *     the current row (sum, count, min, max, first_value) or {@code row_number}. A task that
+ *     the current row (sum, count, first_value; min and max of integers only) or
+ *     {@code row_number}. A task that
  *     continues a key computes it from scratch, and the query's thread combines each of its rows
  *     with the value the key had at the end of the previous task before returning them.</li>
  * </ul>
@@ -92,12 +93,9 @@ public class AsyncWindowSplitPlan implements Plannable {
                 if (Numbers.isNull(l)) {
                     return carry;
                 }
-                final double result = switch (op) {
-                    case OP_ADD -> c + l;
-                    // ties keep the earlier value, as the serial running min and max do
-                    case OP_MIN -> l < c ? l : c;
-                    default -> l > c ? l : c;
-                };
+                // a DOUBLE is only ever added: its min and max are not split, see the planner
+                assert op == OP_ADD;
+                final double result = c + l;
                 return Double.doubleToRawLongBits(result);
             }
             case ColumnType.LONG: {

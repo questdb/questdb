@@ -12729,8 +12729,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else {
                     return AsyncWindowSplitPlan.NONE;
                 }
-                final boolean typeOk = type == ColumnType.DOUBLE || type == ColumnType.LONG
-                        || (type == ColumnType.INT && op != AsyncWindowSplitPlan.OP_ADD);
+                // A floating min or max cannot be carried: the serial running min treats values
+                // within Numbers.compare's tolerance as equal, so where it stands depends on the
+                // path to it, and the running max ranks -0.0 below 0.0. A piece computed from its
+                // own first row, then compared with the carry, reproduces neither.
+                final boolean isFloatingMinMax = (op == AsyncWindowSplitPlan.OP_MIN || op == AsyncWindowSplitPlan.OP_MAX)
+                        && type == ColumnType.DOUBLE;
+                final boolean typeOk = !isFloatingMinMax && (type == ColumnType.DOUBLE || type == ColumnType.LONG
+                        || (type == ColumnType.INT && op != AsyncWindowSplitPlan.OP_ADD));
                 if (!typeOk) {
                     return AsyncWindowSplitPlan.NONE;
                 }

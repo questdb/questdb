@@ -183,6 +183,13 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         return cursor;
     }
 
+    /**
+     * The functions of the output columns, in column order.
+     */
+    public ObjList<Function> getFunctions() {
+        return functions;
+    }
+
     public AsyncWindowSplitPlan getSplitPlan() {
         return splitPlan;
     }

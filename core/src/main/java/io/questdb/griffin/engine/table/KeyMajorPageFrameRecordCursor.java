@@ -397,6 +397,14 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
      * first {@link #hasNext()} or {@link #collectKeyRows} would otherwise do. Idempotent until
      * {@link #toTop()}.
      */
+    public void prepareFrames() {
+        prepareRowCursorFactory();
+        if (!isFramesCollected) {
+            collectFrames();
+            keyCount = rowCursorFactory.getKeyCount();
+        }
+    }
+
     /**
      * Abandons the rest of the current key: the next {@link #collectKeyRows} starts the next key,
      * and no row cursor stays open.
@@ -406,14 +414,6 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         rowCursor = Misc.free(rowCursor);
         keyIndex++;
         framePos = 0;
-    }
-
-    public void prepareFrames() {
-        prepareRowCursorFactory();
-        if (!isFramesCollected) {
-            collectFrames();
-            keyCount = rowCursorFactory.getKeyCount();
-        }
     }
 
     @Override
