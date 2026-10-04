@@ -208,6 +208,13 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
+    // Scratch state of constrainRightAndFullJoinsAfterPrefix, by join model index: the highest index of
+    // the models that the ON clause reads, or -1, and the first link of the list of the models whose
+    // ON clause reads the model, or -1.
+    private final IntList joinModelMaxRefs = new IntList();
+    private final IntList joinModelReaderHeads = new IntList();
+    // (reader model index, next link) pairs of the lists that joinModelReaderHeads starts; -1 ends a list
+    private final IntList joinModelReaderLinks = new IntList();
     private final JoinModelReferenceCollector joinModelReferenceCollector = new JoinModelReferenceCollector();
     // Scratch state of isJoinedAfter: the tables still to visit and the tables already queued.
     private final IntList keyMoveStack = new IntList();
@@ -770,15 +777,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return true;
-    }
-
-    private static boolean intersects(IntHashSet a, IntHashSet b) {
-        for (int i = 0, n = a.size(); i < n; i++) {
-            if (b.contains(a.get(i))) {
-                return true;
-            }
-        }
-        return false;
     }
 
     // Returns true when every leaf in the expression tree is a literal constant
@@ -3516,47 +3514,58 @@ public class SqlOptimiser implements Mutable {
             return;
         }
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final int n = joinModels.size();
         final IntHashSet refs = intHashSetPool.next();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
+        // Resolve each ON clause once: the models a clause reads do not change while this method runs,
+        // and an unqualified name scans every model of the level, so resolving the prefix again for
+        // every boundary made the method cubic in the number of joins.
+        joinModelMaxRefs.setAll(n, -1);
+        joinModelReaderHeads.setAll(n, -1);
+        joinModelReaderLinks.clear();
+        for (int i = 1; i < n; i++) {
             refs.clear();
             if (!collectReferencedJoinModels(parent, joinModels.getQuick(i).getJoinCriteria(), refs)) {
                 return;
             }
+            recordJoinModelRefs(i, refs);
         }
+        boolean isModel0Recorded = false;
         final IntHashSet unpinned = intHashSetPool.next();
         final IntHashSet timeSeriesJoinsAhead = intHashSetPool.next();
-        for (int boundaryIndex = 1, n = joinModels.size(); boundaryIndex < n; boundaryIndex++) {
+        for (int boundaryIndex = 1; boundaryIndex < n; boundaryIndex++) {
             final IQueryModel boundaryModel = joinModels.getQuick(boundaryIndex);
             final int joinType = boundaryModel.getJoinType();
             timeSeriesJoinsAhead.clear();
             final boolean isNonEqui = joinType == IQueryModel.JOIN_CROSS_RIGHT || joinType == IQueryModel.JOIN_CROSS_FULL;
             if (isNonEqui) {
-                refs.clear();
-                // resolves: the level check above returned otherwise
-                collectReferencedJoinModels(parent, boundaryModel.getJoinCriteria(), refs);
-                if (hasModelAfter(refs, boundaryIndex) || !collectTimeSeriesJoinsAhead(joinModels, boundaryIndex, timeSeriesJoinsAhead)) {
+                if (joinModelMaxRefs.getQuick(boundaryIndex) > boundaryIndex || !collectTimeSeriesJoinsAhead(joinModels, boundaryIndex, timeSeriesJoinsAhead)) {
                     continue;
                 }
             } else if (joinType != IQueryModel.JOIN_RIGHT_OUTER && joinType != IQueryModel.JOIN_FULL_OUTER) {
                 continue;
             }
-            // A prefix model that reads an unpinned model must stay unpinned too: it cannot run before
-            // the model it reads, and that model may run after the outer join.
+            if (!isModel0Recorded) {
+                // the level check above skips model 0 and does not require its names to resolve
+                refs.clear();
+                collectReferencedJoinModels(parent, joinModels.getQuick(0).getJoinCriteria(), refs);
+                recordJoinModelRefs(0, refs);
+                isModel0Recorded = true;
+            }
             unpinned.clear();
-            for (boolean isChanged = true; isChanged; ) {
-                isChanged = false;
-                for (int prefixIndex = 0; prefixIndex < boundaryIndex; prefixIndex++) {
-                    if (unpinned.contains(prefixIndex)) {
-                        continue;
-                    }
-                    final IQueryModel prefixModel = joinModels.getQuick(prefixIndex);
-                    final int lastReadableIndex = joinBarriers.contains(prefixModel.getJoinType()) ? prefixIndex : boundaryIndex - 1;
-                    refs.clear();
-                    // resolves: the level check above returned otherwise
-                    collectReferencedJoinModels(parent, prefixModel.getJoinCriteria(), refs);
-                    if (hasModelAfter(refs, lastReadableIndex) || intersects(refs, unpinned)) {
-                        unpinned.add(prefixIndex);
-                        isChanged = true;
+            for (int prefixIndex = 0; prefixIndex < boundaryIndex; prefixIndex++) {
+                final int lastReadableIndex = joinBarriers.contains(joinModels.getQuick(prefixIndex).getJoinType()) ? prefixIndex : boundaryIndex - 1;
+                if (joinModelMaxRefs.getQuick(prefixIndex) > lastReadableIndex) {
+                    unpinned.add(prefixIndex);
+                }
+            }
+            // A prefix model that reads an unpinned model must stay unpinned too: it cannot run before
+            // the model it reads, and that model may run after the outer join. unpinned keeps insertion
+            // order, so it is also the queue of the models whose readers are still to visit.
+            for (int i = 0; i < unpinned.size(); i++) {
+                for (int link = joinModelReaderHeads.getQuick(unpinned.get(i)); link != -1; link = joinModelReaderLinks.getQuick(link + 1)) {
+                    final int readerIndex = joinModelReaderLinks.getQuick(link);
+                    if (readerIndex < boundaryIndex) {
+                        unpinned.add(readerIndex);
                     }
                 }
             }
@@ -9389,6 +9398,20 @@ public class SqlOptimiser implements Mutable {
                 traversalAlgo.traverse(joinModel.getJoinCriteria(), outerJoinOnNameQualifier.of(parent, i));
             }
         }
+    }
+
+    // Records what the ON clause of a join model reads for constrainRightAndFullJoinsAfterPrefix: the
+    // highest index of the models in refs, and the join model as a reader of each of them.
+    private void recordJoinModelRefs(int readerIndex, IntHashSet refs) {
+        int maxRef = -1;
+        for (int i = 0, n = refs.size(); i < n; i++) {
+            final int refIndex = refs.get(i);
+            maxRef = Math.max(maxRef, refIndex);
+            joinModelReaderLinks.add(readerIndex);
+            joinModelReaderLinks.add(joinModelReaderHeads.getQuick(refIndex));
+            joinModelReaderHeads.setQuick(refIndex, joinModelReaderLinks.size() - 2);
+        }
+        joinModelMaxRefs.setQuick(readerIndex, maxRef);
     }
 
     // A non-equi outer join consumes the complete logical prefix as its master, so every prefix
