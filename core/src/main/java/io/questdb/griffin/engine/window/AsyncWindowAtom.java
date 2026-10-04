@@ -161,6 +161,15 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
     }
 
     /**
+     * The slots that hold a copy of the functions for the workers, which share them when there
+     * are fewer slots than workers.
+     */
+    @TestOnly
+    public int getWorkerSlotCount() {
+        return slots.size() - 1;
+    }
+
+    /**
      * Tasks the worker slots, not the query's own thread, computed since the last
      * {@link #resetTaskCounts()}.
      */

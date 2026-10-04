@@ -70,7 +70,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
      *
      * @param functions          the output columns' functions, for the query's own thread
      * @param windowMapStates    the window Map groups over {@code functions}, or null
-     * @param perWorkerFunctions a separately compiled copy of {@code functions} per worker
+     * @param perWorkerFunctions separately compiled copies of {@code functions}, one per worker slot;
+     *                           there may be fewer slots than workers, which then share them
      * @param perWorkerMapStates the window Map groups of each copy, entries may be null
      * @param keyColumnIndex     the base column the scan walks key by key, which every window
      *                           function is partitioned by

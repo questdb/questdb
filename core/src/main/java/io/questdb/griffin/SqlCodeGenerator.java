@@ -12632,10 +12632,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // an output column type a task's row buffer cannot hold
             return null;
         }
-        final ObjList<ObjList<Function>> perWorkerFunctions = new ObjList<>(workerCount);
-        final ObjList<ObjList<WindowMapState>> perWorkerMapStates = new ObjList<>(workerCount);
+        // A round holds at most about round.rows / task.rows tasks, so more copies than that would
+        // never all be busy: compile, and later open, no more. Workers beyond them share the slots.
+        final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
+        final long roundRows = Math.max(taskRows, configuration.getSqlParallelWindowRoundRows());
+        final int copyCount = (int) Math.min(workerCount, (roundRows + taskRows - 1) / taskRows);
+        final ObjList<ObjList<Function>> perWorkerFunctions = new ObjList<>(copyCount);
+        final ObjList<ObjList<WindowMapState>> perWorkerMapStates = new ObjList<>(copyCount);
         try {
-            for (int i = 0; i < workerCount; i++) {
+            for (int i = 0; i < copyCount; i++) {
                 compileStreamingWindowCopy(model, base, baseMetadata, perWorkerFunctions, perWorkerMapStates, executionContext);
             }
         } catch (Throwable th) {

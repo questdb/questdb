@@ -92,6 +92,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private static final int MODE_PARALLEL = 2;
     private static final int MODE_SERIAL = 1;
     private static final int MODE_UNDECIDED = 0;
+    private static final long ROW_IDS_INITIAL_CAPACITY = 1024;
     private final AsyncWindowAtom atom;
     private final long chainMaxPages;
     private final long chainPageSize;
@@ -527,6 +528,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                     }
                     rows.setPos(keyLo);
                     largeKeyState = LARGE_KEY_PENDING;
+                    // the task's list grew for the key's rows, which it no longer holds
+                    if (keyLo == 0) {
+                        shrinkIfOversized(rows, taskRows);
+                    }
                 }
                 // a key too large for a task, or no key left
                 stop = true;
@@ -566,9 +571,16 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         return keyMajorCursor.isWalkExhausted();
     }
 
+    // Gives a row id list's memory back once it has grown well past what a task or a chunk needs.
+    private static void shrinkIfOversized(DirectLongList rows, long taskRows) {
+        if (rows.getCapacity() > 2 * Math.max(taskRows, ROW_IDS_INITIAL_CAPACITY)) {
+            rows.resetCapacity();
+        }
+    }
+
     private DirectLongList newRowIds(MemoryTracker memoryTracker) {
         // charged to the query, under the tag of the parallel operators' row id lists
-        final DirectLongList rows = new DirectLongList(1024, MemoryTag.NATIVE_OFFLOAD, true);
+        final DirectLongList rows = new DirectLongList(ROW_IDS_INITIAL_CAPACITY, MemoryTag.NATIVE_OFFLOAD, true);
         rows.setMemoryTracker(memoryTracker);
         rows.reopen();
         return rows;
@@ -631,10 +643,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         }
         if (largeKeyState == LARGE_KEY_ACTIVE) {
             if (ownerKeyOpen) {
-                if (ownerRows.size() > 2 * taskRows) {
-                    // the key's first rows were up to max.key.rows: give that memory back
-                    ownerRows.resetCapacity();
-                }
+                // the key's first rows were up to max.key.rows: give that memory back
+                shrinkIfOversized(ownerRows, taskRows);
                 ownerRows.clear();
                 ownerPos = 0;
                 ownerKeyOpen = keyMajorCursor.collectKeyRows(ownerRows, taskRows) == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT;
@@ -775,12 +785,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         }
 
         // Empties the task for its next round. A task usually holds about taskRows row ids, but
-        // one that took a large key would keep that key's memory for good: give it back when the
-        // last fill was well above the usual size.
+        // one that grew for a large key would keep that key's memory for good, also after the
+        // key's rows moved out to the query's thread: give it back when the list's capacity, not
+        // its last size, is well above the usual.
         private void reuse(long taskRows) {
-            if (rows.size() > 2 * taskRows) {
-                rows.resetCapacity();
-            }
+            shrinkIfOversized(rows, taskRows);
             rows.clear();
         }
     }
