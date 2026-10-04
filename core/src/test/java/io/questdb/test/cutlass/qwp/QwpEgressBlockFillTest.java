@@ -31,6 +31,8 @@ import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
+import io.questdb.std.Chars;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -77,6 +79,8 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
             "avg(asize + bsize) over (partition by sym rows between 4 preceding and current row) size " +
             "from q where sym in ('A', 'B', 'C1', 'C2', 'C3', 'C5', 'C8', 'D') order by sym";
 
+    private QwpEgressMetrics metrics;
+
     @Before
     public void setUp() {
         super.setUp();
@@ -92,7 +96,7 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     @Test
     public void testAllTypesAcrossManyBatches() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables(smallFrames())) {
+            try (TestServerMain serverMain = start(smallFrames())) {
                 createAllTypes(serverMain, 20_000);
                 // LIMIT over a table scan is a cursor result: the scan offers its frames
                 final String[] sqls = {
@@ -110,7 +114,7 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     @Test
     public void testAsyncWindow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables(windowEnv())) {
+            try (TestServerMain serverMain = start(windowEnv())) {
                 createWindowTable(serverMain);
                 // alone first: only the Async Window offers blocks here, so the block fill ran on its tasks
                 assertBlockFillMatchesRowFill(new String[]{WINDOW_SQL}, "", 0, -1);
@@ -129,7 +133,7 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     @Test
     public void testCancelMidStream() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables(windowEnv())) {
+            try (TestServerMain serverMain = start(windowEnv())) {
                 createWindowTable(serverMain);
                 createAllTypes(serverMain, 5_000);
                 // credit of 1 byte: the server parks after the first batch, the CANCEL lands, the
@@ -142,12 +146,34 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testColumnTopsOnSymbolAndNoNullTypes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(smallFrames())) {
+                // the first 1000 rows are column tops of the SYMBOL column and of the types with
+                // a columnar fill, among them those with no NULL on the wire
+                serverMain.execute("create table ct (x long, ts timestamp) timestamp(ts) partition by DAY BYPASS WAL");
+                serverMain.execute("insert into ct select x, (x * 30000000)::timestamp from long_sequence(1000)");
+                serverMain.execute("alter table ct add column s symbol, b boolean, by byte, sh short, ch char, i int, ip ipv4, f float");
+                serverMain.execute("insert into ct select x, ((x + 1000) * 30000000)::timestamp, " +
+                        "case when x % 7 = 0 then null else 's' || (x % 13) end, x % 2 = 0, (x % 100)::byte, (x % 999)::short, " +
+                        "rnd_char(), x::int, rnd_ipv4(), (x / 3.0)::float from long_sequence(3000)");
+                final String[] sqls = {
+                        "select * from ct limit 1000000",
+                        "select s, x from ct limit 500, 3500",
+                        "select * from ct limit -2000",
+                };
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=333", 0, -1);
+                assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
     public void testCreditFlow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables(windowEnv())) {
+            try (TestServerMain serverMain = start(windowEnv())) {
                 createWindowTable(serverMain);
                 createAllTypes(serverMain, 5_000);
-                final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 final long suspensions = metrics.creditSuspensionsCount();
                 // a small initial credit, topped up by each batch's size as the client reads it
                 assertBlockFillMatchesRowFill(new String[]{WINDOW_SQL, "select * from at limit 5000"}, "?qwp_max_batch_rows=300", 4096, -1);
@@ -157,12 +183,29 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCursorsWithoutBlocksStreamRowByRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(smallFrames())) {
+                createAllTypes(serverMain, 5_000);
+                // none of these cursors offers blocks: a filter, a backward scan and a sort, each
+                // also under a LIMIT; they must stream as before, row by row
+                final String[] sqls = {
+                        "select * from at where l > 5000",
+                        "select * from at where l > 5000 limit 1000, 3000",
+                        "select * from at order by ts desc limit 4000",
+                        "select s, l from at order by l limit -3000",
+                };
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=700", 0, -1, false);
+            }
+        });
+    }
+
+    @Test
     public void testNewSymbolsSplitBatchesOnTheDictionaryBudget() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // the smallest send buffer the handshake accepts: the dictionary budget is 60% of it
-            try (TestServerMain serverMain = startWithEnvVariables(
+            try (TestServerMain serverMain = start(
                     "QDB_HTTP_SEND_BUFFER_SIZE", "163840",
-                    "QDB_METRICS_ENABLED", "true",
                     PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "1000")) {
                 // two SYMBOL columns of long values, new ones arriving all through the result
                 serverMain.execute("create table sy (a symbol capacity 65536, n long, b symbol capacity 65536, d double, ts timestamp) " +
@@ -171,7 +214,6 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                         "case when x % 31 = 0 then null else rpad('a' || (x % 20000), 150, '.') end, x, " +
                         "case when x % 3 = 0 then rpad('b' || (x % 9000), 120, '-') else 'b' end, x * 0.25, " +
                         "(x * 1000000)::timestamp from long_sequence(40000)");
-                final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 final long splits = metrics.batchOverflowSplitCount();
                 final String[] sqls = {
                         "select * from sy limit 100000",
@@ -184,6 +226,103 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 final long splits2 = metrics.batchOverflowSplitCount();
                 assertBlockFillMatchesRowFill(new String[]{"select n, a, d from sy limit 100000"}, "", 0, -1);
                 Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits2);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowNegativeLimits() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(windowEnv())) {
+                createWindowTable(serverMain);
+                final String[] sqls = {
+                        "select * from (" + WINDOW_SQL + ") limit -20000",
+                        "select * from (" + WINDOW_SQL + ") limit -30000, -333",
+                        "select * from (select * from (" + WINDOW_SQL + ") limit 20000) limit 100, 19000",
+                        "select * from (" + WINDOW_SQL + ") limit 1",
+                        "select * from (" + WINDOW_SQL + ") limit 0",
+                };
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=999", 0, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowRunningCarry() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(windowEnv())) {
+                createWindowTable(serverMain);
+                // running windows: a task that continues a key gets the key's running values
+                // combined into its rows in place before it is emitted, and the blocks expose
+                // those rows. Without ORDER BY in OVER: with it, this plans as the cached window
+                final String sql = "select sym, ts, l, i, " +
+                        "sum(l) over (partition by sym rows between unbounded preceding and current row) s, " +
+                        "count(*) over (partition by sym rows between unbounded preceding and current row) c, " +
+                        "row_number() over (partition by sym) rn, " +
+                        "max(i) over (partition by sym rows between unbounded preceding and current row) mx " +
+                        "from q where sym in ('A', 'B', 'C1', 'C2', 'C3', 'C5', 'C8', 'D') order by sym";
+                assertPlanContains(serverMain, sql, "Async Window", "keySplit: running carry");
+                assertBlockFillMatchesRowFill(new String[]{sql, "select * from (" + sql + ") limit 333, 14444"},
+                        "?qwp_max_batch_rows=555", 0, -1);
+                assertBlockFillMatchesRowFill(new String[]{sql}, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowSingleSymbolColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(windowEnv())) {
+                createWindowTable(serverMain);
+                // idx 50's case: one SYMBOL column, so its own loop, over the window's task
+                // chains, whose stride is the chain's row width, not 4
+                final String sql = "select sym, b, l, d, f, db, ts, " +
+                        "avg((bsize * bid + asize * ask) / (bsize + asize)) over (partition by sym rows between 4 preceding and current row) mid " +
+                        "from q where sym in ('A', 'B', 'C1', 'C2', 'C3', 'C5', 'C8', 'D') order by sym";
+                assertPlanContains(serverMain, sql, "Async Window");
+                // twice on one connection: the second run finds its symbols in the dictionary
+                assertBlockFillMatchesRowFill(new String[]{sql, sql}, "?qwp_max_batch_rows=777", 0, -1);
+                assertBlockFillMatchesRowFill(new String[]{sql}, "", 0, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowSingleSymbolDictionaryBudget() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start(
+                    "QDB_HTTP_SEND_BUFFER_SIZE", "163840",
+                    PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName(), "128",
+                    PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName(), "64",
+                    PropertyKey.SHARED_QUERY_WORKER_COUNT.getEnvVarName(), "2",
+                    PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS.getEnvVarName(), "500",
+                    PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS.getEnvVarName(), "4000",
+                    PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS.getEnvVarName(), "1000",
+                    PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS.getEnvVarName(), "3000")) {
+                // 60 keys of 2,000 bytes, 25 rows each: a task holds many keys, so new dictionary
+                // entries arrive inside the window's blocks, and the single-column loop stops on
+                // the budget in the middle of a block, not only at a task's first row, which
+                // hasNext() returns. The index and the IN list make the scan key-major, which
+                // the Async Window needs
+                serverMain.execute("create table kk (sym symbol capacity 1024 index type posting, v double, ts timestamp) " +
+                        "timestamp(ts) partition by DAY BYPASS WAL");
+                serverMain.execute("insert into kk select rpad('k' || (x % 60), 2000, '.'), x * 0.5, (x * 1000000)::timestamp " +
+                        "from long_sequence(1500)");
+                final StringBuilder keys = new StringBuilder();
+                for (int k = 0; k < 60; k++) {
+                    final StringBuilder key = new StringBuilder("k").append(k);
+                    while (key.length() < 2000) {
+                        key.append('.');
+                    }
+                    keys.append(k > 0 ? ",'" : "'").append(key).append('\'');
+                }
+                final String sql = "select sym, ts, avg(v) over (partition by sym rows between 2 preceding and current row) a " +
+                        "from kk where sym in (" + keys + ") order by sym";
+                assertPlanContains(serverMain, sql, "Async Window");
+                final long splits = metrics.batchOverflowSplitCount();
+                // twice on one connection: the second run adds no entries
+                assertBlockFillMatchesRowFill(new String[]{sql, sql}, "", 0, -1);
+                Assert.assertTrue("the dictionary budget must have split batches", metrics.batchOverflowSplitCount() > splits);
             }
         });
     }
@@ -262,8 +401,14 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                 PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS.getEnvVarName(), "4000",
                 PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS.getEnvVarName(), "1000",
                 PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS.getEnvVarName(), "3000",
-                "QDB_METRICS_ENABLED", "true",
         };
+    }
+
+    private static String[] withMetrics(String... env) {
+        final String[] all = Arrays.copyOf(env, env.length + 2);
+        all[env.length] = "QDB_METRICS_ENABLED";
+        all[env.length + 1] = "true";
+        return all;
     }
 
     /**
@@ -276,13 +421,31 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
      *                           cancelled (with a 1-byte credit, the server parks there)
      */
     private void assertBlockFillMatchesRowFill(String[] sqls, String urlQuery, long initialCredit, int cancelAfterBatches) throws Exception {
+        assertBlockFillMatchesRowFill(sqls, urlQuery, initialCredit, cancelAfterBatches, true);
+    }
+
+    /**
+     * @param expectBlocks whether the block fill must run; false for results whose cursor offers
+     *                     no blocks, which must then stream row by row
+     */
+    private void assertBlockFillMatchesRowFill(
+            String[] sqls,
+            String urlQuery,
+            long initialCredit,
+            int cancelAfterBatches,
+            boolean expectBlocks
+    ) throws Exception {
         QwpEgressUpgradeProcessor.DEBUG_DISABLE_BLOCK_FILL = true;
-        final long blockRowsBefore = QwpEgressUpgradeProcessor.BLOCK_FILL_ROWS.sum();
+        final long blockRowsBefore = metrics.blockFillRowsCount();
         final List<byte[]> rowFill = exchange(sqls, urlQuery, initialCredit, cancelAfterBatches);
-        Assert.assertEquals("the row fill must not use blocks", blockRowsBefore, QwpEgressUpgradeProcessor.BLOCK_FILL_ROWS.sum());
+        Assert.assertEquals("the row fill must not use blocks", blockRowsBefore, metrics.blockFillRowsCount());
         QwpEgressUpgradeProcessor.DEBUG_DISABLE_BLOCK_FILL = false;
         final List<byte[]> blockFill = exchange(sqls, urlQuery, initialCredit, cancelAfterBatches);
-        Assert.assertTrue("the block fill must have run", QwpEgressUpgradeProcessor.BLOCK_FILL_ROWS.sum() > blockRowsBefore);
+        if (expectBlocks) {
+            Assert.assertTrue("the block fill must have run", metrics.blockFillRowsCount() > blockRowsBefore);
+        } else {
+            Assert.assertEquals("no block may be offered", blockRowsBefore, metrics.blockFillRowsCount());
+        }
         Assert.assertTrue(rowFill.size() > sqls.length);
         for (int i = 0, n = Math.min(rowFill.size(), blockFill.size()); i < n; i++) {
             if (!Arrays.equals(rowFill.get(i), blockFill.get(i))) {
@@ -291,6 +454,14 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
             }
         }
         Assert.assertEquals("frame count", rowFill.size(), blockFill.size());
+    }
+
+    private void assertPlanContains(TestServerMain serverMain, String query, String... fragments) throws Exception {
+        final StringSink sink = new StringSink();
+        TestUtils.printSql(serverMain.getEngine(), serverMain.getSqlExecutionContext(), "explain " + query, sink);
+        for (String fragment : fragments) {
+            Assert.assertTrue("plan must contain [" + fragment + "]: " + sink, Chars.contains(sink, fragment));
+        }
     }
 
     /**
@@ -337,5 +508,11 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
             }
         }
         return frames;
+    }
+
+    private TestServerMain start(String... env) {
+        final TestServerMain serverMain = startWithEnvVariables(withMetrics(env));
+        metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+        return serverMain;
     }
 }

@@ -126,6 +126,11 @@ public class RecordBlockTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createAllTypes();
             final Rnd rnd = TestUtils.generateRandom(LOG);
+            // the filtered results' top cursors are filter wrappers, which offer no blocks at all;
+            // the backward scan is a page frame scan that refuses them
+            assertSupportsBlocks(false, "select * from at where l > 5000 limit 100000");
+            assertSupportsBlocks(false, "select * from at order by ts desc limit 100000");
+            assertSupportsBlocks(false, "select * from at where s = 'k7' limit 100000");
             Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where l > 5000 limit 100000", rnd));
             Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at order by ts desc limit 100000", rnd));
             Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where s = 'k7' limit 100000", rnd));
@@ -160,6 +165,84 @@ public class RecordBlockTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testScanIntervalsAndShortLimits() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            for (int k = 0; k < 5; k++) {
+                // two intervals; and LIMITs that end inside the first frame or before the last row
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where ts in '1970-01-02' or ts in '1970-01-04' limit 100000", rnd) > 0);
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at where ts > '1970-01-02T05' limit -5, -1", rnd) >= 0);
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at limit 3", rnd) >= 0);
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from (select * from at limit 400) limit 30, 350", rnd) > 0);
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from at order by ts limit 100000", rnd) > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testSupportsRecordBlocks() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            createWindowTable(engine, sqlExecutionContext);
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            // forward scans, and LIMIT over them
+            assertSupportsBlocks(true, "at");
+            assertSupportsBlocks(true, "select * from at limit 10");
+            assertSupportsBlocks(true, "select * from at limit -10");
+            assertSupportsBlocks(true, "select * from (select * from at limit 400) limit 30, 350");
+            assertSupportsBlocks(true, windowQuery("('A', 'B')"));
+            assertSupportsBlocks(true, "select * from (" + windowQuery("('A', 'B')") + ") limit 100");
+            // none of these ever offers a block, so egress never asks them per row
+            assertSupportsBlocks(false, "select l + 1, s from at");
+            assertSupportsBlocks(false, "select * from at order by l limit 10");
+            assertSupportsBlocks(false, "select s, count() from at");
+            assertSupportsBlocks(false, "select s, count() from at limit 3");
+            assertSupportsBlocks(false, "select * from at where b");
+        });
+    }
+
+    @Test
+    public void testWindowNegativeAndNestedLimits() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowTable(engine, sqlExecutionContext);
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            final String query = windowQuery("('A', 'B', 'C3', 'C7', 'D', null)");
+            for (int k = 0; k < 5; k++) {
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from (" + query + ") limit -1500", rnd) > 0);
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from (" + query + ") limit -2500, -10", rnd) > 0);
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from (select * from (" + query + ") limit 2000) limit 100, 1900", rnd) > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowRunningCarry() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowTable(engine, sqlExecutionContext);
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            sqlExecutionContext.setParallelWindowEnabled(true);
+            // running windows: a continuing task's rows hold the key's running values only once
+            // the carry is applied, in place, before the task is emitted; blocks expose those rows.
+            // No ORDER BY in OVER: with one, this plans as the cached window
+            final String query = "select sym, ts, l, i, " +
+                    "sum(l) over (partition by sym rows between unbounded preceding and current row) s, " +
+                    "count(*) over (partition by sym rows between unbounded preceding and current row) c, " +
+                    "row_number() over (partition by sym) rn, " +
+                    "max(i) over (partition by sym rows between unbounded preceding and current row) mx " +
+                    "from w where sym in ('A', 'B', 'C3', 'C7', 'D', null) order by sym";
+            printSql("explain " + query);
+            TestUtils.assertContains(sink, "Async Window");
+            TestUtils.assertContains(sink, "keySplit: running carry");
+            for (int k = 0; k < 5; k++) {
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, "select * from (" + query + ") limit 333, 4444", rnd) > 0);
+            }
+        });
+    }
+
     private static void assertAddresses(RecordBlock block, int row, Record record, RecordMetadata metadata) {
         for (int c = 0, n = metadata.getColumnCount(); c < n; c++) {
             final long address = block.getColumnAddress(c);
@@ -171,7 +254,7 @@ public class RecordBlockTest extends AbstractCairoTest {
             final long p = address + row * block.getColumnStride(c);
             final String msg = metadata.getColumnName(c);
             switch (ColumnType.tagOf(type)) {
-                case ColumnType.BOOLEAN -> Assert.assertEquals(msg, record.getBool(c), Unsafe.getByte(p) != 0);
+                case ColumnType.BOOLEAN -> Assert.assertEquals(msg, record.getBool(c), Unsafe.getByte(p) == 1);
                 case ColumnType.BYTE -> Assert.assertEquals(msg, record.getByte(c), Unsafe.getByte(p));
                 case ColumnType.SHORT -> Assert.assertEquals(msg, record.getShort(c), Unsafe.getShort(p));
                 case ColumnType.CHAR -> Assert.assertEquals(msg, record.getChar(c), Unsafe.getChar(p));
@@ -239,9 +322,12 @@ public class RecordBlockTest extends AbstractCairoTest {
             }
             try (RecordCursor cursor = factory.getCursor(ctx)) {
                 final Record record = cursor.getRecord();
+                // asked once per open; a cursor that says no must never offer a block
+                final boolean supportsBlocks = cursor.supportsRecordBlocks();
                 while (true) {
                     final RecordBlock block = rnd.nextInt(4) > 0 ? cursor.peekRecordBlock(1 + rnd.nextInt(300)) : null;
                     if (block != null) {
+                        Assert.assertTrue("a block from a cursor that does not support them", supportsBlocks);
                         final int rows = block.getRowCount();
                         Assert.assertTrue(rows > 0);
                         final int taken = rnd.nextInt(5) == 0 ? 0 : 1 + rnd.nextInt(rows);
@@ -263,6 +349,12 @@ public class RecordBlockTest extends AbstractCairoTest {
         }
         TestUtils.assertEquals(query, expected, actual);
         return blockRows;
+    }
+
+    private static void assertSupportsBlocks(boolean expected, String query) throws Exception {
+        try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertEquals(query, expected, cursor.supportsRecordBlocks());
+        }
     }
 
     private static void createWindowTable(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
