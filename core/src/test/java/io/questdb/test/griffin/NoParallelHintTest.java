@@ -27,11 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.jit.JitUtil;
@@ -68,12 +65,11 @@ public class NoParallelHintTest extends AbstractCairoTest {
                     SqlCompiler compiler = engine.getSqlCompiler()
             ) {
                 context.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                try {
-                    compiler.compile("select /*+ no_parallel */ k, sum(v) from tab group by k limit 'invalid'", context);
-                    Assert.fail("expected compilation to fail");
-                } catch (SqlException expected) {
-                    TestUtils.assertContains(expected.getFlyweightMessage(), "invalid");
-                }
+                assertQuery("select /*+ no_parallel */ k, sum(v) from tab group by k limit 'invalid'")
+                        .withCompiler(compiler)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .fails(62, "invalid type: STRING");
                 assertParallelPlan(compiler, context, "select v from tab where v > 40", "Async");
             }
         });
@@ -224,15 +220,13 @@ public class NoParallelHintTest extends AbstractCairoTest {
             createTable();
             try (
                     SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 4);
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    RecordCursorFactory factory = compiler.compile(
-                            "with c as (select k, sum(v) s from tab group by k) select * from c union all select /*+ no_parallel */ * from c", context
-                    ).getRecordCursorFactory()
+                    SqlCompiler compiler = engine.getSqlCompiler()
             ) {
-                TextPlanSink plan = new TextPlanSink();
-                plan.of(factory, context);
-                TestUtils.assertContains(plan.getSink(), "vectorized: true");
-                TestUtils.assertContains(plan.getSink(), "vectorized: false");
+                assertQuery("with c as (select k, sum(v) s from tab group by k) select * from c union all select /*+ no_parallel */ * from c")
+                        .withCompiler(compiler)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .assertsPlanContaining("vectorized: true", "vectorized: false");
             }
         });
     }
@@ -262,23 +256,15 @@ public class NoParallelHintTest extends AbstractCairoTest {
     }
 
     private void assertParallelPlan(SqlCompiler compiler, SqlExecutionContextImpl context, String query, String parallelOperator) throws Exception {
-        try (RecordCursorFactory factory = compiler.compile(query, context).getRecordCursorFactory()) {
-            TextPlanSink plan = new TextPlanSink();
-            plan.of(factory, context);
-            TestUtils.assertContains(plan.getSink(), parallelOperator);
-        }
+        assertQuery(query)
+                .withCompiler(compiler)
+                .withContext(context)
+                .noLeakCheck()
+                .assertsPlanContaining(parallelOperator);
     }
 
     private void assertSerialQuery(SqlCompiler compiler, SqlExecutionContextImpl context, String query, String hintedQuery, String parallelOperator) throws Exception {
         assertParallelPlan(compiler, context, query, parallelOperator);
-        try (RecordCursorFactory factory = compiler.compile(hintedQuery, context).getRecordCursorFactory()) {
-            TextPlanSink plan = new TextPlanSink();
-            plan.of(factory, context);
-            String text = plan.getSink().toString();
-            Assert.assertFalse(text, text.contains("Async"));
-            Assert.assertFalse(text, text.matches("(?s).*GroupBy\\s+vectorized: true.*"));
-        }
-
         StringSink result = new StringSink();
         TestUtils.printSql(compiler, context, query, result);
         String expected = result.toString();
@@ -289,6 +275,7 @@ public class NoParallelHintTest extends AbstractCairoTest {
                 .inferTimestamp()
                 .inferRandomAccess()
                 .sizeMayVary()
+                .withPlanNotContaining("Async", "GroupBy vectorized: true")
                 .noLeakCheck()
                 .returns(expected);
         Assert.assertEquals(latestBySequence, bus.getLatestByPubSeq().current());
