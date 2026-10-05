@@ -8539,6 +8539,50 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinStaysAfterNonEquiOuterJoinWhenTimeSeriesJoinMovesAhead() throws Exception {
+        // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp,
+        // while LEFT JOIN c, written between them, must still run after the outer join: it matches the
+        // unmatched b row too. A later RIGHT/FULL join pins the tables before it, and the optimiser then ran
+        // LEFT JOIN c ahead of the outer join as well. On c.k < 100, the unmatched b row lost its c match;
+        // on c.k < b.y, the query failed to resolve b.y. Each query must return the rows of its form with
+        // the tables before the last join in a sub-query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (200)");
+            execute("CREATE TABLE e (y INT, z INT)");
+            execute("INSERT INTO e VALUES (5, 50), (100, 1000), (7, 70)");
+            final String expected = """
+                    x\ty\tk\tv\tz
+                    null\tnull\tnull\t\t70
+                    10\t5\t1\ta1\t50
+                    null\t100\t1\t\t1000
+                    """;
+            // the sub-query form of the queries below
+            assertQuery("SELECT p.x, p.y, p.k, p.v, e.z FROM (SELECT ta.x, b.y, c.k, td1.v FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 ASOF JOIN td1 ON (k)) p FULL JOIN e ON e.y = p.y ORDER BY p.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v, e.z FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 ASOF JOIN td1 ON (k) FULL JOIN e ON e.y = b.y ORDER BY b.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v, e.z FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 LT JOIN td1 ON (k) FULL JOIN e ON e.y = b.y ORDER BY b.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v, e.z FROM ta FULL JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 ASOF JOIN td1 ON (k) RIGHT JOIN e ON e.y = b.y ORDER BY b.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v, e.z FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < b.y ASOF JOIN td1 ON (k) FULL JOIN e ON e.y = b.y ORDER BY b.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testLeftJoinWhereEqualityReadsCrossJoinedTable() throws Exception {
         // The WHERE equality reads the LEFT JOIN slave and a table joined before it without
         // an equi-key. That table runs after the LEFT JOIN, so the filter must sit above both.
