@@ -34,15 +34,6 @@ import io.questdb.mp.RingQueue;
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
  * Reuses existing mappings for the same file when possible to reduce system calls.
- * <p>
- * With async munmap enabled, releasing the last reference to the current mapping of a file does not unmap it.
- * The record stays in both caches with a zero reference count, and the async munmap queue gets an eviction hint
- * pointing at it. A lookup that finds the record before the hint is consumed revives it without another mmap.
- * The consumer retires the record only if it is still mapped and unused when the hint comes up; otherwise the
- * hint is dropped. Every zero-count mapped record has at least one hint queued behind it, so each one is
- * eventually reclaimed. Hints may outlive the mapping they were queued for, and the record may by then be pooled
- * and reused for another mapping: the consumer always acts on the record's current state, and evicting any
- * unused mapping is safe.
  */
 public final class MmapCache {
     public static final MmapCache INSTANCE = new MmapCache();
@@ -78,7 +69,7 @@ public final class MmapCache {
             cursor = munmapConsumerSequence.next();
             if (cursor > -1) {
                 useful = true;
-                consumeMunmapTask(munmapTaskRingQueue.get(cursor));
+                munmapTaskConsumer(munmapTaskRingQueue.get(cursor));
                 munmapConsumerSequence.done(cursor);
             } else if (cursor == -2) {
                 Os.pause();
@@ -187,12 +178,16 @@ public final class MmapCache {
 
                         record.count--;
                         if (record.count == 0) {
-                            // The old cache record is not used anymore. The file cache points at the longer
-                            // record, so no lookup can revive this one: retire it right away.
+                            // The old cache record is not used anymore
+                            mmapAddrCache.removeAt(addrMapIndex);
                             unmapPtr = record.address;
                             unmapLen = record.length;
                             unmapTag = record.memoryTag;
-                            retire(record, addrMapIndex);
+                            record.address = 0;
+
+                            if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
+                                recordPool.push(record);
+                            }
                         }
                     }
                 }
@@ -261,37 +256,46 @@ public final class MmapCache {
             return;
         }
 
-        long unmapPtr = address, unmapLen = len;
-        int unmapTag = memoryTag;
+        long unmapPtr, unmapLen;
+        int unmapTag;
 
         synchronized (this) {
             int addrMapIndex = mmapAddrCache.keyIndex(address);
-            if (addrMapIndex < 0) {
-                var record = mmapAddrCache.valueAt(addrMapIndex);
-                assert record.count > 0 : "unmap of a released mapping [address=" + address + ']';
-                record.count--;
-
-                if (record.count != 0) {
-                    return;
-                }
-
-                // The last usage of the mapping is released. If it is still the file's current mapping, keep it
-                // cached for revival and leave the unmap to the async consumer. A superseded mapping cannot be
-                // revived, and a full queue cannot take the hint: retire those right away.
-                if (Files.ASYNC_MUNMAP_ENABLED && isCurrentFileMapping(record) && publishEvictionHint(record)) {
-                    return;
-                }
-
-                unmapPtr = record.address;
-                unmapLen = record.length;
-                unmapTag = record.memoryTag;
-                retire(record, addrMapIndex);
+            if (addrMapIndex > -1) {
+                // Not cached
+                unmap0(address, len, memoryTag);
+                return;
             }
-            // else: not cached, unmap the caller's mapping as is
+
+            var record = mmapAddrCache.valueAt(addrMapIndex);
+            record.count--;
+
+            if (record.count != 0) {
+                assert record.count > -1;
+                return;
+            }
+
+            // Remove the record from the cache, the last usage of the address is unmapped
+            mmapAddrCache.removeAt(addrMapIndex);
+
+            // Check if the same map record is used for the FD,
+            // it can be already overwritten by a longer map over the same file
+            int fdIndex = mmapFileCache.keyIndex(record.fileCacheKey);
+            if (fdIndex < 0 && mmapFileCache.valueAt(fdIndex) == record) {
+                mmapFileCache.removeAt(fdIndex);
+            }
+
+            // Unmap after exiting the lock.
+            unmapPtr = record.address;
+            unmapLen = record.length;
+            unmapTag = record.memoryTag;
+            record.address = 0;
+            if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
+                recordPool.push(record);
+            }
         }
 
-        // Unmap after exiting the lock. With async munmap enabled, this offloads the unmap to the consumer,
-        // unless the queue is full.
+        // offload the unmap to a single thread to not block everyone under synchronized section
         unmap0(unmapPtr, unmapLen, unmapTag);
     }
 
@@ -316,15 +320,15 @@ public final class MmapCache {
         return address;
     }
 
-    private static void munmapOrLog(long address, long len, int memoryTag) {
-        int result = Files.munmap0(address, len);
+    private static void munmapTaskConsumer(MunmapTask task) {
+        int result = Files.munmap0(task.address, task.size);
         if (result != -1) {
-            Unsafe.recordMemAlloc(-len, memoryTag);
+            Unsafe.recordMemAlloc(-task.size, task.memoryTag);
         } else {
             int errno = Os.errno();
-            LOG.critical().$("munmap failed [address=").$(address)
-                    .$(", size=").$(len)
-                    .$(", tag=").$(MemoryTag.nameOf(memoryTag))
+            LOG.critical().$("munmap failed [address=").$(task.address)
+                    .$(", size=").$(task.size)
+                    .$(", tag=").$(MemoryTag.nameOf(task.memoryTag))
                     .$(", errno=").$(errno)
                     .I$();
         }
@@ -337,8 +341,7 @@ public final class MmapCache {
             if (fdMapIndex < 0) {
                 MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
                 if (record.length >= len) {
-                    // a zero reference count is a released mapping awaiting eviction: this revives it
-                    assert record.count >= 0 : "found a record with negative reference count in mmap cache [fd=" + fd + "]";
+                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
                     record.count++;
                     mmapReuseCount++;
                     return record.address;
@@ -412,8 +415,7 @@ public final class MmapCache {
             if (fdMapIndex < 0) {
                 MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
                 if (record.length >= len) {
-                    // a zero reference count is a released mapping awaiting eviction: this revives it
-                    assert record.count >= 0 : "found a record with negative reference count in mmap cache [fd=" + fd + "]";
+                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
                     record.count++;
                     mmapReuseCount++;
                     return record.address;
@@ -438,33 +440,6 @@ public final class MmapCache {
 
     }
 
-    private void consumeMunmapTask(MunmapTask task) {
-        final MmapCacheRecord record = task.record;
-        if (record == null) {
-            munmapOrLog(task.address, task.size, task.memoryTag);
-            return;
-        }
-        task.record = null;
-
-        long address, len;
-        int memoryTag;
-        synchronized (this) {
-            if (record.address == 0 || record.count != 0) {
-                // Already retired, or revived since the hint was queued. A revived mapping gets a new hint
-                // when its last user releases it again.
-                return;
-            }
-            // Snapshot under the lock: once retired, the record can be pooled and reused by another thread.
-            address = record.address;
-            len = record.length;
-            memoryTag = record.memoryTag;
-            int addrMapIndex = mmapAddrCache.keyIndex(address);
-            assert addrMapIndex < 0 && mmapAddrCache.valueAt(addrMapIndex) == record : "mapped record is not in mmap address cache";
-            retire(record, addrMapIndex);
-        }
-        munmapOrLog(address, len, memoryTag);
-    }
-
     private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {
         MmapCacheRecord rec = recordPool.pop();
         if (rec != null) {
@@ -472,54 +447,6 @@ public final class MmapCache {
             return rec;
         }
         return new MmapCacheRecord(fd, fileCacheKey, len, address, 1, memoryTag);
-    }
-
-    /**
-     * Must be called under the lock.
-     */
-    private boolean isCurrentFileMapping(MmapCacheRecord record) {
-        int fdIndex = mmapFileCache.keyIndex(record.fileCacheKey);
-        return fdIndex < 0 && mmapFileCache.valueAt(fdIndex) == record;
-    }
-
-    /**
-     * Queues a hint to evict the released, still cached record. Must be called under the lock, so that the record
-     * cannot be revived and released again before the hint is in the queue.
-     *
-     * @return false if the queue is full
-     */
-    private boolean publishEvictionHint(MmapCacheRecord record) {
-        long seq;
-        while ((seq = munmapProducesSequence.next()) == -2) {
-            Os.pause();
-        }
-        if (seq < 0) {
-            return false;
-        }
-        MunmapTask task = munmapTaskRingQueue.get(seq);
-        task.record = record;
-        task.address = 0;
-        task.size = 0;
-        task.memoryTag = 0;
-        munmapProducesSequence.done(seq);
-        return true;
-    }
-
-    /**
-     * Removes the record from both caches and pools it. Must be called under the lock, with the record's
-     * mapping details already copied out: the caller unmaps after releasing the lock.
-     */
-    private void retire(MmapCacheRecord record, int addrMapIndex) {
-        mmapAddrCache.removeAt(addrMapIndex);
-        // The file cache may already point at a longer mapping of the same file
-        int fdIndex = mmapFileCache.keyIndex(record.fileCacheKey);
-        if (fdIndex < 0 && mmapFileCache.valueAt(fdIndex) == record) {
-            mmapFileCache.removeAt(fdIndex);
-        }
-        record.address = 0;
-        if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
-            recordPool.push(record);
-        }
     }
 
     private void unmap0(long address, long len, int memoryTag) {
@@ -533,7 +460,6 @@ public final class MmapCache {
 
             if (seq > -1) {
                 MunmapTask task = munmapTaskRingQueue.get(seq);
-                task.record = null;
                 task.address = address;
                 task.size = len;
                 task.memoryTag = memoryTag;
@@ -584,14 +510,9 @@ public final class MmapCache {
         }
     }
 
-    /**
-     * Either a raw mapping to unmap (address, size, memoryTag), or, when the record is set, a hint to evict
-     * the record if it is still mapped and unused when the hint is consumed.
-     */
     private static class MunmapTask {
         private long address;
         private int memoryTag;
-        private MmapCacheRecord record;
         private long size;
     }
 }
