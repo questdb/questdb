@@ -311,6 +311,12 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
     private final ObjHashSet<IQueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
+    // INNER predicates that read a time-series join last, with no master-nulling join written between that
+    // join and the predicate's INNER join, and their (time-series join, INNER join) model index pairs.
+    // constrainTimeSeriesJoinsAhead keeps such a predicate at its INNER join when the time-series join runs
+    // ahead of an earlier master-nulling join, which then executes between the two.
+    private final IntList timeSeriesModelOnPredicateIndexes = new IntList();
+    private final ObjList<ExpressionNode> timeSeriesModelOnPredicates = new ObjList<>();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -498,6 +504,8 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, n = subsampleNameScopes.size(); i < n; i++) {
             subsampleNameScopes.getQuick(i).clear();
         }
+        timeSeriesModelOnPredicates.clear();
+        timeSeriesModelOnPredicateIndexes.clear();
         tmpStringSink.clear();
         clearWindowFunctionHashMap();
         lateralJoinRewriter.clear();
@@ -939,6 +947,30 @@ public class SqlOptimiser implements Mutable {
                 || isSysdateKeyword(token)
                 || isSystimestampKeyword(token)
                 || isCurrentTimestampKeyword(token);
+    }
+
+    // Returns true when the join at modelIndex is a time-series join that a RIGHT/FULL join precedes, so
+    // constrainRightAndFullJoinsAfterPrefix may run it ahead of that join.
+    private static boolean isTimeSeriesJoinAfterRightOrFullJoin(ObjList<IQueryModel> joinModels, int modelIndex) {
+        if (!isTimeSeriesJoinAheadCandidate(joinModels.getQuick(modelIndex).getJoinType())) {
+            return false;
+        }
+        for (int i = 1; i < modelIndex; i++) {
+            final int joinType = joinModels.getQuick(i).getJoinType();
+            if (joinType == IQueryModel.JOIN_RIGHT_OUTER
+                    || joinType == IQueryModel.JOIN_FULL_OUTER
+                    || joinType == IQueryModel.JOIN_CROSS_RIGHT
+                    || joinType == IQueryModel.JOIN_CROSS_FULL) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Returns true for a time-series join that collectTimeSeriesJoinsAhead may run ahead of a non-equi
+    // RIGHT/FULL join: every one but SPLICE.
+    private static boolean isTimeSeriesJoinAheadCandidate(int joinType) {
+        return joinsRequiringTimestamp[joinType] && joinType != IQueryModel.JOIN_SPLICE;
     }
 
     private static void linkDependencies(IQueryModel model, int parent, int child) {
@@ -1541,9 +1573,7 @@ public class SqlOptimiser implements Mutable {
                 // INNER join with no master-nulling join in between, so the context's join stands for it.
                 node.innerPredicate = true;
                 parent.addParsedWhereNode(node, true);
-                if (hasMasterNullingJoinBetween(parent, ai, contextSlaveIndex)) {
-                    addModelOnPredicate(node, ai, contextSlaveIndex);
-                }
+                addModelOnPredicateBehindNullingJoin(parent, node, ai, contextSlaveIndex);
             } else {
                 addWhereNode(parent, ai, node);
             }
@@ -1558,9 +1588,7 @@ public class SqlOptimiser implements Mutable {
                 // master-nulling join, so it filters like an ON conjunct of the INNER join instead.
                 ExpressionNode node = makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
                 parent.addParsedWhereNode(node, true);
-                if (hasMasterNullingJoinBetween(parent, emittedSlaveIndex, contextSlaveIndex)) {
-                    addModelOnPredicate(node, emittedSlaveIndex, contextSlaveIndex);
-                }
+                addModelOnPredicateBehindNullingJoin(parent, node, emittedSlaveIndex, contextSlaveIndex);
                 // keep the ordering edge the emitted key would have given
                 deferredInnerKeyEdges.add(Math.min(ai, bi));
                 deferredInnerKeyEdges.add(emittedSlaveIndex);
@@ -1768,9 +1796,26 @@ public class SqlOptimiser implements Mutable {
 
     private void addModelOnPredicate(ExpressionNode node, int sourceIndex, int joinIndex) {
         assert joinIndex >= 0;
+        // tempIntList holds the (source, join) pairs of tempExprs, then the ordering edges it records.
+        // constrainTimeSeriesJoinsAhead adds predicates after some edges, so the pair goes in front of them.
+        final int pairIndex = 2 * tempExprs.size();
         tempExprs.add(node);
-        tempIntList.add(sourceIndex);
-        tempIntList.add(joinIndex);
+        tempIntList.insert(pairIndex, sourceIndex);
+        tempIntList.insert(pairIndex + 1, joinIndex);
+    }
+
+    // Keeps an INNER predicate at its INNER join at joinIndex when a master-nulling join is written between
+    // that join and the model at sourceIndex, which the predicate reads last. When that model is a
+    // time-series join that may run ahead of an earlier RIGHT/FULL join, constrainTimeSeriesJoinsAhead
+    // decides once constrainRightAndFullJoinsAfterPrefix has ordered the join.
+    private void addModelOnPredicateBehindNullingJoin(IQueryModel parent, ExpressionNode node, int sourceIndex, int joinIndex) {
+        if (hasMasterNullingJoinBetween(parent, sourceIndex, joinIndex)) {
+            addModelOnPredicate(node, sourceIndex, joinIndex);
+        } else if (isTimeSeriesJoinAfterRightOrFullJoin(parent.getJoinModels(), sourceIndex)) {
+            timeSeriesModelOnPredicates.add(node);
+            timeSeriesModelOnPredicateIndexes.add(sourceIndex);
+            timeSeriesModelOnPredicateIndexes.add(joinIndex);
+        }
     }
 
     private void addModelOnPredicateFromCollectedIndexes(IQueryModel parent, ExpressionNode node, int joinIndex) {
@@ -1824,8 +1869,8 @@ public class SqlOptimiser implements Mutable {
             minIndex = Math.min(minIndex, ref);
             maxIndex = Math.max(maxIndex, ref);
         }
-        if (minIndex < maxIndex && maxIndex < joinIndex && hasMasterNullingJoinBetween(parent, maxIndex, joinIndex)) {
-            addModelOnPredicate(node, maxIndex, joinIndex);
+        if (minIndex < maxIndex && maxIndex < joinIndex) {
+            addModelOnPredicateBehindNullingJoin(parent, node, maxIndex, joinIndex);
         }
     }
 
@@ -3378,8 +3423,14 @@ public class SqlOptimiser implements Mutable {
         }
         // applyModelOnOrderingConstraints re-applies these edges from deferredInnerKeyEdges, not from
         // tempIntList, so that a key move in swapJoinOrder0 can reverse them
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {
-            addOrderingConstraint(parent, deferredInnerKeyEdges.getQuick(i), deferredInnerKeyEdges.getQuick(i + 1));
+            final int childIndex = deferredInnerKeyEdges.getQuick(i + 1);
+            // constrainTimeSeriesJoinsAhead applies an edge into a time-series join once
+            // constrainRightAndFullJoinsAfterPrefix has decided whether the join runs ahead of an outer join
+            if (!isTimeSeriesJoinAheadCandidate(joinModels.getQuick(childIndex).getJoinType())) {
+                addOrderingConstraint(parent, deferredInnerKeyEdges.getQuick(i), childIndex);
+            }
         }
     }
 
@@ -3447,7 +3498,9 @@ public class SqlOptimiser implements Mutable {
                 // logical INNER origin so assignFilters keeps the gate at that origin. When the
                 // source follows the boundary, only keep the source after it; source pushdown is
                 // then safe because it cannot alter the outer join's already-established match set.
-                final int constrainedIndex = sourceIndex <= boundaryIndex ? originIndex : sourceIndex;
+                // A time-series join that runs ahead of the boundary has a lower priority and belongs
+                // to the prefix.
+                final int constrainedIndex = getJoinModelPriority(sourceIndex) <= getJoinModelPriority(boundaryIndex) ? originIndex : sourceIndex;
                 recordOrderingConstraint(parent, boundaryIndex, constrainedIndex);
             }
         }
@@ -3610,6 +3663,46 @@ public class SqlOptimiser implements Mutable {
             }
             if (timeSeriesJoinsAhead.size() > 0 && joinModelsByPriority.size() == 0) {
                 prioritiseTimeSeriesJoinsAhead(n, boundaryIndex, timeSeriesJoinsAhead);
+            }
+        }
+    }
+
+    // Completes the ordering of the time-series joins once constrainRightAndFullJoinsAfterPrefix has decided
+    // which of them run ahead of a non-equi RIGHT/FULL join. A deferred edge into such a join stands for a
+    // key that addFilterOrEmitJoin turned into a filter, and assignFilters places the filter after both of
+    // its models, so constrainDeferredInnerKeyParents leaves these edges out of that decision. This method
+    // applies them, except an edge from a model with a higher priority, which would keep the time-series
+    // join behind a model it runs ahead of. A predicate of timeSeriesModelOnPredicates whose time-series
+    // join now runs ahead of a master-nulling join that comes before its INNER join stays at that INNER
+    // join, like a predicate that a master-nulling join is written in front of.
+    private void constrainTimeSeriesJoinsAhead(IQueryModel parent) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        int keptSize = 0;
+        for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {
+            final int parentIndex = deferredInnerKeyEdges.getQuick(i);
+            final int childIndex = deferredInnerKeyEdges.getQuick(i + 1);
+            if (isTimeSeriesJoinAheadCandidate(joinModels.getQuick(childIndex).getJoinType())) {
+                if (getJoinModelPriority(parentIndex) > getJoinModelPriority(childIndex)) {
+                    continue;
+                }
+                addOrderingConstraint(parent, parentIndex, childIndex);
+            }
+            deferredInnerKeyEdges.setQuick(keptSize++, parentIndex);
+            deferredInnerKeyEdges.setQuick(keptSize++, childIndex);
+        }
+        deferredInnerKeyEdges.setPos(keptSize);
+
+        if (joinModelsByPriority.size() == 0) {
+            return;
+        }
+        for (int i = 0, n = timeSeriesModelOnPredicates.size(); i < n; i++) {
+            final int sourceIndex = timeSeriesModelOnPredicateIndexes.getQuick(2 * i);
+            final int joinIndex = timeSeriesModelOnPredicateIndexes.getQuick(2 * i + 1);
+            for (int priority = joinModelPriorities.getQuick(sourceIndex) + 1, hi = joinModelPriorities.getQuick(joinIndex); priority < hi; priority++) {
+                if (isMasterNullingJoinType(joinModels.getQuick(joinModelsByPriority.getQuick(priority)).getJoinType())) {
+                    addModelOnPredicate(timeSeriesModelOnPredicates.getQuick(i), sourceIndex, joinIndex);
+                    break;
+                }
             }
         }
     }
@@ -8219,6 +8312,8 @@ public class SqlOptimiser implements Mutable {
             deferredInnerKeyEdges.clear();
             joinModelPriorities.clear();
             joinModelsByPriority.clear();
+            timeSeriesModelOnPredicates.clear();
+            timeSeriesModelOnPredicateIndexes.clear();
             hasLinkedLoneEmittedClause = false;
             loneEmittedClauseEdges.clear();
             loneDeferredEmittedKeySlaves.clear();
@@ -8256,6 +8351,7 @@ public class SqlOptimiser implements Mutable {
             homogenizeCrossJoins(model);
             constrainDeferredInnerKeyParents(model);
             constrainRightAndFullJoinsAfterPrefix(model);
+            constrainTimeSeriesJoinsAhead(model);
             constrainJoinsAfterReorderedNullingJoins(model);
             constrainOuterJoinsAfterExpressionParents(model);
             linkLoneEmittedClauses(model);
