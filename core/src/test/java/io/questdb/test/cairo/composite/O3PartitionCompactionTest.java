@@ -142,9 +142,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
 
             createDayTable("x", "2024-01-01", 20_000);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
+            buildMoveTailWaste("x");
             pinPieceCap(2);
 
             // The pinned reader gets the day to MAKE-PLAIN's eligible shape, then goes: MOVE-TAIL has run,
@@ -417,11 +415,13 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     " timestamp_sequence('2024-01-01', 1000000L) ts from long_sequence(20000))" +
                     " timestamp(ts) partition by DAY WAL");
             drainWalQueue();
-            for (int i = 0; i < 3; i++) {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+            for (int i = 0; i < 5; i++) {
                 execute("insert into y select cast(x as int) + 500000 i, ('b' || x) s," +
                         " timestamp_sequence('2024-01-01T05:00:00', 1000000L) ts from long_sequence(200)");
                 drainWalQueue();
             }
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             pinPieceCap(2);
 
             // A first pinned reader gets the day to MAKE-PLAIN's eligible shape - MOVE-TAIL runs, MAKE-PLAIN
@@ -546,9 +546,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
 
             createDayTable("x", "2024-01-01", 20_000);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
+            buildMoveTailWaste("x");
             pinPieceCap(2);
             final String before = fingerprintOfDay("x", "2024-01-01");
 
@@ -612,11 +610,13 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     " timestamp_sequence('2024-01-01', 1000000L) ts FROM long_sequence(20000))" +
                     " TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            for (int i = 0; i < 3; i++) {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+            for (int i = 0; i < 5; i++) {
                 execute("INSERT INTO y SELECT x::INT + 500000, 'b' || x," +
                         " timestamp_sequence('2024-01-01T05:00:00', 1000000L) FROM long_sequence(200)");
                 drainWalQueue();
             }
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             pinPieceCap(2);
 
             // A first pinned reader gets the day to a composite shape MAKE-PLAIN can act on, then goes.
@@ -699,9 +699,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
 
             createDayTable("x", "2024-01-01", 20_000);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
+            buildMoveTailWaste("x");
 
             final String expected = fingerprintOfDay("x", "2024-01-01");
             final long frontNameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
@@ -828,9 +826,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
 
             createDayTable("x", "2024-01-01", 20_000);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
+            buildMoveTailWaste("x");
             pinPieceCap(2);
 
             final TableToken tt = engine.verifyTableName("x");
@@ -922,12 +918,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // stride near the end of that span, so the clean front is the overwhelming majority of the
             // partition.
             createDayTable("x", "2024-01-01", 20_000);
-            // Three rewrites: each one relocates only the pre-split-isolated stride, adding one more
-            // piece each time. The piece-count limit is set only now, after the buildup, so it is the
-            // OBSERVED pass that trips it (effective cap 2), not the buildup itself.
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
+            // Build >10% waste without letting ingestion-driven MOVE-TAIL run during fixture construction.
+            buildMoveTailWaste("x");
 
             final long deadBefore = deadRowsOfDay("x", "2024-01-01");
             Assert.assertTrue("fixture produced no waste", deadBefore > 0);
@@ -1084,8 +1076,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 final long oldWriterTxn = reused.getGeometry().getWriterTxn(0);
 
                 reused.goPassive();
-                backdate("x", "2024-01-01T05:00:00", 200);
-                backdate("x", "2024-01-01T05:00:00", 200);
+                buildMoveTailWaste("x");
                 pinPieceCap(2);
                 runCompactionPasses("x");
                 Assert.assertFalse("fixture must reach plain", isComposite("x", "2024-01-01"));
@@ -1234,9 +1225,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
 
             createDayTable("x", "2024-01-01", 20_000);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
-            backdate("x", "2024-01-01T05:00:00", 200);
+            buildMoveTailWaste("x");
             pinPieceCap(2);
 
             // A pinned reader gets the day to MAKE-PLAIN's shape - MOVE-TAIL runs, MAKE-PLAIN declines.
@@ -1726,6 +1715,14 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         execute("insert into " + table + " select cast(x as int) + 500000 i," +
                 " timestamp_sequence('" + ts + "', 1000000L) ts from long_sequence(" + rows + ")");
         drainWalQueue();
+    }
+
+    private static void buildMoveTailWaste(String table) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+        for (int i = 0; i < 5; i++) {
+            backdate(table, "2024-01-01T05:00:00", 200);
+        }
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
     }
 
     private static void createDayTable(String table, String day, int rows) throws Exception {

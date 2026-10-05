@@ -126,6 +126,8 @@ public class O3CompositeMergeStrategy {
         assert pieceCount > 0;
         plan.actions.setPos(0);
         plan.appendActionIndex = -1;
+        plan.incomingMinTimestamp = srcOooHi >= srcOooLo
+                ? TableWriter.getTimestampIndexValue(sortedTimestampsAddr, srcOooLo) : Long.MAX_VALUE;
         int actionCount = 0;
         long o3 = srcOooLo;
 
@@ -274,6 +276,51 @@ public class O3CompositeMergeStrategy {
         return lastAtOrBelow(sortedTimestampsAddr, lo, hi, value - 1) + 1;
     }
 
+    /** Forecasts the nonempty, file-adjacent-coalesced shape of the normal plan. */
+    public static void forecast(LongList bounds, Plan plan, long extent) {
+        long liveRows = 0;
+        long previousEnd = -1;
+        int pieces = 0;
+        if (plan.appendActionIndex >= 0) {
+            extent += plan.actions.getQuick(plan.appendActionIndex).getO3RowCount();
+        }
+        for (int i = 0; i < plan.actions.size(); i++) {
+            final Action action = plan.actions.getQuick(i);
+            final ActionType type = action.isProjectedNoop ? ActionType.KEEP : action.type;
+            long rows;
+            long offset;
+            switch (type) {
+                case KEEP -> {
+                    rows = getRowCount(bounds, action.pieceIndex);
+                    offset = getRowOffset(bounds, action.pieceIndex);
+                }
+                case APPEND -> {
+                    rows = getRowCount(bounds, action.pieceIndex) + action.getO3RowCount();
+                    offset = getRowOffset(bounds, action.pieceIndex);
+                }
+                case MERGE, NEW_PIECE -> {
+                    rows = action.projectedRows >= 0 ? action.projectedRows : action.getO3RowCount()
+                            + (type == ActionType.MERGE ? getRowCount(bounds, action.pieceIndex) : 0);
+                    offset = extent;
+                    extent += rows;
+                }
+                default -> {
+                    continue;
+                }
+            }
+            if (rows > 0) {
+                if (offset != previousEnd) {
+                    pieces++;
+                }
+                previousEnd = offset + rows;
+                liveRows += rows;
+            }
+        }
+        plan.projectedLiveRows = liveRows;
+        plan.projectedDeadRows = extent - liveRows;
+        plan.projectedPieceCount = pieces;
+    }
+
     public static long getLastWriteMicros(LongList bounds, int piece) {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_LAST_WRITE_MICROS);
     }
@@ -298,6 +345,17 @@ public class O3CompositeMergeStrategy {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_WRITER_TXN);
     }
 
+    public static boolean isMoveTailEconomical(long prefixRows, long tailRows, long incomingRows) {
+        return prefixRows > 0 && tailRows > 0
+                && tailRows <= (prefixRows - 1) / 2
+                && incomingRows <= (prefixRows - 1) / 2 - tailRows;
+    }
+
+    public static boolean isMoveTailTriggered(long liveRows, long deadRows, int pieceCount, long deadRowThreshold) {
+        // Integer division preserves strict > 10%, without multiplying either row count.
+        return liveRows > 0 && deadRows > deadRowThreshold && (deadRows > liveRows / 10 || pieceCount > 1_000);
+    }
+
     /**
      * Last O3 index in {@code [lo, hi]} whose timestamp is {@code <= value}, or {@code lo - 1}.
      */
@@ -315,6 +373,39 @@ public class O3CompositeMergeStrategy {
             }
         }
         return result;
+    }
+
+    /** The highest legal boundary before the incoming range, or zero if moving is not economical. */
+    public static int moveTailCut(LongList bounds, Plan plan, long futureFloor, long deadRowThreshold) {
+        if (!isMoveTailTriggered(plan.projectedLiveRows, plan.projectedDeadRows, plan.projectedPieceCount, deadRowThreshold)) {
+            return 0;
+        }
+        final int pieceCount = bounds.size() / LONGS_PER_BOUND;
+        long existingRows = 0;
+        for (int p = 0; p < pieceCount; p++) {
+            existingRows += getRowCount(bounds, p);
+        }
+        long incomingRows = 0;
+        for (int a = 0; a < plan.actions.size(); a++) {
+            incomingRows += plan.actions.getQuick(a).getO3RowCount();
+        }
+        final long floor = Math.min(plan.incomingMinTimestamp, futureFloor);
+        long prefixRows = 0;
+        int cut = 0;
+        for (int a = 0; a < plan.actions.size(); a++) {
+            final Action action = plan.actions.getQuick(a);
+            final int p = action.pieceIndex;
+            if (action.type != ActionType.KEEP || p != a || p + 1 >= pieceCount
+                    || getTsHi(bounds, p) == Numbers.LONG_NULL || getTsHi(bounds, p) >= floor) {
+                break;
+            }
+            prefixRows += getRowCount(bounds, p);
+            if (getTsHi(bounds, p) < getTsLo(bounds, p + 1)
+                    && isMoveTailEconomical(prefixRows, existingRows - prefixRows, incomingRows)) {
+                cut = p + 1;
+            }
+        }
+        return cut;
     }
 
     private static void addCut(LongList cutsOut, int piece, long cutTs, long minRowsBelow, long minRowsAbove) {
@@ -351,7 +442,10 @@ public class O3CompositeMergeStrategy {
                 actions.setQuick(index, new Action());
             }
         }
-        return actions.getQuick(index);
+        final Action action = actions.getQuick(index);
+        action.isProjectedNoop = false;
+        action.projectedRows = -1;
+        return action;
     }
 
     public enum ActionType {
@@ -367,9 +461,11 @@ public class O3CompositeMergeStrategy {
     }
 
     public static class Action {
+        public boolean isProjectedNoop;
         public long o3Hi = -1;
         public long o3Lo = -1;
         public int pieceIndex = -1;
+        public long projectedRows = -1;
         public ActionType type;
 
         public long getO3RowCount() {
@@ -433,5 +529,9 @@ public class O3CompositeMergeStrategy {
          * Position in {@link #actions} of the {@link ActionType#APPEND} action, or -1 when none was emitted.
          */
         public int appendActionIndex = -1;
+        public long incomingMinTimestamp;
+        public long projectedDeadRows;
+        public long projectedLiveRows;
+        public int projectedPieceCount;
     }
 }

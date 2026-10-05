@@ -1507,11 +1507,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     " timestamp_sequence('2024-01-01', 1_000_000L) ts" +
                     " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            for (int i = 0; i < 3; i++) {
-                execute("INSERT INTO x SELECT x::INT + 500_000 i," +
-                        " timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts FROM long_sequence(200)");
-                drainWalQueue();
-            }
+            buildMoveTailWaste();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
 
@@ -1891,6 +1887,16 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      * A day cut into a prefix and a split by an O3 insert into the middle of it, with merge-append off so both
      * folders come out PLAIN, and a later day so the split day is never the active one.
      */
+    private static void buildMoveTailWaste() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+        for (int i = 0; i < 5; i++) {
+            execute("INSERT INTO x SELECT x::INT + 500_000 i," +
+                    " timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+        }
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+    }
+
     private static void createSplitDayTable(String tableName) throws Exception {
         execute("CREATE TABLE " + tableName + " AS (SELECT x::INT i," +
                 " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
@@ -2354,11 +2360,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     " timestamp_sequence('2024-01-01', 1_000_000L) ts" +
                     " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            for (int i = 0; i < 3; i++) {
-                execute("INSERT INTO x SELECT x::INT + 500_000 i," +
-                        " timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts FROM long_sequence(200)");
-                drainWalQueue();
-            }
+            buildMoveTailWaste();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
 

@@ -26,10 +26,13 @@ package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3CompositeMergeStrategy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.LongList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -40,7 +43,7 @@ import org.junit.Test;
  * directory when that forecast breaches {@code PartitionCompactionPolicy.exceedsThresholds}. The forecast
  * therefore has to account for every {@code O3CompositeMergeStrategy.ActionType} the plan can carry.
  * <p>
- * Two of the five tests here pin the two answers apart on ONE fixture shape - a day left with 200 live rows
+ * Two tests here pin the two answers apart on ONE fixture shape - a day left with 200 live rows
  * and 100 dead rows in a single tail-owning piece - that differs only in where this commit's ten rows land:
  * <ul>
  *     <li>above the piece's tsHi, so the plan is APPEND: the piece is extended in place, leaving 210 live
@@ -60,10 +63,11 @@ import org.junit.Test;
  *     <li>{@link #testAppendOntoATwoPieceDayFoldsOnThePieceRule} turns the waste rule off entirely and puts
  *     the piece-count rule in play at two pieces - the only shape in which the piece an APPEND leaves
  *     behind changes the answer;</li>
- *     <li>{@link #testAppendOntoAPrefixDominantDayLeavesTheBreachForMoveTail} keeps the MOVE-TAIL escape a
- *     prefix-dominant day is entitled to, which is the one direction counting an APPEND's rows can take
- *     away.</li>
+ *     <li>{@link #testAppendBelowMoveTailFragmentationUsesGeneralRewriteThreshold} keeps the general rewrite
+ *     thresholds independent of MOVE-TAIL's fragmentation trigger.</li>
  * </ul>
+ * Focused MOVE-TAIL cases cover projected waste, the dead-space minimum, fragmented prefixes, loaded
+ * backfill, single/block apply, dedup, pinned readers, indexed/variable columns and column tops.
  */
 public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
 
@@ -111,21 +115,9 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The direction the other tests cannot see: counting an APPEND's rows in
-     * {@code TableWriter.wouldMoveTailSucceed} enlarges the denominator that decides whether the commit
-     * hands a breach to MOVE-TAIL instead of folding the partition itself, so a shape whose prefix no
-     * longer clears {@code cairo.partition.compaction.prefix.min.percent} against the bigger number loses
-     * an escape it used to get. This fixture is the shape that must keep it: a 400-row cold prefix over an
-     * 80-row tail piece, so the prefix clears the percentage (400 * 100 >= 490 * 50) even with the
-     * appended rows counted.
-     * <p>
-     * The commit therefore writes only its ten rows, and the compaction that follows moves the 90-row tail
-     * out instead of copying all 490 live rows - the cheap path this fixture exists to keep open. Green
-     * before and after the fix: it is the control for a fix that declines the escape too eagerly.
-     */
+    /** A general 5% rewrite threshold must not substitute for MOVE-TAIL's separate 10% trigger. */
     @Test
-    public void testAppendOntoAPrefixDominantDayLeavesTheBreachForMoveTail() throws Exception {
+    public void testAppendBelowMoveTailFragmentationUsesGeneralRewriteThreshold() throws Exception {
         assertMemoryLeak(() -> {
             configureTightWasteThresholds();
             letMoveTailRun();
@@ -147,15 +139,176 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertEquals(
-                    "the commit folded the whole partition instead of leaving its breach to MOVE-TAIL, which"
-                            + " only had to move the tail piece out",
-                    100,
+                    "40 dead rows over 490 live rows do not trigger MOVE-TAIL; the general rewrite still applies",
+                    490,
                     physicallyWrittenRows() - writtenBefore
             );
             assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
                     .noRandomAccess()
                     .expectSize()
                     .returns("c\ts\n490\t120295\n");
+        });
+    }
+
+    @Test
+    public void testLoadedFutureBackfillPreventsMovingTheFrontier() throws Exception {
+        assertMemoryLeak(() -> {
+            configureTightWasteThresholds();
+            letPreSplitCut();
+            createDayWithABigPrefixAndASmallTailPiece();
+            pinPieceCap(20);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, 1);
+            execute("INSERT INTO x SELECT x + 480, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
+            execute("INSERT INTO x VALUES (1000, '2024-01-01T00:03:00')");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertEquals("the queued prefix backfill must prevent the first commit's split", 2, reader.getPartitionCount());
+            }
+            assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
+                    .noRandomAccess().expectSize().returns("c\ts\n491\t121295\n");
+        });
+    }
+
+    @Test
+    public void testMoveTailDeclinesAtExactlyTheProjectedDeadSpaceMinimum() throws Exception {
+        assertMemoryLeak(() -> checkProjectedDeadSpaceMinimum(1_920, 90, 2));
+    }
+
+    @Test
+    public void testMoveTailCrossesProjectedDeadSpaceMinimum() throws Exception {
+        assertMemoryLeak(() -> checkProjectedDeadSpaceMinimum(1_919, 170, 3));
+    }
+
+    @Test
+    public void testMoveTailDoesNotRequirePrefixSizeMinimum() throws Exception {
+        assertMemoryLeak(() -> {
+            configureTightWasteThresholds();
+            letPreSplitCut();
+            createDayWithABigPrefixAndASmallTailPiece();
+            pinPieceCap(20);
+            for (int i = 0; i < 4; i++) {
+                execute("INSERT INTO x SELECT x + 480, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
+                drainWalQueue();
+            }
+            // 500 dead rows is larger than the retained 400-row prefix. The next merge forecasts 540 dead rows.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 8_000);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            final long nameTxnBefore = nameTxnOfDay();
+            final long writtenBefore = physicallyWrittenRows();
+            execute("INSERT INTO x SELECT x + 480, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
+            drainWalQueue();
+            Assert.assertEquals(250, physicallyWrittenRows() - writtenBefore);
+            Assert.assertEquals(nameTxnBefore, nameTxnOfDay());
+            assertQuery("SELECT count() c FROM x WHERE ts IN '2024-01-01'")
+                    .noRandomAccess().expectSize().returns("c\n530\n");
+        });
+    }
+
+    @Test
+    public void testDedupForecastDoesNotRetireNoopRowsOrCountRemovedRowsAsLive() throws Exception {
+        assertMemoryLeak(() -> {
+            configureTightWasteThresholds();
+            letPreSplitCut();
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(440)");
+            execute("INSERT INTO x VALUES (0, '2024-01-03')");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x + 440, timestamp_sequence('2024-01-01T00:06:40', 1_000_000L) FROM long_sequence(40)");
+            drainWalQueue();
+            pinPieceCap(20);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            final long writtenBefore = physicallyWrittenRows();
+            execute("INSERT INTO x SELECT x + 450, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
+            drainWalQueue();
+            Assert.assertEquals("an identical dedup merge must not trigger a tail copy", 0, physicallyWrittenRows() - writtenBefore);
+            execute("INSERT INTO x SELECT x + 500, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
+            drainWalQueue();
+            Assert.assertEquals("only 40 copied and 40 surviving merged rows should be written", 80,
+                    physicallyWrittenRows() - writtenBefore);
+            assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
+                    .noRandomAccess().expectSize().returns("c\ts\n440\t99120\n");
+        });
+    }
+
+    @Test
+    public void testProjectedMergeBreachMovesFreshUntouchedPrefixBeforeWriting() throws Exception {
+        assertMemoryLeak(() -> {
+            configureTightWasteThresholds();
+            letPreSplitCut();
+            createDayWithABigPrefixAndASmallTailPiece();
+            assertPrefixDominantFixture();
+            // Dead space is tested against the split-size setting, not the general rewrite dead-data floor.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            pinPieceCap(20);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "0.05");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, 1_500);
+            final long nameTxnBefore = nameTxnOfDay();
+            final long writtenBefore = physicallyWrittenRows();
+            execute("INSERT INTO x SELECT x + 480, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
+            drainWalQueue();
+            Assert.assertEquals("only the existing tail and its new merged image should be copied", 170,
+                    physicallyWrittenRows() - writtenBefore);
+            Assert.assertEquals("untouched prefix must keep its directory", nameTxnBefore, nameTxnOfDay());
+            assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
+                    .noRandomAccess().expectSize().returns("c\ts\n490\t120295\n");
+        });
+    }
+
+    @Test
+    public void testFragmentedPrefixMoveKeepsFileRangesAndPinnedReader() throws Exception {
+        assertMemoryLeak(() -> checkFragmentedPrefixMove(1));
+    }
+
+    @Test
+    public void testFragmentedPrefixMoveWithTransactionBlock() throws Exception {
+        assertMemoryLeak(() -> checkFragmentedPrefixMove(2));
+    }
+
+    @Test
+    public void testBlockMovesMultiplePartitionTailsBeforePublishingWorkers() throws Exception {
+        assertMemoryLeak(() -> {
+            configureTightWasteThresholds();
+            letPreSplitCut();
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int d = 1; d <= 2; d++) {
+                execute("INSERT INTO x SELECT x + " + ((d - 1) * 1_000) + ", timestamp_sequence('2024-01-0" + d
+                        + "', 1_000_000L) FROM long_sequence(440)");
+            }
+            execute("INSERT INTO x VALUES (0, '2024-01-03')");
+            drainWalQueue();
+            for (int d = 1; d <= 2; d++) {
+                execute("INSERT INTO x SELECT x + " + (440 + (d - 1) * 1_000) + ", timestamp_sequence('2024-01-0" + d
+                        + "', 1_000_000L) FROM long_sequence(40)");
+            }
+            drainWalQueue();
+            for (int d = 1; d <= 2; d++) {
+                execute("INSERT INTO x SELECT x + " + (480 + (d - 1) * 1_000) + ", timestamp_sequence('2024-01-0" + d
+                        + "T00:06:40', 1_000_000L) FROM long_sequence(40)");
+            }
+            drainWalQueue();
+            pinPieceCap(20);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            final long writtenBefore = physicallyWrittenRows();
+            for (int d = 1; d <= 2; d++) {
+                execute("INSERT INTO x SELECT x + " + (520 + (d - 1) * 1_000) + ", timestamp_sequence('2024-01-0" + d
+                        + "T00:06:50', 1_000_000L) FROM long_sequence(10)");
+            }
+            drainWalQueue();
+            Assert.assertEquals(340, physicallyWrittenRows() - writtenBefore);
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertEquals(5, reader.getPartitionCount());
+                Assert.assertEquals(2, reader.getGeometry().getPieceCount(0));
+                Assert.assertEquals(2, reader.getGeometry().getPieceCount(2));
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01' OR ts IN '2024-01-02'")
+                    .noRandomAccess().expectSize().returns("c\ts\n1060\t811430\n");
         });
     }
 
@@ -409,6 +562,109 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    private void checkProjectedDeadSpaceMinimum(long minimumBytes, long expectedWrites, int expectedPartitions) throws Exception {
+        configureTightWasteThresholds();
+        letPreSplitCut();
+        createDayWithABigPrefixAndASmallTailPiece();
+        pinPieceCap(20);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, minimumBytes);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        final long writtenBefore = physicallyWrittenRows();
+        execute("INSERT INTO x SELECT x + 480, timestamp_sequence('2024-01-01T00:06:50', 1_000_000L) FROM long_sequence(10)");
+        drainWalQueue();
+        Assert.assertEquals(expectedWrites, physicallyWrittenRows() - writtenBefore);
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            Assert.assertEquals(expectedPartitions, reader.getPartitionCount());
+        }
+        assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
+                .noRandomAccess().expectSize().returns("c\ts\n490\t120295\n");
+    }
+
+    private void checkFragmentedPrefixMove(int transactionCount) throws Exception {
+        configureTightWasteThresholds();
+        letPreSplitCut();
+        execute("CREATE TABLE x (v LONG, s VARCHAR, sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO x SELECT x, 'base-' || x, 'base', timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(440)");
+        execute("INSERT INTO x (v, ts) VALUES (0, '2024-01-03')");
+        drainWalQueue();
+        execute("INSERT INTO x SELECT x + 440, 'prefix-' || x, 'prefix', timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(40)");
+        drainWalQueue();
+        execute("INSERT INTO x SELECT x + 480, 'tail-' || x, 'tail', timestamp_sequence('2024-01-01T00:06:40', 1_000_000L) FROM long_sequence(40)");
+        drainWalQueue();
+        execute("ALTER TABLE x ADD COLUMN extra STRING");
+        drainWalQueue();
+        final TableToken token = engine.verifyTableName("x");
+        try (TableReader pinned = engine.getReader(token)) {
+            final int index = dayPartitionIndex(pinned);
+            final PartitionGeometry before = pinned.getGeometry();
+            Assert.assertEquals(3, before.getPieceCount(index));
+            Assert.assertEquals(440, before.getPieceRowOffset(index, 0));
+            final long extent = before.getE(index);
+            final LongList prefixBounds = new LongList();
+            for (int p = 0; p < 2; p++) {
+                O3CompositeMergeStrategy.addPieceBounds(prefixBounds, before.getPieceTimestampLo(index, p),
+                        before.getPieceTimestampHi(index, p), before.getPieceRowOffset(index, p), before.getPieceRowCount(index, p),
+                        before.getPieceWriterTxn(index, p), before.getPieceLastWriteMicros(index, p));
+            }
+            final long nameTxn = pinned.getTxFile().getPartitionNameTxn(index);
+            pinPieceCap(20);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            final long writtenBefore = physicallyWrittenRows();
+            for (int t = 0; t < transactionCount; t++) {
+                execute("INSERT INTO x SELECT x + " + (520 + t * 5) + ", 'new-' || (x + " + (t * 5)
+                        + "), 'new', timestamp_sequence('2024-01-01T00:06:50', 1_000_000L), 'new-column' FROM long_sequence(" + (10 / transactionCount) + ")");
+            }
+            drainWalQueue();
+            Assert.assertEquals(170, physicallyWrittenRows() - writtenBefore);
+            try (TableReader reader = engine.getReader(token)) {
+                final int parent = dayPartitionIndex(reader);
+                final PartitionGeometry after = reader.getGeometry();
+                Assert.assertEquals(nameTxn, reader.getTxFile().getPartitionNameTxn(parent));
+                Assert.assertEquals(2, after.getPieceCount(parent));
+                Assert.assertEquals(extent, after.getE(parent));
+                for (int p = 0; p < 2; p++) {
+                    Assert.assertEquals(O3CompositeMergeStrategy.getTsLo(prefixBounds, p), after.getPieceTimestampLo(parent, p));
+                    Assert.assertEquals(O3CompositeMergeStrategy.getTsHi(prefixBounds, p), after.getPieceTimestampHi(parent, p));
+                    Assert.assertEquals(O3CompositeMergeStrategy.getRowOffset(prefixBounds, p), after.getPieceRowOffset(parent, p));
+                    Assert.assertEquals(O3CompositeMergeStrategy.getRowCount(prefixBounds, p), after.getPieceRowCount(parent, p));
+                    Assert.assertEquals(O3CompositeMergeStrategy.getWriterTxn(prefixBounds, p), after.getPieceWriterTxn(parent, p));
+                    Assert.assertEquals(O3CompositeMergeStrategy.getLastWriteMicros(prefixBounds, p), after.getPieceLastWriteMicros(parent, p));
+                }
+                Assert.assertEquals(extent - 440, after.getE(parent) - reader.getTxFile().getPartitionSize(parent));
+                Assert.assertEquals(3, reader.getPartitionCount());
+            }
+            Assert.assertEquals("pinned snapshot must keep its original extent", extent, before.getE(index));
+            Assert.assertEquals(3, before.getPieceCount(index));
+            Assert.assertEquals(521, pinned.size());
+            long oldCount = 0;
+            long oldSum = 0;
+            try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(pinned)) {
+                while (cursor.hasNext()) {
+                    oldCount++;
+                    oldSum += cursor.getRecord().getLong(0);
+                }
+            }
+            Assert.assertEquals(521, oldCount);
+            Assert.assertEquals(135_460, oldSum);
+        }
+        assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
+                .noRandomAccess().expectSize().returns("c\ts\n530\t140715\n");
+        assertQuery("SELECT sym, count() c, sum(length(s)) len FROM x WHERE ts IN '2024-01-01' GROUP BY sym ORDER BY sym")
+                .expectSize().returns("sym\tc\tlen\nbase\t440\t3412\nnew\t10\t51\nprefix\t40\t351\ntail\t40\t271\n");
+        assertQuery("SELECT count() c FROM x WHERE sym = 'prefix' AND ts IN '2024-01-01'")
+                .noRandomAccess().expectSize().returns("c\n40\n");
+        assertQuery("SELECT count(extra) c, sum(CASE WHEN extra IS NULL THEN 0 ELSE length(extra) END) len FROM x WHERE ts IN '2024-01-01'")
+                .noRandomAccess().expectSize().returns("c\tlen\n10\t100\n");
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        // Backfill below the sibling frontier must still find the original physical folder.
+        execute("INSERT INTO x (v, ts) VALUES (1000, '2024-01-01T00:03:00')");
+        drainWalQueue();
+        assertQuery("SELECT count() c, sum(v) s FROM x WHERE ts IN '2024-01-01'")
+                .noRandomAccess().expectSize().returns("c\ts\n531\t141715\n");
+    }
+
     private static int dayPartitionIndex(TableReader reader) {
         final long dayTs = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
         final int partitionIndex = reader.getTxFile().getPartitionIndex(dayTs);
@@ -434,6 +690,7 @@ public class CompositeAppendCompactionForecastTest extends AbstractCairoTest {
      * turns the same three knobs off for the same reason.
      */
     private static void letMoveTailRun() {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 0);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 1);

@@ -301,13 +301,8 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
             execute("CREATE TABLE x AS (SELECT x::INT i, timestamp_sequence('2024-01-01', 1_000_000L) ts" +
                     " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            for (int k = 0; k < 3; k++) {
-                execute("INSERT INTO x SELECT x::INT + 500_000 i, timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts" +
-                        " FROM long_sequence(200)");
-                drainWalQueue();
-            }
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+            buildMoveTailWaste();
+            armMoveTail();
             for (int k = 0; k < 6; k++) {
                 execute("INSERT INTO x SELECT x::INT + 800_000 i, timestamp_sequence('2024-03-0" + (k + 1) + "', 60_000_000L) ts" +
                         " FROM long_sequence(2)");
@@ -362,6 +357,12 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
      * aux) and BITMAP index files are at least as long as committed state says. A truncation shows up here as
      * an assertion instead of a SIGBUS in a later query.
      */
+    private static void armMoveTail() {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+    }
+
     private static void assertColumnFilesCoverPhysicalRows(String table, String state) {
         final TableToken tt = engine.verifyTableName(table);
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -438,6 +439,15 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
 
     private static void assertNotSuspended(String table) {
         Assert.assertFalse("table " + table + " is suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(table)));
+    }
+
+    private static void buildMoveTailWaste() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+        for (int k = 0; k < 5; k++) {
+            execute("INSERT INTO x SELECT x::INT + 500_000 i, timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts" +
+                    " FROM long_sequence(200)");
+            drainWalQueue();
+        }
     }
 
     private static String columnTopState(String table, String day, String column) throws Exception {
@@ -683,11 +693,7 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         execute("CREATE TABLE x AS (SELECT x::INT i, timestamp_sequence('2024-01-01', 1_000_000L) ts" +
                 " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
         drainWalQueue();
-        for (int k = 0; k < 3; k++) {
-            execute("INSERT INTO x SELECT x::INT + 500_000 i, timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts" +
-                    " FROM long_sequence(200)");
-            drainWalQueue();
-        }
+        buildMoveTailWaste();
         Assert.assertTrue("fixture: the day must be composite", isComposite("x", "2024-01-01"));
         // Added while the LAST partition is composite: top = E, above what MOVE-TAIL will leave live.
         execute("ALTER TABLE x ADD COLUMN c LONG");
@@ -707,8 +713,7 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         Assert.assertEquals(columnHasRowsAtWarmUp ? "100/5050" : "0/0", fingerprintOfColumnC("2024-01-01"));
         final String topAfterAdd = columnTopState("x", "2024-01-01", "c");
 
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+        armMoveTail();
         for (int k = 0; k < 6; k++) {
             execute("INSERT INTO x (i, ts) SELECT x::INT + 800_000 i, timestamp_sequence('2024-03-0" + (k + 1) + "', 60_000_000L) ts" +
                     " FROM long_sequence(2)");
@@ -791,13 +796,8 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         final long d1 = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
 
         // Make the day composite, then let MOVE-TAIL give it a split sibling while later days are created.
-        for (int k = 0; k < 3; k++) {
-            execute("INSERT INTO x SELECT x::INT + 500_000 i, timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts" +
-                    " FROM long_sequence(200)");
-            drainWalQueue();
-        }
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+        buildMoveTailWaste();
+        armMoveTail();
         for (int k = 0; k < 6; k++) {
             execute("INSERT INTO x SELECT x::INT + 800_000 i, timestamp_sequence('2024-03-0" + (k + 1) + "', 60_000_000L) ts" +
                     " FROM long_sequence(2)");
@@ -832,6 +832,6 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         assertQuery("SELECT count() c FROM x WHERE ts IN '2024-01-01'")
                 .noRandomAccess()
                 .expectSize()
-                .returns("c\n40600\n");
+                .returns("c\n41000\n");
     }
 }

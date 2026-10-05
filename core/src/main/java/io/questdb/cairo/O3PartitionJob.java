@@ -294,6 +294,61 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         );
     }
 
+    /** Resolves dedup output sizes without writing or publishing the plan. */
+    public static void forecastCompositePlan(
+            Path pathToTable,
+            int partitionIndex,
+            PartitionGeometry geometry,
+            LongList bounds,
+            O3CompositeMergeStrategy.Plan plan,
+            long sortedTimestampsAddr,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            TableWriter tableWriter,
+            long dedupColSinkAddr
+    ) {
+        if (tableWriter.isCommitDedupMode()) {
+            final TxReader txReader = tableWriter.getTxReader();
+            final long partitionTs = txReader.getPartitionTimestampByIndex(partitionIndex);
+            final long nameTxn = txReader.getPartitionNameTxn(partitionIndex);
+            final Path partitionPath = Path.getThreadLocal(pathToTable);
+            TableUtils.setPathForNativePartition(partitionPath, tableWriter.getMetadata().getTimestampType(),
+                    tableWriter.getPartitionBy(), partitionTs, nameTxn);
+            try (Frame source = tableWriter.getFrameFactory().openRO(partitionPath, partitionTs,
+                    tableWriter.getMetadata(), tableWriter.getColumnVersionWriter(), geometry.getE(partitionIndex))) {
+                for (int i = 0; i < plan.actions.size(); i++) {
+                    final O3CompositeMergeStrategy.Action action = plan.actions.getQuick(i);
+                    if (action.type != O3CompositeMergeStrategy.ActionType.MERGE) {
+                        continue;
+                    }
+                    final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
+                    final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                    final long pieceHi = pieceLo + pieceRows;
+                    final long indexSize = (pieceRows + action.getO3RowCount()) * TIMESTAMP_MERGE_ENTRY_BYTES;
+                    final long indexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
+                    try {
+                        source.shift(pieceLo, pieceHi);
+                        final FrameColumn timestampColumn = source.openColumn(tableWriter.getMetadata().getTimestampIndex());
+                        try {
+                            action.projectedRows = getDedupRows(partitionTs, nameTxn,
+                                    tableWriter.getColumnVersionWriter(), timestampColumn.getContiguousDataAddr(pieceHi),
+                                    pieceLo, pieceHi - 1, sortedTimestampsAddr, action.o3Lo, action.o3Hi,
+                                    oooColumns, tableWriter.getDedupCommitAddresses(), dedupColSinkAddr,
+                                    tableWriter, Path.getThreadLocal2(pathToTable), indexAddr);
+                            action.isProjectedNoop = action.projectedRows == pieceRows
+                                    && tableWriter.checkDedupCommitIdenticalToPartition(partitionTs, nameTxn,
+                                    pieceHi, pieceLo, pieceHi - 1, action.o3Lo, action.o3Hi, indexAddr, action.projectedRows);
+                        } finally {
+                            source.releaseColumn(timestampColumn);
+                        }
+                    } finally {
+                        Unsafe.free(indexAddr, indexSize, MemoryTag.NATIVE_O3);
+                    }
+                }
+            }
+        }
+        O3CompositeMergeStrategy.forecast(bounds, plan, geometry.getE(partitionIndex));
+    }
+
     /**
      * Plans what this commit does to one partition, executes it, and publishes the result: a {@code _geometry} record
      * describing the pieces that now exist, and the sink block telling {@code _txn} the partition's new row count and
@@ -402,7 +457,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         // The chain has nowhere left to grow, or the debug force-rewrite flag is on: assemble a fresh,
         // ordinary directory instead of letting the normal path write bytes for a plan nothing publishes.
-        if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, plan.actions, plan.actions.size())) {
+        // Plain folders and sources already due for squash cannot take a discretionary fresh version.
+        // Do not build a second dedup index just to forecast a decision these paths cannot make.
+        final boolean isPendingSquashSource = tableWriter.isPendingSquashSource(partitionIndex);
+        if (txReader.isPartitionComposite(partitionIndex) && !isPendingSquashSource) {
+            forecastCompositePlan(pathToTable, partitionIndex, geometry, ctx.bounds, plan,
+                    sortedTimestampsAddr, oooColumns, tableWriter, dedupColSinkAddr);
+        }
+        if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, ctx.bounds, plan, isPendingSquashSource)) {
             assembleFreshPartitionVersion(
                     pathToTable,
                     partitionTimestamp,
@@ -1466,8 +1528,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             int partitionIndex,
             LongList bounds,
-            ObjList<O3CompositeMergeStrategy.Action> actions,
-            int actionCount
+            O3CompositeMergeStrategy.Plan plan,
+            boolean isPendingSquashSource
     ) {
         // The geometry ref packs four bits of generation, and a generation whose file still holds a record is one a
         // pinned reader may resolve out of, so it is not one a chain may open on or rotate to. With none left,
@@ -1478,7 +1540,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // writes this commit rather than having to unwind one that already wrote it. It covers the chain START of a
         // partition that is not composite yet as well as the rotation of one that is, which is why it precedes the
         // composite guard below.
-        if (!geometry.hasGenerationForNextPublish(partitionIndex, actionCount)) {
+        if (!geometry.hasGenerationForNextPublish(partitionIndex, plan.actions.size())) {
             final long committedRef = txReader.getGeometryRef(partitionIndex);
             LOG.info().$("assembling fresh partition version: geometry generations exhausted [table=")
                     .$(tableWriter.getTableToken())
@@ -1489,13 +1551,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     .I$();
             return true;
         }
-        if (!txReader.isPartitionComposite(partitionIndex)) {
+        if (!txReader.isPartitionComposite(partitionIndex) || isPendingSquashSource) {
             return false;
         }
-        if (!tableWriter.wouldBreachCompactionThresholds(partitionIndex, geometry, bounds, actions, actionCount)) {
+        if (!tableWriter.wouldBreachCompactionThresholds(partitionIndex, plan)) {
             return false;
         }
-        if (tableWriter.wouldMoveTailSucceed(bounds, actions, actionCount)) {
+        if (tableWriter.wouldMoveTailSucceed(bounds, plan)) {
             LOG.info().$("leaving compaction breach for MOVE-TAIL [table=").$(tableWriter.getTableToken())
                     .$(", partitionIndex=").$(partitionIndex)
                     .I$();
@@ -1646,7 +1708,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * JOIN, inline: folds every run of list-adjacent pieces that are ALSO file-adjacent ({@code rowOffset == prevOffset
      * + prevCount}) into one, in a single forward pass.
      */
-    private static void foldAdjacentPieces(LongList pieces) {
+    static void foldAdjacentPieces(LongList pieces) {
         final int n = pieces.size();
         if (n <= PIECES_STRIDE) {
             return;
@@ -4052,7 +4114,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
-    private static boolean hasTouchingPieces(PartitionGeometry geometry, int partitionIndex) {
+    static boolean hasTouchingPieces(PartitionGeometry geometry, int partitionIndex) {
         final int pieceCount = geometry.getPieceCount(partitionIndex);
         long previousTsHi = geometry.getPieceTimestampHi(partitionIndex, 0);
         for (int p = 1; p < pieceCount; p++) {

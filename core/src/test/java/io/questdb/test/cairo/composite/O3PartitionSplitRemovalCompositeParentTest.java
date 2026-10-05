@@ -83,13 +83,14 @@ public class O3PartitionSplitRemovalCompositeParentTest extends AbstractCairoTes
                     " timestamp_sequence('" + DAY + "', 1000000L) ts" +
                     " FROM long_sequence(20000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            // Three rewrites of one 200-row stride near the end of the clean front, each relocating that
-            // stride to the file tail and leaving its old copy dead - the shape MOVE-TAIL is for.
-            for (int i = 0; i < 3; i++) {
+            // Build >10% waste, withholding ingestion-driven MOVE-TAIL until the reader is pinned.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+            for (int i = 0; i < 5; i++) {
                 execute("INSERT INTO x SELECT cast(x AS int) + 500000 i," +
                         " timestamp_sequence('" + DAY + "T05:00:00', 1000000L) ts FROM long_sequence(200)");
                 drainWalQueue();
             }
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
             // Put the piece-count rule in play at exactly 2 pieces, so the observed pass trips it.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
