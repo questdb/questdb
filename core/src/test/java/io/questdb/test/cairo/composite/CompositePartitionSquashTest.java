@@ -70,6 +70,7 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
         // Hold the siblings still while the fixture builds; each test lowers this to let the fold run.
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
     }
 
     @Test
@@ -79,23 +80,25 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
             makeComposite("T11:00:00");
             final long sourceRows;
+            final long lastSourceRows;
             try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
                 Assert.assertEquals(3, reader.getPartitionCount());
                 Assert.assertTrue("fixture must have a composite source", reader.getTxFile().isPartitionComposite(2));
-                sourceRows = reader.getTxFile().getPartitionSize(1) + reader.getTxFile().getPartitionSize(2);
+                lastSourceRows = reader.getTxFile().getPartitionSize(2);
+                sourceRows = reader.getTxFile().getPartitionSize(1) + lastSourceRows;
             }
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 1);
-            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 3);
-            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
             final long countBefore = rowsOfDay();
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             execute("INSERT INTO x (i, ts) VALUES (100, '2024-01-01T12:00:00')");
             execute("INSERT INTO x (i, ts) VALUES (101, '2024-01-02')");
             drainWalQueue();
-            Assert.assertEquals("source rows must be copied once, by squash, not also by a forecast REWRITE",
-                    // Two incoming writes, plus the source's incoming row copied again by squash.
-                    sourceRows + 3, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
+            Assert.assertEquals("pair squashes must not also pay a preliminary forecast REWRITE",
+                    // Pack the smallest pair first, then fold it into the prefix. The last source is copied twice.
+                    // Two incoming writes and two copies of the last source's incoming row add four.
+                    sourceRows + lastSourceRows + 4, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
             Assert.assertEquals(1, partitionCountOfDay());
             Assert.assertEquals(countBefore + 1, rowsOfDay());
             assertDayReadsBack();
@@ -103,7 +106,7 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRepeatedMoveTailAndOrdinarySquashKeepTheAccumulator() throws Exception {
+    public void testMoveTailStopsAtSplitCapWithoutCopyingThePrefix() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, true);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1_024);
@@ -122,6 +125,11 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
                 drainWalQueue();
             }
             Assert.assertEquals("first threshold breach must leave a tail sibling", 2, partitionCountOfDay());
+            final long prefixRows;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                prefixRows = reader.getTxFile().getPartitionSize(0);
+                Assert.assertTrue("the move must preserve the large prefix", prefixRows > 9_000);
+            }
             for (int i = 0; i < 8; i++) {
                 execute("INSERT INTO x SELECT x::INT + 30_000, timestamp_sequence('2024-01-01T02:42:30'::TIMESTAMP + "
                         + (i * 25_000_000L) + ", 1_000_000L) FROM long_sequence(25)");
@@ -132,7 +140,7 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             Assert.assertTrue("tail moves and squash must not copy the 9,500-row prefix repeatedly: " + written, written < 20_000);
             try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
                 Assert.assertEquals("the accumulator must keep its original directory", -1, reader.getTxFile().getPartitionNameTxn(0));
-                Assert.assertTrue("another MOVE-TAIL must feed ordinary squash", reader.getTxFile().getPartitionSize(0) > 9_500);
+                Assert.assertEquals("MOVE-TAIL must not exceed the cap or recopy the prefix", prefixRows, reader.getTxFile().getPartitionSize(0));
             }
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -199,9 +207,13 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             makeComposite("T11:00:00");
             Assert.assertTrue(isComposite(DAY));
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1G");
-            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
             final String before = fingerprintOfDay();
             final long dayRows = rowsOfDay();
+            final long lastSourceRows;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                lastSourceRows = reader.getTxFile().getPartitionSize(2);
+            }
             final long sumBefore = scalar("SELECT sum(i) FROM x");
             final long oldNameTxn;
             final TableToken token = engine.verifyTableName("x");
@@ -222,7 +234,7 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
                 Assert.assertEquals("the old snapshot must survive target rewrite and squash", oldRows, count);
                 Assert.assertEquals(sumBefore, sum);
             }
-            Assert.assertEquals("copy target and sources once, plus the trigger row", dayRows + 1,
+            Assert.assertEquals("smallest-pair packing, target cleanup and trigger row", dayRows + lastSourceRows + 1,
                     node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
             Assert.assertEquals(1, partitionCountOfDay());
             Assert.assertFalse("the small cold accumulator must become plain", isComposite(DAY));
@@ -311,7 +323,7 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
                 Assert.assertEquals(5, reader.getPartitionCount());
                 secondDayNameTxn = reader.getTxFile().getPartitionNameTxn(reader.getTxFile().getPartitionIndex(secondDayTs));
             }
-            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
             execute("INSERT INTO x (i, ts) VALUES (777, '2024-01-02T01:00:00'), (888, '2024-01-03')");
             drainWalQueue();
             Assert.assertFalse("the earlier cold target must compact", isComposite(DAY));
@@ -632,7 +644,7 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
         final String before = fingerprintOfDay();
         final long rowsBefore = rowsOfDay();
 
-        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
         // A row in a LATER day, so the commit touches nothing in the day under test and only its
         // housekeeping can account for what changes there.
         execute("INSERT INTO x (i, s, ts) VALUES (999, 'z', '2024-01-05T00:00:00.000000Z')");

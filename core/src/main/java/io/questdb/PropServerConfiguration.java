@@ -422,7 +422,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3LagCalculationWindowsSize;
     private final int o3LastPartitionMaxSplits;
     private final long o3MaxLagUs;
-    private final int o3MidPartitionMaxSplits;
+    private final int o3PartitionMaxSplits;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
     private final boolean o3PartitionMergeAppendEnabled;
@@ -464,6 +464,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long partitionCompactionTableDeadThreshold;
     private final int partitionCompactionTableDeadThresholdPercent;
     private final long partitionCompactionTableDeadTrigger;
+    private final double partitionCompactionTablePressureDeadRatio;
     private final long partitionCompactionTimeBudgetMs;
     private final double partitionEncoderParquetBloomFilterFpp;
     private final int partitionEncoderParquetCompressionCodec;
@@ -1920,6 +1921,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionMergeAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
             this.o3PartitionMergeAppendFrameCacheSize = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_SIZE, 2));
             this.partitionCompactionDeadRowsRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1.0");
+            this.partitionCompactionTablePressureDeadRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO, "0.5");
+            if (!Double.isFinite(partitionCompactionTablePressureDeadRatio)
+                    || partitionCompactionTablePressureDeadRatio <= 0
+                    || !(partitionCompactionTablePressureDeadRatio < partitionCompactionDeadRowsRatio)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath()
+                        + " must be positive and below " + PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath());
+            }
             this.partitionCompactionDeadMinSize = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.partitionCompactionIdleTimeout = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, 60 * Micros.MINUTE_MICROS);
             // The squash threshold can never sit above the single-folder one: a logical partition whose
@@ -2061,7 +2069,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
-            this.o3MidPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1));
+            this.o3PartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, o3LastPartitionMaxSplits));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
 
@@ -3865,6 +3873,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
                     PropertyKey.LINE_DEFAULT_PARTITION_BY
             );
+            registerDeprecated(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS);
+            registerDeprecated(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS);
             registerDeprecated(
                     PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
                     PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE
@@ -4811,7 +4821,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getO3MidPartitionMaxSplits() {
-            return o3MidPartitionMaxSplits;
+            return o3PartitionMaxSplits;
+        }
+
+        @Override
+        public int getO3PartitionMaxSplits() {
+            return o3PartitionMaxSplits;
         }
 
         @Override
@@ -4992,6 +5007,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getPartitionCompactionTableDeadTrigger() {
             return partitionCompactionTableDeadTrigger;
+        }
+
+        @Override
+        public double getPartitionCompactionTablePressureDeadRatio() {
+            return partitionCompactionTablePressureDeadRatio;
         }
 
         @Override

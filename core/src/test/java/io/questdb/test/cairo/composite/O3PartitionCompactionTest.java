@@ -1368,6 +1368,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             );
 
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO, "0.05");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "0.1");
             append("x", nextPassDay(), 2);
 
@@ -1432,7 +1433,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "10");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
             setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
 
             createDayTable("x", "2024-01-01", 4_000);
@@ -1473,7 +1475,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * partition. It withholds nothing else: JOIN, MOVE-TAIL and MAKE-PLAIN all still run, and on the
      * active partition they are what keeps its size down.
      * <p>
-     * Same fixture as {@link #testTablePressureTriggerCompactsTheColdestPartitionFirst}, minus its
+     * Same fixture as {@link #testTablePressureTriggerCompactsTheMostWastefulPartitionFirst}, minus its
      * cooling step: that step is the only difference, so what it asserts is exactly this rule.
      */
     @Test
@@ -1495,7 +1497,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             enableCompaction();
             // ...but this test is about the hot window itself, so it keeps the shipped one.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 10);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "10");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "20");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, "1");
 
@@ -1534,7 +1537,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * so it is the one that must be compacted first.
      */
     @Test
-    public void testTablePressureTriggerCompactsTheColdestPartitionFirst() throws Exception {
+    public void testTablePressureTriggerCompactsTheMostWastefulPartitionFirst() throws Exception {
         assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
 
@@ -1564,8 +1567,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // Per-partition rules must not be what fires - only the table-wide one. enableCompaction()
             // already keeps the piece-count rule off by default; the fixture's total waste is a few KB,
             // well under the table-wide floor's 50MB default, so that floor must be lowered too or the
-            // percentage check never even runs.
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            // percentage check never even runs. Keep the normal waste rule above this fixture's ratio.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "10");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "20");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, "1");
 

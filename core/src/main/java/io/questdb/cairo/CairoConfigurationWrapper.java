@@ -760,6 +760,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionMaxSplits() {
+        return getDelegate().getO3PartitionMaxSplits();
+    }
+
+    @Override
     public long getO3MinLag() {
         return getDelegate().getO3MinLag();
     }
@@ -937,6 +942,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getPartitionCompactionTableDeadTrigger() {
         return getDelegate().getPartitionCompactionTableDeadTrigger();
+    }
+
+    @Override
+    public double getPartitionCompactionTablePressureDeadRatio() {
+        return getDelegate().getPartitionCompactionTablePressureDeadRatio();
     }
 
     @Override

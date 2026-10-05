@@ -1557,7 +1557,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (!tableWriter.wouldBreachCompactionThresholds(partitionIndex, plan)) {
             return false;
         }
-        if (tableWriter.wouldMoveTailSucceed(bounds, plan)) {
+        if (tableWriter.wouldMoveTailSucceed(partitionIndex, bounds, plan)) {
             LOG.info().$("leaving compaction breach for MOVE-TAIL [table=").$(tableWriter.getTableToken())
                     .$(", partitionIndex=").$(partitionIndex)
                     .I$();
@@ -3455,7 +3455,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     }
 
-                    if (canSplit) {
+                    if (canSplit && tableWriter.tryAcquirePartitionSplit(partitionTimestamp)) {
                         partitionSplit = true;
                         partitionTimestamp = maxSourceTimestamp + 1;
                         prefixType = O3_BLOCK_NONE;
