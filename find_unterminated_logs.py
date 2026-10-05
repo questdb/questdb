@@ -15,11 +15,18 @@ Log statements may span multiple lines:
             .$("`, fd=").$(executionContext.getRequestFd())
             .I$();                                 // OK
 
-Usage:
-    python3 find_unterminated_logs.py [directory] [--no-tests]
+Tests that deliberately leave a chain unterminated (e.g. to exercise
+abandoned-record detection) can suppress the check for one statement by
+putting the SUPPRESS_MARKER comment on any line of that statement:
 
-    directory   -- root to scan (default: current directory)
-    --no-tests  -- skip test source trees
+    LOG.info().$("abandoned"); // unterminated-log-ok
+
+Usage:
+    python3 find_unterminated_logs.py [directory] [--no-tests] [--exclude=<substr>]...
+
+    directory          -- root to scan (default: current directory)
+    --no-tests         -- skip test source trees
+    --exclude=<substr> -- skip files whose path contains <substr>
 """
 
 import os
@@ -44,6 +51,9 @@ _levels_alt = "|".join(LOG_LEVELS)
 LOG_START_RE = re.compile(
     rf"\.(?:{_levels_alt})\(\)"
 )
+
+# Comment marker that exempts a single log statement from the check.
+SUPPRESS_MARKER = "unterminated-log-ok"
 
 # Detects LogRecord variable captures (these terminate separately).
 LOG_RECORD_CAPTURE_RE = re.compile(
@@ -382,6 +392,11 @@ def scan_file(filepath):
         # Skip if the LOG.level() is nested inside a method call
         # (e.g. passed as argument to another function).
         if _is_nested_in_call(stmt):
+            i = end_line + 1
+            continue
+
+        # Skip statements explicitly marked as intentionally unterminated.
+        if any(SUPPRESS_MARKER in lines[k] for k in range(i, end_line + 1)):
             i = end_line + 1
             continue
 
