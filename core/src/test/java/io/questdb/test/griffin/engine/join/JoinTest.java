@@ -2962,6 +2962,71 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardRefLeftJoinWithDerivedKeyOnCrossJoin() throws Exception {
+        // LEFT JOIN g1 reads JOIN g4, written after it. The ON equalities give CROSS JOIN g2 a key on g0,
+        // and then a key on g1 that replaces it. The edge of the replaced key still let g2 execute right
+        // after g0, before g1, so its key read a1 before g1 joined, and the query failed with an
+        // InvalidColumnException that had no message. g2 now executes after g1, and the query returns the
+        // rows of the form that writes CROSS JOIN g2 and JOIN g4 before LEFT JOIN g1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (1, 10), (2, 20), (null, 30)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (1, 11), (3, 31)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (1, 12), (2, 22)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (1, 13), (2, 23)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            execute("INSERT INTO g4 VALUES (1, 100), (2, 200)");
+            execute("CREATE TABLE g5 (a5 INT, b5 INT)");
+            execute("INSERT INTO g5 VALUES (0, 100), (5, 999)");
+            final String expected = """
+                    a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                    1\t10\t1\t11\t1\t12\t1\t13\t1\t100\tnull\tnull
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t100
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t5\t999
+                    """;
+            assertQuery("SELECT a0, b0, a1, b1, a2, b2, a3, b3, a4, b4, a5, b5 FROM g0 CROSS JOIN g2 JOIN g4 ON a2 = a4 AND a0 = a4 LEFT JOIN g1 ON a4 <= a1 JOIN g3 ON a3 = a4 AND a1 = a3 FULL JOIN g5 ON b4 = b5 AND a1 < a5 ORDER BY a5, a0")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT * FROM g0 LEFT JOIN g1 ON a4 <= a1 CROSS JOIN g2 JOIN g3 ON a3 = a4 AND a1 = a3 JOIN g4 ON a2 = a4 AND a0 = a4 FULL JOIN g5 ON b4 = b5 AND a1 < a5 ORDER BY a5, a0")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testForwardRefLeftJoinWithDerivedKeyOnSharedColumnName() throws Exception {
+        // The shape of testForwardRefLeftJoinWithDerivedKeyOnCrossJoin over tables that share column names,
+        // with the key on h1 written on h1.k. CROSS JOIN h2 executed right after h0, before h1, and its key
+        // resolved h1.k to h0.k: the query returned a row that breaks JOIN h4 ON h2.c = h4.c and missed the
+        // row that matches.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 6; i++) {
+                execute("CREATE TABLE h" + i + " (c INT, k INT, v DOUBLE)");
+            }
+            execute("INSERT INTO h0 VALUES (1, 0, 0.0), (2, 5, 0.0)");
+            execute("INSERT INTO h1 VALUES (1, 1, 0.0), (2, 2, 0.0)");
+            execute("INSERT INTO h2 VALUES (0, 0, 0.0), (2, 0, 0.0)");
+            execute("INSERT INTO h3 VALUES (0, 0, 0.0), (2, 0, 0.0)");
+            execute("INSERT INTO h4 VALUES (1, 0, 0.0), (2, 0, 0.0)");
+            execute("INSERT INTO h5 VALUES (0, 0, 9.0)");
+            final String expected = """
+                    c\tk\tv\tc1\tk1\tv1\tc2\tk2\tv2\tc3\tk3\tv3\tc4\tk4\tv4\tc5\tk5\tv5
+                    2\t5\t0.0\t2\t2\t0.0\t2\t0\t0.0\t2\t0\t0.0\t2\t0\t0.0\tnull\tnull\tnull
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t9.0
+                    """;
+            assertQuery("SELECT h0.*, h1.*, h2.*, h3.*, h4.*, h5.* FROM h0 CROSS JOIN h2 JOIN h4 ON h2.c = h4.c AND h0.c = h4.c LEFT JOIN h1 ON h4.c <= h1.c JOIN h3 ON h3.c = h4.c AND h1.k = h3.c FULL JOIN h5 ON h4.v = h5.v AND h1.c < h5.c ORDER BY h5.c, h0.c")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT * FROM h0 LEFT JOIN h1 ON h4.c <= h1.c CROSS JOIN h2 JOIN h3 ON h3.c = h4.c AND h1.k = h3.c JOIN h4 ON h2.c = h4.c AND h0.c = h4.c FULL JOIN h5 ON h4.v = h5.v AND h1.c < h5.c ORDER BY h5.c, h0.c")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testForwardRefOuterJoinColumnEqColumnFilterStaysPostJoin() throws Exception {
         // col=col counterpart of testForwardRefOuterJoinConstFilterStaysPostJoin: the RIGHT/FULL OUTER
         // ON b.k = c.k forward-references c (joined later), so no JoinContext attaches at the join's own

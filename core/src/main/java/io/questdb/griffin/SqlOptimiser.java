@@ -7270,13 +7270,21 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Links the emitted clauses that no other ordering edge links. Left unlinked, such a clause leaves
-    // doReorderTables unable to order the level.
+    // doReorderTables unable to order the level. A clause that processEmittedJoinClauses merges into the
+    // slave's context later can replace the lone clause, and mergeContexts then drops the lone clause's
+    // model from the slave's parents. mergeContexts unlinks the edge of a key it drops, but this edge does
+    // not exist yet, so it stays unlinked here: doReorderTables counts every dependency against the
+    // parents of the slave, and the edge would let the slave run before the model of the replacing
+    // clause. The level still gets the order check of validateNonEquiNullingJoinOrder.
     private void linkLoneEmittedClauses(IQueryModel parent) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         for (int i = 0, n = loneEmittedClauseEdges.size(); i < n; i += 2) {
             final int parentIndex = loneEmittedClauseEdges.getQuick(i);
             final int slaveIndex = loneEmittedClauseEdges.getQuick(i + 1);
-            if (parent.getJoinModels().getQuick(parentIndex).getDependencies().excludes(slaveIndex)) {
-                linkDependencies(parent, parentIndex, slaveIndex);
+            if (joinModels.getQuick(parentIndex).getDependencies().excludes(slaveIndex)) {
+                if (joinModels.getQuick(slaveIndex).getJoinContext().parents.contains(parentIndex)) {
+                    linkDependencies(parent, parentIndex, slaveIndex);
+                }
                 hasLinkedLoneEmittedClause |= hasNonEquiNullingJoin;
             }
         }
