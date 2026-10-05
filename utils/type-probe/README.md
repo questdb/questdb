@@ -36,8 +36,8 @@ repository's `CLAUDE.md` describes (the tool runs Maven with `-P local-client`, 
 
 Options: `--out DIR` (default `utils/target/type-probe/<NAME>/`, ignored by git), `--skip-native`
 (no cargo, no CMake, and the kit runs on the native libraries an earlier run built, or on the
-committed ones), `--skip-kit` (no kit and no coverage tests), `--manual-done FILE` (a copy of
-the manual list with the done entries ticked, section 6). A run with a skipped step never exits 0.
+committed ones), `--skip-kit` (no kit and no coverage tests), `--manual-done FILE` (the
+worklist's manual lines with the decided entries ticked, section 6). A run with a skipped step never exits 0.
 
 ## 3. The facts file
 
@@ -137,7 +137,10 @@ The instrument table lists 555 sites where a type's behaviour could differ from 
   constant, the type constant, the column function, the NULL appender and the NULL fill) are names
   javac reports until the author writes them. Every run rewrites the facts instance from the facts
   file and keeps the answers the author wrote. A var-size type driver gets its facts as methods and
-  a stub that javac reports for every other answer.
+  a stub that javac reports for every other answer. A bind variable holds an existing type: a new
+  type defines one of a type its values fit, as SYMBOL's holds a STRING, and the kit then checks
+  that a refused value names the type the variable holds; or it refuses the definition with an error
+  naming the type, which the COPY bind path then reports.
 - **Pair switches.** The exhaustive switches over a pair of types (ALTER COLUMN TYPE from fixed to
   fixed, from fixed to var-size and from var-size to fixed, the UNION cast, the CASE cast): the
   build lists each; the type names itself in a refusal group, or the pair is implemented. The
@@ -167,10 +170,16 @@ The instrument table lists 555 sites where a type's behaviour could differ from 
   order by the tier, a query compiles or fails naming the type, and a declared site refuses it.
 - **The function steps.** The per-type function bodies (the arithmetic of each function factory
   for each type) are written by the author; the coverage tests report an admitted pair, opcode or
-  function without an implementation.
+  function without an implementation. A type with no functions of its own reaches other types'
+  functions through its implicit casts: `FunctionReachTest` lists each function and operator it
+  reaches that way, and the author answers each one, by a function of the type's own or by adding the
+  reach to the test's expected list as meant. A type that casts to INT implicitly reaches several
+  hundred (470 for a never-null INT).
 - **Native.** The Rust matches over the tag enum: rustc lists the exhaustive ones, a match with a
   wildcard arm is on the manual list, and the decode of an unknown tag code refuses the type at the
-  Parquet boundary until the type joins the Rust enum. The C++ switches over the native enum: the
+  Parquet boundary until the tag has its arm in the tag decode (`TryFrom<u8>` for `ColumnTypeTag` in
+  `col_type.rs`): the registration adds the enum's variant, not that arm, which the kit's Parquet
+  paths report. The C++ switches over the native enum: the
   compiler lists them under `-Wswitch`. The kit runs the tree's native code: the C++ library the
   CMake step builds and a debug Rust library that Maven's `build-rust-library` profile builds, both
   under `core/target/classes/io/questdb` (`bin-local` and `rust`), where they take precedence over
@@ -387,21 +396,21 @@ A coverage test, `TypeDriverTest` or a kit path runs the type through the site a
 | RndSymbolZipfFunctionFactory.newInstance tag switch #1 | `core/src/main/java/io/questdb/griffin/engine/functions/rnd/RndSymbolZipfFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | RndSymbolZipfFunctionFactory.newInstance tag switch #2 | `core/src/main/java/io/questdb/griffin/engine/functions/rnd/RndSymbolZipfFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | LevelTwoPriceFunctionFactory.allowedColumnType tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/finance/LevelTwoPriceFunctionFactory.java` | `allowedColumnType` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
-| BindVariableServiceImpl.setArray0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setArray0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setBoolean0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setBoolean0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setByte0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setByte0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setChar0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setChar0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setDate0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setDate0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setDouble0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setDouble0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setFloat0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setFloat0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setInt0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setInt0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setLong0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setLong0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setLong2560 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setLong2560` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setShort0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setShort0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setStr0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setStr0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setTimestamp0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setTimestamp0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setUuid tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setUuid` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
-| BindVariableServiceImpl.setVarchar0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setVarchar0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, which the kit checks |
+| BindVariableServiceImpl.setArray0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setArray0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setBoolean0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setBoolean0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setByte0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setByte0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setChar0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setChar0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setDate0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setDate0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setDouble0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setDouble0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setFloat0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setFloat0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setInt0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setInt0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setLong0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setLong0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setLong2560 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setLong2560` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setShort0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setShort0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setStr0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setStr0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setTimestamp0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setTimestamp0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setUuid tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setUuid` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
+| BindVariableServiceImpl.setVarchar0 tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/bind/BindVariableServiceImpl.java` | `setVarchar0` | `sql.bind_value`: the kit defines a bind variable of the type and sets it through each value setter: the default arm refuses a tag it does not list with an error naming the type, or the type its variable holds, which the kit checks |
 | GreatestNumericFunctionFactory.newInstance tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/math/GreatestNumericFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | LeastNumericFunctionFactory.newInstance tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/math/LeastNumericFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | SortKeyEncoder.keyKind family switch | `core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java` | `keyKind` | `GeneratedAccessorCoverageTest`: the sort-key kind by accessor; GeneratedAccessorCoverageTest reports a type keyKind does not handle (an unsigned INT look-alike, for example) |
@@ -729,8 +738,9 @@ The site moves bytes by width, orders by tier or is reached by one family only, 
 
 Each entry names a site, what to decide there, and why no build error, test or refusal reaches it.
 The list may only shrink: a kit path or a refusal added later moves a site off it. Every run lists
-the entries as `manual` items until the author ticks them in a copy of this list (`- [x]`) and
-passes the copy with `--manual-done`.
+the entries as `manual` items until the author ticks them: copy the worklist's `manual` lines into a
+file, tick the decided ones (`- [x] manual | README "Manual list", item 3 | ...`) and pass the file
+with `--manual-done`. A ticked copy of the numbered list below is not read.
 
 <!-- manual: start -->
 1. LoopingRecordSink.copyColumn tag switch (`core/src/main/java/io/questdb/cairo/LoopingRecordSink.java`, `copyColumn`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm refuses a tag it does not list, at run time unless a setup path reaches it; no kit path is mapped to it yet.
@@ -801,7 +811,7 @@ per group, in this order: `build-java`, `build-rust`, `build-c`, `refusal`, `kit
 
 | field | values |
 |---|---|
-| decision | `name-yourself` (name the type in a switch or a refusal group), `implement-pair` (write the code an admitted pair, opcode or function needs), `add-writer-arm` (an arm keyed by the type's wire kind, NULL policy or order), `fill-driver-answer` (an answer of the type driver), `declare-or-admit` (a guarded site refused the type: declare it in `refused_sites` or add the type's arm), `manual` (an entry of the manual list) |
+| decision | `name-yourself` (name the type in a switch or a refusal group), `implement-pair` (write the code an admitted pair, opcode or function needs), `add-writer-arm` (an arm keyed by the type's wire kind, NULL policy or order: the item names the switch that chooses an opcode, and the arm goes where that opcode is read, in the per-row writer of the same class), `fill-driver-answer` (an answer of the type driver), `declare-or-admit` (a guarded site refused the type: declare it in `refused_sites` or add the type's arm), `manual` (an entry of the manual list) |
 | location | `` `path:line` `` from the repository root; `` `kit:<path>@<mode>#<value row>` `` for a kit failure; `README "Manual list", item <n>` |
 | message | the first line of the compiler's, the test's or the refusal's text, ASCII, at most 200 characters, `\|` written as `/` |
 | site | the label of the site's row in `sites.tsv`, or `unmapped` when no row matches, which is a defect of the site map |
@@ -859,7 +869,9 @@ addition of the same types, and the time taken. The numbers of that run: not mea
 The tool lists where, not what. It does not write how the type prints, parses, compares and widens,
 the pairs its relations admit, or its function bodies, and it does not rebuild the committed native
 libraries: a CI workflow does, on request. Its native builds check that the code compiles and give
-the kit the tree's native code (section 4).
+the kit the tree's native code (section 4). The build lists the tag switches of
+`OverloadSoundnessTest` and `ColumnConversionSoundnessTest`, but the kit step does not run those two
+tests, so their answers compile and are not checked: run them once the worklist is empty.
 
 Not yet tested, stated plainly: no committed test drives a type through the family-arm guard at the
 sites (the guard itself is tested with stub type drivers), and the factories that refuse a type at a
@@ -888,7 +900,10 @@ Places outside the worklist that a type may still meet:
 The number of places outside a type's own type driver and registration lines that adding it edits:
 
 - a look-alike type, one that stores, reads and orders like an existing type, names itself in the
-  pair switches only (5);
+  five pair switches; it also answers every function it reaches through its implicit casts (section
+  4, "The function steps"), several hundred for a type that casts to INT, and implements the pairs
+  its facts admit (casts, UNION and CASE functions, copier arms, ALTER COLUMN TYPE conversions),
+  which the coverage tests and the kit report;
 - a new representation adds its wire kind (its switches and writer arms) and, for a new order, its
   compare arm;
 - a new NULL policy extends the 18 policy switches once;
