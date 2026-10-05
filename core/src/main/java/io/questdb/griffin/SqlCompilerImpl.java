@@ -2720,10 +2720,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    // Returns the query a materialized view stores, or null to store the query as written. Refresh compiles the
-    // stored query with every bare name read as a column (see SqlExecutionContext.allowBareNoArgFunctionCalls()),
-    // so once the base table drops or renames a column the query reads, refresh fails instead of calling a
-    // function of the same name. Two edits keep the stored query meaning what it means at CREATE:
+    // Returns the query a materialized view stores, or null to store the query as written. A passthrough view's
+    // refresh compiles the stored query with every bare name read as a column (see
+    // SqlExecutionContext.allowBareNoArgFunctionCalls()), so once the base table drops or renames a column the
+    // query reads, refresh fails instead of calling a function of the same name. Two edits keep the stored query
+    // meaning what it means at CREATE:
     // - Each bare name the optimiser read as a call to a zero-argument function gets its parentheses, so
     //   `version` is stored as `version()`.
     // - The top-level wildcard of a passthrough view is replaced by the columns it expands to now. The view's
@@ -2736,7 +2737,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // same column names, types and designated timestamp as the original, so the stored query stays equivalent to
     // what the user wrote at CREATE. The check runs on every CREATE: a bare name read as a call that the edits
     // missed fails it with an invalid column, rather than leaving a view whose refresh fails, or whose refresh
-    // reads a column the base table gains later under that name.
+    // reads a column the base table gains later under that name. An aggregating view's refresh reads a bare
+    // name that matches no column as a call, and the check covers it too: CREATE compiles the user's query with
+    // that same reading, so every bare name CREATE reads as a call is already stored with its parentheses.
     private @Nullable String buildStoredMatViewSql(
             SqlExecutionContext executionContext,
             CreateMatViewOperation createMatViewOp,

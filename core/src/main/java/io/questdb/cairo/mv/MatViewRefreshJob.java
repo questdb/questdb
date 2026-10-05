@@ -1267,7 +1267,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
                 // call, so that all of them are at the same txn.
                 engine.detachReader(baseTableReader);
-                refreshSqlExecutionContext.of(baseTableReader, viewToken);
+                refreshSqlExecutionContext.of(baseTableReader, viewToken, viewDefinition.isPassthrough());
                 try {
                     final int preflight = preflightMaterialization(
                             viewDefinition,
@@ -2709,7 +2709,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
                 // call, so that all of them are at the same txn.
                 engine.detachReader(baseTableReader);
-                refreshSqlExecutionContext.of(baseTableReader, viewToken);
+                refreshSqlExecutionContext.of(baseTableReader, viewToken, viewDefinition.isPassthrough());
                 try {
                     if (preflightMaterialization(viewDefinition, viewState, walWriter, refreshTask, false) != PREFLIGHT_READY) {
                         return false;
@@ -3114,7 +3114,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
             engine.detachReader(baseTableReader);
-            refreshSqlExecutionContext.of(baseTableReader, viewDefinition.getMatViewToken());
+            refreshSqlExecutionContext.of(baseTableReader, viewDefinition.getMatViewToken(), viewDefinition.isPassthrough());
             try {
                 if (preflightMaterialization(viewDefinition, viewState, walWriter, refreshTask, false) != PREFLIGHT_READY) {
                     return toBaseTxn << 1;

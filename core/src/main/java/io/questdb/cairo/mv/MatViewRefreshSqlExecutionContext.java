@@ -49,6 +49,7 @@ import org.jetbrains.annotations.TestOnly;
 public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     private final boolean coveringIndexEnabled;
     private TableReader baseTableReader;
+    private boolean isPassthrough;
     private TableToken viewTableToken;
 
     public MatViewRefreshSqlExecutionContext(CairoEngine engine, int sharedQueryWorkerCount) {
@@ -79,10 +80,14 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
     }
 
-    // The stored query spells each function call with parentheses, so a bare name is always a column.
+    // A passthrough view's stored query spells each function call with parentheses, so a bare name in it is
+    // always a column, and one that stops resolving fails the refresh. Every passthrough view comes from a
+    // binary that stores queries this way. An aggregating view's stored query can come from a binary that
+    // stored it as written, where a bare name such as count or pi calls the zero-argument function, so its
+    // refresh keeps reading a bare name that matches no column as that call.
     @Override
     public boolean allowBareNoArgFunctionCalls() {
-        return false;
+        return !isPassthrough;
     }
 
     @Override
@@ -113,6 +118,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     public void clearReader() {
         this.viewTableToken = null;
         this.baseTableReader = null;
+        this.isPassthrough = false;
     }
 
     @Override
@@ -161,14 +167,15 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return tableToken == baseTableReader.getTableToken();
     }
 
-    public void of(TableReader baseTableReader, TableToken viewTableToken) {
+    public void of(TableReader baseTableReader, TableToken viewTableToken, boolean isPassthrough) {
         this.viewTableToken = viewTableToken;
         this.baseTableReader = baseTableReader;
+        this.isPassthrough = isPassthrough;
     }
 
     @TestOnly
     public void of(TableReader baseTableReader) {
-        of(baseTableReader, baseTableReader.getTableToken());
+        of(baseTableReader, baseTableReader.getTableToken(), false);
     }
 
     @Override

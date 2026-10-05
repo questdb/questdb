@@ -188,35 +188,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             // definition above, so only the guard can make the refresh fail.
             final String legacySql = "SELECT ts, sum(v) AS s FROM base "
                     + "WHERE ts > (SELECT max(value) FROM read_parquet('ext.parquet')) SAMPLE BY 1h";
-            final TableToken viewToken = engine.verifyTableName("mv");
-            final MatViewDefinition current = engine.getDependentViewGraph().getViewDefinition(viewToken);
-            final MatViewDefinition legacy = new MatViewDefinition();
-            legacy.init(
-                    current.getRefreshType(),
-                    current.isDeferred(),
-                    ColumnType.TIMESTAMP_MICRO,
-                    viewToken,
-                    legacySql,
-                    current.getBaseTableName(),
-                    current.getSamplingInterval(),
-                    current.getSamplingIntervalUnit(),
-                    current.getTimeZone(),
-                    current.getTimeZoneOffset(),
-                    current.getRefreshLimitHoursOrMonths(),
-                    current.getTimerInterval(),
-                    current.getTimerUnit(),
-                    current.getTimerStartUs(),
-                    current.getTimerTimeZone(),
-                    current.getPeriodLength(),
-                    current.getPeriodLengthUnit(),
-                    current.getPeriodDelay(),
-                    current.getPeriodDelayUnit(),
-                    current.isPassthrough()
-            );
-            // Mirror TableWriter's definition-swap: both the graph and the state store, so the
-            // refresh job (which reads viewState.getViewDefinition()) sees the legacy SQL.
-            engine.getDependentViewGraph().updateViewDefinition(viewToken, legacy);
-            engine.getMatViewStateStore().updateViewDefinition(viewToken, legacy);
+            installLegacyDefinition("mv", legacySql);
 
             execute("REFRESH MATERIALIZED VIEW mv FULL");
             drainWalAndMatViewQueues();
@@ -239,6 +211,68 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("view_name\tview_status\tinvalidation_reason\n");
+        });
+    }
+
+    @Test
+    public void testRefreshKeepsBareZeroArgCallsInLegacyAggregatingDefinition() throws Exception {
+        // A binary without passthrough views stores an aggregating view's query as written, so the stored
+        // query can call a zero-argument function through its bare name (count, pi). The refresh of an
+        // aggregating view reads such a name as a call, so the view keeps refreshing after an upgrade.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2024-01-01T00:00:00Z', 'a', 1.0),
+                        ('2024-01-01T00:30:00Z', 'a', 2.0),
+                        ('2024-01-01T01:30:00Z', 'a', 3.0)
+                    """);
+            drainWalQueue();
+
+            final String[][] cases = {
+                    {
+                            "SELECT ts, count FROM base SAMPLE BY 1h",
+                            """
+                            ts\tcount
+                            2024-01-01T00:00:00.000000Z\t2
+                            2024-01-01T01:00:00.000000Z\t1
+                            """
+                    },
+                    {
+                            "SELECT ts, pi, sum(v) s FROM base SAMPLE BY 1h",
+                            """
+                            ts\tpi\ts
+                            2024-01-01T00:00:00.000000Z\t3.141592653589793\t3.0
+                            2024-01-01T01:00:00.000000Z\t3.141592653589793\t3.0
+                            """
+                    }
+            };
+            for (String[] c : cases) {
+                final String legacySql = c[0];
+                // MANUAL DEFERRED: no refresh runs at CREATE, so the factory cache stays cold, as on the first
+                // refresh after an upgrade restart. CREATE stores the call with its parentheses.
+                execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + legacySql + ") PARTITION BY DAY");
+                drainWalQueue();
+                installLegacyDefinition("mv", legacySql);
+
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                drainWalAndMatViewQueues();
+
+                assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_name\tview_status\tinvalidation_reason\nmv\tvalid\t\n");
+                assertQuery("mv")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(c[1]);
+
+                execute("DROP MATERIALIZED VIEW mv");
+                drainWalQueue();
+            }
         });
     }
 
@@ -503,6 +537,41 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
     }
 
     /**
+     * Replaces the view's definition with one whose stored query is legacySql, the way TableWriter swaps a
+     * definition: in both the graph and the state store, so the refresh job, which reads
+     * viewState.getViewDefinition(), sees the legacy SQL.
+     */
+    private void installLegacyDefinition(String viewName, String legacySql) {
+        final TableToken viewToken = engine.verifyTableName(viewName);
+        final MatViewDefinition current = engine.getDependentViewGraph().getViewDefinition(viewToken);
+        final MatViewDefinition legacy = new MatViewDefinition();
+        legacy.init(
+                current.getRefreshType(),
+                current.isDeferred(),
+                ColumnType.TIMESTAMP_MICRO,
+                viewToken,
+                legacySql,
+                current.getBaseTableName(),
+                current.getSamplingInterval(),
+                current.getSamplingIntervalUnit(),
+                current.getTimeZone(),
+                current.getTimeZoneOffset(),
+                current.getRefreshLimitHoursOrMonths(),
+                current.getTimerInterval(),
+                current.getTimerUnit(),
+                current.getTimerStartUs(),
+                current.getTimerTimeZone(),
+                current.getPeriodLength(),
+                current.getPeriodLengthUnit(),
+                current.getPeriodDelay(),
+                current.getPeriodDelayUnit(),
+                current.isPassthrough()
+        );
+        engine.getDependentViewGraph().updateViewDefinition(viewToken, legacy);
+        engine.getMatViewStateStore().updateViewDefinition(viewToken, legacy);
+    }
+
+    /**
      * Mirrors the refresh job's cache-miss path: compile the persisted view SQL under the refresh
      * execution context, which is the context that disallows non-deterministic functions.
      */
@@ -515,7 +584,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                 MatViewRefreshSqlExecutionContext refreshContext = new MatViewRefreshSqlExecutionContext(engine, 1);
                 TableReader baseReader = engine.getReader(baseToken)
         ) {
-            refreshContext.of(baseReader);
+            refreshContext.of(baseReader, viewToken, definition.isPassthrough());
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile(viewSql, refreshContext).getRecordCursorFactory().close();
             }

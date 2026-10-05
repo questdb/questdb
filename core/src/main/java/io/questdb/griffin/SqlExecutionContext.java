@@ -60,9 +60,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public interface SqlExecutionContext extends Sinkable, Closeable {
 
     // Returns true when a bare name in a top-level select list that matches no column reads as a call to the
-    // zero-argument function of that name, so `SELECT version FROM t` calls version(). A materialized view
-    // refresh turns this off: the stored query spells each function call with parentheses, so a bare name
-    // that stops resolving means the base table lost that column.
+    // zero-argument function of that name, so `SELECT version FROM t` calls version(). A passthrough materialized
+    // view's refresh turns this off: its stored query spells each function call with parentheses, so a bare
+    // name that stops resolving means the base table lost that column.
     default boolean allowBareNoArgFunctionCalls() {
         return true;
     }
