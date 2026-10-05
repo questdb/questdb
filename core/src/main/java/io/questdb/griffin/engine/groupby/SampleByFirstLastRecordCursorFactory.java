@@ -584,7 +584,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         indexCursor = symbolIndexReader.getFrameCursor(
                                 groupBySymbolKey,
                                 frameLo,
-                                frameHi,
+                                frameHi - 1,
                                 frameMemory.getSourceRowResolver()
                         );
 
