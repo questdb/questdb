@@ -17,7 +17,7 @@ ALTER COLUMN TYPE fixed to fixed pair switch	pair-switch	core/src/main/java/io/q
 CursorPrinter.printColumn writer arm	writer-arm	core/src/main/java/io/questdb/cairo/CursorPrinter.java	printColumn		-	not-type-dependent
 CursorPrinter.printOpcode wire-kind switch	wire-kind-switch	core/src/main/java/io/questdb/cairo/CursorPrinter.java	printOpcode		add-writer-arm	build
 DecimalColumnTypeConverter.convertToDecimal tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java	convertToDecimal		-	not-type-dependent
-DecimalColumnTypeConverter.getLoader tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java	getLoader		-	not-type-dependent
+DecimalColumnTypeConverter.getLoader tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java	getLoader		implement-pair	test storage.alter
 DedupColumnCommitAddresses.setColValues policy switch	policy-switch	core/src/main/java/io/questdb/cairo/DedupColumnCommitAddresses.java	setColValues		add-writer-arm	build
 GeoHashes.getGeoLong tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/GeoHashes.java	getGeoLong		-	not-type-dependent
 IntervalTypeDriver.IntervalTypeDriver tag switch	tag-switch-default	core/src/main/java/io/questdb/cairo/IntervalTypeDriver.java	IntervalTypeDriver		-	not-type-dependent
@@ -137,7 +137,7 @@ CompiledFilterIRSerializer.updateType family switch	family-arm	core/src/main/jav
 CompiledFilterIRSerializer.serializeConstant accessorOf	family-arm	core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java	serializeConstant		manual	manual
 DecimalUtil.createDecimalConstant tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	createDecimalConstant		-	not-type-dependent
 DecimalUtil.createNullDecimalConstant tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	createNullDecimalConstant		-	not-type-dependent
-DecimalUtil.getImplicitCastFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	getImplicitCastFunction		-	not-type-dependent
+DecimalUtil.getImplicitCastFunction tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	getImplicitCastFunction		manual	manual
 DecimalUtil.getTypePrecisionScale relation kind switch	registration	core/src/main/java/io/questdb/griffin/DecimalUtil.java	getTypePrecisionScale		name-yourself	build
 DecimalUtil.load tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	load		-	not-type-dependent
 DecimalUtil.store tag switch #1	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	store		-	not-type-dependent
@@ -549,6 +549,8 @@ update::generate_required_zero_page match	rust-match	core/rust/qdbr/src/parquet_
 column_type.h::var_layout switch	c-switch	core/src/main/c/share/column_type.h	var_layout		name-yourself	build
 converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch	c-switch	core/src/main/c/share/converters.cpp	Java_io_questdb_griffin_ConvertersNative_fixedToFixed		name-yourself	build
 converters.h::is_fixed_convertible switch	c-switch	core/src/main/c/share/converters.h	is_fixed_convertible		name-yourself	build
+FunctionParser.createFunction argument cast chain	tag-switch-default	core/src/main/java/io/questdb/griffin/FunctionParser.java	createFunction		manual	manual
+DecimalUtil.getImplicitCastType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	getImplicitCastType		manual	manual
 ColumnType tag constants	registration	core/src/main/java/io/questdb/cairo/ColumnType.java			name-yourself	build
 ColumnTypeTag enum	registration	core/src/main/java/io/questdb/cairo/ColumnTypeTag.java			name-yourself	build
 WireKind enum	registration	core/src/main/java/io/questdb/cairo/WireKind.java			name-yourself	build

@@ -36,7 +36,8 @@ repository's `CLAUDE.md` describes (the tool runs Maven with `-P local-client`, 
 
 Options: `--out DIR` (default `utils/target/type-probe/<NAME>/`, ignored by git), `--skip-native`
 (no cargo, no CMake, and the kit runs on the native libraries an earlier run built, or on the
-committed ones), `--skip-kit` (no kit and no coverage tests), `--manual-done FILE` (the
+committed ones; the CMake step builds the bundled zlib in place, which leaves the
+`core/src/main/c/share/zlib` submodule dirty), `--skip-kit` (no kit and no coverage tests), `--manual-done FILE` (the
 worklist's manual lines with the decided entries ticked, section 6). A run with a skipped step never exits 0.
 
 ## 3. The facts file
@@ -106,7 +107,7 @@ site of `sites.tsv`, a `pg_oid` that names no constant, or a new wire kind whose
 ## 4. Predefined places, by kind
 
 <!-- counts: start -->
-The instrument table lists 555 sites where a type's behaviour could differ from its family's, by kind and by the instrument that names each when a type is added:
+The instrument table lists 557 sites where a type's behaviour could differ from its family's, by kind and by the instrument that names each when a type is added:
 
 | kind | build | test | refused at setup | manual | not type dependent | all |
 |---|---|---|---|---|---|---|
@@ -119,10 +120,10 @@ The instrument table lists 555 sites where a type's behaviour could differ from 
 | policy-switch | 18 | 0 | 0 | 0 | 0 | 18 |
 | registration | 17 | 4 | 0 | 0 | 0 | 21 |
 | rust-match | 12 | 0 | 1 | 18 | 13 | 44 |
-| tag-switch-default | 0 | 114 | 4 | 19 | 137 | 274 |
+| tag-switch-default | 0 | 115 | 4 | 22 | 135 | 276 |
 | wire-kind-switch | 14 | 0 | 0 | 3 | 0 | 17 |
 | writer-arm | 0 | 0 | 0 | 0 | 30 | 30 |
-| all | 69 | 130 | 62 | 53 | 241 | 555 |
+| all | 69 | 131 | 62 | 56 | 239 | 557 |
 <!-- counts: end -->
 
 - **Registration.** Six places, each marked by a comment `type-registration: <anchor>`: the tag
@@ -179,7 +180,8 @@ The instrument table lists 555 sites where a type's behaviour could differ from 
   wildcard arm is on the manual list, and the decode of an unknown tag code refuses the type at the
   Parquet boundary until the tag has its arm in the tag decode (`TryFrom<u8>` for `ColumnTypeTag` in
   `col_type.rs`): the registration adds the enum's variant, not that arm, which the kit's Parquet
-  paths report. The C++ switches over the native enum: the
+  paths report. cargo checks qdbr only once qdb-core compiles, so the run after qdb-core's items
+  are worked lists qdbr's. The C++ switches over the native enum: the
   compiler lists them under `-Wswitch`. The kit runs the tree's native code: the C++ library the
   CMake step builds and a debug Rust library that Maven's `build-rust-library` profile builds, both
   under `core/target/classes/io/questdb` (`bin-local` and `rust`), where they take precedence over
@@ -279,13 +281,14 @@ The compiler lists the site when a type is added: an exhaustive switch or match 
 | Rust ColumnTypeTag enum | `core/rust/qdb-core/src/col_type.rs` | `` | where a new type registers itself: javac (or rustc, the C++ compiler) lists the exhaustive switch or the enum |
 | native ColumnType enum | `core/src/main/c/share/column_type.h` | `` | where a new type registers itself: javac (or rustc, the C++ compiler) lists the exhaustive switch or the enum |
 
-### Reported by a test (130)
+### Reported by a test (131)
 
 A coverage test, `TypeDriverTest` or a kit path runs the type through the site and reports what is missing.
 
 | site | file | method | how |
 |---|---|---|---|
 | ColumnType.pow2SizeOf tag table POW2_SIZE | `core/src/main/java/io/questdb/cairo/ColumnType.java` | `pow2SizeOf` | `TypeDriverTest`: the size table by tag, filled from the type drivers; testFixedSizeDriverWidthsMatchColumnType checks it |
+| DecimalColumnTypeConverter.getLoader tag switch | `core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java` | `getLoader` | `storage.alter`: the loader of a conversion into DECIMAL, by the source type: a type it does not list has none, and ALTER COLUMN TYPE fails with "column conversion failed"; kit path storage.alter reaches it |
 | LiveViewWindow.isAnchorType family switch | `core/src/main/java/io/questdb/cairo/lv/LiveViewWindow.java` | `isAnchorType` | `lv.window_anchor`: the kit makes the column the ANCHOR EXPRESSION of a live view window: a type outside TIMESTAMP, LONG and INT, or unlike its family's order, is refused at CREATE, the others anchor the window and the view holds every row |
 | LiveViewWindow.LiveViewWindow accessorOpcodeOf | `core/src/main/java/io/questdb/cairo/lv/LiveViewWindow.java` | `LiveViewWindow` | `lv.window_anchor`: the anchor value is read through the opcode of its family when the view refreshes; the kit refreshes an anchored view of every anchor type and checks it holds every row |
 | LoopingRecordToRowCopier.copyColumn tag switch | `core/src/main/java/io/questdb/griffin/LoopingRecordToRowCopier.java` | `copyColumn` | `RelationCoverageTest`: a copier arm; INSERT admits a pair only with a copier arm (rule K), checked for every kit type by testCopierHasAnArmForEveryAdmittedPair |
@@ -485,7 +488,7 @@ A kit path reaches the site, which refuses the type before it allocates or copie
 | QWP WAL append #6 | `core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java` | `appendToWalColumnar` | `ingest.qwp`, "no family arm for <type> at QWP WAL append": the switch keys on familyArmOpcodeOf; an unlike type reaches the default, which raises the guard error |
 | col_type::try_from match | `core/rust/qdb-core/src/col_type.rs` | `try_from` | `storage.parquet`, "unknown QuestDB column tag code": decodes the tag number at the JNI boundary; a Java tag Rust does not know is refused |
 
-### Not type-dependent (241)
+### Not type-dependent (239)
 
 The site moves bytes by width, orders by tier or is reached by one family only, so it cannot treat a new type wrongly; the reason says which.
 
@@ -494,7 +497,6 @@ The site moves bytes by width, orders by tier or is reached by one family only, 
 | ColumnType.getTimestampType tag switch | `core/src/main/java/io/questdb/cairo/ColumnType.java` | `getTimestampType` | tells the timestamp or interval units apart; reached only for that family |
 | CursorPrinter.printColumn writer arm | `core/src/main/java/io/questdb/cairo/CursorPrinter.java` | `printColumn` | the opcode comes from a closed switch at setup (printOpcode, csvOpcode, jsonOpcode, outColumnOpcode, exportOpcode), which refuses an unhandled type; ProtocolOpcodeCoverageTest covers those |
 | DecimalColumnTypeConverter.convertToDecimal tag switch | `core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java` | `convertToDecimal` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
-| DecimalColumnTypeConverter.getLoader tag switch | `core/src/main/java/io/questdb/cairo/DecimalColumnTypeConverter.java` | `getLoader` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | GeoHashes.getGeoLong tag switch | `core/src/main/java/io/questdb/cairo/GeoHashes.java` | `getGeoLong` | reached only for a GEOHASH type: the switch tells the geohash widths apart |
 | IntervalTypeDriver.IntervalTypeDriver tag switch | `core/src/main/java/io/questdb/cairo/IntervalTypeDriver.java` | `IntervalTypeDriver` | tells the timestamp or interval units apart; reached only for that family |
 | IntervalTypeDriver.getName tag switch | `core/src/main/java/io/questdb/cairo/IntervalTypeDriver.java` | `getName` | tells the timestamp or interval units apart; reached only for that family |
@@ -565,7 +567,6 @@ The site moves bytes by width, orders by tier or is reached by one family only, 
 | CompiledFilterIRSerializer.isGeoHash tag switch | `core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java` | `isGeoHash` | reached only for a GEOHASH type: the switch tells the geohash widths apart |
 | DecimalUtil.createDecimalConstant tag switch | `core/src/main/java/io/questdb/griffin/DecimalUtil.java` | `createDecimalConstant` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | DecimalUtil.createNullDecimalConstant tag switch | `core/src/main/java/io/questdb/griffin/DecimalUtil.java` | `createNullDecimalConstant` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
-| DecimalUtil.getImplicitCastFunction tag switch | `core/src/main/java/io/questdb/griffin/DecimalUtil.java` | `getImplicitCastFunction` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | DecimalUtil.load tag switch | `core/src/main/java/io/questdb/griffin/DecimalUtil.java` | `load` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | DecimalUtil.store tag switch #1 | `core/src/main/java/io/questdb/griffin/DecimalUtil.java` | `store` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | DecimalUtil.store tag switch #2 | `core/src/main/java/io/questdb/griffin/DecimalUtil.java` | `store` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
@@ -757,45 +758,48 @@ with `--manual-done`. A ticked copy of the numbered list below is not read.
 12. CompiledFilterIRSerializer.rejectOrderingComparison family switch (`core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java`, `rejectOrderingComparison`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Decides the JIT NULL value or orderability by accessor; kit path sql.filter_lt runs the parallel JIT mode.
 13. CompiledFilterIRSerializer.updateType family switch (`core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java`, `updateType`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Chooses the JIT operand by accessor; signed compares and the sentinel NULL test would be wrong for an unsigned or never-null look-alike; kit path sql.filter_lt runs the parallel JIT mode.
 14. CompiledFilterIRSerializer.serializeConstant accessorOf (`core/src/main/java/io/questdb/jit/CompiledFilterIRSerializer.java`, `serializeConstant`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Decides the JIT NULL value or orderability by accessor; kit path sql.filter_lt runs the parallel JIT mode.
-15. FunctionParser.createFunction tag switch (`core/src/main/java/io/questdb/griffin/FunctionParser.java`, `createFunction`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-16. FunctionParser.createImplicitCastOrNull tag switch (`core/src/main/java/io/questdb/griffin/FunctionParser.java`, `createImplicitCastOrNull`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-17. FunctionParser.functionToConstant0 tag switch (`core/src/main/java/io/questdb/griffin/FunctionParser.java`, `functionToConstant0`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-18. SqlCodeGenerator.createSymbolShortCircuit tag switch (`core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java`, `createSymbolShortCircuit`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-19. SqlCodeGenerator.validateSubQueryColumnAndGetGetter tag switch (`core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java`, `validateSubQueryColumnAndGetGetter`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm refuses a tag it does not list, at run time unless a setup path reaches it; no kit path is mapped to it yet.
-20. JsonUnnestSource.JsonUnnestSource tag switch (`core/src/main/java/io/questdb/griffin/engine/join/JsonUnnestSource.java`, `JsonUnnestSource`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-21. GroupByColumnSink.put tag switch (`core/src/main/java/io/questdb/griffin/engine/groupby/GroupByColumnSink.java`, `put`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm refuses a tag it does not list, at run time unless a setup path reaches it; no kit path is mapped to it yet.
-22. GroupByColumnSink.putAt tag switch (`core/src/main/java/io/questdb/griffin/engine/groupby/GroupByColumnSink.java`, `putAt`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm refuses a tag it does not list, at run time unless a setup path reaches it; no kit path is mapped to it yet.
-23. ParquetRowGroupFilter.prepareFilterListImpl tag switch #1 (`core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java`, `prepareFilterListImpl`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-24. ParquetRowGroupFilter.prepareFilterListImpl tag switch #2 (`core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java`, `prepareFilterListImpl`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-25. ParquetRowGroupFilter.prepareFilterListImpl tag switch #3 (`core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java`, `prepareFilterListImpl`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-26. WindowAccumulatorDescriptor.contributionKindFor tag switch (`core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java`, `contributionKindFor`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-27. WindowAccumulatorDescriptor.resetState tag switch (`core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java`, `resetState`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-28. WindowAccumulatorDescriptor.isLongPayload tag switch (`core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java`, `isLongPayload`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-29. WindowAccumulatorDescriptor.isWidenedToDouble tag switch (`core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java`, `isWidenedToDouble`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
-30. SortKeyEncoder.keyShapeOf family switch (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `keyShapeOf`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
-31. SortKeyEncoder.SortKeyEncoder accessorOpcodeOf (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `SortKeyEncoder`): decide whether the type behaves as its family's namesake here; if not, give it an opcode. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
-32. SortKeyEncoder.SortKeyEncoder accessorOf (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `SortKeyEncoder`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
-33. CairoTextWriter.initWriterAndOverrideImportTypes wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/CairoTextWriter.java`, `initWriterAndOverrideImportTypes`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
-34. ParallelCsvFileImporter.initWriterAndOverrideImportMetadata wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/ParallelCsvFileImporter.java`, `initWriterAndOverrideImportMetadata`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
-35. TextMetadataParser.createImportedType wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/TextMetadataParser.java`, `createImportedType`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
-36. decode::decode_int32_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int32_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-37. decode::decode_int64_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int64_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-38. decode::decode_fixed_len_dispatch match #1 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-39. decode::decode_fixed_len_dispatch match #2 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-40. decode::decode_byte_array_dispatch match #2 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-41. decode::decode_byte_array_dispatch match #3 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-42. decode::decode_int96_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int96_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-43. decode::decode_double_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_double_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-44. decode::decode_other_fixed_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_other_fixed_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
-45. row_groups::post_convert match (`core/rust/qdbr/src/parquet_read/row_groups.rs`, `post_convert`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-46. row_groups::plan_decode_conversion match (`core/rust/qdbr/src/parquet_read/row_groups.rs`, `plan_decode_conversion`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-47. encode::encode_boolean_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_boolean_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-48. encode::encode_int32_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_int32_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-49. encode::encode_int64_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_int64_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-50. encode::encode_byte_array_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-51. encode::encode_fixed_len_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-52. schema::column_type_to_parquet_type match #2 (`core/rust/qdbr/src/parquet_write/schema.rs`, `column_type_to_parquet_type`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
-53. schema::validate_encoding match (`core/rust/qdbr/src/parquet_write/schema.rs`, `validate_encoding`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+15. DecimalUtil.getImplicitCastFunction tag switch (`core/src/main/java/io/questdb/griffin/DecimalUtil.java`, `getImplicitCastFunction`): decide whether the type needs an arm of its own; its tag takes the default arm. The cast of a function argument into a DECIMAL signature slot, by the argument's type: a type it does not list gets no cast, so the call does not compile.
+16. FunctionParser.createFunction tag switch (`core/src/main/java/io/questdb/griffin/FunctionParser.java`, `createFunction`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+17. FunctionParser.createImplicitCastOrNull tag switch (`core/src/main/java/io/questdb/griffin/FunctionParser.java`, `createImplicitCastOrNull`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+18. FunctionParser.functionToConstant0 tag switch (`core/src/main/java/io/questdb/griffin/FunctionParser.java`, `functionToConstant0`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+19. SqlCodeGenerator.createSymbolShortCircuit tag switch (`core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java`, `createSymbolShortCircuit`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+20. SqlCodeGenerator.validateSubQueryColumnAndGetGetter tag switch (`core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java`, `validateSubQueryColumnAndGetGetter`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm refuses a tag it does not list, at run time unless a setup path reaches it; no kit path is mapped to it yet.
+21. JsonUnnestSource.JsonUnnestSource tag switch (`core/src/main/java/io/questdb/griffin/engine/join/JsonUnnestSource.java`, `JsonUnnestSource`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+22. GroupByColumnSink.put tag switch (`core/src/main/java/io/questdb/griffin/engine/groupby/GroupByColumnSink.java`, `put`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm refuses a tag it does not list, at run time unless a setup path reaches it; no kit path is mapped to it yet.
+23. GroupByColumnSink.putAt tag switch (`core/src/main/java/io/questdb/griffin/engine/groupby/GroupByColumnSink.java`, `putAt`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm refuses a tag it does not list, at run time unless a setup path reaches it; no kit path is mapped to it yet.
+24. ParquetRowGroupFilter.prepareFilterListImpl tag switch #1 (`core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java`, `prepareFilterListImpl`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+25. ParquetRowGroupFilter.prepareFilterListImpl tag switch #2 (`core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java`, `prepareFilterListImpl`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+26. ParquetRowGroupFilter.prepareFilterListImpl tag switch #3 (`core/src/main/java/io/questdb/griffin/engine/table/ParquetRowGroupFilter.java`, `prepareFilterListImpl`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+27. WindowAccumulatorDescriptor.contributionKindFor tag switch (`core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java`, `contributionKindFor`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+28. WindowAccumulatorDescriptor.resetState tag switch (`core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java`, `resetState`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+29. WindowAccumulatorDescriptor.isLongPayload tag switch (`core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java`, `isLongPayload`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+30. WindowAccumulatorDescriptor.isWidenedToDouble tag switch (`core/src/main/java/io/questdb/griffin/engine/window/WindowAccumulatorDescriptor.java`, `isWidenedToDouble`): decide whether the type needs an arm of its own; its tag takes the default arm. The default arm answers silently for a tag it does not list.
+31. SortKeyEncoder.keyShapeOf family switch (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `keyShapeOf`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
+32. SortKeyEncoder.SortKeyEncoder accessorOpcodeOf (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `SortKeyEncoder`): decide whether the type behaves as its family's namesake here; if not, give it an opcode. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
+33. SortKeyEncoder.SortKeyEncoder accessorOf (`core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java`, `SortKeyEncoder`): decide whether the type behaves as its family's namesake here; if not, give it an arm. Encodes a sort key by accessor; a type ordered unlike its family (an unsigned tier) needs its own encoding, which compareOpcode does not gate; kit paths sql.order_asc and sql.order_desc reach it.
+34. CairoTextWriter.initWriterAndOverrideImportTypes wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/CairoTextWriter.java`, `initWriterAndOverrideImportTypes`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
+35. ParallelCsvFileImporter.initWriterAndOverrideImportMetadata wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/ParallelCsvFileImporter.java`, `initWriterAndOverrideImportMetadata`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
+36. TextMetadataParser.createImportedType wire-kind switch (`core/src/main/java/io/questdb/cutlass/text/TextMetadataParser.java`, `createImportedType`): decide which import type the type's wire kind takes; the default arm keeps the detected one. The CSV import's switch over wire kinds has a default arm that keeps the column as detected; kit path ingest.csv reaches it.
+37. decode::decode_int32_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int32_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+38. decode::decode_int64_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int64_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+39. decode::decode_fixed_len_dispatch match #1 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+40. decode::decode_fixed_len_dispatch match #2 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+41. decode::decode_byte_array_dispatch match #2 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+42. decode::decode_byte_array_dispatch match #3 (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+43. decode::decode_int96_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_int96_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+44. decode::decode_double_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_double_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+45. decode::decode_other_fixed_dispatch match (`core/rust/qdbr/src/parquet_read/decode.rs`, `decode_other_fixed_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A Parquet page decoder by physical type: its wildcard arm answers "not decoded here" for a tag it does not list, so a new tag reaches the next decoder or none without a listing.
+46. row_groups::post_convert match (`core/rust/qdbr/src/parquet_read/row_groups.rs`, `post_convert`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+47. row_groups::plan_decode_conversion match (`core/rust/qdbr/src/parquet_read/row_groups.rs`, `plan_decode_conversion`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+48. encode::encode_boolean_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_boolean_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+49. encode::encode_int32_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_int32_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+50. encode::encode_int64_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_int64_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+51. encode::encode_byte_array_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_byte_array_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+52. encode::encode_fixed_len_dispatch match (`core/rust/qdbr/src/parquet_write/encode.rs`, `encode_fixed_len_dispatch`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+53. schema::column_type_to_parquet_type match #2 (`core/rust/qdbr/src/parquet_write/schema.rs`, `column_type_to_parquet_type`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+54. schema::validate_encoding match (`core/rust/qdbr/src/parquet_write/schema.rs`, `validate_encoding`): decide whether the type needs an arm of its own; its tag takes the wildcard arm. A wildcard arm takes a tag added to the Rust enum without a listing.
+55. FunctionParser.createFunction argument cast chain (`core/src/main/java/io/questdb/griffin/FunctionParser.java`, `createFunction`): decide whether the type needs an arm of its own; its tag takes the default arm. An if-else chain over the argument's and the signature's tags inserts the casts overload matching leaves to the parser, INT, LONG, SHORT and BYTE into DECIMAL among them: a type it does not list passes through uncast, and a getter its function lacks fails at run time.
+56. DecimalUtil.getImplicitCastType tag switch (`core/src/main/java/io/questdb/griffin/DecimalUtil.java`, `getImplicitCastType`): decide whether the type needs an arm of its own; its tag takes the default arm. The DECIMAL type an integer converts to implicitly, by the source type: a type it does not list gets 0, no implicit conversion.
 <!-- manual: end -->
 
 ## 7. The worklist format
@@ -812,7 +816,7 @@ per group, in this order: `build-java`, `build-rust`, `build-c`, `refusal`, `kit
 | field | values |
 |---|---|
 | decision | `name-yourself` (name the type in a switch or a refusal group), `implement-pair` (write the code an admitted pair, opcode or function needs), `add-writer-arm` (an arm keyed by the type's wire kind, NULL policy or order: the item names the switch that chooses an opcode, and the arm goes where that opcode is read, in the per-row writer of the same class), `fill-driver-answer` (an answer of the type driver), `declare-or-admit` (a guarded site refused the type: declare it in `refused_sites` or add the type's arm), `manual` (an entry of the manual list) |
-| location | `` `path:line` `` from the repository root; `` `kit:<path>@<mode>#<value row>` `` for a kit failure; `README "Manual list", item <n>` |
+| location | `` `path:line` `` from the repository root; `` `kit:<path>@<mode>#<value row>` `` for a kit failure, `` `kit:<test class>#<test>` `` for one that names no path; `` `<test class>#<test>` `` for a coverage failure that names no site; `README "Manual list", item <n>` |
 | message | the first line of the compiler's, the test's or the refusal's text, ASCII, at most 200 characters, `\|` written as `/` |
 | site | the label of the site's row in `sites.tsv`, or `unmapped` when no row matches, which is a defect of the site map |
 
@@ -859,8 +863,8 @@ A type PR is done when the run exits 0: every build is clean, the kit and the co
 with the type in `later-types.txt` (its declared refusals checked as refusals), and the manual list
 is worked.
 
-The tool's own acceptance: an author who has not added these types before adds two look-alike
-types, a never-null INT and an unsigned INT, from the worklist alone, on a throwaway branch.
+The tool's own acceptance: an author who has not added the type before adds an unsigned INT from
+the worklist alone, on a throwaway branch (a never-null type waits for its column tops, section 9).
 Measured: the decisions made outside the worklist, the sites touched against an earlier hand-made
 addition of the same types, and the time taken. The numbers of that run: not measured yet.
 
@@ -872,6 +876,11 @@ libraries: a CI workflow does, on request. Its native builds check that the code
 the kit the tree's native code (section 4). The build lists the tag switches of
 `OverloadSoundnessTest` and `ColumnConversionSoundnessTest`, but the kit step does not run those two
 tests, so their answers compile and are not checked: run them once the worklist is empty.
+
+A type that stores no NULL (NULL policy NONE) is not supported yet. Its column tops, the rows of a
+partition written before the column was added, must read a default value given in SQL when the
+column is added, never written into the old rows; that does not exist yet, so those rows read the
+family's NULL (INT's -2147483648 for a type on INT's accessor).
 
 Not yet tested, stated plainly: no committed test drives a type through the family-arm guard at the
 sites (the guard itself is tested with stub type drivers), and the factories that refuse a type at a
