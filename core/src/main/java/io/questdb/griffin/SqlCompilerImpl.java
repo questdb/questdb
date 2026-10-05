@@ -2785,7 +2785,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int end = findBareNameEnd(selectText, pos, name);
             if (end < 0) {
                 throw SqlException.$(selectTextPosition + Math.max(pos, 0),
-                        "could not store the function call of the materialized view query, write it as ")
+                                "could not store the function call of the materialized view query, write it as ")
                         .put(name).put("()");
             }
             edits.add(pos);
