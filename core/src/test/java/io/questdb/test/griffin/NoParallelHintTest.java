@@ -171,8 +171,17 @@ public class NoParallelHintTest extends AbstractCairoTest {
     @Test
     public void testParquet() throws Exception {
         assertMemoryLeak(() -> {
-            createTable();
+            execute("""
+                    CREATE TABLE tab AS (
+                        SELECT (x % 4)::SYMBOL k, x v, timestamp_sequence(0, 1_000_000_000) ts
+                        FROM long_sequence(100)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
             execute("alter table tab convert partition to parquet list '1970-01-01'");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tab') WHERE name = '1970-01-01'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("name\tisParquet\n1970-01-01\ttrue\n");
             assertSerialQuery("select k, sum(v) from tab where v > 40 group by k order by k", "Async");
         });
     }
