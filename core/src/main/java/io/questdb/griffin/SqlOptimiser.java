@@ -45,6 +45,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -130,6 +132,7 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_WINDOW_JOIN_MODE = 128;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
     static final String LATERAL_COUNT_MARKER_PREFIX = "__qdb_count_marker__";
+    static final String NULL_REJECTING_PROBE_COLUMN = "__qdb_null_probe";
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
@@ -165,7 +168,18 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
-    private static final String NULL_REJECTING_PROBE_COLUMN = "__qdb_null_probe";
+    // The probe column of isFalseOnNullRecord() holds the NULL of its type, which reads no symbol table
+    private static final SymbolTableSource NULL_REJECTING_PROBE_SYMBOL_TABLES = new SymbolTableSource() {
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return null;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return null;
+        }
+    };
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -6835,17 +6849,6 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
 
-        // Evaluate the comparison on the NULL record to preserve type-specific NULL semantics.
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata(
-                NULL_REJECTING_PROBE_COLUMN,
-                columnType,
-                IndexType.NONE,
-                0,
-                false,
-                null
-        ));
-
         final ExpressionNode columnNode = expressionNodePool.next().of(
                 LITERAL,
                 NULL_REJECTING_PROBE_COLUMN,
@@ -6857,19 +6860,7 @@ public class SqlOptimiser implements Mutable {
         comparisonNode.lhs = isColumnLhs ? columnNode : constCopy;
         comparisonNode.rhs = isColumnLhs ? constCopy : columnNode;
         comparisonNode.paramCount = 2;
-
-        Function function = null;
-        Record nullRecord = null;
-        try {
-            nullRecord = NullRecordFactory.getInstance(metadata);
-            function = functionParser.parseFunction(comparisonNode, metadata, sqlExecutionContext);
-            return function != null && ColumnType.isBoolean(function.getType()) && !function.getBool(nullRecord);
-        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException ignored) {
-            return false;
-        } finally {
-            Misc.free(function);
-            Misc.freeIfCloseable(nullRecord);
-        }
+        return isFalseOnNullRecord(functionParser, comparisonNode, columnType, sqlExecutionContext);
     }
 
     private boolean isNullRejectingJoinConstant(
@@ -15977,6 +15968,45 @@ public class SqlOptimiser implements Mutable {
         return column;
     }
 
+    // Returns true when the predicate, whose only column is NULL_REJECTING_PROBE_COLUMN of the type, is
+    // false on the NULL record of the type, which an outer join puts in the rows that it NULL-extends.
+    // Evaluating the predicate keeps the NULL semantics of the type: a BOOLEAN, BYTE or SHORT column
+    // holds false or 0, and a constant such as 'NaN' or NULL::int may read as NULL. Any failure to
+    // parse or evaluate the predicate returns false.
+    static boolean isFalseOnNullRecord(
+            FunctionParser functionParser,
+            ExpressionNode predicate,
+            int columnType,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata(
+                NULL_REJECTING_PROBE_COLUMN,
+                columnType,
+                IndexType.NONE,
+                0,
+                false,
+                null
+        ));
+        Function function = null;
+        Record nullRecord = null;
+        try {
+            nullRecord = NullRecordFactory.getInstance(metadata);
+            function = functionParser.parseFunction(predicate, metadata, sqlExecutionContext);
+            if (function == null || !ColumnType.isBoolean(function.getType())) {
+                return false;
+            }
+            // some functions, such as IN on a SYMBOL column, read their state from init()
+            function.init(NULL_REJECTING_PROBE_SYMBOL_TABLES, sqlExecutionContext);
+            return !function.getBool(nullRecord);
+        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException ignored) {
+            return false;
+        } finally {
+            Misc.free(function);
+            Misc.freeIfCloseable(nullRecord);
+        }
+    }
+
     static boolean isZeroOnEmptyAggregate(ExpressionNode node) {
         return node != null
                 && node.type == FUNCTION
@@ -16239,7 +16269,7 @@ public class SqlOptimiser implements Mutable {
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
-            lateralJoinRewriter.rewrite(rewrittenModel);
+            lateralJoinRewriter.rewrite(rewrittenModel, sqlExecutionContext);
             rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             verifyNoResidualSubsample(rewrittenModel, true);

@@ -1450,20 +1450,57 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // NaN is the NULL of a DOUBLE column, and '0.0.0.0' that of an IPv4 column. = and <= against
-    // them, and IN with them, keep the refunds that match no trade per outer row: WHERE t.d = NaN
-    // returns 1 null 101, 2 null 100 and 2 null 101. They would carry a NULL outer-ref key and be
-    // lost, so those filters fail. != against them is IS NOT NULL, which drops those refunds.
+    // A bind variable may be NULL in any execution of the cached plan, and NULL >= NULL is true, so
+    // per outer row WHERE t.id >= $1 keeps the refunds that match no trade when $1 is NULL. Those
+    // refunds would carry a NULL outer-ref key and be lost, so the filter fails whatever $1 holds,
+    // as do <= and a cast of NULL. < and > are false for a NULL t.id whatever $1 holds, so they
+    // drop those refunds for every value.
     @Test
-    public void testLateralCorrelatedRightJoinOnWithNullConstantFilter() throws Exception {
+    public void testLateralCorrelatedRightJoinOnWithBindVariableFilter() throws Exception {
         assertMemoryLeak(() -> {
-            createTypedCorrelatedRightJoinTables();
-            for (String filter : new String[]{"t.d = NaN", "t.d <= NaN", "t.d IN (NaN, 10.0)", "t.ip = '0.0.0.0'", "t.ip IN ('0.0.0.0', '1.1.1.1')"}) {
+            createCorrelatedRightJoinTables();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 5);
+            for (String filter : new String[]{"t.id >= $1", "t.id <= $1", "t.id >= NULL::int", "t.id <= CAST(NULL AS INT)"}) {
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
                 assertQuery(sql)
                         .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
             }
-            for (String filter : new String[]{"t.d != NaN", "t.ip != '0.0.0.0'"}) {
+            final String gtSql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id > $1) l ORDER BY 1, 2, 3";
+            assertQuery(gtSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            """);
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            assertQuery(gtSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            """);
+        });
+    }
+
+    // NaN is the NULL of a DOUBLE column, and so are the strings 'NaN' and 'Infinity' that a DOUBLE
+    // column reads, and '0.0.0.0' is the NULL of an IPv4 column. = and <= against them, and IN with
+    // them, keep the refunds that match no trade per outer row: WHERE t.d = NaN returns 1 null 101,
+    // 2 null 100 and 2 null 101. They would carry a NULL outer-ref key and be lost, so those filters
+    // fail. != against them is IS NOT NULL, which drops those refunds, and so does IN with non-NULL
+    // values on a SYMBOL column.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithNullConstantFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedCorrelatedRightJoinTables();
+            for (String filter : new String[]{"t.d = NaN", "t.d <= NaN", "t.d IN (NaN, 10.0)", "t.ip = '0.0.0.0'", "t.ip IN ('0.0.0.0', '1.1.1.1')",
+                    "t.d = 'NaN'", "'NaN' = t.d", "t.d >= 'NaN'", "t.d IN ('NaN', 10.0)", "t.d = 'Infinity'", "t.d >= NULL::double", "t.sym IN (NULL, 'abc')"}) {
+                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
+                assertQuery(sql)
+                        .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+            }
+            for (String filter : new String[]{"t.d != NaN", "t.ip != '0.0.0.0'", "t.d != 'NaN'", "t.d = 10.0", "t.sym IN ('abc', 'xyz')"}) {
                 assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3")
                         .noLeakCheck()
                         .expectSize()
@@ -1485,6 +1522,65 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (3, NULL, 3::timestamp)");
             assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id >= o.k) l")
                     .fails(94, "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // A sub-query column that passes a table column through has its type, under the same name or
+    // another, so WHERE t.v IS NOT NULL on the INT id drops the refunds that match no trade, per
+    // outer row too. The type of a computed column is not known before code generation, and a
+    // SHORT one holds 0 in those refunds, which IS NOT NULL keeps. Such a filter fails, while
+    // t.v > 5 is false for both NULL and 0 and counts.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithSubQueryColumnFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelatedRightJoinTables();
+            for (String table : new String[]{"(SELECT x, id AS v FROM trades)", "(SELECT * FROM (SELECT x, id v FROM trades))"}) {
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.v tid, r.id rid FROM " + table + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.v IS NOT NULL) l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\ttid\trid
+                                1\t10\t100
+                                """);
+            }
+            final String computed = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.v tid, r.id rid FROM (SELECT x, id::short v FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.v IS NOT NULL) l";
+            assertQuery(computed)
+                    .fails(computed.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+            assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.v tid, r.id rid FROM (SELECT x, id::short v FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.v > 5) l ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            """);
+        });
+    }
+
+    // A sub-query that passes the SHORT, BYTE and BOOLEAN columns of trades through holds 0 or false
+    // in them for the refunds that match no trade, as the table does. A filter that holds for 0 or
+    // false keeps those refunds per outer row: WHERE t.s < 11 returns 1 10 100, 1 null 101,
+    // 2 null 100 and 2 null 101. They would carry a NULL outer-ref key and be lost, so such a filter
+    // fails. A filter that is false for 0 or false drops them, so losing them changes nothing.
+    @Test
+    public void testLateralCorrelatedRightJoinOnWithSubQueryTypeWithoutNullFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedCorrelatedRightJoinTables();
+            for (String table : new String[]{"(SELECT id, x, s, b, f FROM trades)", "(SELECT * FROM trades)", "(SELECT * FROM (SELECT id, x, s, b, f FROM trades))"}) {
+                for (String filter : new String[]{"t.s < 11", "t.s >= 0", "t.s = 0", "t.s IS NOT NULL", "t.b <= 10", "t.f = false", "t.f IS NOT NULL"}) {
+                    final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + table + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l";
+                    assertQuery(sql)
+                            .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+                }
+                for (String filter : new String[]{"t.s > 5", "t.b >= 1", "t.f = true"}) {
+                    assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + table + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE " + filter + ") l ORDER BY 1, 2, 3")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    id\ttid\trid
+                                    1\t10\t100
+                                    """);
+                }
+            }
         });
     }
 
@@ -17059,10 +17155,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     // columns of trades, which have no NULL, and NULL in the others.
     private void createTypedCorrelatedRightJoinTables() throws Exception {
         execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-        execute("CREATE TABLE trades (id INT, x INT, s SHORT, b BYTE, f BOOLEAN, d DOUBLE, ip IPv4, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("CREATE TABLE trades (id INT, x INT, s SHORT, b BYTE, f BOOLEAN, d DOUBLE, ip IPv4, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
         execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
         execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp)");
-        execute("INSERT INTO trades VALUES (10, 1, 10, 10, true, 10.0, '1.1.1.1', 1::timestamp)");
+        execute("INSERT INTO trades VALUES (10, 1, 10, 10, true, 10.0, '1.1.1.1', 'abc', 1::timestamp)");
         execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp)");
     }
 }
