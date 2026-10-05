@@ -85,6 +85,7 @@ import static io.questdb.std.Files.SEPARATOR;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class WalTableFailureTest extends AbstractCairoTest {
+    private boolean isWalApplyStarted;
 
     @Override
     @Before
@@ -1972,17 +1973,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
         overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
         spinLockTimeout = 1;
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
-            private int attempt = 0;
-
             @Override
             public long openRO(LPSZ name) {
-                // Skips one more _meta open than it used to, and the extra one is nameable: publishing a
-                // table's generation-zero epoch baseline copies the live _meta, and that copy now opens its
-                // SOURCE read-only (TableUtils.replaceFileContent) where ff.copy() was a single native call
-                // this facade never saw. The added open lands inside createTable, while the name is still
-                // reserved, so firing on it made the verifyTableName below throw "table name is reserved"
-                // instead of exercising the suspend path under test.
-                if (Utf8s.containsAscii(name, "_meta") && attempt++ >= 3) {
+                // Fails _meta opens only once runCheckTableSuspended starts the WAL apply, so the
+                // UPDATE fails when the apply job compiles it. Counting earlier opens instead is
+                // brittle: table creation opens _meta more often under adaptive commit mode
+                // (epoch baseline copy and checksum) than under nosync, and compiling the UPDATE
+                // opens a reader to reject parquet partitions.
+                if (isWalApplyStarted && Utf8s.containsAscii(name, "_meta")) {
                     if (!engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName))) {
                         return -1;
                     }
@@ -2337,6 +2335,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             // minimize time spent opening metadata that cannot be opened
             spinLockTimeout = 100;
+            isWalApplyStarted = true;
             drainWalQueue();
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
