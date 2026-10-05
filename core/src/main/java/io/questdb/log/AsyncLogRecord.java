@@ -30,9 +30,11 @@ import io.questdb.mp.CarrierIdentity;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
@@ -48,35 +50,42 @@ import java.util.Set;
 import static io.questdb.ParanoiaState.*;
 
 /**
- * Per-carrier {@link LogRecord} builder. One instance lives in
- * {@link AbstractLogRecord#tl} per carrier; {@code AbstractLogRecord.prepareLogRecord}
- * performs a single {@link io.questdb.std.CarrierLocal#get()} (one FFI downcall via
- * {@link CarrierIdentity#current()}) at the start of a chain, then all
- * {@code $(...)}/{@code $()} calls read this record's plain fields. The previous
- * design routed every chain segment through {@code tl.get().sink}, paying the FFI
- * cost ~6 times per chain.
+ * Per-carrier {@link LogRecord} builder, shared by all loggers. A chain starts in
+ * {@link #begin}, which {@code AbstractLogRecord} reaches through a single
+ * {@link CarrierLocal#get()} (one FFI downcall via {@link CarrierIdentity#current()});
+ * all subsequent {@code $(...)}/{@code $()} calls read this record's plain fields.
+ * <p>
+ * The chain formats its message into the carrier's on-heap staging
+ * {@link #sink} and does not touch the log ring until {@code $()}. There, it
+ * claims a ring slot, copies the staged bytes into it and publishes it right
+ * away. Nothing between claiming and publishing can throw, so a chain that
+ * fails or gets abandoned half-way loses at most its own message and can never
+ * leave a claimed-but-unpublished slot behind to wedge the log queue.
  * <p>
  * Safety vs. the C2 hoist hazard documented in
  * {@code mp/continuation/CARRIER_LOCAL.md}: a log chain has no continuation
- * suspend point - {@code Sequence.next()} spins, sink writes are plain memory,
+ * suspend point - sink writes are plain memory, {@code Sequence.next()} spins,
  * {@code seq.done()} publishes - so the carrier captured at the start of the
- * chain is the carrier executing the whole chain. One {@code tl.get()} at the
- * start is sufficient; subsequent reads of this record are field accesses.
+ * chain is the carrier executing the whole chain.
  */
 final class AsyncLogRecord implements LogRecord {
+    // no initial value: forCarrier() sizes the record for the first destination ring
+    private static final CarrierLocal<AsyncLogRecord> CARRIER_RECORD = new CarrierLocal<>();
     final LogError abandonedLogRecordError;
-    private final Clock clock;
     private final ObjHashSet<Throwable> dejaVu = new ObjHashSet<>();
-    long cursor;
     boolean isLogRecordInProgress;
-    RingQueue<LogRecordUtf8Sink> ring;
-    Sequence seq;
-    LogRecordUtf8Sink sink;
+    // non-final so that tests can inject a failing sink
+    HeapLogRecordUtf8Sink sink;
+    private Clock clock;
+    private boolean isGuaranteed;
+    private int level;
+    private RingQueue<LogRecordUtf8Sink> ring;
     private int[] ryuE10;
+    private Sequence seq;
 
-    AsyncLogRecord(Clock clock, CharSequence name) {
-        this.clock = clock;
+    private AsyncLogRecord(int capacity) {
         this.abandonedLogRecordError = createAbandonedLogError();
+        this.sink = new HeapLogRecordUtf8Sink(capacity);
     }
 
     @Override
@@ -96,7 +105,12 @@ final class AsyncLogRecord implements LogRecord {
         if (sequence == null) {
             sink.putAscii("null");
         } else {
-            sink.put(sequence);
+            try {
+                sink.put(sequence);
+            } catch (Throwable t) {
+                releaseOnFailure(t);
+                throw t;
+            }
         }
         return this;
     }
@@ -113,7 +127,13 @@ final class AsyncLogRecord implements LogRecord {
 
     @Override
     public LogRecord $(@Nullable File x) {
-        sink.put(x == null ? "null" : x.getAbsolutePath());
+        try {
+            // getAbsolutePath() allocates
+            sink.put(x == null ? "null" : x.getAbsolutePath());
+        } catch (Throwable t) {
+            releaseOnFailure(t);
+            throw t;
+        }
         return this;
     }
 
@@ -122,7 +142,14 @@ final class AsyncLogRecord implements LogRecord {
         if (sequence == null) {
             sink.putAscii("null");
         } else {
-            sink.putAscii(sequence);
+            try {
+                sink.putAscii(sequence);
+            } catch (Throwable t) {
+                // Arbitrary CharSequence implementation could throw.
+                // If that happens, publish the partial message.
+                releaseOnFailure(t);
+                throw t;
+            }
         }
         return this;
     }
@@ -136,7 +163,7 @@ final class AsyncLogRecord implements LogRecord {
                 sink.put(x.toString());
             } catch (Throwable t) {
                 // Complex toString() method could throw e.g. NullPointerException.
-                // If that happens, release the cursor to prevent blocking log queue.
+                // If that happens, publish the partial message.
                 releaseOnFailure(t);
                 throw t;
             }
@@ -153,7 +180,7 @@ final class AsyncLogRecord implements LogRecord {
                 x.toSink(sink);
             } catch (Throwable t) {
                 // Complex toSink() method could throw e.g. NullPointerException.
-                // If that happens, release the cursor to prevent blocking log queue.
+                // If that happens, publish the partial message.
                 releaseOnFailure(t);
                 throw t;
             }
@@ -186,7 +213,7 @@ final class AsyncLogRecord implements LogRecord {
         }
 
         try {
-            final LogRecordUtf8Sink s = sink;
+            final HeapLogRecordUtf8Sink s = sink;
             dejaVu.add(e);
             // Do not log EOL before exception type and message for log alerting to have more context.
             put0(s, e);
@@ -226,12 +253,9 @@ final class AsyncLogRecord implements LogRecord {
             if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
                 validateUtf8(sink);
             }
+            publish(isGuaranteed);
         } finally {
-            if (dejaVu.size() > 0) {
-                dejaVu.clear();
-            }
-            isLogRecordInProgress = false;
-            seq.done(cursor);
+            reset();
         }
     }
 
@@ -271,7 +295,12 @@ final class AsyncLogRecord implements LogRecord {
 
     @Override
     public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
-        sink.put(sequence, lo, hi);
+        try {
+            sink.put(sequence, lo, hi);
+        } catch (Throwable t) {
+            releaseOnFailure(t);
+            throw t;
+        }
         return this;
     }
 
@@ -280,7 +309,12 @@ final class AsyncLogRecord implements LogRecord {
         if (sequence == null) {
             sink.putAscii("null");
         } else {
-            Utf8s.putSafe(sequence, sink);
+            try {
+                Utf8s.putSafe(sequence, sink);
+            } catch (Throwable t) {
+                releaseOnFailure(t);
+                throw t;
+            }
         }
         return this;
     }
@@ -296,7 +330,12 @@ final class AsyncLogRecord implements LogRecord {
         if (sequence == null) {
             sink.putAscii("null");
         } else {
-            sink.put(sequence);
+            try {
+                sink.put(sequence);
+            } catch (Throwable t) {
+                releaseOnFailure(t);
+                throw t;
+            }
         }
         return this;
     }
@@ -312,14 +351,19 @@ final class AsyncLogRecord implements LogRecord {
         if (sequence == null) {
             sink.putAscii("null");
         } else {
-            if (from > -1 && sequence.size() > from) {
-                sink.putNonAscii(sequence.lo() + from, sequence.hi());
-            } else {
-                sink
-                        .put("WTF? substr? [from:").put(from)
-                        .put(", sequence=").put(sequence)
-                        .put(", size=").put(sequence.size())
-                        .put(']');
+            try {
+                if (from > -1 && sequence.size() > from) {
+                    sink.putNonAscii(sequence.lo() + from, sequence.hi());
+                } else {
+                    sink
+                            .put("WTF? substr? [from:").put(from)
+                            .put(", sequence=").put(sequence)
+                            .put(", size=").put(sequence.size())
+                            .put(']');
+                }
+            } catch (Throwable t) {
+                releaseOnFailure(t);
+                throw t;
             }
         }
         return this;
@@ -333,7 +377,12 @@ final class AsyncLogRecord implements LogRecord {
 
     @Override
     public LogRecord $ts(TimestampDriver driver, long x) {
-        sink.putISODate(driver, x);
+        try {
+            sink.putISODate(driver, x);
+        } catch (Throwable t) {
+            releaseOnFailure(t);
+            throw t;
+        }
         return this;
     }
 
@@ -375,7 +424,12 @@ final class AsyncLogRecord implements LogRecord {
 
     @Override
     public Utf8Sink put(@Nullable Utf8Sequence us) {
-        sink.put(us);
+        try {
+            sink.put(us);
+        } catch (Throwable t) {
+            releaseOnFailure(t);
+            throw t;
+        }
         return this;
     }
 
@@ -395,19 +449,37 @@ final class AsyncLogRecord implements LogRecord {
 
     @Override
     public LogRecord ts() {
-        final long us = clock.getTicks();
-        if (LogLevel.TIMESTAMP_TIMEZONE_RULES != null) {
-            LogLevel.TIMESTAMP_FORMAT.format(
-                    LogLevel.TIMESTAMP_TIMEZONE_RULES.getOffset(us) + us,
-                    LogLevel.TIMESTAMP_TIMEZONE_LOCALE,
-                    LogLevel.TIMESTAMP_TIMEZONE,
-                    sink
-            );
-        } else {
-            sink.putISODate(us);
+        try {
+            final long us = clock.getTicks();
+            if (LogLevel.TIMESTAMP_TIMEZONE_RULES != null) {
+                LogLevel.TIMESTAMP_FORMAT.format(
+                        LogLevel.TIMESTAMP_TIMEZONE_RULES.getOffset(us) + us,
+                        LogLevel.TIMESTAMP_TIMEZONE_LOCALE,
+                        LogLevel.TIMESTAMP_TIMEZONE,
+                        sink
+                );
+            } else {
+                sink.putISODate(us);
+            }
+        } catch (Throwable t) {
+            releaseOnFailure(t);
+            throw t;
         }
-
         return this;
+    }
+
+    /**
+     * Returns the carrier's record, creating it on the carrier's first chain with
+     * a staging buffer sized to match the destination ring's slots. All rings of
+     * a LogFactory share one slot size, so the buffer never needs to grow.
+     */
+    static AsyncLogRecord forCarrier(RingQueue<LogRecordUtf8Sink> ring) {
+        AsyncLogRecord rec = CARRIER_RECORD.getIfPresent();
+        if (rec == null) {
+            rec = new AsyncLogRecord(ring.get(0).capacity());
+            CARRIER_RECORD.set(rec);
+        }
+        return rec;
     }
 
     private static @NotNull LogError createAbandonedLogError() {
@@ -496,7 +568,7 @@ final class AsyncLogRecord implements LogRecord {
         }
     }
 
-    private static void validateUtf8(LogRecordUtf8Sink sink) {
+    private static void validateUtf8(HeapLogRecordUtf8Sink sink) {
         if (Utf8s.validateUtf8(sink) < 0) {
             LogError e = new LogError("Invalid UTF-8, partial message: \n"
                     + Utf8s.stringFromUtf8BytesSafe(sink) + "\nEND partial message");
@@ -506,6 +578,9 @@ final class AsyncLogRecord implements LogRecord {
         }
     }
 
+    // Publishes the partial message up to the failure point, so that the log
+    // still shows which chain failed. The staged record never holds a ring slot,
+    // so failing to publish it cannot block the log queue either.
     private void releaseOnFailure(Throwable failure) {
         try {
             $();
@@ -516,25 +591,85 @@ final class AsyncLogRecord implements LogRecord {
         }
     }
 
-    /**
-     * Returns the previously-installed abandoned log record if the prior chain
-     * never reached {@code $()}, or {@code null} if the record is in a clean
-     * state. Mirrors {@link AbstractLogRecord}'s former private helper but
-     * operates on this carrier's record fields, avoiding a second {@code tl.get()}.
-     */
-    @Nullable LogError detectAbandonedLogRecord() throws LogError {
-        if (!isLogRecordInProgress) {
-            isLogRecordInProgress = true;
-            abandonedLogRecordError.fillInStackTrace();
-            return null;
-        }
+    // Handles a chain that started while the previous one on this carrier never
+    // reached $(). The previous chain was either abandoned (e.g. an exception
+    // skipped its $()) or the new chain is nested inside it (e.g. a toString()
+    // that logs). Either way the previous message only exists in the staging
+    // sink, so dropping it cannot block the log queue.
+    private void onAbandoned(RingQueue<LogRecordUtf8Sink> newRing) {
         try {
-            $(" #$#$ ABANDONED LOG RECORD #$#$");
-        } catch (Throwable t) {
-            releaseOnFailure(t);
-            throw t;
+            // Publish the partial message with a marker, so the log shows the
+            // abandoned call site. Only when the abandoned chain targeted the
+            // same ring as the new chain: the new chain proves that ring is
+            // alive, while another ring may belong to a closed LogFactory.
+            if (ring == newRing) {
+                sink.putAscii(" #$#$ ABANDONED LOG RECORD #$#$");
+                sink.putEOL();
+                publish(false);
+            }
+        } finally {
+            reset();
         }
-        $();
-        return abandonedLogRecordError;
+        abandonedLogRecordError.printStackTrace(System.out);
+        if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
+            throw abandonedLogRecordError;
+        }
+    }
+
+    // Claims a ring slot, copies the staged record into it and publishes it.
+    // Nothing between next()/nextBully() and done() can throw. A non-guaranteed
+    // record gets dropped when the ring is full.
+    private void publish(boolean isWaiting) {
+        final Sequence seq = this.seq;
+        long cursor;
+        if (isWaiting) {
+            cursor = seq.nextBully();
+        } else {
+            // -2 means a lost CAS race with another producer; retry
+            while ((cursor = seq.next()) == -2) {
+                Os.pause();
+            }
+        }
+        if (cursor > -1) {
+            final LogRecordUtf8Sink slot = ring.get(cursor);
+            slot.copyFrom(sink);
+            slot.setLevel(level);
+            seq.done(cursor);
+        }
+    }
+
+    private void reset() {
+        isLogRecordInProgress = false;
+        if (dejaVu.size() > 0) {
+            dejaVu.clear();
+        }
+        // do not retain the rings of a LogFactory that may get closed
+        seq = null;
+        ring = null;
+        clock = null;
+    }
+
+    /**
+     * Starts a new chain that formats into the staging sink and publishes to the
+     * given ring on {@code $()}. Claims nothing, so a throw from here or from any
+     * appender leaves the log queue untouched.
+     */
+    LogRecord begin(Clock clock, Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, boolean isGuaranteed) {
+        if (isLogRecordInProgress) {
+            onAbandoned(ring);
+        }
+        // Captures the stack trace of the chain start, reported if this chain
+        // gets abandoned. Production (paranoia mode NONE) never reports it.
+        if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
+            abandonedLogRecordError.fillInStackTrace();
+        }
+        sink.of(ring.get(0).capacity());
+        this.clock = clock;
+        this.seq = seq;
+        this.ring = ring;
+        this.level = level;
+        this.isGuaranteed = isGuaranteed;
+        isLogRecordInProgress = true;
+        return this;
     }
 }
