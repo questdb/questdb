@@ -450,6 +450,14 @@ class WorklistTest(unittest.TestCase):
         # a path a row names maps to that row
         self.assertEqual(('declare-or-admit', 'ILP column kind'), item('ingest.ilp-tcp'))
 
+    def test_coverage_failure_naming_two_methods_gives_two_items(self):
+        # ProtocolOpcodeCoverageTest lists every opcode function that does not handle the type
+        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
+        message = 'expected:<[]> but was:<[fixedTargetOpcode: nn_int is not handled, columnKind: nn_int is not handled]>'
+        failure = tp.Failure('io.questdb.test.cutlass.ProtocolOpcodeCoverageTest', 'testOpcodeFunctionsHandleEveryType', message, message)
+        items = tp.failure_items(failure, sites, self.facts)
+        self.assertEqual(['ILP column kind', 'ParquetColumnTypeConverter.fixedTargetOpcode family switch'], sorted(i.site for i in items))
+
     def test_coverage_failure_maps_to_the_relation_its_test_checks(self):
         sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
 

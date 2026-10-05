@@ -1196,15 +1196,16 @@ def failure_items(failure, sites, facts, tree=None):
         return [Item('kit', 'implement-pair', location, message, 'unmapped')]
     location = f'`{cls}#{test}`'
     message = failure.message or failure.text
-    # a precise match (a kept text, or the function a coverage test names) is located at its site;
+    # a precise match (a kept text, or each function a coverage test names) is located at its site;
     # a test that only names the layer stays located at itself, so each failing test is an item
-    row = kept
-    if row is None:
-        m = re.search(r'\b([a-z][A-Za-z0-9]*): \S+ is not handled', text)
-        if m:
-            row = next((r for r in sites.rows if r.method == m.group(1)), None)
-    if row is not None:
-        return [Item('coverage', 'implement-pair', site_location(tree, row) or location, message, row.site)]
+    rows = [kept] if kept is not None else []
+    if not rows:
+        for method in dict.fromkeys(re.findall(r'\b([a-z][A-Za-z0-9]*): \S+ is not handled', text)):
+            row = next((r for r in sites.rows if r.method == method), None)
+            if row is not None:
+                rows.append(row)
+    if rows:
+        return [Item('coverage', 'implement-pair', site_location(tree, row) or location, message, row.site) for row in rows]
     row, decision = sites.by_layer(f'{cls}#{test}')
     if row is None:
         row = next(iter(sites.by_instrument(cls)), None)
