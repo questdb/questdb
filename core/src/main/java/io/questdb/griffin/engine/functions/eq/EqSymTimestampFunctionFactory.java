@@ -192,6 +192,9 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
             long timestampConstant = right.getTimestamp(null);
             this.innerFunc = new VarSymbolConstTimestampFunction(left, right, timestampConstant, driver);
+            if (negated) {
+                innerFunc.setNegated();
+            }
         }
     }
 

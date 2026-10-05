@@ -262,15 +262,17 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     @Test
-    public void testFilteredKeyMissExtendsMapForward() throws Exception {
+    public void testFilteredKeyMissBoundsNextPosition() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             State state = new State();
             Trace trace = new Trace();
             Cursor cursor = new Cursor(trace, 4096);
+            SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
             try (PollingEngine engine = new PollingEngine(root, state);
-                 Map map = newMap(engine)) {
-                SqlExecutionCircuitBreaker breaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-                HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), null);
+                 Map map = newMap(engine);
+                 HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                         engine.getConfiguration(), 64, 1, 131_072, 1_024, 8, filter(trace, true), new ArrayColumnTypes().add(ColumnType.INT)
+                 )) {
                 helper.of(cursor, null);
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(1001, trace.visits);
@@ -322,7 +324,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     @Test
-    public void testFilteredKeyMissSwitchesToForwardScan() throws Exception {
+    public void testFilteredKeyMissDoesNotSwitchToForwardScan() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Trace trace = new Trace();
             Cursor cursor = new Cursor(trace, 4096);
@@ -347,10 +349,21 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2000, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(2001, trace.visits);
-                // The bounded miss scan triggers the forward switch, so the second key
-                // does not rescan the rows the first key already covered.
+                // A bounded miss stays below the cost floor, so the second key rescans from its own miss.
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2001, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(2003, trace.visits);
+                Assert.assertEquals(3002, trace.visits);
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(2002, otherMissingKey, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(3003, trace.visits);
+
+                // A shallow miss then a one-row gap must not lock a far lookup into a forward scan.
+                helper.of(cursor, null);
+                map.clear();
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(63, MISSING_KEY, KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(3067, trace.visits);
+                Assert.assertEquals(64, helper.findKeyedAsOfMatch(64, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(3068, trace.visits);
+                Assert.assertEquals(4095, helper.findKeyedAsOfMatch(4095, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
+                Assert.assertEquals(3069, trace.visits);
             }
         });
     }
@@ -398,12 +411,12 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                 Assert.assertEquals(1005, helper.findKeyedAsOfMatch(1005, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(1012, trace.visits);
 
-                // Within one master frame, the miss switches to a forward scan that picks up the row.
+                // Within one master frame, the next position scans back only to the qualifying row.
                 helper.of(cursor, null);
                 map.clear();
                 Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(1000, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
                 Assert.assertEquals(1005, helper.findKeyedAsOfMatch(1010, cursor.getRecord(), KEY_SINK, KEY_SINK, map, null, breaker));
-                Assert.assertEquals(2023, trace.visits);
+                Assert.assertEquals(2019, trace.visits);
             }
         });
     }

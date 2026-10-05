@@ -90,8 +90,6 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private long filterMissWatermark = Long.MIN_VALUE;
     // Forward watermark: highest rowId we've forward-scanned (inclusive)
     private long forwardWatermark = Long.MIN_VALUE;
-    // A keyed lookup found no match at the current ASOF position.
-    private boolean hasKeyMiss;
     private boolean isFilterAlwaysFalse;
     private boolean isForwardScanMode;
     private long prevAsOfRowId = Long.MIN_VALUE;
@@ -565,13 +563,11 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 if (prevAsOfRowId != Long.MIN_VALUE) {
                     long gap = asOfRowId - prevAsOfRowId;
                     long minGap = bwdScanMinGap;
-                    if (filter != null) {
+                    if (filter != null && gap > 0) {
                         // A filter repeats a deep scan at every position, so a small gap also
-                        // switches: a miss at any cost, a hit at the cost the minimum gap implies.
+                        // switches at the cost the minimum gap implies.
                         minGap = 0;
-                        if (!hasKeyMiss && gap > 0) {
-                            gap = Math.max(gap, bwdScanMinGap);
-                        }
+                        gap = Math.max(gap, bwdScanMinGap);
                     }
                     if (shouldSwitchToForwardScan(
                             bwdScanCost,
@@ -593,7 +589,6 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             if (isForwardScanMode) {
                 forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, keyToRowIdMap, circuitBreaker);
             }
-            hasKeyMiss = false;
             prevAsOfRowId = asOfRowId;
         }
 
@@ -830,7 +825,6 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         cachedAsOfRowId = Long.MIN_VALUE;
         cachedNextRowTs = Long.MIN_VALUE;
         backwardScanRows = 0;
-        hasKeyMiss = false;
         isForwardScanMode = false;
         prevAsOfRowId = Long.MIN_VALUE;
     }
@@ -986,7 +980,6 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
 
     // The caller has established that the key has no qualifying row at or below rowId.
     private void recordKeyMiss(@Nullable MapValue missValue, Record masterRecord, RecordSink masterAsOfJoinMapSink, long rowId) {
-        hasKeyMiss = true;
         if (keyMissMap == null) {
             return;
         }

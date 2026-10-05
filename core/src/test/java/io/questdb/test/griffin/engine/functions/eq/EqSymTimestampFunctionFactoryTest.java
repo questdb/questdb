@@ -312,28 +312,28 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES ('1'), ('2'), (null)");
             for (boolean isNano : new boolean[]{false, true}) {
                 ObjList<BindVarTuple> cases = new ObjList<>();
-                cases.add(BindVarTuple.ok("first timestamp", "matches\ntrue\nfalse\nfalse\n", b -> {
+                cases.add(BindVarTuple.ok("first timestamp", "matches\tdiffers\ntrue\tfalse\nfalse\ttrue\nfalse\ttrue\n", b -> {
                     if (isNano) {
                         b.setTimestampNano(0, 1);
                     } else {
                         b.setTimestamp(0, 1);
                     }
                 }));
-                cases.add(BindVarTuple.ok("second timestamp", "matches\nfalse\ntrue\nfalse\n", b -> {
+                cases.add(BindVarTuple.ok("second timestamp", "matches\tdiffers\nfalse\ttrue\ntrue\tfalse\nfalse\ttrue\n", b -> {
                     if (isNano) {
                         b.setTimestampNano(0, 2);
                     } else {
                         b.setTimestamp(0, 2);
                     }
                 }));
-                cases.add(BindVarTuple.ok("null timestamp", "matches\nfalse\nfalse\ntrue\n", b -> {
+                cases.add(BindVarTuple.ok("null timestamp", "matches\tdiffers\nfalse\ttrue\nfalse\ttrue\ntrue\tfalse\n", b -> {
                     if (isNano) {
                         b.setTimestampNano(0, Numbers.LONG_NULL);
                     } else {
                         b.setTimestamp(0, Numbers.LONG_NULL);
                     }
                 }));
-                assertQuery("SELECT stamp::SYMBOL = $1 AS matches FROM x").expectSize().assertBinds(cases);
+                assertQuery("SELECT stamp::SYMBOL = $1 AS matches, stamp::SYMBOL != $1 AS differs FROM x").expectSize().assertBinds(cases);
             }
         });
     }
