@@ -43,7 +43,6 @@ import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryUtil;
@@ -5264,16 +5263,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int remainingExpiryPolicyRetries = maxRecompileAttempts;
             final boolean rejectExpiryOnEntry = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT;
             for (; ; ) {
-                final MetadataCache.ExpiryPolicyGuard initialGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-                expiryPolicyVersion = initialGuard.getVersion();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
                 try {
                     executionModel = compileExecutionModel(executionContext);
                 } catch (SqlException e) {
                     if (!e.isMaterializationExpiryConflict()) {
                         throw e;
                     }
-                    final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-                    if (initialGuard.hasSameVersion(finalGuard)) {
+                    if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
                         throw e;
                     }
                     if (rejectExpiryOnEntry) {
@@ -5286,13 +5283,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     lexer.restart();
                     continue;
                 }
-                final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-                final boolean isMaterializing = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT
-                        || executionModel.getModelType() == ExecutionModel.CREATE_MAT_VIEW
-                        || executionModel.getModelType() == ExecutionModel.CREATE_LIVE_VIEW;
-                if (isMaterializing
-                        ? initialGuard.hasSameVersion(finalGuard)
-                        : expiryPolicyVersion == finalGuard.getVersion()) {
+                if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
                     break;
                 }
                 if (rejectExpiryOnEntry) {
@@ -5826,7 +5817,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
                 if (createTableOp.getSelectText() != null) {
                     for (int retryCount = 0; ; retryCount++) {
-                        final MetadataCache.ExpiryPolicyGuard initialGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
+                        final long initialExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
                         RecordCursorFactory newFactory = null;
                         RecordCursor newCursor = null;
                         try {
@@ -5844,8 +5835,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 createMatViewOp.setMatViewSql(storedSql);
                             }
 
-                            final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-                            if (!initialGuard.hasSameVersion(finalGuard)) {
+                            if (initialExpiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
                                 if (retryCount == maxRecompileAttempts) {
                                     throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
                                 }
@@ -5881,8 +5871,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             if (!e.isMaterializationExpiryConflict()) {
                                 throw e;
                             }
-                            final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-                            if (initialGuard.hasSameVersion(finalGuard)) {
+                            if (initialExpiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
                                 throw e;
                             }
                             if (retryCount == maxRecompileAttempts) {

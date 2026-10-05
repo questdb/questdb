@@ -1402,7 +1402,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // column. See LiveViewTableStructure.
         final BoolList outputSymbolCacheFlags = new BoolList();
         for (int retryCount = 0; ; retryCount++) {
-            final MetadataCache.ExpiryPolicyGuard initialGuard = metadataCache.sampleExpiryPolicyGuard();
+            final long initialExpiryPolicyVersion = metadataCache.getExpiryPolicyVersion();
             dependencyColumnNames.clear();
             dependencyColumnTypes.clear();
             outputSymbolCacheFlags.clear();
@@ -1546,8 +1546,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                     continue;
                 }
-                final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-                if (initialGuard.hasSameVersion(finalGuard)) {
+                if (initialExpiryPolicyVersion == metadataCache.getExpiryPolicyVersion()) {
                     throw e;
                 }
                 if (retryCount == configuration.getMaxSqlRecompileAttempts()) {
@@ -1555,8 +1554,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 continue;
             } catch (SqlException e) {
-                final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-                if (!e.isMaterializationExpiryConflict() || initialGuard.hasSameVersion(finalGuard)) {
+                if (!e.isMaterializationExpiryConflict() || initialExpiryPolicyVersion == metadataCache.getExpiryPolicyVersion()) {
                     throw e;
                 }
                 if (retryCount == configuration.getMaxSqlRecompileAttempts()) {
@@ -1564,8 +1562,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 continue;
             }
-            final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-            if (initialGuard.hasSameVersion(finalGuard)) {
+            if (initialExpiryPolicyVersion == metadataCache.getExpiryPolicyVersion()) {
                 break;
             }
             if (retryCount == configuration.getMaxSqlRecompileAttempts()) {

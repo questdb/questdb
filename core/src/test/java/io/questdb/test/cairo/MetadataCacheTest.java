@@ -1199,21 +1199,21 @@ public class MetadataCacheTest extends AbstractCairoTest {
             Assert.assertFalse("precondition: a hydrated policy-free view must close the per-table gate",
                     cache.mayTableHaveExpiryPolicy(mv));
 
-            final MetadataCache.ExpiryPolicyGuard beforeMark = cache.sampleExpiryPolicyGuard();
+            final long versionBeforeMark = cache.getExpiryPolicyVersion();
             cache.markExpiryPolicyPossible(mv.getTableId());
             try {
-                final MetadataCache.ExpiryPolicyGuard firstGuard = cache.sampleExpiryPolicyGuard();
-                Assert.assertFalse("a transition starting after an initial sample must change its generation",
-                        beforeMark.hasSameVersion(firstGuard));
+                final long firstVersion = cache.getExpiryPolicyVersion();
+                Assert.assertNotEquals("a transition starting after an initial sample must change its generation",
+                        versionBeforeMark, firstVersion);
                 Assert.assertTrue("a pending first SET must open the parser's per-table gate",
                         cache.mayTableHaveExpiryPolicy(mv));
                 Assert.assertTrue(cache.isExpiryPolicyUpdatePending(mv));
                 final MetadataCache.ExpiryPolicyInfo policy = cache.lookupExpiryPolicy(mv);
                 Assert.assertTrue(policy.isPending());
                 Assert.assertNull("_meta is still policy-free before the first SET publishes", policy.getPredicate());
-                final MetadataCache.ExpiryPolicyGuard secondGuard = cache.sampleExpiryPolicyGuard();
-                Assert.assertTrue("a steady pending marker has an unchanged generation",
-                        firstGuard.hasSameVersion(secondGuard));
+                final long secondVersion = cache.getExpiryPolicyVersion();
+                Assert.assertEquals("a steady pending marker has an unchanged generation",
+                        firstVersion, secondVersion);
             } finally {
                 cache.cancelExpiryPolicyUpdate(mv.getTableId());
             }

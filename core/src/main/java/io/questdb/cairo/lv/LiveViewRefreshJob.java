@@ -9295,7 +9295,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // publication. A refresh approved against an earlier snapshot may still finish.
     private String preflightExpiryPolicy(LiveViewInstance instance) {
         final MetadataCache metadataCache = engine.getMetadataCache();
-        final MetadataCache.ExpiryPolicyGuard initialGuard = metadataCache.sampleExpiryPolicyGuard();
+        final long initialExpiryPolicyVersion = metadataCache.getExpiryPolicyVersion();
 
         final LiveViewDefinition definition = instance.getDefinition();
         final TableToken baseToken = engine.getTableTokenIfExists(definition.getBaseTableName());
@@ -9317,8 +9317,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (metadataCache.isExpiryPolicyUpdatePending(baseToken)) {
                 return EXPIRY_PREFLIGHT_DEFERRED;
             }
-            final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-            if (!initialGuard.hasSameVersion(finalGuard)) {
+            if (initialExpiryPolicyVersion != metadataCache.getExpiryPolicyVersion()) {
                 return EXPIRY_PREFLIGHT_DEFERRED;
             }
             throw e;
@@ -9326,8 +9325,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (policy.isPending()) {
             return EXPIRY_PREFLIGHT_DEFERRED;
         }
-        final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-        if (!initialGuard.hasSameVersion(finalGuard)) {
+        if (initialExpiryPolicyVersion != metadataCache.getExpiryPolicyVersion()) {
             return EXPIRY_PREFLIGHT_DEFERRED;
         }
         if (policy.getPredicate() != null) {

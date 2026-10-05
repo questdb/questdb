@@ -113,6 +113,11 @@ public class MetadataCache implements QuietCloseable {
     // snapshot authoritatively contains both active policy IDs (for lock-free read gating) and active table
     // entries (for cleanup deadline discovery). Metadata updates rebuild it once; startup publishes one batch.
     private volatile ExpiryPolicySnapshot expiryPolicySnapshot = ExpiryPolicySnapshot.EMPTY;
+    // Policy epoch. Readers sample it without the lock and redo work derived from an earlier sample once
+    // it has moved. Writers change it only under expiryPolicySnapshotLock. A writer that publishes a new
+    // expiryPolicySnapshot and increments the epoch in the same critical section publishes the snapshot
+    // first, so a reader that sees the new epoch also sees that snapshot. A reader can still see the new
+    // snapshot before the increment, while it reads the previous epoch.
     private volatile long expiryPolicyVersion;
     private volatile boolean fullyHydrated = false;
 
@@ -217,12 +222,6 @@ public class MetadataCache implements QuietCloseable {
 
     public long getExpiryPolicyVersion() {
         return expiryPolicyVersion;
-    }
-
-    public ExpiryPolicyGuard sampleExpiryPolicyGuard() {
-        synchronized (expiryPolicySnapshotLock) {
-            return new ExpiryPolicyGuard(expiryPolicyVersion, pendingExpiryPolicyIds.size() > 0);
-        }
     }
 
     /**
@@ -1145,32 +1144,6 @@ public class MetadataCache implements QuietCloseable {
             }
         }
         return null;
-    }
-
-    public static final class ExpiryPolicyGuard {
-        private final boolean pending;
-        private final long version;
-
-        private ExpiryPolicyGuard(long version, boolean pending) {
-            this.version = version;
-            this.pending = pending;
-        }
-
-        public long getVersion() {
-            return version;
-        }
-
-        public boolean isPending() {
-            return pending;
-        }
-
-        /**
-         * Compares only the global policy generation. Materialization uses this after separately excluding a
-         * pending resolved source, so a steady pending marker on an unrelated table is not a liveness gate.
-         */
-        public boolean hasSameVersion(ExpiryPolicyGuard other) {
-            return version == other.version;
-        }
     }
 
     public static final class ExpiryPolicyInfo {

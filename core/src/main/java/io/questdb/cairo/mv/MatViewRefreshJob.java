@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -1444,7 +1443,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             boolean forceFreshFactory
     ) throws SqlException {
         final TableToken viewToken = viewDefinition.getMatViewToken();
-        final MetadataCache.ExpiryPolicyGuard initialGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
+        final long initialExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier = viewState.getRecordToRowCopier();
@@ -1454,7 +1453,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try {
             final long cachedPolicyVersion = viewState.getRecordFactoryExpiryPolicyVersion();
             factory = viewState.acquireRecordFactory();
-            if (forceFreshFactory || (factory != null && cachedPolicyVersion != initialGuard.getVersion())) {
+            if (forceFreshFactory || (factory != null && cachedPolicyVersion != initialExpiryPolicyVersion)) {
                 factory = Misc.free(factory);
             }
 
@@ -1484,8 +1483,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-            if (!initialGuard.hasSameVersion(finalGuard)) {
+            final long finalExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+            if (initialExpiryPolicyVersion != finalExpiryPolicyVersion) {
                 factory = Misc.free(factory);
                 if (refreshStartStamped) {
                     viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
@@ -1497,7 +1496,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     factory,
                     copier,
                     walWriter.getMetadata().getMetadataVersion(),
-                    finalGuard.getVersion()
+                    finalExpiryPolicyVersion
             );
             if (refreshStartStamped) {
                 viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
@@ -1512,8 +1511,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 deferRefreshSameKind(viewToken, refreshTask);
                 return PREFLIGHT_DEFERRED;
             }
-            final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-            if (!initialGuard.hasSameVersion(finalGuard)) {
+            if (initialExpiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
                 if (refreshStartStamped) {
                     viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
                 }
@@ -1531,8 +1529,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 throw e;
             }
-            final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-            if (e.isMaterializationExpiryConflict() && !initialGuard.hasSameVersion(finalGuard)) {
+            if (e.isMaterializationExpiryConflict()
+                    && initialExpiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
                 if (refreshStartStamped) {
                     viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
                 }
