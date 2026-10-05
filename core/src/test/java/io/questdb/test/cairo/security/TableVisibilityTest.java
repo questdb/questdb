@@ -673,20 +673,20 @@ public class TableVisibilityTest extends AbstractCairoTest {
                 }
             }
             final TableToken oldView = engine.verifyTableName("visible_parts");
-            final long oldSeqTxn = engine.getViewGraph().getViewDefinition(oldView).getSeqTxn();
             try (
                     RecordCursorFactory oldFunction = new ShowPartitionsRecordCursorFactory(
                             engine.verifyTableName("secret_t"), ColumnType.TIMESTAMP_MICRO, 0,
-                            new SqlExecutionContext.TableFunctionView(oldView, oldSeqTxn)
+                            new SqlExecutionContext.TableFunctionView(engine.getViewGraph().getViewDefinition(oldView))
                     );
                     SqlExecutionContext hidingContext = newHidingContext()
             ) {
                 execute("CREATE OR REPLACE VIEW visible_parts AS (SELECT * FROM table_partitions('visible_t'))");
                 drainWalAndViewQueues();
+                // the old function's plan is stale: the caller recompiles it against the new definition
                 try (RecordCursor ignored = oldFunction.getCursor(hidingContext)) {
                     Assert.fail("a replaced view must not authorize the old table function");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used");
                 }
             }
             try (RecordCursorFactory cached = select("SELECT * FROM visible_parts")) {

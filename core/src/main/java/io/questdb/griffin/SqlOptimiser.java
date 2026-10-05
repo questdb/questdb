@@ -5278,7 +5278,7 @@ public class SqlOptimiser implements Mutable {
             case IQueryModel.SHOW_COLUMNS:
                 tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
                 if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
-                        || !executionContext.isTableFunctionVisible(tableToken, view)) {
+                        || !executionContext.isTableFunctionVisibleAtCompile(tableToken, view)) {
                     throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
                 }
                 tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position, view);
@@ -5286,7 +5286,7 @@ public class SqlOptimiser implements Mutable {
             case IQueryModel.SHOW_PARTITIONS:
                 tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
                 if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
-                        || !executionContext.isTableFunctionVisible(tableToken, view)) {
+                        || !executionContext.isTableFunctionVisibleAtCompile(tableToken, view)) {
                     throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
                 }
 

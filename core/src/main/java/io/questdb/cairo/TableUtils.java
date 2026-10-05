@@ -1143,7 +1143,7 @@ public final class TableUtils {
         if (viewDefinition == null) {
             throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
         }
-        return new SqlExecutionContext.TableFunctionView(viewToken, viewDefinition.getSeqTxn());
+        return new SqlExecutionContext.TableFunctionView(viewDefinition);
     }
 
     public static int getTableIdFromTableDir(CharSequence dirName) throws NumericException {

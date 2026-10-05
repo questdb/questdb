@@ -55,7 +55,7 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
         // Outside a view, an invisible table fails like a missing one.
-        if (token == null || !sqlExecutionContext.isTableFunctionVisible(token, view)) {
+        if (token == null || !sqlExecutionContext.isTableFunctionVisibleAtCompile(token, view)) {
             throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName).put(']');
         }
         return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0), view));

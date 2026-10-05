@@ -64,7 +64,7 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
             final CharSequence tableName = args.getQuick(0).getStrA(null);
             tt = context.getTableToken(tableName);
             // Outside a view, an invisible table fails like a missing one, echoing its SQL spelling.
-            if (!context.isTableFunctionVisible(tt, view)) {
+            if (!context.isTableFunctionVisibleAtCompile(tt, view)) {
                 throw CairoException.tableDoesNotExist(tableName);
             }
             try (TableMetadata metadata = context.getCairoEngine().getTableMetadata(tt)) {

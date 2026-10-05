@@ -36,6 +36,7 @@ import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -350,20 +351,44 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     /**
      * A table-name function or a SHOW statement in a view reads the object it names through that
-     * view, not as the caller. Recheck the view's identity, definition and SELECT grant at execution:
-     * a cached cursor may outlive a revoke, a replacement or a drop and recreation under the same name.
+     * view, not as the caller. Recheck the view's identity, definition and SELECT grant when the
+     * cursor opens: a cached cursor may outlive a revoke, a replacement or a drop and recreation
+     * under the same name. A view that changed since the compile makes the plan stale, so it throws
+     * {@link TableReferenceOutOfDateException} for the caller to recompile, rather than run a
+     * function the current definition may not name or report a visible object as missing.
      */
     default boolean isTableFunctionVisible(TableToken tableToken, TableFunctionView view) {
+        if (view != null) {
+            final ViewDefinition viewDefinition = view.definition();
+            final TableToken viewToken = viewDefinition.getViewToken();
+            final ViewDefinition currentDefinition = viewToken.equals(getTableTokenIfExists(viewToken.getTableName()))
+                    ? getCairoEngine().getViewGraph().getViewDefinition(viewToken)
+                    : null;
+            if (currentDefinition == null || currentDefinition.getSeqTxn() != viewDefinition.getSeqTxn()) {
+                throw TableReferenceOutOfDateException.ofOutdatedView(
+                        viewToken,
+                        viewDefinition.getSeqTxn(),
+                        currentDefinition != null ? currentDefinition.getSeqTxn() : -1
+                );
+            }
+        }
+        return isTableFunctionVisibleAtCompile(tableToken, view);
+    }
+
+    /**
+     * Like {@link #isTableFunctionVisible(TableToken, TableFunctionView)}, for the compile that
+     * captured the view: it checks the view's visibility and SELECT grant against the definition the
+     * compile captured, without rereading it. A view change that another session commits during the
+     * compile makes the plan stale, which StaleViewCheckFactory and the recheck at cursor open report
+     * as {@link TableReferenceOutOfDateException}; failing the compile instead would report the object
+     * missing, or fail a PostgreSQL Parse, which does not recompile.
+     */
+    default boolean isTableFunctionVisibleAtCompile(TableToken tableToken, TableFunctionView view) {
         if (view == null) {
             return getSecurityContext().isTableVisible(tableToken);
         }
-        final TableToken viewToken = view.token();
-        final TableToken currentViewToken = getTableTokenIfExists(viewToken.getTableName());
-        if (!viewToken.equals(currentViewToken) || !getSecurityContext().isTableVisible(viewToken)) {
-            return false;
-        }
-        final ViewDefinition viewDefinition = getCairoEngine().getViewGraph().getViewDefinition(viewToken);
-        if (viewDefinition == null || viewDefinition.getSeqTxn() != view.seqTxn()) {
+        final ViewDefinition viewDefinition = view.definition();
+        if (!getSecurityContext().isTableVisible(viewDefinition.getViewToken())) {
             return false;
         }
         getSecurityContext().authorizeSelect(viewDefinition);
@@ -537,6 +562,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void toSink(@NotNull CharSink<?> sink) {
     }
 
-    record TableFunctionView(TableToken token, long seqTxn) {
+    // the view definition, as of the compile, that a table-name function or SHOW statement reads through
+    record TableFunctionView(ViewDefinition definition) {
     }
 }

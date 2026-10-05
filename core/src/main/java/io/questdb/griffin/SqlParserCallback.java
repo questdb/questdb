@@ -209,7 +209,7 @@ public interface SqlParserCallback {
     private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
         if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
-                || !executionContext.isTableFunctionVisible(tableToken, executionContext.getTableFunctionView())) {
+                || !executionContext.isTableFunctionVisibleAtCompile(tableToken, executionContext.getTableFunctionView())) {
             throw notExistsError;
         }
         return tableToken;
