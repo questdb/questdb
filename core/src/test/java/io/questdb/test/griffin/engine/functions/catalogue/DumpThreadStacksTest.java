@@ -25,11 +25,11 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
+import io.questdb.log.HeapLogRecordUtf8Sink;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecord;
-import io.questdb.log.LogRecordUtf8Sink;
 import io.questdb.log.LogWriter;
 import io.questdb.log.LogWriterConfig;
 import io.questdb.mp.SCSequence;
@@ -78,7 +78,7 @@ public class DumpThreadStacksTest extends AbstractCairoTest {
                 final Field sinkField = record.getClass().getDeclaredField("sink");
                 sinkField.setAccessible(true);
                 final Object originalSink = sinkField.get(record);
-                sinkField.set(record, new LogRecordUtf8Sink(0, 0) {
+                sinkField.set(record, new HeapLogRecordUtf8Sink(0) {
                     @Override
                     public Utf8Sink putAscii(char c) {
                         throw renderingFailure;
@@ -104,6 +104,9 @@ public class DumpThreadStacksTest extends AbstractCairoTest {
                     final ByteArrayOutputStream errorBuffer = new ByteArrayOutputStream();
                     try (PrintStream errorStream = new PrintStream(errorBuffer, true, StandardCharsets.UTF_8)) {
                         DumpThreadStacksFunctionFactory.dumpThreadStack(threadInfo, record, errorStream);
+                    } finally {
+                        // the staging sink belongs to the carrier and serves the next chains too
+                        sinkField.set(record, originalSink);
                     }
 
                     final String error = errorBuffer.toString(StandardCharsets.UTF_8);
