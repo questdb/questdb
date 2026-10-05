@@ -78,7 +78,7 @@ public class RelationRulesTest {
                 if (driverB != null
                         && driverA.getRelationKind() == driverB.getRelationKind()
                         && driverA.getRelationBits() == driverB.getRelationBits()) {
-                    Assert.assertEquals(ColumnType.nameOf(a) + " and " + ColumnType.nameOf(b), "[]", tagsRelatingOtherwise(a, driverA, b, driverB).toString());
+                    Assert.assertEquals(ColumnType.nameOf(a) + " and " + ColumnType.nameOf(b), "[]", tagsRelatingOtherwise(a, driverA, b, driverB, false).toString());
                     pairs++;
                 }
             }
@@ -91,10 +91,10 @@ public class RelationRulesTest {
         // a signed 32-bit INT-kind type relates as INT does with no edit to the lists of BYTE,
         // SHORT and CHAR, which name INT but not the newcomer
         final TypeDriver intDriver = ColumnType.getTypeDriver(ColumnType.INT);
-        Assert.assertEquals("[]", tagsRelatingOtherwise(ColumnType.INT, intDriver, NEWCOMER, LookAlikeTypeDriver.sentinelInt()).toString());
+        Assert.assertEquals("[]", tagsRelatingOtherwise(ColumnType.INT, intDriver, NEWCOMER, LookAlikeTypeDriver.sentinelInt(), true).toString());
         // a never-null one too; only the texts, whose NULL it cannot hold, do not widen to it
         // as they widen to INT, by parsing through INT's getter
-        Assert.assertEquals("[STRING, VARCHAR, VARCHAR_SLICE]", tagsRelatingOtherwise(ColumnType.INT, intDriver, NEWCOMER, LookAlikeTypeDriver.neverNullInt()).toString());
+        Assert.assertEquals("[STRING, VARCHAR, VARCHAR_SLICE]", tagsRelatingOtherwise(ColumnType.INT, intDriver, NEWCOMER, LookAlikeTypeDriver.neverNullInt(), true).toString());
     }
 
     @Test
@@ -103,7 +103,7 @@ public class RelationRulesTest {
         // widen through a signed integer: BYTE, SHORT and CHAR by their lists, and the texts,
         // which parse through INT's signed getter; the rules report them until the type's author
         // names their cells
-        Assert.assertEquals("[BYTE, CHAR, SHORT, STRING, VARCHAR, VARCHAR_SLICE]", tagsRelatingOtherwise(ColumnType.INT, ColumnType.getTypeDriver(ColumnType.INT), NEWCOMER, LookAlikeTypeDriver.unsignedInt()).toString());
+        Assert.assertEquals("[BYTE, CHAR, SHORT, STRING, VARCHAR, VARCHAR_SLICE]", tagsRelatingOtherwise(ColumnType.INT, ColumnType.getTypeDriver(ColumnType.INT), NEWCOMER, LookAlikeTypeDriver.unsignedInt(), true).toString());
     }
 
     private static boolean isAlike(short aTag, short bTag, short resultWithA, short resultWithB) {
@@ -118,11 +118,12 @@ public class RelationRulesTest {
     }
 
     // the third types that relate to a and b differently, under W, C, N or CASE's number rule, in
-    // either direction, outside the cells an exception or a rule clause names
-    private static TreeSet<String> tagsRelatingOtherwise(short aTag, TypeDriver a, short bTag, TypeDriver b) {
+    // either direction, outside the cells an exception or a rule clause names; the lists the stub
+    // type drivers' tests pin hold the existing types, so those tests skip a type registered later
+    private static TreeSet<String> tagsRelatingOtherwise(short aTag, TypeDriver a, short bTag, TypeDriver b, boolean isLaterTypeSkipped) {
         final TreeSet<String> tags = new TreeSet<>();
         for (short t = 0; t <= ColumnType.MAX_TAG; t++) {
-            if (t == aTag || t == bTag) {
+            if (t == aTag || t == bTag || (isLaterTypeSkipped && TypeConformanceTypes.isLaterTag(t))) {
                 continue;
             }
             final TypeDriver third = ColumnType.findTypeDriver(t);

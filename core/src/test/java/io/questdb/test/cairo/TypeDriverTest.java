@@ -322,7 +322,7 @@ public class TypeDriverTest {
     public void testFixedSizeDriverWidthsMatchColumnType() {
         final IntList fixedWidthTags = new IntList();
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-            if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag))) {
+            if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ExistingTags.IS_LATER[tag]) {
                 continue;
             }
             final TypeDriver driver = ColumnType.getTypeDriver(tag);
@@ -340,7 +340,7 @@ public class TypeDriverTest {
         // isFixedSize reports as not fixed-size while their data vectors have a fixed width
         final IntList expected = new IntList();
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-            if (ColumnType.isFixedSize(tag) || tag == ColumnType.SYMBOL || tag == ColumnType.INTERVAL) {
+            if (!ExistingTags.IS_LATER[tag] && (ColumnType.isFixedSize(tag) || tag == ColumnType.SYMBOL || tag == ColumnType.INTERVAL)) {
                 expected.add(tag);
             }
         }
@@ -461,7 +461,7 @@ public class TypeDriverTest {
         covered.add(ColumnTypeTag.SYMBOL);
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
             final ColumnTypeTag enumTag = ColumnTypeTag.of(tag);
-            Assert.assertTrue(enumTag.name(), PSEUDO_TAGS.contains(enumTag) || covered.contains(enumTag));
+            Assert.assertTrue(enumTag.name(), PSEUDO_TAGS.contains(enumTag) || covered.contains(enumTag) || ExistingTags.IS_LATER[tag]);
         }
     }
 
@@ -597,7 +597,7 @@ public class TypeDriverTest {
         }
         covered.add(ColumnTypeTag.ARRAY);
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-            Assert.assertTrue(ColumnTypeTag.of(tag).name(), covered.contains(ColumnTypeTag.of(tag)));
+            Assert.assertTrue(ColumnTypeTag.of(tag).name(), covered.contains(ColumnTypeTag.of(tag)) || ExistingTags.IS_LATER[tag]);
         }
     }
 
@@ -638,7 +638,7 @@ public class TypeDriverTest {
 
         // only the four value-only types have no sentinel
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-            if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag))) {
+            if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ExistingTags.IS_LATER[tag]) {
                 continue;
             }
             final boolean isValueOnly = tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
@@ -654,20 +654,26 @@ public class TypeDriverTest {
         final StringSink sink = new StringSink();
         final EnumSet<WireKind> answered = EnumSet.noneOf(WireKind.class);
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-            sink.put("tag ").put(tag).put(' ').put(ColumnTypeTag.of(tag).name()).put('\t');
             final TypeDriver driver = ColumnType.findTypeDriver(tag);
-            if (driver == null) {
-                sink.put("-\t-\t-");
-            } else {
-                sink.put(driver.getPgOid()).put('\t').put(driver.getPgArrayOid()).put('\t').put(driver.getWireKind().name());
-                answered.add(driver.getWireKind());
-            }
             final WireKind kind = WireKind.of(tag);
-            sink.put('\t').put(kind != null ? kind.name() : "-").put('\t').put(PGOids.getTypeOid(tag)).put('\n');
             if (kind != null) {
                 Assert.assertSame(ColumnType.nameOf(tag), driver.getWireKind(), kind);
                 Assert.assertEquals(ColumnType.nameOf(tag), driver.getPgOid(), PGOids.getTypeOid(tag));
             }
+            if (driver != null) {
+                answered.add(driver.getWireKind());
+            }
+            // a type registered later is checked against the protocols above, but has no line
+            if (ExistingTags.IS_LATER[tag]) {
+                continue;
+            }
+            sink.put("tag ").put(ExistingTags.NUMBER[tag]).put(' ').put(ColumnTypeTag.of(tag).name()).put('\t');
+            if (driver == null) {
+                sink.put("-\t-\t-");
+            } else {
+                sink.put(driver.getPgOid()).put('\t').put(driver.getPgArrayOid()).put('\t').put(driver.getWireKind().name());
+            }
+            sink.put('\t').put(kind != null ? kind.name() : "-").put('\t').put(PGOids.getTypeOid(tag)).put('\n');
         }
         TestUtils.assertEquals("""
                 tag 0 UNDEFINED\t-\t-\t-\t-\t0
@@ -978,7 +984,9 @@ public class TypeDriverTest {
         // timestamp reads false
         final StringSink sink = new StringSink();
         for (int tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-            appendTypeFacts(sink, "tag " + tag + ' ' + ColumnTypeTag.of(tag).name(), tag);
+            if (!ExistingTags.IS_LATER[tag]) {
+                appendTypeFacts(sink, "tag " + ExistingTags.NUMBER[tag] + ' ' + ColumnTypeTag.of(tag).name(), tag);
+            }
         }
         appendTypeFacts(sink, "TIMESTAMP_NS", ColumnType.TIMESTAMP_NANO);
         appendTypeFacts(sink, "designated TIMESTAMP", ColumnType.setDesignatedTimestampBit(ColumnType.TIMESTAMP_MICRO, true));
@@ -1183,13 +1191,18 @@ public class TypeDriverTest {
             default -> false;
         };
         final short tag = ColumnType.tagOf(type);
+        if (tag >= 0 && ExistingTags.IS_LATER[tag]) {
+            return;
+        }
         Assert.assertEquals("isFixedSize " + type, s10FixedSize, ColumnType.isFixedSize(type));
         if (tag < 0) {
             return; // -1, "no type": sizeOf and pow2SizeOf both throw, so neither is checked
         }
-        Assert.assertEquals("sizeOf " + type, tag < s10Size.length ? s10Size[tag] : -1, ColumnType.sizeOf(type));
-        if (tag < s10Pow2Size.length) {
-            Assert.assertEquals("pow2SizeOf " + type, s10Pow2Size[tag], ColumnType.pow2SizeOf(type));
+        // the tables hold the existing tags by number
+        final int number = ExistingTags.NUMBER[tag];
+        Assert.assertEquals("sizeOf " + type, number < s10Size.length ? s10Size[number] : -1, ColumnType.sizeOf(type));
+        if (number < s10Pow2Size.length) {
+            Assert.assertEquals("pow2SizeOf " + type, s10Pow2Size[number], ColumnType.pow2SizeOf(type));
         } else {
             try {
                 ColumnType.pow2SizeOf(type);
@@ -1200,6 +1213,9 @@ public class TypeDriverTest {
     }
 
     private static void assertS10Name(IntObjHashMap<String> s10Names, int type) {
+        if (ExistingTags.IS_LATER[type & 0xFF]) {
+            return;
+        }
         final String expected = s10Names.get(type);
         final String actual = ColumnType.nameOf(type);
         if (!(expected != null ? expected : ColumnType.UNKNOWN_NAME).equals(actual)) {
@@ -1340,6 +1356,26 @@ public class TypeDriverTest {
         } finally {
             if (process.isAlive()) {
                 process.destroyForcibly().onExit().join();
+            }
+        }
+    }
+
+    // Per tag code: whether a type registered later holds it, and the tag's number among the
+    // existing tags. The tests that pin an answer per tag check the existing types only, as the
+    // namesake test does; a later type takes NULL's number and moves NULL up, so those tests read
+    // each existing tag at the number it has without the later types.
+    private static final class ExistingTags {
+        private static final boolean[] IS_LATER = new boolean[256];
+        private static final int[] NUMBER = new int[256];
+
+        static {
+            int laterCount = 0;
+            for (int tag = 0; tag < 256; tag++) {
+                IS_LATER[tag] = TypeConformanceTypes.isLaterTag(tag);
+                NUMBER[tag] = tag - laterCount;
+                if (IS_LATER[tag]) {
+                    laterCount++;
+                }
             }
         }
     }

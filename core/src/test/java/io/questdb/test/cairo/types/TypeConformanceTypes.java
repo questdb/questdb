@@ -93,6 +93,14 @@ public final class TypeConformanceTypes {
     }
 
     /**
+     * Whether tag code {@code tag} belongs to a type registered later: it has a type driver and no
+     * recording. Tests that pin an answer for every tag check the existing types and skip these.
+     */
+    public static boolean isLaterTag(int tag) {
+        return ColumnType.findTypeDriver(tag) != null && !EXISTING_TAGS.contains(ColumnTypeTag.of(tag));
+    }
+
+    /**
      * Parses one declaration line of {@link #LATER_TYPES_RESOURCE},
      * {@code tag | DDL | NULL policy | paths [| arithmetic tier [| refused sites]]}, into its six
      * fields, trimmed; a field the line leaves out is empty. Every refused site must be one of
