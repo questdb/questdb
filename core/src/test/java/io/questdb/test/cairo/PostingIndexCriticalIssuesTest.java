@@ -3554,6 +3554,58 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3PostingSealPurgeContinuesAfterPurgeLogWriteFailure() throws Exception {
+        final AtomicBoolean isLogOpenFailing = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isLogOpenFailing.get() && Utf8s.containsAscii(name, "posting_seal_purge_log")) {
+                    isLogOpenFailing.set(false);
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_log_failure";
+            final long partitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, 0, 10, false));
+
+            final ObjList<PostingSealFileNames> supersededFiles = new ObjList<>();
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                // The purge log has no partition yet, so the job opens one when it
+                // persists its first task. That open fails.
+                isLogOpenFailing.set(true);
+                supersededFiles.add(resolvePostingSealFileNames(tableName, "sym", "marker", partitionTimestamp, -1L));
+                // Each batch is out of order and lands after the committed rows: an O3
+                // append into the indexed partition, which reseals the posting index.
+                execute(insertPostingRowsSql(tableName, 10, 12, false));
+                runPostingSealPurgeJob(purgeJob);
+                Assert.assertFalse("setup: the failed open must cost the job its log writer", purgeJob.isLogWriterOpenForTesting());
+
+                for (int lo = 12; lo < 30; lo += 2) {
+                    supersededFiles.add(resolvePostingSealFileNames(tableName, "sym", "marker", partitionTimestamp, -1L));
+                    execute(insertPostingRowsSql(tableName, lo, lo + 2, false));
+                }
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final PostingSealFileNames liveFiles = resolvePostingSealFileNames(tableName, "sym", "marker", partitionTimestamp, -1L);
+            for (int i = 0, n = supersededFiles.size(); i < n; i++) {
+                Assert.assertTrue("each O3 commit must supersede the seal", supersededFiles.getQuick(i).sealTxn < liveFiles.sealTxn);
+                assertPostingSealFilesExist(supersededFiles.getQuick(i), false);
+            }
+            assertPostingSealFilesExist(liveFiles, true);
+            assertQuery("SELECT count() FROM " + tableName + " WHERE sym = 'A'").noRandomAccess().expectSize().returns("count\n30\n");
+            assertQuery("SELECT sum(marker) FROM " + tableName + " WHERE sym = 'A'").noRandomAccess().expectSize().returns("sum\n435\n");
+        });
+    }
+
+    @Test
     public void testO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
@@ -3626,7 +3678,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // until after the data writer closes. The queue must accept the
             // deferred work even with a backlog larger than the former ring.
             try (PostingSealPurgeJob liveJob = new PostingSealPurgeJob(engine)) {
-                Assert.assertTrue("live job must own the log writer", liveJob.isJobAliveForTesting());
+                Assert.assertTrue("live job must own the log writer", liveJob.isLogWriterOpenForTesting());
                 fillPostingSealPurgeQueue(tableToken);
 
                 // The O3 commit makes the deferred purge ready and queues it.

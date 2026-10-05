@@ -58,6 +58,10 @@ import io.questdb.test.tools.LogCapture;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
 
@@ -233,6 +237,169 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 int outstanding = job.getOutstandingPurgeTasks();
                 assertFalse("outstanding tasks must not be negative", outstanding < 0);
                 job.run();
+            }
+        });
+    }
+
+    @Test
+    public void testJobKeepsPurgingAfterLogWriteFailure() throws Exception {
+        final AtomicBoolean isLogOpenFailing = new AtomicBoolean(false);
+        ff = newFailingLogOpenFilesFacade(isLogOpenFailing);
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_log_failure");
+            FilesFacade runtimeFf = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                final int pLen = partitionPath.size();
+                // The purge log has no partition yet, so the job opens one when it
+                // persists its first task. That open fails.
+                isLogOpenFailing.set(true);
+                long firstSealTxn = writeAndSeal(partitionPath, "c_first");
+                publishPurgeTask(tok, "c_first", firstSealTxn, 1L);
+                runPurgeJob(job);
+                assertFalse("setup: the failed open must cost the job its log writer", job.isLogWriterOpenForTesting());
+                assertTrue("a log failure must not stop the job", job.isJobAliveForTesting());
+
+                final int taskCount = 4;
+                final long[] sealTxns = new long[taskCount];
+                for (int i = 0; i < taskCount; i++) {
+                    sealTxns[i] = writeAndSeal(partitionPath, "c_" + i);
+                    publishPurgeTask(tok, "c_" + i, sealTxns[i], 1L);
+                }
+                runPurgeJob(job, 3);
+
+                for (int i = 0; i < taskCount; i++) {
+                    assertFalse(
+                            "a task published after the log failure must be purged [col=c_" + i + ']',
+                            runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c_" + i, COLUMN_NAME_TXN_NONE, sealTxns[i]))
+                    );
+                }
+                partitionPath.trimTo(pLen);
+                assertEquals(0, job.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
+    public void testJobLogsPendingTaskOnCloseAfterLogWriteFailure() throws Exception {
+        final AtomicBoolean isLogOpenFailing = new AtomicBoolean(false);
+        ff = newFailingLogOpenFilesFacade(isLogOpenFailing);
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_log_failure_close");
+            FilesFacade runtimeFf = configuration.getFilesFacade();
+            final String col = "c_pinned";
+            final long sealTxn;
+            try (Path partitionPath = partitionPathFor(tok)) {
+                sealTxn = writeAndSeal(partitionPath, col);
+            }
+
+            try (TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)) {
+                // A reader at txn 5 pins the superseded seal, so its task stays pending.
+                assertTrue(scoreboard.acquireTxn(0, 5L));
+                try {
+                    try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                        isLogOpenFailing.set(true);
+                        publishPurgeTask(tok, col, sealTxn, 10L);
+                        runPurgeJob(job, 3);
+                        assertFalse("setup: the failed open must cost the job its log writer", job.isLogWriterOpenForTesting());
+                        assertEquals("setup: the pinned task must be pending", 1, job.getOutstandingPurgeTasks());
+                        assertEquals(0L, countLogRows("column_name = '" + col + '\''));
+                    }
+                    assertEquals("close must log the pending task", 1L, countLogRows("column_name = '" + col + "' AND completed = null"));
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+            }
+
+            // The next start recovers the task from the log and purges it.
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob ignore = new PostingSealPurgeJob(engine)) {
+                assertFalse(
+                        "a task pending at close must be purged after a restart",
+                        runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn))
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testJobLogsRolledBackBatchOnCloseAfterLogDiskFull() throws Exception {
+        // A disk-full error in the middle of a batch costs the job its log writer, and
+        // the writer pool rolls back the rows the batch had appended. close() must log
+        // every task of that batch, and must not log the earlier, committed one again.
+        node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, 4096);
+        final AtomicBoolean isLogDiskFull = new AtomicBoolean(false);
+        final Set<Long> logFds = ConcurrentHashMap.newKeySet();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (isLogDiskFull.get() && logFds.contains(fd)) {
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                logFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.containsAscii(name, "posting_seal_purge_log")) {
+                    logFds.add(fd);
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_log_disk_full");
+            Misc.free(partitionPathFor(tok));
+            // Enough tasks for the batch to outgrow the first page of the log's 8-byte columns.
+            final int taskCount = (int) (configuration.getSystemDataAppendPageSize() / Long.BYTES) + 16;
+
+            try (TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)) {
+                // A reader at txn 5 keeps every task pending: they all cover [0, 10).
+                assertTrue(scoreboard.acquireTxn(0, 5L));
+                try {
+                    try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                        publishPurgeTask(tok, "c_committed", 1L, 10L);
+                        runPurgeJob(job);
+                        assertTrue("setup: the first batch must commit", job.isLogWriterOpenForTesting());
+                        assertEquals(1L, countLogRows("column_name = 'c_committed'"));
+
+                        isLogDiskFull.set(true);
+                        for (int i = 0; i < taskCount; i++) {
+                            publishPurgeTask(tok, "c_rolled_back", 2L + i, 10L);
+                        }
+                        runPurgeJob(job);
+                        isLogDiskFull.set(false);
+                        assertFalse("setup: the disk-full error must cost the job its log writer", job.isLogWriterOpenForTesting());
+                        assertEquals(taskCount + 1, job.getOutstandingPurgeTasks());
+                        assertEquals("setup: the failed batch must not reach the log", 0L, countLogRows("column_name = 'c_rolled_back'"));
+                    }
+                    assertEquals("close must not log the committed task again", 1L, countLogRows("column_name = 'c_committed'"));
+                    assertEquals("close must log every task of the rolled-back batch", taskCount, countLogRows("column_name = 'c_rolled_back'"));
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+            }
+
+            // The next start purges every logged task and empties the log.
+            try (PostingSealPurgeJob ignore = new PostingSealPurgeJob(engine)) {
+                assertEquals(0L, countLogRows("completed = null"));
             }
         });
     }
@@ -859,6 +1026,20 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                         0, job.getOutstandingPurgeTasks());
             }
         });
+    }
+
+    // Fails the next open of a purge-log file once the flag is set, then clears the flag.
+    private static TestFilesFacadeImpl newFailingLogOpenFilesFacade(AtomicBoolean isLogOpenFailing) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isLogOpenFailing.get() && Utf8s.containsAscii(name, "posting_seal_purge_log")) {
+                    isLogOpenFailing.set(false);
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
     }
 
     private void assertLogTableCompletedCount(String columnFilter) throws Exception {
