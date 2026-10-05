@@ -95,6 +95,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class TypeConformanceStorageTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
     private static final Pattern INCOMPATIBLE = Pattern.compile("error: alter: \\[(\\d+)] incompatible column type change \\[existing=([^,\\]]+), new=([^\\]]+)]");
+    // the refusal of a row that goes back in time on a non-partitioned non-WAL table
+    private static final String OUT_OF_ORDER_REFUSAL = "cannot insert rows out of order to non-partitioned table";
     // the guarded site the conversion of a Parquet partition's column into the type reaches
     private static final String PARQUET_SITE = "Parquet conversion";
     private static final String[] PARTITIONED_MODES = {"nonwal-day", "wal-day"};
@@ -288,7 +290,14 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                         if (isO3) {
                             // even rows first, then the odd rows go back in time
                             writeLaterRows(table, "", 0, 0, rows.size(), 2, steps);
-                            writeLaterRows(table, "", 0, 1, rows.size(), 2, steps);
+                            if ("nonwal-none-o3".equals(mode)) {
+                                // the non-partitioned non-WAL table refuses the odd rows
+                                final StringSink o3Steps = new StringSink();
+                                writeLaterRows(table, "", 0, 1, rows.size(), 2, o3Steps);
+                                assertOutOfOrderRefused(table, mode, 1, 2, o3Steps);
+                            } else {
+                                writeLaterRows(table, "", 0, 1, rows.size(), 2, steps);
+                            }
                         } else {
                             writeLaterRows(table, "", 0, 0, rows.size(), 1, steps);
                         }
@@ -693,6 +702,34 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
             if (cursor.hasNext()) {
                 throw new AssertionError(TypeConformanceInvariants.context(type, cursor.getRecord().getVarcharA(0).toString(), "storage.shapes", mode)
                         + ": " + shape + " must read no row");
+            }
+        }
+    }
+
+    /**
+     * {@code storage.insert} on the non-partitioned non-WAL table for a type registered later: the
+     * table refuses rows that go back in time, as the existing types' {@code insert-o3-none}
+     * sections record, so every step of the out-of-order write is that refusal and none of the
+     * rows {@code lo, lo + step, ...} is in the table. The rows written in order are checked as in
+     * every other mode.
+     */
+    private void assertOutOfOrderRefused(String table, String mode, int lo, int step, CharSequence o3Steps) throws Exception {
+        final String path = "storage.insert";
+        if (o3Steps.length() == 0) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": the rows that go back in time were written");
+        }
+        for (String line : o3Steps.toString().split("\n")) {
+            if (!line.startsWith("error: ") || !line.contains(OUT_OF_ORDER_REFUSAL)) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
+                        + ": the rows that go back in time must be refused as out of order, but: " + o3Steps);
+            }
+        }
+        final Map<String, String> texts = new HashMap<>();
+        readLater(table, texts, new HashMap<>());
+        for (int i = lo, n = rows.size(); i < n; i += step) {
+            final String label = rows.getQuick(i).label;
+            if (texts.containsKey(label)) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, label, path, mode) + ": the row goes back in time, but the table holds it");
             }
         }
     }
