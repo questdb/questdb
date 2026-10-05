@@ -165,9 +165,13 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     @TestOnly
+    private volatile Runnable onBeforeUnlockForTesting;
+    @TestOnly
     private volatile Runnable onClearPendingFullRefreshForTesting;
     @TestOnly
     private volatile Runnable onPendingFullRefreshMarkerReadForTesting;
+    @TestOnly
+    private volatile Runnable onPendingIncrementalRefreshRequestForTesting;
     @TestOnly
     private volatile Runnable onPendingInvalidationMarkerReadForTesting;
     // Single atomic marker for a deferred invalidation, collapsing the former
@@ -1149,6 +1153,11 @@ public class MatViewState implements QuietCloseable {
     }
 
     void requestPendingIncrementalRefresh() {
+        final Runnable onRequest = onPendingIncrementalRefreshRequestForTesting;
+        if (onRequest != null) {
+            onPendingIncrementalRefreshRequestForTesting = null;
+            onRequest.run();
+        }
         pendingIncrementalRefresh.set(true);
     }
 
@@ -1178,6 +1187,16 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Test seam: runs once at the start of {@link #unlock()}, while the caller still holds the lock. Tests use
+     * it to race a refresh that loses the lock against the holder's release.
+     * One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnBeforeUnlockForTesting(Runnable onBeforeUnlockForTesting) {
+        this.onBeforeUnlockForTesting = onBeforeUnlockForTesting;
+    }
+
+    /**
      * Test seam: runs once at the start of {@code clearPendingFullRefresh}, before it reads the pending
      * marker. Tests use it to race a marker replacement against the clear.
      * One-shot: the seam clears itself before firing.
@@ -1196,6 +1215,16 @@ public class MatViewState implements QuietCloseable {
     @TestOnly
     public void setOnPendingFullRefreshMarkerReadForTesting(Runnable onPendingFullRefreshMarkerReadForTesting) {
         this.onPendingFullRefreshMarkerReadForTesting = onPendingFullRefreshMarkerReadForTesting;
+    }
+
+    /**
+     * Test seam: runs once at the start of {@code requestPendingIncrementalRefresh}, after a refresh lost its
+     * first lock attempt and before it publishes its request. Tests use it to release the lock in that window.
+     * One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnPendingIncrementalRefreshRequestForTesting(Runnable onPendingIncrementalRefreshRequestForTesting) {
+        this.onPendingIncrementalRefreshRequestForTesting = onPendingIncrementalRefreshRequestForTesting;
     }
 
     /**
@@ -1267,6 +1296,11 @@ public class MatViewState implements QuietCloseable {
     }
 
     public void unlock() {
+        final Runnable onBeforeUnlock = onBeforeUnlockForTesting;
+        if (onBeforeUnlock != null) {
+            onBeforeUnlockForTesting = null;
+            onBeforeUnlock.run();
+        }
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
         }

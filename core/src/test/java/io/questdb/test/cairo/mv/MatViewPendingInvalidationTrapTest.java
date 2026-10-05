@@ -1736,6 +1736,137 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshRequestDuringTheHolderReleaseIsWoken() throws Exception {
+        // The lock holder checks for requests only after it unlocks. A refresh that loses both of its lock
+        // attempts while the holder is unlocking leaves its request on the view, and the holder's post-release
+        // check wakes it.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+            drainWalQueue();
+
+            final AtomicBoolean hookRan = new AtomicBoolean();
+            final AtomicInteger dequeuedAfterHook = new AtomicInteger();
+            final AtomicReference<Throwable> loserFailure = new AtomicReference<>();
+            state.setOnBeforeUnlockForTesting(() -> {
+                hookRan.set(true);
+                engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
+                // The losing refresh runs on a thread of its own while this holder still has the lock.
+                final Thread loser = new Thread(() -> {
+                    try {
+                        runRefreshThatLosesTheLock(state);
+                    } catch (Throwable th) {
+                        loserFailure.set(th);
+                    }
+                }, "losing-refresh");
+                loser.start();
+                try {
+                    loser.join();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(e);
+                }
+            });
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnRefreshTaskDequeuedForTesting(() -> {
+                    if (hookRan.get()) {
+                        dequeuedAfterHook.incrementAndGet();
+                    }
+                });
+                drainMatViewQueue(job);
+            } finally {
+                state.setOnBeforeUnlockForTesting(null);
+            }
+
+            final Throwable failure = loserFailure.get();
+            if (failure != null) {
+                throw new AssertionError("the losing refresh failed", failure);
+            }
+            Assert.assertTrue("the holder must release through the hook", hookRan.get());
+            Assert.assertEquals("the release must wake the request left while it unlocked", 1, dequeuedAfterHook.get());
+            Assert.assertFalse("the woken refresh must claim the request", state.hasPendingIncrementalRefreshForTesting());
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshRunsWhenTheHolderReleasesBeforeTheRequest() throws Exception {
+        // A refresh that loses the lock publishes its request and then tries the lock once more. Here the holder
+        // releases between the loser's first attempt and its request, so a holder's post-release check would find
+        // nothing to wake. The second attempt takes the lock and the refresh runs.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+
+            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+            drainWalQueue();
+
+            final AtomicBoolean released = new AtomicBoolean();
+            Assert.assertTrue(state.tryLock());
+            try {
+                state.setOnPendingIncrementalRefreshRequestForTesting(() -> {
+                    released.set(true);
+                    state.unlock();
+                });
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    drainMatViewQueue(job);
+                }
+            } finally {
+                state.setOnPendingIncrementalRefreshRequestForTesting(null);
+                if (!released.get()) {
+                    state.unlock();
+                }
+            }
+
+            Assert.assertTrue("the refresh must lose its first lock attempt", released.get());
+            Assert.assertFalse("the refresh must claim its own request", state.hasPendingIncrementalRefreshForTesting());
+            Assert.assertFalse("the refresh must release the lock", state.isLocked());
+            drainWalQueue();
+            assertQuery("price_1h order by sym, ts").expectSize().noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.5\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshTaskSkippedBeforeTheLockIncrementsRefreshSeq() throws Exception {
+        // MatViewTimerJob enqueues a view's next incremental refresh only once the view's refresh sequence has
+        // moved past the value it saw when it enqueued the last one. A view-scoped task that one of the early
+        // exits stops before the lock increments the sequence too: the refresh block list, writes denied on a
+        // suspended view, and an invalid view.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST, "price_1h");
+            try {
+                assertSkippedTaskIncrementsRefreshSeq(viewToken, state, "a task skipped for the refresh block list");
+            } finally {
+                setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST, "");
+            }
+
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            try {
+                assertSkippedTaskIncrementsRefreshSeq(viewToken, state, "a task skipped for a write-suspended view");
+            } finally {
+                execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "false");
+                drainWalAndMatViewQueues();
+            }
+
+            state.markAsInvalid("invalidated by the test");
+            assertSkippedTaskIncrementsRefreshSeq(viewToken, state, "a task skipped for an invalid view");
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshTaskThatFinishesWithoutRefreshingIncrementsRefreshSeq() throws Exception {
         // MatViewTimerJob enqueues a view's next incremental refresh only once the view's refresh sequence has
         // moved past the value it saw when it enqueued the last one. So a view-scoped incremental refresh
@@ -4195,6 +4326,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                         view_name\tbase_table_name\tview_status
                         price_1h\tbase_price\tvalid
                         """);
+    }
+
+    private void assertSkippedTaskIncrementsRefreshSeq(TableToken viewToken, MatViewState state, String task) {
+        final long seqBefore = state.getRefreshSeq();
+        engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
+        try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+            drainMatViewQueue(job);
+        }
+        Assert.assertTrue(task + " must increment the sequence", state.getRefreshSeq() > seqBefore);
     }
 
     private boolean baseWalDirExists(TableToken baseToken) {
