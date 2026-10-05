@@ -2552,8 +2552,8 @@ public class JoinTest extends AbstractCairoTest {
         // u1 and lets u0 take over u3.a = u0.a, so u0 joins last. u0 is a plain table without a
         // designated timestamp, so the reorder allows that. The s tables hold the same rows with
         // designated timestamps, and s1 lists them in reverse. There the first table keeps driving the
-        // chain, at the cost of a cross join with s1, so the rows follow s0's timestamps rather than
-        // s1's order. Every dropped equality turns the 3 rows into 9 on this data.
+        // chain, which reaches s1 through hash joins with s3 and s2, so the rows follow s0's
+        // timestamps rather than s1's order. Every dropped equality turns the 3 rows into 9 on this data.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE u0 (a INT, b INT, x INT)");
             execute("CREATE TABLE u1 (a INT, b INT, x INT)");
@@ -2634,6 +2634,8 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .timestamp("ts")
+                    .withPlanContaining("condition: s3.a=s0.a", "condition: s2.b=s3.b", "condition: s1.x=s2.x")
+                    .withPlanNotContaining("Cross Join")
                     .returns("""
                             a\tts\tx
                             1\t1970-01-01T00:00:01.000000Z\t1
@@ -2645,6 +2647,7 @@ public class JoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .timestamp("ts")
+                    .withPlanNotContaining("Cross Join")
                     .returns("""
                             a\tts\tx
                             3\t1970-01-01T00:00:03.000000Z\t3
@@ -2653,10 +2656,258 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
+                    .withPlanNotContaining("Cross Join")
                     .returns("""
                             first\tlast\tcount
                             1\t3\t3
                             """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampReachesBranchingJoinGraphThroughHashJoins() throws Exception {
+        // No equality links g1 to g0. g2 and g3 hold equalities with g1 alone, and g4 cannot hand
+        // g4.x = g1.x over to g1, because g4 depends on g2, which depends on g1. The reorder used to
+        // cross join g1 right after g0. The chain now starts from g4, the only table that an equality
+        // links to g0: g4 hands its equalities with g1 and g2 over to them, so g1 joins g4, g2 joins
+        // g1 and g4 on both of its keys, and g3 joins g1. The row of g0 that matches two rows of g4
+        // comes out three times, and g4.z = g2.z drops the chain of the third row of g0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE g1 (x INT, y INT, w INT, v INT)");
+            execute("CREATE TABLE g2 (y INT, z INT, v INT)");
+            execute("CREATE TABLE g3 (w INT, v INT)");
+            execute("CREATE TABLE g4 (k INT, x INT, z INT, v INT)");
+            execute("""
+                    INSERT INTO g0 VALUES
+                    (1, 101, '1970-01-01T00:00:01Z'),
+                    (2, 102, '1970-01-01T00:00:02Z'),
+                    (3, 103, '1970-01-01T00:00:03Z')
+                    """);
+            execute("INSERT INTO g1 VALUES (10, 20, 30, 201), (11, 21, 31, 202), (12, 22, 32, 203)");
+            execute("INSERT INTO g2 VALUES (21, 41, 301), (20, 40, 302), (22, 99, 303)");
+            execute("INSERT INTO g3 VALUES (31, 401), (30, 402), (30, 403), (39, 404)");
+            execute("INSERT INTO g4 VALUES (2, 11, 41, 501), (1, 10, 40, 502), (3, 12, 42, 503), (1, 11, 41, 504)");
+
+            final String from = " FROM g0, g1, g2, g3, g4"
+                    + " WHERE g4.k = g0.k AND g4.x = g1.x AND g2.y = g1.y AND g4.z = g2.z AND g3.w = g1.w";
+            assertQuery("SELECT g0.v, g0.ts" + from)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining(
+                            "condition: g4.k=g0.k",
+                            "condition: g1.x=g4.x",
+                            "condition: g2.y=g1.y and g2.z=g4.z",
+                            "condition: g3.w=g1.w"
+                    )
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            v\tts
+                            101\t1970-01-01T00:00:01.000000Z
+                            101\t1970-01-01T00:00:01.000000Z
+                            101\t1970-01-01T00:00:01.000000Z
+                            102\t1970-01-01T00:00:02.000000Z
+                            """);
+            assertQuery("SELECT g0.v, g0.ts, g1.v v1, g2.v v2, g3.v v3, g4.v v4" + from + " ORDER BY g0.ts, v4, v3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            v\tts\tv1\tv2\tv3\tv4
+                            101\t1970-01-01T00:00:01.000000Z\t201\t302\t402\t502
+                            101\t1970-01-01T00:00:01.000000Z\t201\t302\t403\t502
+                            101\t1970-01-01T00:00:01.000000Z\t202\t301\t401\t504
+                            102\t1970-01-01T00:00:02.000000Z\t202\t301\t401\t501
+                            """);
+            assertQuery("SELECT first(g0.ts) first_ts, last(g0.ts) last_ts, count(*) cnt, sum(g3.v) total" + from)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            first_ts\tlast_ts\tcnt\ttotal
+                            1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000000Z\t4\t1607
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampReachesStarSchemaThroughHashJoins() throws Exception {
+        // The query lists the fact table first and the dimensions outermost-first, so no equality
+        // links countries to a table before it, and venues holds no other equality that would let
+        // countries take over v.country = c.id. trades has a designated timestamp, so it drives the
+        // chain and never takes over i.id = t.instrument. The reorder reaches the dimensions from
+        // trades instead: instruments joins trades, venues joins instruments and countries joins
+        // venues, all through hash joins. Rows keep the order of trades, and a NULL key matches
+        // nothing on either side of the chain.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (instrument INT, px INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE countries (id INT, name SYMBOL)");
+            execute("CREATE TABLE venues (id INT, country INT)");
+            execute("CREATE TABLE instruments (id INT, venue INT)");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (3, 100, '1970-01-01T00:00:01Z'),
+                    (1, 101, '1970-01-01T00:00:02Z'),
+                    (9, 102, '1970-01-01T00:00:03Z'),
+                    (2, 103, '1970-01-01T00:00:04Z'),
+                    (3, 104, '1970-01-01T00:00:05Z'),
+                    (4, 105, '1970-01-01T00:00:06Z'),
+                    (NULL, 106, '1970-01-01T00:00:07Z'),
+                    (6, 107, '1970-01-01T00:00:08Z')
+                    """);
+            execute("INSERT INTO countries VALUES (2, 'de'), (1, 'uk'), (3, 'fr')");
+            execute("INSERT INTO venues VALUES (20, 1), (10, 2), (30, 7), (40, NULL)");
+            execute("INSERT INTO instruments VALUES (4, 30), (3, 20), (2, 20), (1, 10), (5, 10), (6, 40)");
+
+            final String from = " FROM trades t, countries c, venues v, instruments i"
+                    + " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            assertQuery("SELECT t.px, t.ts, c.name, v.id vid, i.id iid" + from)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: c.id=v.country
+                                    Hash Join Light
+                                      condition: v.id=i.venue
+                                        Hash Join Light
+                                          condition: i.id=t.instrument
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: instruments
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: venues
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: countries
+                            """)
+                    .returns("""
+                            px\tts\tname\tvid\tiid
+                            100\t1970-01-01T00:00:01.000000Z\tuk\t20\t3
+                            101\t1970-01-01T00:00:02.000000Z\tde\t10\t1
+                            103\t1970-01-01T00:00:04.000000Z\tuk\t20\t2
+                            104\t1970-01-01T00:00:05.000000Z\tuk\t20\t3
+                            """);
+            assertQuery("SELECT t.px, t.ts, c.name" + from + " LIMIT -2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            px\tts\tname
+                            103\t1970-01-01T00:00:04.000000Z\tuk
+                            104\t1970-01-01T00:00:05.000000Z\tuk
+                            """);
+            assertQuery("SELECT c.name, count(*) cnt, sum(t.px) total, first(t.px) first_px, last(t.px) last_px" + from + " ORDER BY name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            name\tcnt\ttotal\tfirst_px\tlast_px
+                            de\t1\t101\t101\t101
+                            uk\t3\t307\t100\t104
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampReachesTablesThroughHashJoins() throws Exception {
+        // The first item has a designated timestamp, or is a sub-query or CTE, so it drives the join
+        // chain and never takes over an equality. No equality links s1 to an item before it, and s2
+        // holds no other equality that would let s1 take over s2.x = s1.x, so the reorder used to
+        // cross join s1 right after the first item. The chain now reaches s1 through hash joins: s3
+        // joins the first item, s2 joins s3 and s1 joins s2. s1 lists its rows against the order of
+        // s0, so a chain that followed s1 would return the rows in another order. Some rows of s0
+        // match two rows, and one matches none, so a dropped equality changes the row count.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s0 (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE s1 (x INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE s2 (b INT, x INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE s3 (a INT, b INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO s0 VALUES
+                    (1, 101, '1970-01-01T00:00:01Z'),
+                    (2, 102, '1970-01-01T00:00:02Z'),
+                    (3, 103, '1970-01-01T00:00:03Z'),
+                    (4, 104, '1970-01-01T00:00:04Z'),
+                    (2, 105, '1970-01-01T00:00:05Z')
+                    """);
+            execute("""
+                    INSERT INTO s1 VALUES
+                    (300, 11, '1970-01-01T00:00:01Z'),
+                    (210, 12, '1970-01-01T00:00:02Z'),
+                    (200, 13, '1970-01-01T00:00:03Z'),
+                    (100, 14, '1970-01-01T00:00:04Z'),
+                    (100, 15, '1970-01-01T00:00:05Z'),
+                    (999, 16, '1970-01-01T00:00:06Z')
+                    """);
+            execute("""
+                    INSERT INTO s2 VALUES
+                    (10, 100, 21, '1970-01-01T00:00:01Z'),
+                    (20, 200, 22, '1970-01-01T00:00:02Z'),
+                    (21, 210, 23, '1970-01-01T00:00:03Z'),
+                    (30, 300, 24, '1970-01-01T00:00:04Z'),
+                    (40, 400, 25, '1970-01-01T00:00:05Z')
+                    """);
+            execute("""
+                    INSERT INTO s3 VALUES
+                    (3, 30, 31, '1970-01-01T00:00:01Z'),
+                    (2, 20, 32, '1970-01-01T00:00:02Z'),
+                    (1, 10, 33, '1970-01-01T00:00:03Z'),
+                    (2, 21, 34, '1970-01-01T00:00:04Z'),
+                    (5, 50, 35, '1970-01-01T00:00:05Z'),
+                    (1, 40, 36, '1970-01-01T00:00:06Z')
+                    """);
+            execute("""
+                    INSERT INTO q VALUES
+                    (901, '1970-01-01T00:00:02Z'),
+                    (902, '1970-01-01T00:00:04Z'),
+                    (903, '1970-01-01T00:00:06Z')
+                    """);
+
+            final String where = " WHERE s2.x = s1.x AND s3.a = m.a AND s3.b = s2.b";
+            assertQuery("SELECT m.v, m.ts FROM s0 m, s1, s2, s3" + where)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: s1.x=s2.x
+                                    Hash Join Light
+                                      condition: s2.b=s3.b
+                                        Hash Join Light
+                                          condition: s3.a=m.a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s0
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: s3
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s2
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: s1
+                            """);
+            assertFirstTableReachesTablesThroughHashJoins("", "s0 m, s1, s2, s3", where);
+            assertFirstTableReachesTablesThroughHashJoins("", "s0 m CROSS JOIN s1 JOIN s2 ON s2.x = s1.x JOIN s3 ON s3.a = m.a AND s3.b = s2.b", "");
+            assertFirstTableReachesTablesThroughHashJoins("", "(SELECT a, v, ts FROM s0 WHERE v > 0) m, s1, s2, s3", where);
+            assertFirstTableReachesTablesThroughHashJoins("WITH m AS (SELECT a, v, ts FROM s0 WHERE v > 0) ", "m, s1, s2, s3", where);
         });
     }
 
@@ -2687,6 +2938,996 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("SELECT a.av, b.k bk, b.bv, c.v cv FROM a LEFT OUTER JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.v = 1 ORDER BY bk")
                     .noLeakCheck()
                     .returns("av\tbk\tbv\tcv\n11\t1\t21\t1\n");
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampStopsChainAtLeftJoin() throws Exception {
+        // s0 drives the chain, and no equality before the LEFT JOIN links it to s1 or s2, so a cross join
+        // stays. The LEFT JOIN's ON clause links s4 to s0 and s2, but the chain must not reach across the
+        // LEFT JOIN: anchoring s4 to s0 would make s4.b = s2.b an inner hash join key and drop the rows
+        // that the LEFT JOIN NULL-extends.
+        assertMemoryLeak(() -> {
+            createFirstTableBarrierTables();
+            assertQuery("SELECT s0.v v0, s0.ts, s1.v v1, s2.v v2, s4.v v4 FROM s0, s1, s2 LEFT JOIN s4 ON s4.a = s0.a AND s4.b = s2.b WHERE s2.x = s1.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("Cross Join", "condition: s4.b=s2.b and s4.a=s0.a")
+                    .returns("""
+                            v0\tts\tv1\tv2\tv4
+                            100\t2024-01-01T10:00:00.000000Z\t200\t300\t400
+                            100\t2024-01-01T10:00:00.000000Z\t201\t301\tnull
+                            101\t2024-01-01T11:00:00.000000Z\t200\t300\tnull
+                            101\t2024-01-01T11:00:00.000000Z\t201\t301\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampStopsChainAtLtJoin() throws Exception {
+        // s0 drives the chain, and no equality before the LT JOIN links it to s1 or s2, so a cross join
+        // stays. The LT JOIN's keys link s4 to s0 and s2, but the chain must not reach across the LT
+        // JOIN: anchoring s4 to s0 would make s4.b = s2.b an inner hash join key and drop the rows
+        // without an earlier s4 row.
+        assertMemoryLeak(() -> {
+            createFirstTableBarrierTables();
+            assertQuery("SELECT s0.v v0, s0.ts, s1.v v1, s2.v v2, s4.v v4 FROM s0 CROSS JOIN s1 JOIN s2 ON s2.x = s1.x LT JOIN s4 ON (s4.a = s0.a AND s4.b = s2.b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("Cross Join", "condition: s4.b=s2.b and s4.a=s0.a")
+                    .returns("""
+                            v0\tts\tv1\tv2\tv4
+                            100\t2024-01-01T10:00:00.000000Z\t200\t300\t400
+                            100\t2024-01-01T10:00:00.000000Z\t201\t301\tnull
+                            101\t2024-01-01T11:00:00.000000Z\t200\t300\tnull
+                            101\t2024-01-01T11:00:00.000000Z\t201\t301\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityAsOfJoinMatchesItsTimestamp() throws Exception {
+        // ASOF and LT JOIN over the join match on its designated timestamp, which is l.ts, not r.rts
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String rows = """
+                    ts\trts\tdts\tv
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t2020-01-01T00:00:00.000000Z\t1
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t2020-01-01T00:00:00.000000Z\t1
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t2020-01-01T00:00:00.000000Z\t1
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t2020-01-01T02:00:00.000000Z\t4
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t2020-01-01T02:00:00.000000Z\t4
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t2020-01-01T02:00:00.000000Z\t4
+                    """;
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT x.ts, x.rts, d.dts, d.v FROM (SELECT l.ts, r.rts FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) x "
+                        + join + " JOIN td d")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityAsOfSlaveFollowsItsTimestamp() throws Exception {
+        // as the slave of an ASOF JOIN, the join yields for each td row the last of its rows whose l.ts
+        // is not later than td's timestamp
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            assertQuery("SELECT d.dts, x.ts, x.rts FROM td d ASOF JOIN (SELECT l.ts, r.rts FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("dts")
+                    .returns("""
+                            dts\tts\trts
+                            2020-01-01T00:00:00.000000Z\t\t
+                            2020-01-01T00:15:00.000000Z\t2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z
+                            2020-01-01T01:30:00.000000Z\t2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z
+                            2020-01-01T02:00:00.000000Z\t2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z
+                            2020-01-01T03:00:00.000000Z\t2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityCreateTableKeepsPlanOfSelect() throws Exception {
+        // CREATE TABLE AS SELECT, like INSERT AS SELECT, keeps the plan that runs ta last at every level of
+        // its SELECT. The SELECT streams tb2's rows and declares r.rts, so the new table takes r.rts as its
+        // designated timestamp, and a non-partitioned table with TIMESTAMP(rts) receives its rows in order.
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String join = " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            execute("CREATE TABLE tj AS (SELECT l.ts lts, r.rts, r.c1" + join + ")");
+            execute("CREATE TABLE tj_rts AS (SELECT l.ts lts, r.rts, r.c1" + join + ") TIMESTAMP(rts)");
+            execute("CREATE TABLE tj_none AS (SELECT l.ts lts, r.rts, r.c1" + join + ") TIMESTAMP(rts) PARTITION BY NONE");
+            assertQuery("SELECT table_name, designatedTimestamp FROM tables() WHERE table_name LIKE 'tj%' ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\tdesignatedTimestamp
+                            tj\trts
+                            tj_none\trts
+                            tj_rts\trts
+                            """);
+            for (String table : new String[]{"tj", "tj_rts", "tj_none"}) {
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("rts")
+                        .returns("""
+                                lts\trts\tc1
+                                2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10
+                                2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10
+                                2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                                2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                                2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30
+                                2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30
+                                """);
+            }
+            // the SELECT reads no column of ta
+            execute("CREATE TABLE tj_chain AS (SELECT r.rts, r.c1" + join + ") TIMESTAMP(rts)");
+            assertQuery("SELECT * FROM tj_chain")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("rts")
+                    .returns("""
+                            rts\tc1
+                            2020-01-01T00:20:00.000000Z\t10
+                            2020-01-01T00:20:00.000000Z\t10
+                            2020-01-01T01:20:00.000000Z\t20
+                            2020-01-01T01:20:00.000000Z\t20
+                            2020-01-01T03:20:00.000000Z\t30
+                            2020-01-01T03:20:00.000000Z\t30
+                            """);
+            // the sub-queries of the SELECT keep that plan as well: the ASOF JOIN in the IN set matches
+            // on r.rts, and the set {10, 20, 30} holds '10' and '20' but not '7'
+            execute("CREATE TABLE tsym (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tsym VALUES ('10', '2020-01-01T00:00'), ('20', '2020-01-01T01:00'), ('7', '2020-01-01T02:00')");
+            execute("CREATE TABLE tj_in AS (SELECT * FROM tsym WHERE s IN (SELECT x.c1::SYMBOL FROM (SELECT l.ts, r.c1" + join + ") x ASOF JOIN td d))");
+            assertQuery("SELECT * FROM tj_in")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            20\t2020-01-01T01:00:00.000000Z
+                            """);
+            // EXPLAIN shows the plan that CREATE TABLE AS SELECT runs
+            assertQuery("CREATE TABLE tj_plan AS (SELECT l.ts lts, r.rts, r.c1" + join + ")")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Create table: tj_plan
+                                SelectedRecord
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: n.cts=r.rts
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tb2
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tc2
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: ta
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityDeclaresItsTimestamp() throws Exception {
+        // the join streams ta's rows, joined to tb2 and tc2 by a cross join and a hash join, and declares
+        // l.ts as its designated timestamp
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String rows = """
+                    lts\trts\tc1
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30
+                    """;
+            final String plan = """
+                    SelectedRecord
+                        Hash Join Light
+                          condition: n.cts=r.rts
+                            Cross Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: ta
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tb2
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tc2
+                    """;
+            for (String from : new String[]{
+                    " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts",
+                    " FROM ta l, tb2 r, tc2 n WHERE n.cts = r.rts"
+            }) {
+                assertQuery("SELECT l.ts lts, r.rts, r.c1" + from)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("lts")
+                        .withPlan(plan)
+                        .returns(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityExplicitTimestampOfChainKeepsItsOrder() throws Exception {
+        // TIMESTAMP(rts) declares the order of tb2's timestamp, so the join keeps the plan that streams
+        // tb2's rows. The filter of the time series joins keeps (02:10, 00:20), (02:10, 01:20) and
+        // (00:10, 03:20), one row per rts value.
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String join = "SELECT l.ts lts, r.rts, r.c1 FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            final String filtered = "((" + join + " WHERE (l.v = 9 AND r.c1 < 30) OR (l.v = 1 AND r.c1 = 30)) TIMESTAMP(rts)) x";
+            assertQuery("SELECT rts, c1 FROM (" + join + ") TIMESTAMP(rts)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("rts")
+                    .returns("""
+                            rts\tc1
+                            2020-01-01T00:20:00.000000Z\t10
+                            2020-01-01T00:20:00.000000Z\t10
+                            2020-01-01T01:20:00.000000Z\t20
+                            2020-01-01T01:20:00.000000Z\t20
+                            2020-01-01T03:20:00.000000Z\t30
+                            2020-01-01T03:20:00.000000Z\t30
+                            """);
+            // for each td row, the last row whose rts is not later than td's timestamp
+            assertQuery("SELECT d.dts, x.lts, x.rts, x.c1 FROM td d ASOF JOIN " + filtered)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("dts")
+                    .returns("""
+                            dts\tlts\trts\tc1
+                            2020-01-01T00:00:00.000000Z\t\t\tnull
+                            2020-01-01T00:15:00.000000Z\t\t\tnull
+                            2020-01-01T01:30:00.000000Z\t2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                            2020-01-01T02:00:00.000000Z\t2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                            2020-01-01T03:00:00.000000Z\t2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                            """);
+            // for each row, the last td row whose timestamp is not later than rts
+            assertQuery("SELECT x.lts, x.rts, d.dts, d.v FROM " + filtered + " ASOF JOIN td d")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("rts")
+                    .returns("""
+                            lts\trts\tdts\tv
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t2020-01-01T00:15:00.000000Z\t2
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t2020-01-01T00:15:00.000000Z\t2
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t2020-01-01T03:00:00.000000Z\t5
+                            """);
+            // the window around 00:20 holds td's 00:00 and 00:15; the one around 01:20 holds 01:30 and
+            // 02:00, plus 00:15 as the prevailing row; the one around 03:20 holds 03:00, plus 02:00
+            assertQuery("SELECT x.rts, sum(d.v) s FROM ((" + join + ") TIMESTAMP(rts)) x"
+                    + " WINDOW JOIN td d RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("rts")
+                    .returns("""
+                            rts\ts
+                            2020-01-01T00:20:00.000000Z\t3
+                            2020-01-01T00:20:00.000000Z\t3
+                            2020-01-01T01:20:00.000000Z\t9
+                            2020-01-01T01:20:00.000000Z\t9
+                            2020-01-01T03:20:00.000000Z\t9
+                            2020-01-01T03:20:00.000000Z\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityExplicitTimestampOfChainSampleBy() throws Exception {
+        // TIMESTAMP(rts) declares the order of tb2's timestamp, so every join below the clause keeps the
+        // plan that runs ta last and streams tb2's rows: also where the sub-query reads its own rows in
+        // order, through a window function or LIMIT, and where the join is the first model of another
+        // join. Each rts value holds two rows.
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String join = "SELECT l.ts lts, r.rts, r.c1 FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            final String buckets = """
+                    c\ts
+                    2\t20
+                    2\t40
+                    2\t60
+                    """;
+            assertQuery("SELECT count() c, sum(c1) s FROM (" + join + ") TIMESTAMP(rts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(buckets);
+            assertQuery("WITH w AS (" + join + ") SELECT count() c, sum(c1) s FROM w TIMESTAMP(rts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(buckets);
+            assertQuery("SELECT count() c, sum(c1) s FROM ((SELECT l.ts lts, r.rts, r.c1, row_number() OVER () rn"
+                    + " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) TIMESTAMP(rts)) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(buckets);
+            // x.rts comes from tb2 inside x, the first model of the outer join
+            assertQuery("SELECT count() c, sum(c1) s FROM ((SELECT x.rts, x.c1 FROM (" + join + ") x CROSS JOIN long_sequence(1) z)"
+                    + " TIMESTAMP(rts)) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(buckets);
+            assertQuery("SELECT count() c, sum(c1) s FROM ((SELECT x.rts, x.c1, d.v FROM (" + join + ") x ASOF JOIN td d)"
+                    + " TIMESTAMP(rts)) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(buckets);
+            assertQuery("SELECT rts, count() c, sum(c1) s FROM ((" + join + " LIMIT 100) TIMESTAMP(rts)) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("rts")
+                    .returns("""
+                            rts\tc\ts
+                            2020-01-01T00:20:00.000000Z\t2\t20
+                            2020-01-01T01:20:00.000000Z\t2\t40
+                            2020-01-01T03:20:00.000000Z\t2\t60
+                            """);
+            // SAMPLE BY over a view does not become a GROUP BY, so it buckets the rows in their order
+            execute("CREATE VIEW vjr AS (SELECT * FROM (" + join + ") TIMESTAMP(rts))");
+            assertQuery("SELECT rts, count() c, sum(c1) s FROM vjr SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("rts")
+                    .returns("""
+                            rts\tc\ts
+                            2020-01-01T00:00:00.000000Z\t2\t20
+                            2020-01-01T01:00:00.000000Z\t2\t40
+                            2020-01-01T03:00:00.000000Z\t2\t60
+                            """);
+            // the same tables, all timestamped on ts: only the alias of r.ts tells it from sa's timestamp
+            execute("CREATE TABLE sa (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sb (ts TIMESTAMP, v INT, c1 INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sc (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO sa SELECT * FROM ta");
+            execute("INSERT INTO sb SELECT * FROM tb2");
+            execute("INSERT INTO sc SELECT * FROM tc2");
+            assertQuery("SELECT count() c, sum(c1) s FROM (SELECT l.ts lts, r.ts rts, r.c1 FROM sa l CROSS JOIN sb r JOIN sc n ON n.ts = r.ts)"
+                    + " TIMESTAMP(rts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(buckets);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityExplicitTimestampOfFirstTableSampleBy() throws Exception {
+        // TIMESTAMP(lts) declares the order of ta's designated timestamp, which the join keeps when ta
+        // drives it, wherever the clause sits: each l.ts bucket holds one ta row joined to three chain rows
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String buckets = """
+                    c\ts
+                    3\t60
+                    3\t60
+                    """;
+            for (String query : new String[]{
+                    // the first item is a sub-query
+                    "SELECT count() c, sum(c1) s FROM (SELECT l.ts lts, r.c1 FROM (SELECT * FROM ta) l"
+                            + " CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) TIMESTAMP(lts)",
+                    // the first item is a CTE, and the projection does not qualify the column
+                    "WITH w AS (SELECT * FROM ta) SELECT count() c, sum(c1) s FROM (SELECT ts lts, c1 FROM w l"
+                            + " CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) TIMESTAMP(lts)",
+                    // the join is the first model of another join
+                    "SELECT count() c, sum(c1) s FROM ((SELECT x.lts, x.c1 FROM (SELECT l.ts lts, r.c1 FROM ta l"
+                            + " CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) x CROSS JOIN long_sequence(1) z) TIMESTAMP(lts))"
+            }) {
+                assertQuery(query + " SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(buckets);
+            }
+            execute("CREATE VIEW vjl AS (SELECT * FROM (SELECT l.ts lts, r.c1 FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) TIMESTAMP(lts))");
+            assertQuery("SELECT lts, count() c, sum(c1) s FROM vjl SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("lts")
+                    .returns("""
+                            lts\tc\ts
+                            2020-01-01T00:00:00.000000Z\t3\t60
+                            2020-01-01T02:00:00.000000Z\t3\t60
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityFirstLastFollowItsOrder() throws Exception {
+        // the filter keeps (l.v = 1, r.c1 = 30) and (l.v = 9, r.c1 = 10), in this order of ta's rows
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            assertQuery("SELECT first(l.v) fl, last(l.v) ll, first(r.c1) fr, last(r.c1) lr FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts"
+                    + " WHERE (l.v = 1 AND r.c1 = 30) OR (l.v = 9 AND r.c1 = 10)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            fl\tll\tfr\tlr
+                            1\t9\t30\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityInsertKeepsTargetTimestamp() throws Exception {
+        // INSERT AS SELECT keeps the plan that runs ta last at every level of its SELECT, so the SELECT
+        // declares r.rts, which feeds the target's designated timestamp.
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String join = " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            final String rows = """
+                    lts\trts\tc1
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                    2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30
+                    2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30
+                    """;
+            execute("CREATE TABLE ins_rts (lts TIMESTAMP, rts TIMESTAMP, c1 INT) TIMESTAMP(rts) PARTITION BY DAY");
+            execute("INSERT INTO ins_rts SELECT l.ts lts, r.rts, r.c1" + join);
+            assertQuery("SELECT lts, rts, c1 FROM ins_rts ORDER BY rts, lts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("rts")
+                    .returns(rows);
+            execute("CREATE TABLE ins_rts0 (rts TIMESTAMP, lts TIMESTAMP, c1 INT) TIMESTAMP(rts) PARTITION BY DAY");
+            execute("INSERT INTO ins_rts0 SELECT r.rts, l.ts lts, r.c1" + join);
+            assertQuery("SELECT lts, rts, c1 FROM ins_rts0 ORDER BY rts, lts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("rts")
+                    .returns(rows);
+            execute("CREATE TABLE ins_wal (lts TIMESTAMP, rts TIMESTAMP, c1 INT) TIMESTAMP(rts) PARTITION BY DAY WAL");
+            execute("INSERT INTO ins_wal SELECT l.ts lts, r.rts, r.c1" + join);
+            drainWalQueue();
+            assertQuery("SELECT lts, rts, c1 FROM ins_wal ORDER BY rts, lts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("rts")
+                    .returns(rows);
+            // LIMIT, a window function and an ASOF JOIN in the SELECT keep that plan as well, and none of
+            // them changes which rows reach the target here
+            final String[] selects = {
+                    "SELECT l.ts lts, r.rts, r.c1" + join + " LIMIT 100",
+                    "SELECT lts, rts, c1 FROM (SELECT l.ts lts, r.rts, r.c1, row_number() OVER () rn" + join + ") WHERE rn > 0",
+                    "SELECT x.lts, x.rts, x.c1 FROM (SELECT l.ts lts, r.rts, r.c1" + join + ") x ASOF JOIN td d"
+            };
+            for (int i = 0; i < selects.length; i++) {
+                execute("CREATE TABLE ins_rts" + (i + 1) + " (lts TIMESTAMP, rts TIMESTAMP, c1 INT) TIMESTAMP(rts) PARTITION BY DAY");
+                execute("INSERT INTO ins_rts" + (i + 1) + " " + selects[i]);
+                assertQuery("SELECT lts, rts, c1 FROM ins_rts" + (i + 1) + " ORDER BY rts, lts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("rts")
+                        .returns(rows);
+            }
+            // the sub-queries of the SELECT keep that plan as well. The join streams tb2's rows, so LIMIT 1, 2
+            // takes the row of l.ts 02:10, and the filter keeps the rows of ta's second row
+            execute("CREATE TABLE ins_scalar (lts TIMESTAMP, rts TIMESTAMP, c1 INT) TIMESTAMP(rts) PARTITION BY DAY");
+            execute("INSERT INTO ins_scalar SELECT l.ts lts, r.rts, r.c1" + join + " WHERE l.ts >= (SELECT l.ts" + join + " LIMIT 1, 2)");
+            assertQuery("SELECT * FROM ins_scalar")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("rts")
+                    .returns("""
+                            lts\trts\tc1
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30
+                            """);
+            // the ASOF JOIN in the IN set matches on r.rts, and the set {10, 20, 30} holds '10' and '20'
+            // but not '7'
+            execute("CREATE TABLE tsym (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tsym VALUES ('10', '2020-01-01T00:00'), ('20', '2020-01-01T01:00'), ('7', '2020-01-01T02:00')");
+            execute("CREATE TABLE ins_in (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ins_in SELECT * FROM tsym WHERE s IN (SELECT x.c1::SYMBOL FROM (SELECT l.ts, r.c1" + join + ") x ASOF JOIN td d)");
+            assertQuery("SELECT * FROM ins_in")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            20\t2020-01-01T01:00:00.000000Z
+                            """);
+            // a target whose designated timestamp takes l.ts rejects the SELECT, which declares r.rts, as it
+            // does on a revision that never keeps ta first
+            execute("CREATE TABLE ins_lts (lts TIMESTAMP, rts TIMESTAMP, c1 INT) TIMESTAMP(lts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "INSERT INTO ins_lts SELECT l.ts lts, r.rts, r.c1" + join,
+                    12,
+                    "designated timestamp of existing table (0) does not match designated timestamp in select query (1)"
+            );
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityKeepsPlanOfInSubQuery() throws Exception {
+        // The order of an IN set's rows cannot change the result, so the sub-query keeps the plan that
+        // runs ta last.
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            execute("CREATE TABLE tsym (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tsym VALUES ('10', '2020-01-01T00:00'), ('20', '2020-01-01T01:00'), ('7', '2020-01-01T02:00')");
+            final String subQuery = "(SELECT r.c1::SYMBOL FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts)";
+            assertQuery("SELECT count() FROM tsym WHERE s IN " + subQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Count
+                                Async Filter workers: 1
+                                  filter: s in cursor\s
+                                    VirtualRecord
+                                      functions: [c1::symbol]
+                                        SelectedRecord
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: n.cts=r.rts
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tb2
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tc2
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: ta [state-shared]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tsym
+                            """)
+                    .returns("""
+                            count
+                            2
+                            """);
+            assertQuery("SELECT count() FROM tsym WHERE s NOT IN " + subQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Count
+                                Async Filter workers: 1
+                                  filter: not (s in cursor\s
+                                    VirtualRecord
+                                      functions: [c1::symbol]
+                                        SelectedRecord
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: n.cts=r.rts
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tb2
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tc2
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: ta [state-shared])
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tsym
+                            """)
+                    .returns("""
+                            count
+                            1
+                            """);
+            // the set of an IN predicate in a GROUP BY or ORDER BY expression keeps the plan as well:
+            // '10' and '20' are in the set, '7' is not
+            assertQuery("SELECT count() c FROM tsym GROUP BY s IN " + subQuery + " ORDER BY c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [c]
+                                VirtualRecord
+                                  functions: [c]
+                                    Async Group By workers: 1
+                                      keys: [column]
+                                      keyFunctions: [s in cursor\s
+                                        VirtualRecord
+                                          functions: [c1::symbol]
+                                            SelectedRecord
+                                                Cross Join
+                                                    Hash Join Light
+                                                      condition: n.cts=r.rts
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tb2
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: tc2
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: ta [state-shared]]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tsym
+                            """)
+                    .returns("""
+                            c
+                            1
+                            2
+                            """);
+            // the same set in a column that the GROUP BY names by its alias
+            assertQuery("SELECT s IN " + subQuery + " k, count() c FROM tsym GROUP BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [k]
+                                VirtualRecord
+                                  functions: [k,c]
+                                    Async Group By workers: 1
+                                      keys: [k]
+                                      keyFunctions: [s in cursor\s
+                                        VirtualRecord
+                                          functions: [c1::symbol]
+                                            SelectedRecord
+                                                Cross Join
+                                                    Hash Join Light
+                                                      condition: n.cts=r.rts
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tb2
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: tc2
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: ta [state-shared]]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tsym
+                            """)
+                    .returns("""
+                            k\tc
+                            false\t1
+                            true\t2
+                            """);
+            assertQuery("SELECT s FROM tsym ORDER BY s IN " + subQuery + ", s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [column, s]
+                                    VirtualRecord
+                                      functions: [s,s in cursor\s
+                                        VirtualRecord
+                                          functions: [c1::symbol]
+                                            SelectedRecord
+                                                Cross Join
+                                                    Hash Join Light
+                                                      condition: n.cts=r.rts
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tb2
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: tc2
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: ta]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tsym
+                            """)
+                    .returns("""
+                            s
+                            7
+                            10
+                            20
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityKeepsPlanWhenOrderIsUnobserved() throws Exception {
+        // Where nothing reads the order of the join's rows, the plan keeps the cross join with ta last,
+        // which multiplies fewer rows than a chain that starts at ta.
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String from = " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            assertQuery("SELECT count() c, sum(r.c1) s" + from)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            GroupBy vectorized: false
+                              values: [count(*),sum(c1)]
+                                SelectedRecord
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: n.cts=r.rts
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tb2
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tc2
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: ta
+                            """)
+                    .returns("""
+                            c\ts
+                            6\t120
+                            """);
+            assertQuery("SELECT l.v, count() c" + from + " ORDER BY l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [v]
+                                GroupBy vectorized: false
+                                  keys: [v]
+                                  values: [count(*)]
+                                    SelectedRecord
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: n.cts=r.rts
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tb2
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tc2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: ta
+                            """)
+                    .returns("""
+                            v\tc
+                            1\t3
+                            9\t3
+                            """);
+            // SAMPLE BY with the calendar alignment becomes a GROUP BY over timestamp_floor(l.ts)
+            assertQuery("SELECT count() c, sum(r.c1) s" + from + " SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [ts]
+                                    GroupBy vectorized: false
+                                      keys: [ts]
+                                      values: [count(*),sum(c1)]
+                                        SelectedRecord
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: n.cts=r.rts
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tb2
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tc2
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: ta
+                            """)
+                    .returns("""
+                            c\ts
+                            3\t60
+                            3\t60
+                            """);
+            assertQuery("SELECT l.v, r.c1" + from + " ORDER BY r.c1, l.v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [c1, v]
+                                SelectedRecord
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: n.cts=r.rts
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tb2
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tc2
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: ta
+                            """)
+                    .returns("""
+                            v\tc1
+                            1\t10
+                            9\t10
+                            1\t20
+                            9\t20
+                            1\t30
+                            9\t30
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityLimitFollowsItsOrder() throws Exception {
+        // the first item of the last query lists ta's rows in reverse, ORDER BY v DESC
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String from = " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            assertQuery("SELECT l.ts lts, r.rts, r.c1" + from + " LIMIT -2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("lts")
+                    .returns("""
+                            lts\trts\tc1
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30
+                            """);
+            assertQuery("SELECT l.ts lts, r.rts, r.c1" + from + " LIMIT 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("lts")
+                    .returns("""
+                            lts\trts\tc1
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20
+                            """);
+            assertQuery("WITH l AS (SELECT * FROM ta) SELECT l.ts lts, r.rts FROM l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts LIMIT -2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("lts")
+                    .returns("""
+                            lts\trts
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z
+                            """);
+            assertQuery("SELECT l.v, r.c1 FROM (SELECT * FROM ta ORDER BY v DESC) l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts LIMIT -2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tc1
+                            1\t20
+                            1\t30
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualitySampleByAlignedToFirstObservation() throws Exception {
+        // this SAMPLE BY does not become a GROUP BY: it buckets the join's rows on the join's designated
+        // timestamp, in the order of the rows, so the buckets start at l.ts 00:10 and 02:10
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String buckets = """
+                    c\ts
+                    3\t60
+                    3\t60
+                    """;
+            for (String from : new String[]{
+                    " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts",
+                    " FROM ta l, tb2 r, tc2 n WHERE n.cts = r.rts",
+                    " FROM (SELECT * FROM ta) l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts"
+            }) {
+                assertQuery("SELECT count() c, sum(r.c1) s" + from + " SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(buckets);
+            }
+            assertQuery("SELECT count() c, sum(c1) s FROM (SELECT l.ts, r.c1 FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts)"
+                    + " TIMESTAMP(ts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(buckets);
+            assertQuery("SELECT l.ts, count() c, sum(r.c1) s FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts"
+                    + " SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tc\ts
+                            2020-01-01T00:10:00.000000Z\t3\t60
+                            2020-01-01T02:10:00.000000Z\t3\t60
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualitySampleByFillLinear() throws Exception {
+        // SAMPLE BY FILL(LINEAR) does not become a GROUP BY either: the l.ts buckets are the calendar
+        // hours 00:00 and 02:00, and the fill interpolates 01:00 between its equal neighbours
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            final String from = " FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            assertQuery("SELECT count() c, sum(r.c1) s" + from + " SAMPLE BY 1h FILL(LINEAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\ts
+                            3\t60
+                            3\t60
+                            3\t60
+                            """);
+            assertQuery("SELECT l.ts, count() c, sum(r.c1) s" + from + " SAMPLE BY 1h FILL(LINEAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tc\ts
+                            2020-01-01T00:00:00.000000Z\t3\t60
+                            2020-01-01T01:00:00.000000Z\t3\t60
+                            2020-01-01T02:00:00.000000Z\t3\t60
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityWindowFunctionFollowsItsOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            assertQuery("SELECT l.ts lts, r.rts, row_number() OVER () rn FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("lts")
+                    .returns("""
+                            lts\trts\trn
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t1
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t2
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t3
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t4
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t5
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithoutEqualityWindowJoinMatchesItsTimestamp() throws Exception {
+        // the window around 00:10 holds td's 00:00 and 00:15; the one around 02:10 holds 01:30, 02:00
+        // and 03:00, plus 00:15 as the prevailing row
+        assertMemoryLeak(() -> {
+            createFirstTableWithoutEqualityTables();
+            assertQuery("SELECT x.ts, x.rts, sum(d.v) s FROM (SELECT l.ts, r.rts FROM ta l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) x"
+                    + " WINDOW JOIN td d RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\trts\ts
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t3
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t3
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t3
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t14
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t14
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t14
+                            """);
         });
     }
 
@@ -13266,6 +14507,90 @@ public class JoinTest extends AbstractCairoTest {
         }
     }
 
+    // Asserts the queries of testFirstTableWithTimestampReachesTablesThroughHashJoins() for one form of
+    // the FROM clause: an optional WITH prefix, the joined items, and an optional WHERE clause.
+    private void assertFirstTableReachesTablesThroughHashJoins(String with, String items, String where) throws Exception {
+        final String from = " FROM " + items + where;
+        assertQuery(with + "SELECT m.v, m.ts" + from)
+                .noLeakCheck()
+                .noRandomAccess()
+                .timestamp("ts")
+                .withPlanContaining("condition: s3.a=m.a", "condition: s2.b=s3.b", "condition: s1.x=s2.x")
+                .withPlanNotContaining("Cross Join")
+                .returns("""
+                        v\tts
+                        101\t1970-01-01T00:00:01.000000Z
+                        101\t1970-01-01T00:00:01.000000Z
+                        102\t1970-01-01T00:00:02.000000Z
+                        102\t1970-01-01T00:00:02.000000Z
+                        103\t1970-01-01T00:00:03.000000Z
+                        105\t1970-01-01T00:00:05.000000Z
+                        105\t1970-01-01T00:00:05.000000Z
+                        """);
+        assertQuery(with + "SELECT m.v, m.ts, s3.v v3, s2.v v2, s1.v v1" + from + " ORDER BY m.ts, v3, v1")
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlanNotContaining("Cross Join")
+                .returns("""
+                        v\tts\tv3\tv2\tv1
+                        101\t1970-01-01T00:00:01.000000Z\t33\t21\t14
+                        101\t1970-01-01T00:00:01.000000Z\t33\t21\t15
+                        102\t1970-01-01T00:00:02.000000Z\t32\t22\t13
+                        102\t1970-01-01T00:00:02.000000Z\t34\t23\t12
+                        103\t1970-01-01T00:00:03.000000Z\t31\t24\t11
+                        105\t1970-01-01T00:00:05.000000Z\t32\t22\t13
+                        105\t1970-01-01T00:00:05.000000Z\t34\t23\t12
+                        """);
+        assertQuery(with + "SELECT m.v, m.ts" + from + " LIMIT -3")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanNotContaining("Cross Join")
+                .returns("""
+                        v\tts
+                        103\t1970-01-01T00:00:03.000000Z
+                        105\t1970-01-01T00:00:05.000000Z
+                        105\t1970-01-01T00:00:05.000000Z
+                        """);
+        assertQuery(with + "SELECT first(m.v), last(m.v), count(*)" + from)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanNotContaining("Cross Join")
+                .returns("""
+                        first\tlast\tcount
+                        101\t105\t7
+                        """);
+        assertQuery(with + "SELECT m.ts, count(*) cnt, first(m.v) first_v, last(m.v) last_v" + from + " SAMPLE BY 2s ALIGN TO FIRST OBSERVATION")
+                .noLeakCheck()
+                .noRandomAccess()
+                .timestamp("ts")
+                .withPlanNotContaining("Cross Join")
+                .returns("""
+                        ts\tcnt\tfirst_v\tlast_v
+                        1970-01-01T00:00:01.000000Z\t4\t101\t102
+                        1970-01-01T00:00:03.000000Z\t1\t103\t103
+                        1970-01-01T00:00:05.000000Z\t2\t105\t105
+                        """);
+        // the ASOF JOIN matches on the timestamps of the first item
+        assertQuery(with + "SELECT m.v, m.ts, q.v qv FROM " + items + " ASOF JOIN q" + where)
+                .noLeakCheck()
+                .noRandomAccess()
+                .timestamp("ts")
+                .withPlanNotContaining("Cross Join")
+                .returns("""
+                        v\tts\tqv
+                        101\t1970-01-01T00:00:01.000000Z\tnull
+                        101\t1970-01-01T00:00:01.000000Z\tnull
+                        102\t1970-01-01T00:00:02.000000Z\t901
+                        102\t1970-01-01T00:00:02.000000Z\t901
+                        103\t1970-01-01T00:00:03.000000Z\t901
+                        105\t1970-01-01T00:00:05.000000Z\t902
+                        105\t1970-01-01T00:00:05.000000Z\t902
+                        """);
+    }
+
     private void assertHashJoinSql(String query, String expected) throws Exception {
         assertHashJoinSql(query, expected, null, false, false);
     }
@@ -13337,6 +14662,53 @@ public class JoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    // Tables of testFirstTableWithTimestampStopsChainAt*(): s0 has a designated timestamp, each s1 row
+    // joins one s2 row on x, and s4 matches the first s0 and s2 rows on a and b, at a time before s0's.
+    private void createFirstTableBarrierTables() throws SqlException {
+        execute("CREATE TABLE s0 (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE s1 (x INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE s2 (b INT, x INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE s4 (a INT, b INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO s0 VALUES (1, 100, '2024-01-01T10:00'), (2, 101, '2024-01-01T11:00')");
+        execute("INSERT INTO s1 VALUES (1, 200, '2024-01-01T00:00'), (2, 201, '2024-01-01T01:00')");
+        execute("INSERT INTO s2 VALUES (1, 1, 300, '2024-01-01T00:00'), (2, 2, 301, '2024-01-01T01:00')");
+        execute("INSERT INTO s4 VALUES (1, 1, 400, '2024-01-01T09:00')");
+    }
+
+    // Tables of testFirstTableWithoutEquality*(). No equality links the first FROM item ta to tb2 and
+    // tc2, which join on their timestamps, so a cross join connects ta to the chain. When the result
+    // depends on the order of the join's rows, ta drives the chain: the join declares l.ts as its
+    // designated timestamp and streams ta's rows, ta-major and tb2-minor. A plan that ran ta last, as
+    // the slave of the cross join, would stream tb2's rows and declare r.rts instead. td is the other
+    // side of time series joins.
+    private void createFirstTableWithoutEqualityTables() throws SqlException {
+        execute("CREATE TABLE ta (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tb2 (rts TIMESTAMP, v INT, c1 INT) TIMESTAMP(rts) PARTITION BY DAY");
+        execute("CREATE TABLE tc2 (cts TIMESTAMP, v INT) TIMESTAMP(cts) PARTITION BY DAY");
+        execute("CREATE TABLE td (dts TIMESTAMP, v INT) TIMESTAMP(dts) PARTITION BY DAY");
+        execute("INSERT INTO ta VALUES ('2020-01-01T00:10', 1), ('2020-01-01T02:10', 9)");
+        execute("""
+                INSERT INTO tb2 VALUES
+                ('2020-01-01T00:20', 5, 10),
+                ('2020-01-01T01:20', 0, 20),
+                ('2020-01-01T03:20', 100, 30)
+                """);
+        execute("""
+                INSERT INTO tc2 VALUES
+                ('2020-01-01T00:20', 5),
+                ('2020-01-01T01:20', 0),
+                ('2020-01-01T03:20', 100)
+                """);
+        execute("""
+                INSERT INTO td VALUES
+                ('2020-01-01T00:00', 1),
+                ('2020-01-01T00:15', 2),
+                ('2020-01-01T01:30', 3),
+                ('2020-01-01T02:00', 4),
+                ('2020-01-01T03:00', 5)
+                """);
     }
 
     private void testAsOfJoin0(boolean fullFatJoin) throws Exception {

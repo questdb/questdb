@@ -8359,9 +8359,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByOnUnorderedJoinRequiresTimestamp() throws Exception {
         // A RIGHT or FULL join emits rows in the slave's order and null-extends the master's
-        // timestamp, so code generation gives its output no designated timestamp. A join order
-        // that moves the master off the first position follows another table, whose timestamp
-        // these queries do not read, so its output has none either.
+        // timestamp, so code generation gives its output no designated timestamp.
         // The paths that do not rewrite SAMPLE BY to GROUP BY need one and must fail, also when
         // the projection leaves out the master's timestamp and the optimiser adds it. They used
         // to bucket the unordered rows instead, folding earlier and NULL timestamps into the
@@ -8394,10 +8392,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "ta l JOIN tc m ON l.v = m.v RIGHT JOIN tb r ON l.v > r.v",
                     "ta l LEFT JOIN tc m ON l.v = m.v FULL JOIN tb r ON l.v > r.v",
                     "ta l CROSS JOIN tc m RIGHT JOIN tb r ON l.v > r.v",
-                    "ta l RIGHT JOIN tb r ON l.v > r.v LEFT JOIN tc m ON m.v = r.v",
-                    // the optimiser joins tb to tn first and cross joins ta last, so ta's
-                    // timestamps repeat in tb's order
-                    "ta l CROSS JOIN tb r JOIN tn n ON n.v = r.v"
+                    "ta l RIGHT JOIN tb r ON l.v > r.v LEFT JOIN tc m ON m.v = r.v"
             };
             final String[] fills = {"", " FILL(NULL)", " FILL(PREV)", " FILL(LINEAR)", " FILL(0, 0)"};
             for (String join : unorderedJoins) {
@@ -8433,6 +8428,55 @@ public class SampleByTest extends AbstractCairoTest {
                                 2\t30
                                 """);
             }
+
+            // No equality links ta to tb and tn. SAMPLE BY reads the order of the join's rows, so the
+            // optimiser keeps ta first rather than cross joining it after tb and tn, and the buckets
+            // start at ta's timestamps 00:10 and 02:10.
+            final String crossJoin = "SELECT count() c, sum(r.c1) s FROM ta l CROSS JOIN tb r JOIN tn n ON n.v = r.v SAMPLE BY 1h";
+            assertQuery(crossJoin + " ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            c\ts
+                            3\t60
+                            3\t60
+                            """);
+            assertQuery(crossJoin + " FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            c\ts
+                            3\t60
+                            null\tnull
+                            3\t60
+                            """);
+            assertQuery(crossJoin + " FILL(PREV) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            c\ts
+                            3\t60
+                            3\t60
+                            3\t60
+                            """);
+            assertQuery(crossJoin + " FILL(LINEAR) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\ts
+                            3\t60
+                            3\t60
+                            3\t60
+                            """);
+            assertQuery(crossJoin + " FILL(0, 0) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            c\ts
+                            3\t60
+                            0\t0
+                            3\t60
+                            """);
 
             // the GROUP BY rewrite forms a NULL bucket for the null-extended rows
             assertQuery("SELECT count() c, sum(r.c1) s FROM ta l RIGHT JOIN tb r ON l.v > r.v SAMPLE BY 1h")

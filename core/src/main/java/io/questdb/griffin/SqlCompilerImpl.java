@@ -218,6 +218,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
+    // false while executeCreateTable() compiles the SELECT of CREATE TABLE AS SELECT, see SqlOptimiser.optimise()
+    private boolean isQueryOrderTracked = true;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -3303,7 +3305,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
-                return optimiser.optimise((IQueryModel) model, executionContext, this);
+                return optimiser.optimise((IQueryModel) model, executionContext, this, isQueryOrderTracked);
             case ExecutionModel.INSERT: {
                 final InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
@@ -3355,7 +3357,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeTableCreate();
                 final CreateTableOperationBuilder createTableBuilder = (CreateTableOperationBuilder) model;
                 if (createTableBuilder.getQueryModel() != null) {
-                    final IQueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this);
+                    // the same mode as executeCreateTable() compiles the SELECT in
+                    final IQueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this, false);
                     createTableBuilder.setSelectModel(selectModel);
                 }
                 return model;
@@ -4817,7 +4820,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try {
                             lexer.of(createTableOp.getSelectText());
                             clearExceptSqlText();
-                            compileInner(executionContext, createTableOp.getSelectText(), false);
+                            // as for INSERT AS SELECT, no level of the SELECT keeps the first table of a
+                            // join chain first for the order of the rows
+                            isQueryOrderTracked = false;
+                            try {
+                                compileInner(executionContext, createTableOp.getSelectText(), false);
+                            } finally {
+                                isQueryOrderTracked = true;
+                            }
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             newCursor = newFactory.getCursor(executionContext);
@@ -5752,7 +5762,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
-        final IQueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
+        // no level of the SELECT keeps the first table of a join chain first for the order of the rows, so
+        // the SELECT keeps the join order and the designated timestamp that the cost model picks
+        final IQueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this, false);
         int columnNameListSize = model.getColumnNameList().size();
         if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
             throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
