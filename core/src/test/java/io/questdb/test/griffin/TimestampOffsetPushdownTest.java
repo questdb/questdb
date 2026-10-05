@@ -478,24 +478,23 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // LATEST ON takes the last row of each key when its input is in timestamp order. Over a month
         // dateadd() projection the last row is not the latest one: January 31 at 06:00 lands on
         // February 29 at 06:00, before January 30 at 18:00, which lands on February 29 at 18:00.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE late (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO late VALUES
-                        ('2024-01-30T12:00:00.000000Z', 1),
-                        ('2024-01-30T18:00:00.000000Z', 2),
-                        ('2024-01-31T00:00:00.000000Z', 3),
-                        ('2024-01-31T06:00:00.000000Z', 4)
-                    """);
-            assertQuery("SELECT * FROM (SELECT dateadd('M', 1, ts) x, i, 0 k FROM late) LATEST ON x PARTITION BY k")
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("order_by_timestamp: false")
-                    .returns("""
-                            x\ti\tk
-                            2024-02-29T18:00:00.000000Z\t2\t0
-                            """);
-        });
+        assertQuery("SELECT * FROM (SELECT dateadd('M', 1, ts) x, i, 0 k FROM late) LATEST ON x PARTITION BY k")
+                .ddl(
+                        "CREATE TABLE late (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO late VALUES
+                                    ('2024-01-30T12:00:00.000000Z', 1),
+                                    ('2024-01-30T18:00:00.000000Z', 2),
+                                    ('2024-01-31T00:00:00.000000Z', 3),
+                                    ('2024-01-31T06:00:00.000000Z', 4)
+                                """
+                )
+                .expectSize()
+                .withPlanContaining("order_by_timestamp: false")
+                .returns("""
+                        x\ti\tk
+                        2024-02-29T18:00:00.000000Z\t2\t0
+                        """);
     }
 
     @Test
@@ -1293,6 +1292,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     0,
                     NO_DESIGNATED_TIMESTAMP_ERROR
             );
+            // The sub-query designates time, an alias of ts that its ORDER BY names. The rows arrive in ts
+            // order, but code generation keeps the designated timestamp only when the dateadd() argument is
+            // the designated column itself, so SAMPLE BY needs the rows sorted by x.
+            assertDateaddOverUnorderedSubQuery("SELECT ts AS time, ts, price FROM trades ORDER BY time", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+            assertDateaddOverUnorderedSubQuery("SELECT *, ts AS time FROM trades ORDER BY time", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
 
             // Column pruning drops x from the dateadd() projection, and the code generator restores a
             // pruned dateadd() timestamp as a hidden column for an operator that requires one. The
@@ -4061,6 +4065,47 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\t3
                             2024-01-01T01:30:00.000000Z\t2
                             2024-01-01T01:30:00.000000Z\t3
+                            """);
+
+            // The same outer join inside the sub-query on the right side of a join: only the optimiser's
+            // pass over the nested models of the join slaves rebuilds the wrapper there
+            assertQuery("""
+                    SELECT a.id, s.x FROM t1 a JOIN (
+                        SELECT * FROM (
+                            SELECT dateadd('h', 1, ts) x, id
+                            FROM (SELECT t1.id, t2.ts2 ts FROM t1 LEFT JOIN t2 ON (id))
+                        )
+                        WHERE x > '2024-01-01T02:00:00'
+                    ) s ON (id)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join
+                                  condition: s.id=a.id
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
+                                    Hash
+                                        VirtualRecord
+                                          functions: [dateadd('h',1,ts),id]
+                                            SelectedRecord
+                                                Filter filter: 2024-01-01T02:00:00.000000Z<dateadd('h',1,t2.ts2)
+                                                    Hash Left Outer Join Light
+                                                      condition: t2.id=t1.id
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t1
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            id\tx
+                            3\t2024-01-01T03:30:00.000000Z
                             """);
         });
     }

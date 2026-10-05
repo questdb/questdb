@@ -1618,8 +1618,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
 
-                        assertQuery("SELECT t.sym, count() c, count(q.bid) m, sum(abs(q.bid - t.price)) d " +
-                                "FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY sym")
+                        assertQuery("""
+                                SELECT t.sym, count() c, count(q.bid) m, sum(abs(q.bid - t.price)) d
+                                FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY sym
+                                """)
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
@@ -1633,8 +1635,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         S3\t2000\t2000\t0.0
                                         S4\t2000\t2000\t0.0
                                         """);
-                        assertQuery("SELECT count() c, count(q.bid) m, sum(abs(q.bid - t.price)) d " +
-                                "FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                        assertQuery("""
+                                SELECT count() c, count(q.bid) m, sum(abs(q.bid - t.price)) d
+                                FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h
+                                """)
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
@@ -1645,8 +1649,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         c\tm\td
                                         10000\t10000\t0.0
                                         """);
-                        assertQuery("SELECT t.sym, count(b.bid) m, sum(abs(b.bid - t.price)) d, sum(abs(k.ask - t.price - 1)) e " +
-                                "FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY sym")
+                        assertQuery("""
+                                SELECT t.sym, count(b.bid) m, sum(abs(b.bid - t.price)) d, sum(abs(k.ask - t.price - 1)) e
+                                FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY sym
+                                """)
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
@@ -1660,8 +1666,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         S3\t2000\t0.0\t0.0
                                         S4\t2000\t0.0\t0.0
                                         """);
-                        assertQuery("SELECT count(b.bid) m, sum(abs(b.bid - t.price)) d, sum(abs(k.ask - t.price - 1)) e " +
-                                "FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h")
+                        assertQuery("""
+                                SELECT count(b.bid) m, sum(abs(b.bid - t.price)) d, sum(abs(k.ask - t.price - 1)) e
+                                FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h
+                                """)
                                 .withEngine(engine)
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()

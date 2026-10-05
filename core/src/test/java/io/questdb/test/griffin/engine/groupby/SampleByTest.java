@@ -5233,6 +5233,68 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarNumericTimeZoneBindVariableAndLimit() throws Exception {
+        // Every execution of a compiled factory reads the TIME ZONE bind variable again, and LIMIT
+        // rewinds the SAMPLE BY cursor before its first read, see
+        // testSampleByAlignToCalendarNumericTimeZoneAndLimit(). of() saves the numeric offset of the
+        // current execution for that rewind. An offset saved by the first execution only would put
+        // the buckets of the +02:00 execution on +05:30 days. Each execution returns the rows of the
+        // same statement with the zone as a literal, with or without LIMIT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1.0, '2024-01-01T10:00:00.000000Z'),
+                        (2.0, '2024-01-01T12:00:00.000000Z'),
+                        (4.0, '2024-01-01T19:00:00.000000Z'),
+                        (8.0, '2024-01-01T23:00:00.000000Z')
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String sql = """
+                    SELECT ts, sum(price) FROM (SELECT ts, price FROM trades)
+                    SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE $1 LIMIT 10
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "+05:30");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Limit value: 10", "Sample By\n");
+
+            final String rowsAt0530 = """
+                    ts\tsum
+                    2023-12-31T18:30:00.000000Z\t3.0
+                    2024-01-01T18:30:00.000000Z\t12.0
+                    """;
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "+05:30",
+                    rowsAt0530,
+                    bindVariableService -> bindVariableService.setStr(0, "+05:30")
+            ));
+            cases.add(BindVarTuple.ok(
+                    "+02:00 on the same factory",
+                    """
+                            ts\tsum
+                            2023-12-31T22:00:00.000000Z\t7.0
+                            2024-01-01T22:00:00.000000Z\t8.0
+                            """,
+                    bindVariableService -> bindVariableService.setStr(0, "+02:00")
+            ));
+            cases.add(BindVarTuple.ok(
+                    "back to +05:30",
+                    rowsAt0530,
+                    bindVariableService -> bindVariableService.setStr(0, "+05:30")
+            ));
+            // compiles the statement once and executes it for each case in turn
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .assertBinds(cases);
+        });
+    }
+
+    @Test
     public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -7535,24 +7597,21 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByFromToSubDayTimeZoneLimitFillNull() throws Exception {
         // FILL(NULL) under LIMIT, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of
         // the GROUP BY path.
-        assertMemoryLeak(() -> {
-            execute(SUB_DAY_TIME_ZONE_DDL);
-            assertQuery("""
-                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
-                    SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'
-                    LIMIT 3
-                    """)
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
-                            ts\tc
-                            2021-10-28T22:00:00.000000Z\tnull
-                            2021-10-29T03:00:00.000000Z\tnull
-                            2021-10-29T08:00:00.000000Z\tnull
-                            """);
-        });
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'
+                LIMIT 3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-28T22:00:00.000000Z\tnull
+                        2021-10-29T03:00:00.000000Z\tnull
+                        2021-10-29T08:00:00.000000Z\tnull
+                        """);
     }
 
     @Test
@@ -7596,24 +7655,21 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByFromToSubDayTimeZoneLimitFillValue() throws Exception {
         // FILL(value) under LIMIT, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of
         // the GROUP BY path.
-        assertMemoryLeak(() -> {
-            execute(SUB_DAY_TIME_ZONE_DDL);
-            assertQuery("""
-                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
-                    SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' FILL(42) ALIGN TO CALENDAR TIME ZONE '+02:00'
-                    LIMIT 3
-                    """)
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
-                            ts\tc
-                            2021-10-28T22:00:00.000000Z\t42
-                            2021-10-29T03:00:00.000000Z\t42
-                            2021-10-29T08:00:00.000000Z\t42
-                            """);
-        });
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' FILL(42) ALIGN TO CALENDAR TIME ZONE '+02:00'
+                LIMIT 3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-28T22:00:00.000000Z\t42
+                        2021-10-29T03:00:00.000000Z\t42
+                        2021-10-29T08:00:00.000000Z\t42
+                        """);
     }
 
     @Test
@@ -7799,50 +7855,44 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByFromToSubDayTimeZoneLimitWithOffsetBindVariable() throws Exception {
         // WITH OFFSET as a bind variable, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal
         // those of the GROUP BY path.
-        assertMemoryLeak(() -> {
-            execute(SUB_DAY_TIME_ZONE_DDL);
-            sqlExecutionContext.getBindVariableService().setStr(0, "00:00");
-            assertQuery("""
-                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
-                    SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00' WITH OFFSET $1
-                    LIMIT 3
-                    """)
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
-                            ts\tc
-                            2021-10-29T18:00:00.000000Z\t5
-                            2021-10-29T23:00:00.000000Z\t8
-                            2021-10-30T04:00:00.000000Z\t8
-                            """);
-        });
+        sqlExecutionContext.getBindVariableService().setStr(0, "00:00");
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00' WITH OFFSET $1
+                LIMIT 3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-29T18:00:00.000000Z\t5
+                        2021-10-29T23:00:00.000000Z\t8
+                        2021-10-30T04:00:00.000000Z\t8
+                        """);
     }
 
     @Test
     public void testSampleByFromToSubDayTimeZoneLimitWithoutFrom() throws Exception {
         // TO without FROM, which code generation converts to UTC alone, see
         // testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of the GROUP BY path.
-        assertMemoryLeak(() -> {
-            execute(SUB_DAY_TIME_ZONE_DDL);
-            assertQuery("""
-                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
-                    SAMPLE BY 3h TO '2021-10-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-03:00'
-                    LIMIT -3
-                    """)
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
-                            ts\tc
-                            2021-10-30T18:00:00.000000Z\t5
-                            2021-10-30T21:00:00.000000Z\t4
-                            2021-10-31T00:00:00.000000Z\t5
-                            """);
-        });
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 3h TO '2021-10-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-03:00'
+                LIMIT -3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-30T18:00:00.000000Z\t5
+                        2021-10-30T21:00:00.000000Z\t4
+                        2021-10-31T00:00:00.000000Z\t5
+                        """);
     }
 
     @Test
@@ -7926,25 +7976,22 @@ public class SampleByTest extends AbstractCairoTest {
         // TO without FROM. Code generation converts TO to UTC, and the FILL(value) cursor reads TO in its
         // end fill, so it rewinds to a zero offset, see testSampleByFromToSubDayTimeZoneLimit(). The rows
         // equal those of the GROUP BY path.
-        assertMemoryLeak(() -> {
-            execute(SUB_DAY_TIME_ZONE_DDL);
-            assertQuery("""
-                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
-                    SAMPLE BY 3h TO '2021-10-31' FILL(42) ALIGN TO CALENDAR TIME ZONE '-03:00'
-                    LIMIT -3
-                    """)
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("Sample By\n")
-                    .returns("""
-                            ts\tc
-                            2021-10-30T18:00:00.000000Z\t5
-                            2021-10-30T21:00:00.000000Z\t4
-                            2021-10-31T00:00:00.000000Z\t5
-                            """);
-        });
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 3h TO '2021-10-31' FILL(42) ALIGN TO CALENDAR TIME ZONE '-03:00'
+                LIMIT -3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-30T18:00:00.000000Z\t5
+                        2021-10-30T21:00:00.000000Z\t4
+                        2021-10-31T00:00:00.000000Z\t5
+                        """);
     }
 
     @Test
