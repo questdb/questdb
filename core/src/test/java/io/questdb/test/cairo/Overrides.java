@@ -189,9 +189,10 @@ public class Overrides {
                 }
             }
             properties.setProperty(propertyPath, value);
-            changed = !Chars.equalsNc(value, existing);
+            // Accumulate: a no-op set must not clear another property's pending change.
+            changed |= !Chars.equalsNc(value, existing);
         } else {
-            changed = properties.remove(propertyPath) != null;
+            changed |= properties.remove(propertyPath) != null;
         }
     }
 
