@@ -14,6 +14,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import type_probe as tp
 
@@ -494,6 +495,31 @@ class WorklistTest(unittest.TestCase):
         self.assertTrue(items[0].message.startswith('`WalWriter` column setup: decide whether'))
         done = tp.manual_items(data('readme-manual.md'), data('manual-done.md'))
         self.assertEqual(['README "Manual list", item 1', 'README "Manual list", item 3'], [i.location for i in done])
+
+
+class KitStepTest(unittest.TestCase):
+    def kit_profiles(self, **kwargs):
+        """The Maven profiles the kit step runs with, its Maven call captured instead of run."""
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            tree = tp.Tree(d)
+
+            def run(cmd, log_path, cwd, env=None, timeout=None):
+                calls.append([str(c) for c in cmd])
+                reports = tree.path(tp.SUREFIRE_DIR)
+                reports.mkdir(parents=True, exist_ok=True)
+                (reports / 'TEST-Probe.xml').write_text('<testsuite/>', encoding='utf-8')
+                return 0, ''
+
+            with mock.patch.object(tp, 'run_logged', run):
+                tp.kit(tree, Path(d) / 'out', **kwargs)
+        cmd = calls[0]
+        return cmd[cmd.index('-P') + 1].split(',')
+
+    def test_kit_loads_the_trees_rust_library(self):
+        # the kit runs the type's Rust answers, as it runs the C++ library the CMake step builds
+        self.assertEqual(['local-client', 'build-rust-library'], self.kit_profiles())
+        self.assertEqual(['local-client'], self.kit_profiles(is_rust_from_tree=False))
 
 
 class ExitCodeTest(unittest.TestCase):

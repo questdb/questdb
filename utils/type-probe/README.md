@@ -31,10 +31,12 @@ adding the type's arm at the site.
 
 Prerequisites: Python 3.11 or newer, a JDK, Maven with the offline cache of the project, cargo,
 CMake with a C++ compiler, and the Java client the kit drives, built and installed as the
-repository's `CLAUDE.md` describes (the tool runs Maven with `-P local-client`).
+repository's `CLAUDE.md` describes (the tool runs Maven with `-P local-client`, and the kit with
+`build-rust-library` as well, which builds the Rust library with cargo).
 
 Options: `--out DIR` (default `utils/target/type-probe/<NAME>/`, ignored by git), `--skip-native`
-(no cargo, no CMake), `--skip-kit` (no kit and no coverage tests), `--manual-done FILE` (a copy of
+(no cargo, no CMake, and the kit runs on the native libraries an earlier run built, or on the
+committed ones), `--skip-kit` (no kit and no coverage tests), `--manual-done FILE` (a copy of
 the manual list with the done entries ticked, section 6). A run with a skipped step never exits 0.
 
 ## 3. The facts file
@@ -169,8 +171,10 @@ The instrument table lists 555 sites where a type's behaviour could differ from 
 - **Native.** The Rust matches over the tag enum: rustc lists the exhaustive ones, a match with a
   wildcard arm is on the manual list, and the decode of an unknown tag code refuses the type at the
   Parquet boundary until the type joins the Rust enum. The C++ switches over the native enum: the
-  compiler lists them under `-Wswitch`. The committed native libraries: a CI workflow rebuilds them
-  on request.
+  compiler lists them under `-Wswitch`. The kit runs the tree's native code: the C++ library the
+  CMake step builds and a debug Rust library that Maven's `build-rust-library` profile builds, both
+  under `core/target/classes/io/questdb` (`bin-local` and `rust`), where they take precedence over
+  the committed libraries. The committed native libraries: a CI workflow rebuilds them on request.
 
 ## 5. What the build lists, what the tests report, what fails at setup, and what does not depend on the type
 
@@ -854,7 +858,8 @@ addition of the same types, and the time taken. The numbers of that run: not mea
 
 The tool lists where, not what. It does not write how the type prints, parses, compares and widens,
 the pairs its relations admit, or its function bodies, and it does not rebuild the committed native
-libraries: a CI workflow does, on request. Its native build checks that the code compiles.
+libraries: a CI workflow does, on request. Its native builds check that the code compiles and give
+the kit the tree's native code (section 4).
 
 Not yet tested, stated plainly: no committed test drives a type through the family-arm guard at the
 sites (the guard itself is tested with stub type drivers), and the factories that refuse a type at a

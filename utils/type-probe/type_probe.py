@@ -912,15 +912,18 @@ def cmake(tree, out):
     return text
 
 
-def kit(tree, out):
-    """The conformance kit and the coverage tests, with the local client; returns the reports."""
+def kit(tree, out, is_rust_from_tree=True):
+    """The conformance kit and the coverage tests, with the local client; returns the reports.
+    The kit loads the tree's native code: the C++ library the CMake step builds, and a debug Rust
+    library Maven's build-rust-library profile builds, unless the run skips native builds."""
     names = '|'.join(['TypeConformance.*Test'] + list(COVERAGE_TESTS))
     reports = tree.path(SUREFIRE_DIR)
     shutil.rmtree(reports, ignore_errors=True)
     log = out / 'logs' / 'kit.log'
+    profiles = 'local-client,build-rust-library' if is_rust_from_tree else 'local-client'
     code, text = run_logged(
         ['mvn', '-o', '-B', '-Dtest.exclude=None', '-DfailIfNoTests=false', '-Dsurefire.failIfNoSpecifiedTests=false',
-         '-pl', 'core', 'test', '-P', 'local-client', f'-Dtest.include=%regex[.*({names})\\.class]'],
+         '-pl', 'core', 'test', '-P', profiles, f'-Dtest.include=%regex[.*({names})\\.class]'],
         log, tree.root)
     copied = out / 'logs' / 'surefire'
     shutil.rmtree(copied, ignore_errors=True)
@@ -1335,7 +1338,7 @@ def cmd_run(args, tree):
     elif items:
         notes.append('the kit and the coverage tests did not run, because the build lists items')
     else:
-        for report in kit(tree, out):
+        for report in kit(tree, out, not args.skip_native):
             for failure in parse_surefire(report):
                 items += failure_items(failure, sites, facts, tree)
     done = Path(args.manual_done).read_text(encoding='utf-8') if args.manual_done else None
