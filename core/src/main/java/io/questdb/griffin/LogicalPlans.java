@@ -126,6 +126,13 @@ final class LogicalPlans {
         return expression == null || isStableWithinExecution(expression);
     }
 
+    private static boolean isTimestampComparison(FunctionExpression call) {
+        return call.getArgumentCount() == 2 && switch (call.getName()) {
+            case "=", "!=", "<>", "<", "<=", ">", ">=" -> true;
+            default -> false;
+        };
+    }
+
     private static boolean isUnconvertedTimestampCall(FunctionExpression call) {
         for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
             if (call.argumentAt(i) instanceof ConstantExpression constant && constant.isUnparsedTimestamp()) {
@@ -135,13 +142,6 @@ final class LogicalPlans {
         return isTimestampComparison(call)
                 && (isUnconvertibleSymbol(call.argumentAt(0), call.argumentAt(1).getDataType())
                 || isUnconvertibleSymbol(call.argumentAt(1), call.argumentAt(0).getDataType()));
-    }
-
-    private static boolean isTimestampComparison(FunctionExpression call) {
-        return call.getArgumentCount() == 2 && switch (call.getName()) {
-            case "=", "!=", "<>", "<", "<=", ">", ">=" -> true;
-            default -> false;
-        };
     }
 
     /**
@@ -340,43 +340,6 @@ final class LogicalPlans {
     }
 
     /**
-     * True when the expression reads a column of an enclosing LATERAL's outer input.
-     */
-    static boolean hasOuterColumn(BoundExpression expression) {
-        if (expression instanceof OuterColumnExpression) {
-            return true;
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (hasOuterColumn(call.argumentAt(i))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * True when the plan or one of its inputs reads a column of an enclosing LATERAL's outer input;
-     * {@code scratch} is restored on return.
-     */
-    static boolean hasOuterColumn(LogicalPlan plan, IntList scratch) {
-        final int base = scratch.size();
-        collectOuterColumnIds(plan, scratch);
-        final boolean hasOwn = scratch.size() > base;
-        scratch.setPos(base);
-        if (hasOwn) {
-            return true;
-        }
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            if (hasOuterColumn(plan.inputAt(i), scratch)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Whether a conjunct of the predicate is a WHERE or ON conjunct that failed to bind. Such a conjunct never
      * evaluates and its filter's generation raises its error, so no pass folds it, reads it as a fact or moves
      * it out of the filter it was bound in, other than to the join input whose columns alone it reads.
@@ -396,6 +359,43 @@ final class LogicalPlans {
     static boolean hasGenerationError(BoundExpression expression) {
         return expression instanceof ConstantExpression constant ? constant.isUnparsedTimestamp()
                 : firstGenerationError(expression) != null;
+    }
+
+    /**
+     * True when the expression reads a column of an enclosing LATERAL's outer input.
+     */
+    static boolean hasOuterColumn(BoundExpression expression) {
+        if (expression instanceof OuterColumnExpression) {
+            return true;
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (hasOuterColumn(call.argumentAt(i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when the plan or one of its inputs reads a column of an enclosing LATERAL's outer input;
+     * {@code tmpColumnIds} is restored on return.
+     */
+    static boolean hasOuterColumn(LogicalPlan plan, IntList tmpColumnIds) {
+        final int base = tmpColumnIds.size();
+        collectOuterColumnIds(plan, tmpColumnIds);
+        final boolean hasOwn = tmpColumnIds.size() > base;
+        tmpColumnIds.setPos(base);
+        if (hasOwn) {
+            return true;
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            if (hasOuterColumn(plan.inputAt(i), tmpColumnIds)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static boolean hasRepeatedColumn(ProjectPlan project) {
@@ -582,9 +582,6 @@ final class LogicalPlans {
         return -1;
     }
 
-    /**
-     * Whether the expression reads only columns of the output and no cursor.
-     */
     /**
      * Raises an error {@link #firstGenerationError} found: the deferred error, the type mismatch of a
      * conjunction's first conjunct that is not BOOLEAN, or the error building the call

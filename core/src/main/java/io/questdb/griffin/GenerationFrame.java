@@ -99,9 +99,9 @@ final class GenerationFrame implements Closeable, Mutable {
     int sharedHeadId;
     LogicalPlan sharedHeadTarget;
 
-    GenerationFrame(CairoConfiguration configuration, StringSink scratchSink, LongList longScratch) {
-        this.intervals = new IntervalExtractor(configuration, scratchSink, longScratch);
-        this.overrideIntervals = new IntervalExtractor(configuration, scratchSink, longScratch);
+    GenerationFrame(CairoConfiguration configuration, StringSink tmpSink, LongList tmpLongs) {
+        this.intervals = new IntervalExtractor(configuration, tmpSink, tmpLongs);
+        this.overrideIntervals = new IntervalExtractor(configuration, tmpSink, tmpLongs);
     }
 
     @Override

@@ -170,20 +170,20 @@ final class SampleByBinder implements Mutable {
                                                         ExpressionNode bound, SqlExecutionContext executionContext) throws SqlException {
         final BoundExpression value = ctx.functionBinder.bind(bound, input.getOutput(), sourceAlias(source), executionContext);
         final int placeholderId = ctx.nextColumnId++;
-        ctx.scratchScope.copyFrom(input.getOutput());
-        ctx.scratchScope.add(placeholderId, "", value.getDataType(), false);
+        ctx.tmpScope.copyFrom(input.getOutput());
+        ctx.tmpScope.add(placeholderId, "", value.getDataType(), false);
         ctx.substitutionNodes.clear();
         ctx.substitutionColumns.clear();
         ctx.substitutionNodes.add(bound);
         ctx.substitutionColumns.add(ctx.columns.next().of(placeholderId, value.getDataType(), bound.position));
         try {
             final BoundExpression comparison = ctx.functionBinder.bind(sampleByComparison(input.getOutput(), operator, bound),
-                    ctx.scratchScope, sourceAlias(source), ctx.substitutionNodes, ctx.substitutionColumns, executionContext);
+                    ctx.tmpScope, sourceAlias(source), ctx.substitutionNodes, ctx.substitutionColumns, executionContext);
             return ctx.expressionRewriter.moveToColumn(comparison, placeholderId, value);
         } finally {
             ctx.substitutionNodes.clear();
             ctx.substitutionColumns.clear();
-            ctx.scratchScope.clear();
+            ctx.tmpScope.clear();
         }
     }
 

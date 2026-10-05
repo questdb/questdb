@@ -1056,7 +1056,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     @Test
     public void testWindowJoinCursorComparisonProjection() throws Exception {
         // regression: compiling the scalar sub-query of a cursor-comparison projection must not
-        // corrupt the WINDOW JOIN aggregation scratch state in JoinFactoryGenerator, and the execution
+        // corrupt the WINDOW JOIN aggregation temporary state in JoinFactoryGenerator, and the execution
         // plan must render across the nested sub-query plan
         assertMemoryLeak(() -> {
             execute("create table trades as (" +
@@ -1158,7 +1158,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     @Test
     public void testMultiHorizonJoinAggregateSubQueryKey() throws Exception {
         // multi-slave counterpart of testHorizonJoinAggregateSubQueryKey, covering
-        // AggregateFactoryGenerator's projection scratch state
+        // AggregateFactoryGenerator's projection temporary state
         assertMemoryLeak(() -> {
             execute("create table trades as (" +
                     "select 'A'::symbol sym, x::double qty, timestamp_sequence(1000000, 1000000) ts" +

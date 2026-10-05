@@ -41,10 +41,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
 /**
- * Runs the semantics-preserving plan rewrites in a fixed order. Every pass step takes the plan root and
- * returns the root of the rewritten plan, the same node unless the step replaces it. The optimiser owns
- * the plan-shaped scratch the passes share and the {@link OptimiserContext} of the query level being
- * rewritten, borrows the compiler's leaf scratch (the column-id set and three index lists, which the
+ * Runs the semantics-preserving plan rewrites in a fixed order. A step that may replace the plan root
+ * returns the new root; a step that rewrites the plan in place returns nothing. The optimiser owns
+ * the plan-shaped temporary lists the passes share and the {@link OptimiserContext} of the query level being
+ * rewritten, borrows the compiler's leaf temporaries (the column-id set and three index lists, which the
  * generators and join ordering use in windows no optimisation can run in), and hands them, with the
  * statement binder's plan-node pools, to each pass through its constructor.
  */
@@ -52,21 +52,21 @@ final class SqlOptimiser implements Mutable {
     private final AggregateInputOrderPass aggregateInputOrder;
     private final AggregateRewritePass aggregateRewrite;
     private final ColumnPruningPass columnPruning;
-    private final ObjList<BoundExpression> conjunctScratch = new ObjList<>();
+    private final ObjList<BoundExpression> tmpConjuncts = new ObjList<>();
     private final OptimiserContext context = new OptimiserContext();
     private final DecorrelationPass decorrelation;
-    private final ObjList<BoundExpression> expressionScratch = new ObjList<>();
+    private final ObjList<BoundExpression> tmpExpressions = new ObjList<>();
     private final FilterPushdownPass filterPushdown;
-    private final IntList indexScratch;
-    private final IntList keyScratch;
+    private final IntList tmpIndexes;
+    private final IntList tmpKeys;
     private final NegativeLimitReversalPass negativeLimitReversal;
-    private final ObjList<LogicalPlan> planScratch = new ObjList<>();
+    private final ObjList<LogicalPlan> tmpPlans = new ObjList<>();
     private final ProjectionMergePass projectionMerge;
-    private final OutputSchema schemaScratch = new OutputSchema();
+    private final OutputSchema tmpSchema = new OutputSchema();
     private final SortEliminationPass sortElimination = new SortEliminationPass();
-    private final ObjList<JoinInput> stepScratch = new ObjList<>();
+    private final ObjList<JoinInput> tmpSteps = new ObjList<>();
     private final TimestampEndpointPass timestampEndpoint;
-    private final IntList valueScratch;
+    private final IntList tmpValues;
     private final PlanVerifier verifier;
     private final WindowCsePass windowCse;
 
@@ -78,46 +78,46 @@ final class SqlOptimiser implements Mutable {
             CharacterStore characterStore,
             BindContext planNodes,
             IntHashSet columnIds,
-            IntList indexScratch,
-            IntList valueScratch,
-            IntList keyScratch
+            IntList tmpIndexes,
+            IntList tmpValues,
+            IntList tmpKeys
     ) {
-        this.indexScratch = indexScratch;
-        this.valueScratch = valueScratch;
-        this.keyScratch = keyScratch;
+        this.tmpIndexes = tmpIndexes;
+        this.tmpValues = tmpValues;
+        this.tmpKeys = tmpKeys;
         final ObjectPool<ColumnExpression> columns = planNodes.columns;
         final ObjectPool<ConstantExpression> constants = planNodes.constants;
         final ObjectPool<FilterPlan> filters = planNodes.filters;
         final ObjectPool<LimitPlan> limits = planNodes.limits;
         final ObjectPool<ProjectPlan> projects = planNodes.projects;
         final ObjectPool<SortPlan> sorts = planNodes.sorts;
-        decorrelation = new DecorrelationPass(context, planNodes, characterStore, expressionScratch, conjunctScratch, indexScratch, valueScratch,
-                keyScratch, planScratch, schemaScratch, stepScratch);
+        decorrelation = new DecorrelationPass(context, planNodes, characterStore, tmpExpressions, tmpConjuncts, tmpIndexes, tmpValues,
+                tmpKeys, tmpPlans, tmpSchema, tmpSteps);
         timestampEndpoint = new TimestampEndpointPass(constants, limits, sorts);
         aggregateInputOrder = new AggregateInputOrderPass();
-        filterPushdown = new FilterPushdownPass(context, aggregateInputOrder, expressionScratch, filters, columns, projects,
-                indexScratch, valueScratch, conjunctScratch);
-        columnPruning = new ColumnPruningPass(context, aggregateInputOrder, expressionScratch, columns, projects, indexScratch, valueScratch,
-                columnIds, planScratch, schemaScratch);
+        filterPushdown = new FilterPushdownPass(context, aggregateInputOrder, tmpExpressions, filters, columns, projects,
+                tmpIndexes, tmpValues, tmpConjuncts);
+        columnPruning = new ColumnPruningPass(context, aggregateInputOrder, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
+                columnIds, tmpPlans, tmpSchema);
         projectionMerge = new ProjectionMergePass(context);
         aggregateRewrite = new AggregateRewritePass(context, projectionMerge, characterStore, columns, projects,
-                expressionScratch, indexScratch, valueScratch, keyScratch);
-        negativeLimitReversal = new NegativeLimitReversalPass(constants, sorts, indexScratch, planScratch);
-        windowCse = new WindowCsePass(context, columns, projects, planScratch);
-        verifier = new PlanVerifier(planScratch, schemaScratch, columnIds, stepScratch);
+                tmpExpressions, tmpIndexes, tmpValues, tmpKeys);
+        negativeLimitReversal = new NegativeLimitReversalPass(constants, sorts, tmpIndexes, tmpPlans);
+        windowCse = new WindowCsePass(context, columns, projects, tmpPlans);
+        verifier = new PlanVerifier(tmpPlans, tmpSchema, columnIds, tmpSteps);
     }
 
     @Override
     public void clear() {
-        conjunctScratch.clear();
+        tmpConjuncts.clear();
         context.clear();
-        expressionScratch.clear();
-        indexScratch.clear();
-        keyScratch.clear();
-        planScratch.clear();
-        schemaScratch.clear();
-        stepScratch.clear();
-        valueScratch.clear();
+        tmpExpressions.clear();
+        tmpIndexes.clear();
+        tmpKeys.clear();
+        tmpPlans.clear();
+        tmpSchema.clear();
+        tmpSteps.clear();
+        tmpValues.clear();
         aggregateInputOrder.clear();
         aggregateRewrite.clear();
         decorrelation.clear();
@@ -140,24 +140,24 @@ final class SqlOptimiser implements Mutable {
         LogicalPlan plan = decorrelation.decorrelate(root);
 
         // Aggregate shapes. The endpoint LIMIT comes first so the later passes keep filters below it.
-        plan = timestampEndpoint.limitEndpointInputs(plan);
+        timestampEndpoint.limitEndpointInputs(plan);
         plan = aggregateRewrite.rewriteAggregates(plan);
 
         // Filter placement. Ordered set-operation branches are marked after join filters settle and
         // before pushdown and pruning, which read the marks when they drop an aggregate's input order.
-        plan = filterPushdown.pushJoinFilters(plan);
-        plan = aggregateInputOrder.collectOrderedBranchAggregates(plan);
+        filterPushdown.pushJoinFilters(plan);
+        aggregateInputOrder.collectOrderedBranchAggregates(plan);
         plan = filterPushdown.pushDownFilters(plan);
-        plan = filterPushdown.filterSharedDomains(plan);
+        filterPushdown.filterSharedDomains(plan);
 
         // Window calls merge over their final inputs, before pruning drops the columns a merge leaves unread.
-        plan = windowCse.mergeWindowCalls(plan);
-        plan = columnPruning.prune(plan);
+        windowCse.mergeWindowCalls(plan);
+        columnPruning.prune(plan);
         plan = projectionMerge.collapseColumnProjects(plan);
 
         // Sort and LIMIT shape.
         plan = negativeLimitReversal.reverseNegativeLimits(plan);
-        plan = sortElimination.markMarkoutHorizons(plan);
+        sortElimination.markMarkoutHorizons(plan);
         plan = sortElimination.removeReorderedSorts(plan);
         assert verifier.verify(plan, "SqlOptimiser.optimise");
         return plan;

@@ -145,7 +145,7 @@ final class AggregateInputOrderPass implements Mutable {
      * When the first branch of a set operation is neither an aggregate nor a sort, it emits rows in
      * its input order; an aggregate in a later branch then keeps the ORDER BY below it as well.
      */
-    private void collectOrderedBranchAggregates0(LogicalPlan plan) {
+    void collectOrderedBranchAggregates(LogicalPlan plan) {
         if (plan instanceof SetOperationPlan operation) {
             LogicalPlan first = operation;
             while (first instanceof SetOperationPlan left) {
@@ -158,13 +158,8 @@ final class AggregateInputOrderPass implements Mutable {
             }
         }
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            collectOrderedBranchAggregates0(plan.inputAt(i));
+            collectOrderedBranchAggregates(plan.inputAt(i));
         }
-    }
-
-    LogicalPlan collectOrderedBranchAggregates(LogicalPlan root) {
-        collectOrderedBranchAggregates0(root);
-        return root;
     }
 
     void removeInputOrder(AggregatePlan aggregate) {

@@ -107,7 +107,7 @@ final class SqlBinder implements Closeable, Mutable {
     private final LateralBinder lateralBinder;
     private final OrderBinder orderBinder;
     // Set-operation column types while binding, the root's output column positions after binding.
-    private final IntList outputColumnScratch = new IntList();
+    private final IntList tmpOutputColumns = new IntList();
     private final BoolList pendingSubqueries = new BoolList();
     private final PivotBinder pivotBinder;
     private final SubqueryMetadataFactory rootMetadata = new SubqueryMetadataFactory();
@@ -149,14 +149,14 @@ final class SqlBinder implements Closeable, Mutable {
         this.cursorSourceIndexes = windowBinder.windowAliasReferenceColumns;
         this.cursorSources = windowBinder.windowCopyOrigins;
         this.lateralBinder = new LateralBinder(ctx, this);
-        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, compiler.getScratchIds(), compiler.getIndexScratch(),
-                compiler.getValueScratch(), compiler.getSlaveKeyScratch());
+        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, compiler.getTmpIds(), compiler.getTmpIndexes(),
+                compiler.getTmpValues(), compiler.getTmpSlaveKeys());
         this.sampleByBinder = new SampleByBinder(ctx, this, configuration, functionParser, emptySchema, windowBinder, joinBinder);
         this.orderBinder = new OrderBinder(ctx, emptySchema, sampleByBinder);
         this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder, windowBinder);
         this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder);
         this.pivotBinder = new PivotBinder(ctx, this, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
-                compiler.getScratchSink());
+                compiler.getTmpSink());
     }
 
     @Override
@@ -185,7 +185,7 @@ final class SqlBinder implements Closeable, Mutable {
             hintScopes.peekQuick(i).clear();
         }
         hintScopes.clear();
-        outputColumnScratch.clear();
+        tmpOutputColumns.clear();
         isUpdate = false;
         updateTargetNames.clear();
         predicateSource = null;
@@ -837,16 +837,16 @@ final class SqlBinder implements Closeable, Mutable {
         final OutputSchema output = branch.getOutput();
         final BoundExpression predicate;
         try {
-            ctx.scratchScope.clear();
-            ctx.scratchScope.add(output.getColumnId(columnIndex), scope.getColumnName(scopeIndex), output.getColumnType(columnIndex),
+            ctx.tmpScope.clear();
+            ctx.tmpScope.add(output.getColumnId(columnIndex), scope.getColumnName(scopeIndex), output.getColumnType(columnIndex),
                     output.getMetadata(columnIndex), true, scope.getColumnQualifier(scopeIndex));
-            ctx.scratchScope.setTimestampIndex(output.getTimestampIndex() == columnIndex ? 0 : -1);
+            ctx.tmpScope.setTimestampIndex(output.getTimestampIndex() == columnIndex ? 0 : -1);
             ctx.joinNativeTimestampIds.clear();
             ctx.copyTimestampScope(output);
-            predicate = ctx.functionBinder.toBooleanSubquery(ctx.functionBinder.bindPredicate(expression, ctx.scratchScope, alias,
+            predicate = ctx.functionBinder.toBooleanSubquery(ctx.functionBinder.bindPredicate(expression, ctx.tmpScope, alias,
                     ctx.joinNativeTimestampIds, ColumnType.BOOLEAN, executionContext));
         } finally {
-            ctx.scratchScope.clear();
+            ctx.tmpScope.clear();
         }
         if (predicate.getDataType() != ColumnType.BOOLEAN) {
             throw SqlException.$(expression.position, "boolean expression expected");
@@ -873,9 +873,9 @@ final class SqlBinder implements Closeable, Mutable {
             final SetOperationPlan operation = ctx.setOperations.next().of(
                     result, right, setOperationKind(branch.getSetOperationType()), branch.getModelPosition(), next.getModelPosition(), !continuesUnion
             );
-            SetOperationBinder.resolveTypes(operation, outputColumnScratch);
-            for (int i = 0, n = outputColumnScratch.size(); i < n; i++) {
-                operation.getOutput().add(ctx.nextColumnId++, result.getOutput().getColumnName(i), outputColumnScratch.getQuick(i), result.getOutput().isVisible(i));
+            SetOperationBinder.resolveTypes(operation, tmpOutputColumns);
+            for (int i = 0, n = tmpOutputColumns.size(); i < n; i++) {
+                operation.getOutput().add(ctx.nextColumnId++, result.getOutput().getColumnName(i), tmpOutputColumns.getQuick(i), result.getOutput().isVisible(i));
                 operation.getOutput().setSymbolTableStatic(i, SetOperationBinder.isSymbolTableStatic(operation, i));
                 final int leftId = result.getOutput().getColumnId(i);
                 final int rightId = right.getOutput().getColumnId(i);
@@ -1278,8 +1278,8 @@ final class SqlBinder implements Closeable, Mutable {
     }
 
     private OutputSchema projectionReferenceScope(OutputSchema source) {
-        ctx.scratchScope.copyFrom(source);
-        return ctx.scratchScope;
+        ctx.tmpScope.copyFrom(source);
+        return ctx.tmpScope;
     }
 
     private boolean referencesOnlyColumn(ExpressionNode expression, OutputSchema output, CharSequence alias, int index) {
@@ -1478,16 +1478,16 @@ final class SqlBinder implements Closeable, Mutable {
         if (expression == null) {
             return null;
         }
-        ctx.scratchScope.clear();
+        ctx.tmpScope.clear();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            ctx.scratchScope.add(i, metadata.getColumnName(i), metadata.getColumnType(i), true);
-            ctx.scratchScope.setSymbolTableStatic(i, metadata.isSymbolTableStatic(i));
+            ctx.tmpScope.add(i, metadata.getColumnName(i), metadata.getColumnType(i), true);
+            ctx.tmpScope.setSymbolTableStatic(i, metadata.isSymbolTableStatic(i));
         }
         Function function = null;
         try {
-            final BoundExpression bound = ctx.functionBinder.bind(expression, ctx.scratchScope, null, preferredType, executionContext);
+            final BoundExpression bound = ctx.functionBinder.bind(expression, ctx.tmpScope, null, preferredType, executionContext);
             completeSubqueries(executionContext);
-            function = ctx.functionInstantiator.instantiate(bound, ctx.scratchScope, metadata, executionContext);
+            function = ctx.functionInstantiator.instantiate(bound, ctx.tmpScope, metadata, executionContext);
             // Only the executable closure escapes a standalone expression. Reuse
             // preparation storage per VALUES cell, not once per entire statement.
             ctx.clearExpressions();
@@ -1498,7 +1498,7 @@ final class SqlBinder implements Closeable, Mutable {
             assert failure == th;
             throw th;
         } finally {
-            ctx.scratchScope.clear();
+            ctx.tmpScope.clear();
         }
     }
 
@@ -1755,12 +1755,12 @@ final class SqlBinder implements Closeable, Mutable {
     }
 
     IntList getOutputColumnPositions() {
-        // Borrowed binder scratch; callers must consume it before reuse or clear().
-        outputColumnScratch.clear();
+        // Borrowed binder list; callers must consume it before reuse or clear().
+        tmpOutputColumns.clear();
         for (int i = 0, n = root.getOutput().getColumnCount(); i < n; i++) {
-            outputColumnScratch.add(getOutputColumnPosition(i));
+            tmpOutputColumns.add(getOutputColumnPosition(i));
         }
-        return outputColumnScratch;
+        return tmpOutputColumns;
     }
 
     LogicalPlan getRoot() {

@@ -1396,7 +1396,7 @@ final class AggregateBinder implements Mutable {
     private boolean rewriteCountDistinct(
             QueryModel model, QueryModel source, GroupingPlan aggregate, SqlExecutionContext executionContext
     ) throws SqlException {
-        if (source.getNestedModel() != null || LogicalPlans.hasOuterColumn(aggregate.getInput(), ctx.outerColumnScratch)
+        if (source.getNestedModel() != null || LogicalPlans.hasOuterColumn(aggregate.getInput(), ctx.tmpOuterColumns)
                 || source.getTableName() == null || source.getJoinModels().size() != 1
                 || model.getJoinModels().size() != 1 || model.getWhereClause() != null
                 || model.getSampleBy() != null || source.getSampleBy() != null

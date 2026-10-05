@@ -56,7 +56,7 @@ final class DecorrelationDomains implements Mutable {
     int domainSequence;
 
     /**
-     * {@code decorrelatedSteps} is the optimiser's step scratch, which the owner empties before decorrelation starts.
+     * {@code decorrelatedSteps} is the optimiser's temporary step list, which the owner empties before decorrelation starts.
      */
     DecorrelationDomains(OptimiserContext context, DecorrelationContext ctx, ObjList<JoinInput> decorrelatedSteps) {
         this.context = context;
@@ -233,13 +233,13 @@ final class DecorrelationDomains implements Mutable {
             }
             return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : context.getRewriter().replaceConjunction(call, left, right);
         }
-        final int columnBase = ctx.scratch.size();
-        LogicalPlans.collectOuterColumnIds(predicate, ctx.scratch);
+        final int columnBase = ctx.tmpColumnIds.size();
+        LogicalPlans.collectOuterColumnIds(predicate, ctx.tmpColumnIds);
         boolean isDomain = false;
-        for (int i = columnBase, n = ctx.scratch.size(); i < n && !isDomain; i++) {
-            isDomain = domainOuterIds.contains(ctx.scratch.getQuick(i));
+        for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n && !isDomain; i++) {
+            isDomain = domainOuterIds.contains(ctx.tmpColumnIds.getQuick(i));
         }
-        ctx.scratch.setPos(columnBase);
+        ctx.tmpColumnIds.setPos(columnBase);
         if (!isDomain) {
             return predicate;
         }

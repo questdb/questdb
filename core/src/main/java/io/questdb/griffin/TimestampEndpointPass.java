@@ -65,20 +65,15 @@ final class TimestampEndpointPass {
         aggregate.replaceInput(0, limit);
     }
 
-    private void limitEndpointInputs0(LogicalPlan plan) {
+    void limitEndpointInputs(LogicalPlan plan) {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             final LogicalPlan input = plan.inputAt(i);
             if (input != null) {
-                limitEndpointInputs0(input);
+                limitEndpointInputs(input);
             }
         }
         if (plan instanceof AggregatePlan aggregate && LogicalPlans.isTimestampEndpoint(aggregate)) {
             limitInput(aggregate);
         }
-    }
-
-    LogicalPlan limitEndpointInputs(LogicalPlan root) {
-        limitEndpointInputs0(root);
-        return root;
     }
 }

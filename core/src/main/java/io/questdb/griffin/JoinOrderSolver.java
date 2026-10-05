@@ -40,7 +40,7 @@ import io.questdb.std.ObjectPool;
 /**
  * The binding-time join-order constraint solver. The binder feeds it equi-join keys, ordering
  * constraints and late inputs, then binds the remaining predicates, types and designated timestamps
- * against the step order it selects. All returned scratch is borrowed until clear(); no syntax or
+ * against the step order it selects. Every returned list is borrowed until clear(); no syntax or
  * runtime resources are retained.
  */
 final class JoinOrderSolver implements Mutable {
@@ -66,7 +66,7 @@ final class JoinOrderSolver implements Mutable {
     private JoinPlan join;
 
     /**
-     * Borrows two caller lists as {@link #order()} scratch; the caller stops reading them once order() starts.
+     * Borrows two caller lists as temporary lists of {@link #order()}; the caller stops reading them once order() starts.
      */
     JoinOrderSolver(
             IntList candidateOrder,

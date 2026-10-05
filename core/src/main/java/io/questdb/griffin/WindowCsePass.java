@@ -333,9 +333,8 @@ final class WindowCsePass {
         return context.getRewriter().remapColumns(expression, renaming);
     }
 
-    LogicalPlan mergeWindowCalls(LogicalPlan root) {
+    void mergeWindowCalls(LogicalPlan root) {
         ancestors.clear();
         mergeWindowCalls0(root);
-        return root;
     }
 }

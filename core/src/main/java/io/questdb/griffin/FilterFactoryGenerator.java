@@ -80,17 +80,17 @@ final class FilterFactoryGenerator {
             CharacterStore characterStore,
             MemoryCARW jitIRMem,
             PageFrameReduceTaskFactory reduceTaskFactory,
-            StringSink scratchSink,
-            IntList indexScratch,
-            IntList valueScratch,
-            IntList masterKeyScratch,
-            IntList slaveKeyScratch,
-            LongList longScratch
+            StringSink tmpSink,
+            IntList tmpIndexes,
+            IntList tmpValues,
+            IntList tmpMasterKeys,
+            IntList tmpSlaveKeys,
+            LongList tmpLongs
     ) {
         this.configuration = configuration;
         this.jitIRMem = jitIRMem;
         this.reduceTaskFactory = reduceTaskFactory;
-        this.jitIRSerializer = new CompiledFilterIRSerializer(characterStore, scratchSink, indexScratch, valueScratch, masterKeyScratch, slaveKeyScratch, longScratch);
+        this.jitIRSerializer = new CompiledFilterIRSerializer(characterStore, tmpSink, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpLongs);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
     }
 
@@ -438,7 +438,7 @@ final class FilterFactoryGenerator {
         Function limit = null;
         try {
             final int jitOptions;
-            Throwable scratchFailure = null;
+            Throwable cleanupFailure = null;
             try {
                 try (PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ANY)) {
                     final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
@@ -450,18 +450,18 @@ final class FilterFactoryGenerator {
                 compiledCountOnlyFilter = new CompiledCountOnlyFilter();
                 compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
             } catch (Throwable th) {
-                scratchFailure = th;
+                cleanupFailure = th;
                 throw th;
             } finally {
-                final boolean hasPrimary = scratchFailure != null;
-                scratchFailure = Misc.clearBestEffort(scratchFailure, jitIRSerializer);
+                final boolean hasPrimary = cleanupFailure != null;
+                cleanupFailure = Misc.clearBestEffort(cleanupFailure, jitIRSerializer);
                 try {
                     jitIRMem.truncate();
                 } catch (Throwable th) {
-                    scratchFailure = Misc.foldCleanupFailure(scratchFailure, th);
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
                 }
                 if (!hasPrimary) {
-                    CairoException.rethrowCleanupFailure(scratchFailure);
+                    CairoException.rethrowCleanupFailure(cleanupFailure);
                 }
             }
 

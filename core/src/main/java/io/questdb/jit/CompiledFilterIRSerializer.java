@@ -206,7 +206,7 @@ public class CompiledFilterIRSerializer implements Mutable {
     // discardBackfillNodesFrom() (LongObjHashMap offers no bulk removal, and removeAt() re-hashes
     // the entries below the freed slot, so the walk collects every offset before it removes any)
     // and the parsed intervals of serializeInTimestampRange(). Each window clears it first.
-    private final LongList longScratch;
+    private final LongList tmpLongs;
     // The bindVarFunctions slot each bind variable node already took, so that a re-traversal of the
     // SAME node reuses it rather than appending a duplicate. serializeCharOrdering() and
     // serializeIPv4Ordering() re-traverse each operand four and up to six times respectively, so
@@ -355,7 +355,7 @@ public class CompiledFilterIRSerializer implements Mutable {
     private PageFrameCursor pageFrameCursor;
 
     /**
-     * The scratch lists are borrowed from the generator: serialize() is a leaf window (it never
+     * The temporary lists are borrowed from the generator: serialize() is a leaf window (it never
      * binds, optimises or generates), and every owner's own window has closed by the time a
      * filter is compiled.
      */
@@ -366,7 +366,7 @@ public class CompiledFilterIRSerializer implements Mutable {
             IntList orderingRewindBindVarSizes,
             IntList predicatePriorities,
             IntList predicatePriorityOffsets,
-            LongList longScratch
+            LongList tmpLongs
     ) {
         this.characterStore = characterStore;
         this.sink = sink;
@@ -374,7 +374,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         this.orderingRewindBindVarSizes = orderingRewindBindVarSizes;
         this.predicatePriorities = predicatePriorities;
         this.predicatePriorityOffsets = predicatePriorityOffsets;
-        this.longScratch = longScratch;
+        this.tmpLongs = tmpLongs;
     }
 
     @TestOnly
@@ -397,7 +397,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         unwidenableIntCmpFloatNode = null;
         predicateContext.clear();
         backfillNodes.clear();
-        longScratch.clear();
+        tmpLongs.clear();
         orderingRewindBindVarSizes.clear();
         orderingRewindNodes.clear();
         orderingRewindOffsets.clear();
@@ -2330,7 +2330,7 @@ public class CompiledFilterIRSerializer implements Mutable {
      * the deferred {@code true} stub whose backfill is what declines JIT for the shape.
      */
     private void discardBackfillNodesFrom(long offset) {
-        final LongList doomedOffsets = longScratch;
+        final LongList doomedOffsets = tmpLongs;
         doomedOffsets.clear();
         final long[] offsets = backfillNodes.keys();
         for (int i = 0, n = offsets.length; i < n; i++) {
@@ -5031,7 +5031,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         final CharSequence token = token(rhs(predicateContext.inOperationNode));
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
-        final LongList intervals = longScratch;
+        final LongList intervals = tmpLongs;
         intervals.clear();
         IntervalUtils.parseTickExprAndIntersect(
                 ColumnType.getTimestampDriver(predicateContext.columnType),

@@ -48,21 +48,21 @@ import io.questdb.std.ObjectPool;
  * substitution, conjunction surgery and operand reshapes, never parsing SQL or building a function.
  */
 public final class BoundExpressionRewriter implements Mutable {
-    private final ObjList<BoundExpression> argumentScratch;
+    private final ObjList<BoundExpression> tmpArguments;
     private final ObjectPool<ColumnExpression> columns;
     private final ObjectPool<ConstantExpression> constants;
     private final FunctionFactoryCache functionFactoryCache;
     private final ObjectPool<FunctionExpression> functions;
     private final ObjectPool<OuterColumnExpression> outerColumns;
     private final ObjectPool<BindVariableExpression> parameters;
-    private final IntList positionScratch;
+    private final IntList tmpPositions;
     private final PreparedFunctions prepared;
     private final ObjectPool<ObjList<BoundExpression>> rewriteArguments = new ObjectPool<>(ObjList::new, 8);
     private final ObjectPool<TypeExpression> types;
     private boolean isReplacementPlaced;
 
     /**
-     * Allocates descriptions from the given pools, which their owner empties; the scratch lists are borrowed for
+     * Allocates descriptions from the given pools, which their owner empties; the temporary lists are borrowed for
      * single calls only.
      */
     BoundExpressionRewriter(
@@ -74,8 +74,8 @@ public final class BoundExpressionRewriter implements Mutable {
             ObjectPool<BindVariableExpression> parameters,
             ObjectPool<TypeExpression> types,
             PreparedFunctions prepared,
-            ObjList<BoundExpression> argumentScratch,
-            IntList positionScratch
+            ObjList<BoundExpression> tmpArguments,
+            IntList tmpPositions
     ) {
         this.functionFactoryCache = functionFactoryCache;
         this.columns = columns;
@@ -85,8 +85,8 @@ public final class BoundExpressionRewriter implements Mutable {
         this.parameters = parameters;
         this.types = types;
         this.prepared = prepared;
-        this.argumentScratch = argumentScratch;
-        this.positionScratch = positionScratch;
+        this.tmpArguments = tmpArguments;
+        this.tmpPositions = tmpPositions;
     }
 
     @Override
@@ -99,18 +99,18 @@ public final class BoundExpressionRewriter implements Mutable {
         if (original.getArgumentCount() != 2 || overload == null) {
             throw new IllegalArgumentException("registered binary equality required");
         }
-        argumentScratch.clear();
-        positionScratch.clear();
+        tmpArguments.clear();
+        tmpPositions.clear();
         try {
-            argumentScratch.add(original.argumentAt(1));
-            argumentScratch.add(original.argumentAt(0));
-            positionScratch.add(original.getArgumentPosition(1));
-            positionScratch.add(original.getArgumentPosition(0));
-            return functions.next().of(overload, argumentScratch, positionScratch,
+            tmpArguments.add(original.argumentAt(1));
+            tmpArguments.add(original.argumentAt(0));
+            tmpPositions.add(original.getArgumentPosition(1));
+            tmpPositions.add(original.getArgumentPosition(0));
+            return functions.next().of(overload, tmpArguments, tmpPositions,
                     original.getDataType(), original.getFunctionFlags(), original.getPosition());
         } finally {
-            argumentScratch.clear();
-            positionScratch.clear();
+            tmpArguments.clear();
+            tmpPositions.clear();
         }
     }
 
@@ -201,18 +201,18 @@ public final class BoundExpressionRewriter implements Mutable {
                     : right.getDataType() == ColumnType.BOOLEAN ? right : constants.next().ofBoolean(false, position);
         }
         final int flags = conjunctionFlags(left, right);
-        argumentScratch.clear();
-        positionScratch.clear();
+        tmpArguments.clear();
+        tmpPositions.clear();
         try {
-            argumentScratch.add(left);
-            argumentScratch.add(right);
-            positionScratch.add(left.getPosition());
-            positionScratch.add(right.getPosition());
-            return functions.next().of(overload, argumentScratch, positionScratch,
+            tmpArguments.add(left);
+            tmpArguments.add(right);
+            tmpPositions.add(left.getPosition());
+            tmpPositions.add(right.getPosition());
+            return functions.next().of(overload, tmpArguments, tmpPositions,
                     ColumnType.BOOLEAN, flags, position);
         } finally {
-            argumentScratch.clear();
-            positionScratch.clear();
+            tmpArguments.clear();
+            tmpPositions.clear();
         }
     }
 
@@ -395,9 +395,9 @@ public final class BoundExpressionRewriter implements Mutable {
         for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
             final FunctionFactoryDescriptor overload = overloads.getQuick(i);
             if (overload.getSigArgCount() == 0 && overload.getFactory().isWindow()) {
-                argumentScratch.clear();
-                positionScratch.clear();
-                return functions.next().of(overload, argumentScratch, positionScratch, ColumnType.LONG, 0, position);
+                tmpArguments.clear();
+                tmpPositions.clear();
+                return functions.next().of(overload, tmpArguments, tmpPositions, ColumnType.LONG, 0, position);
             }
         }
         throw new IllegalStateException("window function is not registered");
@@ -505,18 +505,18 @@ public final class BoundExpressionRewriter implements Mutable {
             if (overload.getSigArgCount() == 2
                     && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(0)) == ColumnType.SYMBOL
                     && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(1)) == ColumnType.VAR_ARG) {
-                argumentScratch.clear();
-                positionScratch.clear();
+                tmpArguments.clear();
+                tmpPositions.clear();
                 try {
-                    argumentScratch.add(key);
-                    argumentScratch.addAll(values);
-                    positionScratch.add(key.getPosition());
-                    positionScratch.addAll(valuePositions);
-                    return functions.next().of(overload, argumentScratch, positionScratch,
+                    tmpArguments.add(key);
+                    tmpArguments.addAll(values);
+                    tmpPositions.add(key.getPosition());
+                    tmpPositions.addAll(valuePositions);
+                    return functions.next().of(overload, tmpArguments, tmpPositions,
                             ColumnType.BOOLEAN, functionFlags, position);
                 } finally {
-                    argumentScratch.clear();
-                    positionScratch.clear();
+                    tmpArguments.clear();
+                    tmpPositions.clear();
                 }
             }
         }

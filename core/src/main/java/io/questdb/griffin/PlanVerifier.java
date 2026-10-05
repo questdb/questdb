@@ -126,7 +126,7 @@ public final class PlanVerifier {
     private String site;
 
     /**
-     * Borrows scratch from the optimiser: the verifier runs between stages and leaves every structure empty.
+     * Borrows temporary lists from the optimiser: the verifier runs between stages and leaves every structure empty.
      */
     PlanVerifier(ObjList<LogicalPlan> visited, OutputSchema joinScope, IntHashSet columnIds, ObjList<JoinInput> outerInputs) {
         this.visited = visited;
@@ -136,7 +136,7 @@ public final class PlanVerifier {
     }
 
     /**
-     * A verifier over its own scratch, for checking hand-built plans.
+     * A verifier over its own temporary lists, for checking hand-built plans.
      */
     @TestOnly
     public static PlanVerifier newStandalone() {

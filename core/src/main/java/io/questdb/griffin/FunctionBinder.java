@@ -1072,18 +1072,18 @@ public final class FunctionBinder implements Mutable {
         }
         if (ColumnType.isArray(function.getType()) && expression instanceof FunctionExpression call
                 && (call.getDataType() != function.getType() || call.getFunctionFlags() != callFlags(function, call))) {
-            ctx.argumentScratch.clear();
-            ctx.positionScratch.clear();
+            ctx.tmpArguments.clear();
+            ctx.tmpPositions.clear();
             try {
                 for (int i = 0; i < call.getArgumentCount(); i++) {
-                    ctx.argumentScratch.add(call.argumentAt(i));
-                    ctx.positionScratch.add(call.getArgumentPosition(i));
+                    ctx.tmpArguments.add(call.argumentAt(i));
+                    ctx.tmpPositions.add(call.getArgumentPosition(i));
                 }
-                return ctx.functions.next().of(call.getOverload(), ctx.argumentScratch, ctx.positionScratch,
+                return ctx.functions.next().of(call.getOverload(), ctx.tmpArguments, ctx.tmpPositions,
                         function.getType(), callFlags(function, call), call.getPosition());
             } finally {
-                ctx.argumentScratch.clear();
-                ctx.positionScratch.clear();
+                ctx.tmpArguments.clear();
+                ctx.tmpPositions.clear();
             }
         }
         if (function instanceof ConstantFunction && !ColumnType.isArray(function.getType()) && (!(expression instanceof ConstantExpression)
@@ -1461,15 +1461,15 @@ public final class FunctionBinder implements Mutable {
         for (int i = 0, n = casts.size(); i < n; i++) {
             final FunctionFactoryDescriptor overload = casts.getQuick(i);
             if (overload.getFactory().getClass() == factoryClass) {
-                ctx.argumentScratch.clear();
-                ctx.positionScratch.clear();
+                ctx.tmpArguments.clear();
+                ctx.tmpPositions.clear();
                 try {
-                    ctx.argumentScratch.add(arguments.getQuick(index));
-                    ctx.argumentScratch.add(ctx.types.next().of(function.getType(), position));
-                    ctx.positionScratch.add(position);
-                    ctx.positionScratch.add(position);
-                    final FunctionExpression conversion = ctx.functions.next().of(overload, ctx.argumentScratch,
-                            ctx.positionScratch, function.getType(),
+                    ctx.tmpArguments.add(arguments.getQuick(index));
+                    ctx.tmpArguments.add(ctx.types.next().of(function.getType(), position));
+                    ctx.tmpPositions.add(position);
+                    ctx.tmpPositions.add(position);
+                    final FunctionExpression conversion = ctx.functions.next().of(overload, ctx.tmpArguments,
+                            ctx.tmpPositions, function.getType(),
                             callFlags(function, LogicalPlans.stabilityFlags(arguments.getQuick(index))), position);
                     if (unconstructed.indexOf(arguments.getQuick(index)) >= 0) {
                         unconstructed.add(conversion);
@@ -1477,8 +1477,8 @@ public final class FunctionBinder implements Mutable {
                     arguments.setQuick(index, conversion);
                     return function;
                 } finally {
-                    ctx.argumentScratch.clear();
-                    ctx.positionScratch.clear();
+                    ctx.tmpArguments.clear();
+                    ctx.tmpPositions.clear();
                 }
             }
         }

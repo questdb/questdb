@@ -28,10 +28,10 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
- * Nests the users of binder scratch that one owner shares, so a user that runs inside another's
+ * Nests the users of binder temporary lists that one owner shares, so a user that runs inside another's
  * window would corrupt the result.
  */
-public class SqlBinderSharedScratchTest extends AbstractCairoTest {
+public class SqlBinderSharedTmpReuseTest extends AbstractCairoTest {
 
     @Test
     public void testJoinSubqueriesInsideJoinFilter() throws Exception {

@@ -72,14 +72,14 @@ import io.questdb.std.ObjectPool;
 
 /**
  * Per-binder binding state shared by {@link SqlBinder}, its area binders and the expression stage: the plan-node
- * pools, the column-id counter, the scope facts of the query block being bound and the scratch they share.
+ * pools, the column-id counter, the scope facts of the query block being bound and the temporary lists they share.
  */
 final class BindContext implements Mutable {
     final ObjectPool<AggregatePlan> aggregates = new ObjectPool<>(AggregatePlan.FACTORY, 4);
     final LowerCaseCharSequenceIntHashMap aliasSequences = new LowerCaseCharSequenceIntHashMap();
     final LowerCaseCharSequenceHashSet aliases = new LowerCaseCharSequenceHashSet();
     final IntHashSet ambiguousTimestampColumnIds = new IntHashSet();
-    final ObjList<BoundExpression> argumentScratch = new ObjList<>(2);
+    final ObjList<BoundExpression> tmpArguments = new ObjList<>(2);
     final ObjectPool<ExpressionNode> bindingExpressions;
     final CharacterStore characterStore;
     final ObjectPool<ColumnExpression> columns = new ObjectPool<>(ColumnExpression.FACTORY, 16);
@@ -108,16 +108,16 @@ final class BindContext implements Mutable {
     final ObjectPool<JoinPlan> joins = new ObjectPool<>(JoinPlan.FACTORY, 2);
     final ObjectPool<LatestByPlan> latestByPlans = new ObjectPool<>(LatestByPlan.FACTORY, 4);
     final ObjectPool<LimitPlan> limits = new ObjectPool<>(LimitPlan.FACTORY, 4);
-    final IntList outerColumnScratch;
+    final IntList tmpOuterColumns;
     final ObjectPool<OuterColumnExpression> outerColumns = new ObjectPool<>(OuterColumnExpression.FACTORY, 4);
     final ObjectPool<BindVariableExpression> parameters = new ObjectPool<>(BindVariableExpression.FACTORY, 8);
-    final IntList positionScratch = new IntList(2);
+    final IntList tmpPositions = new IntList(2);
     final PreparedFunctions preparedFunctions = new PreparedFunctions();
     final IntList projectionAliasIndexes = new IntList();
     final ObjectPool<ProjectPlan> projects = new ObjectPool<>(ProjectPlan.FACTORY, 4);
     final ObjectPool<SampleByPlan> sampleByPlans = new ObjectPool<>(SampleByPlan.FACTORY, 4);
     final ObjectPool<ScanPlan> scans = new ObjectPool<>(ScanPlan.FACTORY, 4);
-    final OutputSchema scratchScope = new OutputSchema();
+    final OutputSchema tmpScope = new OutputSchema();
     final ObjectPool<SetOperationPlan> setOperations = new ObjectPool<>(SetOperationPlan.FACTORY, 4);
     final ObjectPool<SortPlan> sorts = new ObjectPool<>(SortPlan.FACTORY, 4);
     final IntList sourceProjectionIndexes = new IntList();
@@ -150,11 +150,11 @@ final class BindContext implements Mutable {
     BindContext(FunctionParser functionParser, ObjectPool<ExpressionNode> bindingExpressions, CharacterStore characterStore, SqlBinder subqueryBinder) {
         this.bindingExpressions = bindingExpressions;
         this.characterStore = characterStore;
-        this.outerColumnScratch = projectionAliasIndexes;
+        this.tmpOuterColumns = projectionAliasIndexes;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
         this.expressionRewriter = new BoundExpressionRewriter(functionFactoryCache, columns, constants, functions, outerColumns,
-                parameters, types, preparedFunctions, argumentScratch, positionScratch);
-        this.functionInstantiator = new FunctionInstantiator(functionParser, preparedFunctions, scratchScope, subqueryBinder);
+                parameters, types, preparedFunctions, tmpArguments, tmpPositions);
+        this.functionInstantiator = new FunctionInstantiator(functionParser, preparedFunctions, tmpScope, subqueryBinder);
         this.functionBinder = new FunctionBinder(this, functionParser, subqueryBinder);
         this.functionSources = new TableFunctionSources(functionParser);
     }
@@ -194,7 +194,7 @@ final class BindContext implements Mutable {
         projects.clear();
         sampleByPlans.clear();
         scans.clear();
-        scratchScope.clear();
+        tmpScope.clear();
         setOperations.clear();
         sourceProjectionIndexes.clear();
         substitutionColumns.clear();
@@ -462,7 +462,7 @@ final class BindContext implements Mutable {
     }
 
     /**
-     * Closes every prepared root nothing adopted and empties the description pools and scratch of the three
+     * Closes every prepared root nothing adopted and empties the description pools and temporary lists of the three
      * expression stages, which allocate from this context.
      */
     void clearExpressions() {

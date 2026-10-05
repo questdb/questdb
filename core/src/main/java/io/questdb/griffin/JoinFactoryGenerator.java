@@ -187,8 +187,8 @@ final class JoinFactoryGenerator {
             ListColumnFilter listColumnFilterB,
             PageFrameReduceTaskFactory reduceTaskFactory,
             StringSink conditionSink,
-            IntList indexScratch,
-            IntList valueScratch,
+            IntList tmpIndexes,
+            IntList tmpValues,
             IntHashSet intHashSet,
             BitSet writeSymbolAsStringA,
             IntList masterSymbolKeyColumns,
@@ -206,10 +206,10 @@ final class JoinFactoryGenerator {
         this.listColumnFilterB = listColumnFilterB;
         this.reduceTaskFactory = reduceTaskFactory;
         this.conditionSink = conditionSink;
-        this.masterKeyIndexes = indexScratch;
-        this.slaveValueIndexes = indexScratch;
-        this.symbolJoinKeyFlags = indexScratch;
-        this.slaveKeyIndexes = valueScratch;
+        this.masterKeyIndexes = tmpIndexes;
+        this.slaveValueIndexes = tmpIndexes;
+        this.symbolJoinKeyFlags = tmpIndexes;
+        this.slaveKeyIndexes = tmpValues;
         this.intHashSet = intHashSet;
         this.writeSymbolAsStringA = writeSymbolAsStringA;
         this.masterSymbolKeyColumns = masterSymbolKeyColumns;

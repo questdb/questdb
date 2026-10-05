@@ -241,11 +241,11 @@ final class ScalarCompensation implements Mutable {
         if (expression instanceof ColumnExpression column && isZeroOnEmptyColumn(column.getColumnId(), aggregate)) {
             return zeroCoalesce(ctx.planNodes.columns.next().of(project.getOutput().getColumnId(index), column.getDataType(), column.getPosition()), input);
         }
-        final int columnBase = ctx.scratch.size();
-        collectColumnIds(expression, ctx.scratch);
+        final int columnBase = ctx.tmpColumnIds.size();
+        collectColumnIds(expression, ctx.tmpColumnIds);
         BoundExpression value = expression;
-        for (int i = columnBase, n = ctx.scratch.size(); i < n; i++) {
-            final int columnId = ctx.scratch.getQuick(i);
+        for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n; i++) {
+            final int columnId = ctx.tmpColumnIds.getQuick(i);
             final int aggregateIndex = aggregate.getOutput().getColumnIndexById(columnId);
             final int keyCount = aggregate.getGroupingExpressions().size();
             final int type = aggregate.getOutput().getColumnType(aggregateIndex);
@@ -262,7 +262,7 @@ final class ScalarCompensation implements Mutable {
                 value = context.getRewriter().substituteColumn(value, columnId, replacement);
             }
         }
-        ctx.scratch.setPos(columnBase);
+        ctx.tmpColumnIds.setPos(columnBase);
         return value;
     }
 
@@ -281,26 +281,26 @@ final class ScalarCompensation implements Mutable {
         if (expression instanceof ColumnExpression column) {
             return scalarColumnIndex(input, column.getColumnId()) > -1;
         }
-        final int columnBase = ctx.scratch.size();
-        collectColumnIds(expression, ctx.scratch);
+        final int columnBase = ctx.tmpColumnIds.size();
+        collectColumnIds(expression, ctx.tmpColumnIds);
         boolean hasAggregate = false;
         boolean hasCount = false;
-        for (int i = columnBase, n = ctx.scratch.size(); i < n; i++) {
-            hasAggregate |= scalarColumnIndex(input, ctx.scratch.getQuick(i)) > -1;
-            hasCount |= scalarCountIndex(input, ctx.scratch.getQuick(i)) > -1;
+        for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n; i++) {
+            hasAggregate |= scalarColumnIndex(input, ctx.tmpColumnIds.getQuick(i)) > -1;
+            hasCount |= scalarCountIndex(input, ctx.tmpColumnIds.getQuick(i)) > -1;
         }
-        ctx.scratch.setPos(columnBase);
+        ctx.tmpColumnIds.setPos(columnBase);
         return hasAggregate && !hasCount;
     }
 
     private boolean readsCompensated(BoundExpression expression) {
-        final int columnBase = ctx.scratch.size();
-        collectColumnIds(expression, ctx.scratch);
+        final int columnBase = ctx.tmpColumnIds.size();
+        collectColumnIds(expression, ctx.tmpColumnIds);
         boolean isFound = false;
-        for (int i = columnBase, n = ctx.scratch.size(); i < n && !isFound; i++) {
-            isFound = compensatedIds.indexOf(ctx.scratch.getQuick(i), 0, compensatedIds.size()) > -1;
+        for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n && !isFound; i++) {
+            isFound = compensatedIds.indexOf(ctx.tmpColumnIds.getQuick(i), 0, compensatedIds.size()) > -1;
         }
-        ctx.scratch.setPos(columnBase);
+        ctx.tmpColumnIds.setPos(columnBase);
         return isFound;
     }
 
@@ -492,18 +492,18 @@ final class ScalarCompensation implements Mutable {
         final BoundExpression hoisted = pendingConjuncts;
         ctx.substitution.clear();
         if (hoisted != null) {
-            final int columnBase = ctx.scratch.size();
-            collectColumnIds(hoisted, ctx.scratch);
-            for (int i = columnBase, n = ctx.scratch.size(); i < n; i++) {
-                final int columnId = ctx.scratch.getQuick(i);
+            final int columnBase = ctx.tmpColumnIds.size();
+            collectColumnIds(hoisted, ctx.tmpColumnIds);
+            for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n; i++) {
+                final int columnId = ctx.tmpColumnIds.getQuick(i);
                 final int index = LogicalPlans.projectedUncastColumnIndex(project, columnId);
                 if (index < 0) {
-                    ctx.scratch.setPos(columnBase);
+                    ctx.tmpColumnIds.setPos(columnBase);
                     return null;
                 }
                 ctx.substitution.put(columnId, project.getOutput().getColumnId(index));
             }
-            ctx.scratch.setPos(columnBase);
+            ctx.tmpColumnIds.setPos(columnBase);
         }
         final ObjList<BoundExpression> expressions = project.getExpressions();
         for (int i = 0, n = expressions.size(); i < n; i++) {
@@ -709,10 +709,10 @@ final class ScalarCompensation implements Mutable {
             if (!output.isVisible(i) || expression instanceof ColumnExpression || !hasZeroOnEmpty(expression, aggregate)) {
                 continue;
             }
-            final int columnBase = ctx.scratch.size();
-            collectColumnIds(expression, ctx.scratch);
-            for (int k = columnBase, m = ctx.scratch.size(); k < m; k++) {
-                final int columnId = ctx.scratch.getQuick(k);
+            final int columnBase = ctx.tmpColumnIds.size();
+            collectColumnIds(expression, ctx.tmpColumnIds);
+            for (int k = columnBase, m = ctx.tmpColumnIds.size(); k < m; k++) {
+                final int columnId = ctx.tmpColumnIds.getQuick(k);
                 final int aggregateIndex = aggregate.getOutput().getColumnIndexById(columnId);
                 if (aggregateIndex >= keyCount && pairIndex(carrierColumnIds, columnId) < 0) {
                     final int type = aggregate.getOutput().getColumnType(aggregateIndex);
@@ -723,7 +723,7 @@ final class ScalarCompensation implements Mutable {
                     carrierColumnIds.add(carrierId);
                 }
             }
-            ctx.scratch.setPos(columnBase);
+            ctx.tmpColumnIds.setPos(columnBase);
         }
     }
 
@@ -775,7 +775,7 @@ final class ScalarCompensation implements Mutable {
      */
     boolean isScalarProjection(ProjectPlan project) {
         if (!(project.getInput() instanceof AggregatePlan aggregate) || !isImplicitlyKeyedByOuterColumns(aggregate)
-                || !LogicalPlans.hasOuterColumn(project, ctx.scratch)) {
+                || !LogicalPlans.hasOuterColumn(project, ctx.tmpColumnIds)) {
             return false;
         }
         final int keyCount = aggregate.getGroupingExpressions().size();

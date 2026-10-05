@@ -96,28 +96,28 @@ final class DecorrelationPass implements Mutable {
 
     /**
      * Allocates plan nodes and expressions from the statement binder's pools; the other arguments are
-     * scratch the optimiser lends to its passes.
+     * temporary lists the optimiser lends to its passes.
      */
     DecorrelationPass(
             OptimiserContext context,
             BindContext planNodes,
             CharacterStore characterStore,
             ObjList<BoundExpression> callArguments,
-            ObjList<BoundExpression> conjunctScratch,
-            IntList indexScratch,
-            IntList valueScratch,
-            IntList keyScratch,
-            ObjList<LogicalPlan> planScratch,
-            OutputSchema schemaScratch,
-            ObjList<JoinInput> stepScratch
+            ObjList<BoundExpression> tmpConjuncts,
+            IntList tmpIndexes,
+            IntList tmpValues,
+            IntList tmpKeys,
+            ObjList<LogicalPlan> tmpPlans,
+            OutputSchema tmpSchema,
+            ObjList<JoinInput> tmpSteps
     ) {
         this.context = context;
-        liftedConjuncts = conjunctScratch;
-        ctx = new DecorrelationContext(context, planNodes, characterStore, callArguments, indexScratch, valueScratch, keyScratch, planScratch,
-                schemaScratch);
-        domains = new DecorrelationDomains(context, ctx, stepScratch);
+        liftedConjuncts = tmpConjuncts;
+        ctx = new DecorrelationContext(context, planNodes, characterStore, callArguments, tmpIndexes, tmpValues, tmpKeys, tmpPlans,
+                tmpSchema);
+        domains = new DecorrelationDomains(context, ctx, tmpSteps);
         keys = new CorrelationKeys(context, ctx);
-        compensation = new ScalarCompensation(context, ctx, domains, conjunctScratch);
+        compensation = new ScalarCompensation(context, ctx, domains, tmpConjuncts);
         rewriter = new CorrelatedChainRewriter(context, ctx, keys, compensation);
     }
 
@@ -224,15 +224,15 @@ final class DecorrelationPass implements Mutable {
     }
 
     private void collectMasterOuterIds(LogicalPlan plan) {
-        final int base = ctx.scratch.size();
-        LogicalPlans.collectOuterColumnIds(plan, ctx.scratch);
-        for (int i = base, n = ctx.scratch.size(); i < n; i++) {
-            final int outerId = ctx.scratch.getQuick(i);
+        final int base = ctx.tmpColumnIds.size();
+        LogicalPlans.collectOuterColumnIds(plan, ctx.tmpColumnIds);
+        for (int i = base, n = ctx.tmpColumnIds.size(); i < n; i++) {
+            final int outerId = ctx.tmpColumnIds.getQuick(i);
             if (ctx.masterInput(outerId) > -1 && !ctx.masterOuterIds.contains(outerId)) {
                 ctx.masterOuterIds.add(outerId);
             }
         }
-        ctx.scratch.setPos(base);
+        ctx.tmpColumnIds.setPos(base);
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             collectMasterOuterIds(plan.inputAt(i));
         }
@@ -271,17 +271,17 @@ final class DecorrelationPass implements Mutable {
             if (source instanceof JoinPlan join) {
                 keys.keyDeferredInputs(join, deferredBase, base);
                 compensation.compensateDrivenInputs(join, drivenBase, consumer);
-                final int keyedBase = ctx.scratch.size();
+                final int keyedBase = ctx.tmpColumnIds.size();
                 for (int i = 1, n = join.getInputs().size(); i < n; i++) {
                     if (hasOuterCondition(join.getInputs().getQuick(i))) {
-                        ctx.scratch.add(i);
+                        ctx.tmpColumnIds.add(i);
                     }
                 }
                 ctx.remapMapped(join, base);
-                for (int i = keyedBase, n = ctx.scratch.size(); i < n; i++) {
-                    keys.keyOuterConditions(join, join.getInputs().getQuick(ctx.scratch.getQuick(i)));
+                for (int i = keyedBase, n = ctx.tmpColumnIds.size(); i < n; i++) {
+                    keys.keyOuterConditions(join, join.getInputs().getQuick(ctx.tmpColumnIds.getQuick(i)));
                 }
-                ctx.scratch.setPos(keyedBase);
+                ctx.tmpColumnIds.setPos(keyedBase);
             }
             return rewriter.rewriteChain(source, chainBase, base, isBodyTop || isBranch);
         } finally {
@@ -526,11 +526,11 @@ final class DecorrelationPass implements Mutable {
     }
 
     private void exposeLiftedColumns(ProjectPlan project, BoundExpression expression) {
-        final int columnBase = ctx.scratch.size();
-        collectColumnIds(expression, ctx.scratch);
+        final int columnBase = ctx.tmpColumnIds.size();
+        collectColumnIds(expression, ctx.tmpColumnIds);
         final OutputSchema output = project.getOutput();
-        for (int i = columnBase, n = ctx.scratch.size(); i < n; i++) {
-            final int columnId = ctx.scratch.getQuick(i);
+        for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n; i++) {
+            final int columnId = ctx.tmpColumnIds.getQuick(i);
             if (ctx.substitution.keyIndex(columnId) < 0) {
                 continue;
             }
@@ -549,7 +549,7 @@ final class DecorrelationPass implements Mutable {
             }
             ctx.substitution.put(columnId, exposed);
         }
-        ctx.scratch.setPos(columnBase);
+        ctx.tmpColumnIds.setPos(columnBase);
     }
 
     private boolean hasDecorrelatedMasterReference(int chainOuterBase) {
@@ -563,13 +563,13 @@ final class DecorrelationPass implements Mutable {
     }
 
     private boolean hasMasterOuterColumn(LogicalPlan plan) {
-        final int base = ctx.scratch.size();
-        LogicalPlans.collectOuterColumnIds(plan, ctx.scratch);
+        final int base = ctx.tmpColumnIds.size();
+        LogicalPlans.collectOuterColumnIds(plan, ctx.tmpColumnIds);
         boolean isFound = false;
-        for (int i = base, n = ctx.scratch.size(); i < n && !isFound; i++) {
-            isFound = ctx.masterOuterIds.contains(ctx.scratch.getQuick(i));
+        for (int i = base, n = ctx.tmpColumnIds.size(); i < n && !isFound; i++) {
+            isFound = ctx.masterOuterIds.contains(ctx.tmpColumnIds.getQuick(i));
         }
-        ctx.scratch.setPos(base);
+        ctx.tmpColumnIds.setPos(base);
         if (isFound) {
             return true;
         }
@@ -582,14 +582,14 @@ final class DecorrelationPass implements Mutable {
     }
 
     private boolean isUnmappedOuter(BoundExpression expression, int base) {
-        final int columnBase = ctx.scratch.size();
-        LogicalPlans.collectOuterColumnIds(expression, ctx.scratch);
+        final int columnBase = ctx.tmpColumnIds.size();
+        LogicalPlans.collectOuterColumnIds(expression, ctx.tmpColumnIds);
         boolean isFound = false;
-        for (int i = columnBase, n = ctx.scratch.size(); i < n && !isFound; i++) {
-            final int outerId = ctx.scratch.getQuick(i);
+        for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n && !isFound; i++) {
+            final int outerId = ctx.tmpColumnIds.getQuick(i);
             isFound = ctx.masterOuterIds.contains(outerId) && ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size()) < 0;
         }
-        ctx.scratch.setPos(columnBase);
+        ctx.tmpColumnIds.setPos(columnBase);
         return isFound;
     }
 

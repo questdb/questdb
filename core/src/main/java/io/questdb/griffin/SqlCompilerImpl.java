@@ -198,9 +198,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
-    private final IntList indexScratch = new IntList();
+    private final IntList tmpIndexes = new IntList();
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
-    private final IntList masterKeyScratch = new IntList();
+    private final IntList tmpMasterKeys = new IntList();
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getCMARWInstance();
     private final MessageBus messageBus;
@@ -211,14 +211,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final Path renamePath;
-    private final IntHashSet scratchIds = new IntHashSet();
-    private final StringSink scratchSink = new StringSink();
-    private final IntList slaveKeyScratch = new IntList();
+    private final IntHashSet tmpIds = new IntHashSet();
+    private final StringSink tmpSink = new StringSink();
+    private final IntList tmpSlaveKeys = new IntList();
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
-    private final IntList valueScratch = new IntList();
+    private final IntList tmpValues = new IntList();
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private QueryModel boundModel;
@@ -254,7 +254,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
             this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, characterStore, asm,
-                    entityColumnFilter, emptySchema, scratchSink, scratchIds, indexScratch, valueScratch, masterKeyScratch, slaveKeyScratch);
+                    entityColumnFilter, emptySchema, tmpSink, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             registerKeywordBasedExecutors();
@@ -282,7 +282,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
             binder = new SqlBinder(configuration, functionParser, this);
             final BindContext planNodes = binder.ctx;
-            optimiser = new SqlOptimiser(characterStore, planNodes, scratchIds, indexScratch, valueScratch, masterKeyScratch);
+            optimiser = new SqlOptimiser(characterStore, planNodes, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys);
         } catch (Throwable th) {
             close();
             throw th;
@@ -6221,28 +6221,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return emptySchema;
     }
 
-    IntList getIndexScratch() {
-        return indexScratch;
+    IntList getTmpIndexes() {
+        return tmpIndexes;
     }
 
-    IntHashSet getScratchIds() {
-        return scratchIds;
+    IntHashSet getTmpIds() {
+        return tmpIds;
     }
 
-    StringSink getScratchSink() {
-        return scratchSink;
+    StringSink getTmpSink() {
+        return tmpSink;
     }
 
-    IntList getSlaveKeyScratch() {
-        return slaveKeyScratch;
+    IntList getTmpSlaveKeys() {
+        return tmpSlaveKeys;
     }
 
     ObjectPool<ExpressionNode> getSqlNodePool() {
         return sqlNodePool;
     }
 
-    IntList getValueScratch() {
-        return valueScratch;
+    IntList getTmpValues() {
+        return tmpValues;
     }
 
     protected void lexerToFirstToken(GenericLexer lexer, int rollbackPosition) throws SqlException {

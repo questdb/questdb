@@ -56,10 +56,10 @@ final class DecorrelationContext implements Mutable {
     final IntList masterOuterIds = new IntList();
     final IntIntHashMap outerAliases = new IntIntHashMap();
     final BindContext planNodes;
-    final IntList scratch;
+    final IntList tmpColumnIds;
     final IntIntHashMap substitution = new IntIntHashMap();
     private final OptimiserContext context;
-    private final OutputSchema schemaScratch;
+    private final OutputSchema tmpSchema;
     int carrierSequence;
     JoinPlan master;
     int masterLimit;
@@ -70,21 +70,21 @@ final class DecorrelationContext implements Mutable {
             BindContext planNodes,
             CharacterStore characterStore,
             ObjList<BoundExpression> callArguments,
-            IntList scratch,
+            IntList tmpColumnIds,
             IntList mappedOuterIds,
             IntList mappedColumnIds,
             ObjList<LogicalPlan> chain,
-            OutputSchema schemaScratch
+            OutputSchema tmpSchema
     ) {
         this.context = context;
         this.planNodes = planNodes;
         this.characterStore = characterStore;
         this.callArguments = callArguments;
-        this.scratch = scratch;
+        this.tmpColumnIds = tmpColumnIds;
         this.mappedOuterIds = mappedOuterIds;
         this.mappedColumnIds = mappedColumnIds;
         this.chain = chain;
-        this.schemaScratch = schemaScratch;
+        this.tmpSchema = tmpSchema;
         this.copier = new LogicalPlanCopier(context, planNodes);
     }
 
@@ -217,7 +217,7 @@ final class DecorrelationContext implements Mutable {
     }
 
     void insertColumn(OutputSchema output, int index, int columnId, CharSequence name, int type) {
-        final OutputSchema copy = schemaScratch;
+        final OutputSchema copy = tmpSchema;
         copy.copyFrom(output);
         final int timestampId = output.getTimestampColumnId();
         output.clear();
@@ -238,7 +238,7 @@ final class DecorrelationContext implements Mutable {
      * by the columns the node itself defines; the designated timestamp keeps its column.
      */
     void alignColumns(OutputSchema output, OutputSchema input) {
-        final OutputSchema copy = schemaScratch;
+        final OutputSchema copy = tmpSchema;
         copy.copyFrom(output);
         final int timestampId = output.getTimestampColumnId();
         output.clear();
@@ -314,13 +314,13 @@ final class DecorrelationContext implements Mutable {
         if (expression == null || !LogicalPlans.hasOuterColumn(expression)) {
             return expression;
         }
-        final int columnBase = scratch.size();
-        LogicalPlans.collectOuterColumnIds(expression, scratch);
+        final int columnBase = tmpColumnIds.size();
+        LogicalPlans.collectOuterColumnIds(expression, tmpColumnIds);
         substitution.clear();
-        for (int i = columnBase, n = scratch.size(); i < n; i++) {
-            substitution.put(scratch.getQuick(i), masterColumn(scratch.getQuick(i)));
+        for (int i = columnBase, n = tmpColumnIds.size(); i < n; i++) {
+            substitution.put(tmpColumnIds.getQuick(i), masterColumn(tmpColumnIds.getQuick(i)));
         }
-        scratch.setPos(columnBase);
+        tmpColumnIds.setPos(columnBase);
         return context.getRewriter().remapColumns(expression, substitution);
     }
 
@@ -364,13 +364,13 @@ final class DecorrelationContext implements Mutable {
         if (expression == null) {
             return false;
         }
-        final int columnBase = scratch.size();
-        collectColumnIds(expression, scratch);
+        final int columnBase = tmpColumnIds.size();
+        collectColumnIds(expression, tmpColumnIds);
         boolean isFound = false;
-        for (int i = columnBase, n = scratch.size(); i < n && !isFound; i++) {
-            isFound = output.getColumnIndexById(scratch.getQuick(i)) > -1;
+        for (int i = columnBase, n = tmpColumnIds.size(); i < n && !isFound; i++) {
+            isFound = output.getColumnIndexById(tmpColumnIds.getQuick(i)) > -1;
         }
-        scratch.setPos(columnBase);
+        tmpColumnIds.setPos(columnBase);
         return isFound;
     }
 

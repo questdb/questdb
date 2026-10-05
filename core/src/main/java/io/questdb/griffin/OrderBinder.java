@@ -485,7 +485,7 @@ final class OrderBinder implements Mutable {
         final int position = model.getLimitLo() != null ? model.getLimitLo().position : model.getLimitHi().position;
         final BoundExpression lo = model.getLimitLo() == null ? ctx.constants.next().ofLong(0, position) : bindLimit(model.getLimitLo(), executionContext);
         final BoundExpression hi = model.getLimitHi() == null ? null : bindLimit(model.getLimitHi(), executionContext);
-        if (LogicalPlans.hasOuterColumn(input, ctx.outerColumnScratch)) {
+        if (LogicalPlans.hasOuterColumn(input, ctx.tmpOuterColumns)) {
             validateCorrelatedLimit(model.getLimitLo(), lo);
             validateCorrelatedLimit(model.getLimitHi(), hi);
         }

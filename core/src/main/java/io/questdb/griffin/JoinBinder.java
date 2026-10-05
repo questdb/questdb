@@ -79,7 +79,7 @@ final class JoinBinder implements Mutable {
             SqlBinder binder,
             CairoConfiguration configuration,
             LateralBinder lateralBinder,
-            IntHashSet scratchIds,
+            IntHashSet tmpIds,
             IntList stagedIndexes,
             IntList bestOrder,
             IntList roots
@@ -88,7 +88,7 @@ final class JoinBinder implements Mutable {
         this.binder = binder;
         this.configuration = configuration;
         this.lateralBinder = lateralBinder;
-        this.joinOrder = new JoinOrderSolver(nonEquiNullingJoinInputs, nullingJoinBoundaries, scratchIds, stagedIndexes, bestOrder, roots);
+        this.joinOrder = new JoinOrderSolver(nonEquiNullingJoinInputs, nullingJoinBoundaries, tmpIds, stagedIndexes, bestOrder, roots);
     }
 
     @Override

@@ -107,12 +107,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final LatestByFactoryGenerator latestByGenerator;
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
-    private final LongList longScratch = new LongList();
+    private final LongList tmpLongs = new LongList();
     private final ProjectionFactoryGenerator projectionGenerator;
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final SampleByFactoryGenerator sampleByGenerator;
     private final ScanFactoryGenerator scanGenerator;
-    private final StringSink scratchSink;
+    private final StringSink tmpSink;
     private final SetOperationFactoryGenerator setOperationGenerator;
     private final SortFactoryGenerator sortGenerator;
     private final WindowFactoryGenerator windowGenerator;
@@ -147,18 +147,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
             OutputSchema emptySchema,
-            StringSink scratchSink,
-            IntHashSet idScratch,
-            IntList indexScratch,
-            IntList valueScratch,
-            IntList masterKeyScratch,
-            IntList slaveKeyScratch
+            StringSink tmpSink,
+            IntHashSet tmpIds,
+            IntList tmpIndexes,
+            IntList tmpValues,
+            IntList tmpMasterKeys,
+            IntList tmpSlaveKeys
     ) {
         try {
             this.configuration = configuration;
             this.asm = asm;
             this.emptySchema = emptySchema;
-            this.scratchSink = scratchSink;
+            this.tmpSink = tmpSink;
             this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
             this.jitIRMem = Vm.getCARWInstance(
                     configuration.getSqlJitIRMemoryPageSize(),
@@ -172,23 +172,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             final ListColumnFilter listColumnFilterB = new ListColumnFilter();
             final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            final BitSet symbolScratch = new BitSet();
-            this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, scratchSink,
-                    indexScratch, valueScratch, masterKeyScratch, slaveKeyScratch, longScratch);
+            final BitSet tmpSymbols = new BitSet();
+            this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, tmpSink,
+                    tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpLongs);
             this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, asm, emptySchema, entityColumnFilter,
-                    indexScratch, valueScratch);
+                    tmpIndexes, tmpValues);
             this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionParser, asm, entityColumnFilter,
-                    keyTypes, valueTypes, listColumnFilterA, listColumnFilterB, reduceTaskFactory, scratchSink, indexScratch, valueScratch,
-                    idScratch, symbolScratch, masterKeyScratch, slaveKeyScratch);
-            this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, keyTypes, listColumnFilterA, indexScratch, longScratch);
-            this.projectionGenerator = new ProjectionFactoryGenerator(indexScratch, valueScratch);
+                    keyTypes, valueTypes, listColumnFilterA, listColumnFilterB, reduceTaskFactory, tmpSink, tmpIndexes, tmpValues,
+                    tmpIds, tmpSymbols, tmpMasterKeys, tmpSlaveKeys);
+            this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, keyTypes, listColumnFilterA, tmpIndexes, tmpLongs);
+            this.projectionGenerator = new ProjectionFactoryGenerator(tmpIndexes, tmpValues);
             this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionParser, asm, entityColumnFilter, intListPool,
                     keyTypes, valueTypes, listColumnFilterA, recordComparatorCompiler);
             this.scanGenerator = new ScanFactoryGenerator(configuration, filterGenerator, latestByGenerator, emptySchema, reduceTaskFactory);
             this.sortGenerator = new SortFactoryGenerator(configuration, this, projectionGenerator, asm, emptySchema, entityColumnFilter,
                     recordComparatorCompiler, listColumnFilterB);
             this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter, keyTypes, valueTypes,
-                    listColumnFilterB, symbolScratch);
+                    listColumnFilterB, tmpSymbols);
             this.windowGenerator = new WindowFactoryGenerator(configuration, this, functionParser.getFunctionFactoryCache(), asm, entityColumnFilter, recordComparatorCompiler);
         } catch (Throwable th) {
             close();
@@ -615,7 +615,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw new IllegalStateException("query is not bound");
         }
         if (generationFrames.size() == generationDepth) {
-            generationFrames.add(new GenerationFrame(configuration, scratchSink, longScratch));
+            generationFrames.add(new GenerationFrame(configuration, tmpSink, tmpLongs));
         }
         final GenerationFrame frame = generationFrames.getQuick(generationDepth++);
         try {

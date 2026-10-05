@@ -157,18 +157,6 @@ final class SortEliminationPass {
         }
     }
 
-    private static void markMarkoutHorizons0(LogicalPlan plan) {
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final LogicalPlan input = plan.inputAt(i);
-            if (input != null) {
-                markMarkoutHorizons0(input);
-            }
-        }
-        if (plan instanceof SortPlan sort) {
-            markMarkoutHorizon(sort);
-        }
-    }
-
     /**
      * {@code isReordered}: a consumer above re-sorts or discards the order of {@code plan};
      * {@code isSetBranchReordered}: that consumer is a set operation, whose branch order never survives.
@@ -245,9 +233,16 @@ final class SortEliminationPass {
      * Marks a sort over a {@code markout_horizon}-hinted CROSS JOIN whose key is {@code master.ts + slave.offset},
      * so the generator can use the markout factory.
      */
-    LogicalPlan markMarkoutHorizons(LogicalPlan root) {
-        markMarkoutHorizons0(root);
-        return root;
+    void markMarkoutHorizons(LogicalPlan plan) {
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final LogicalPlan input = plan.inputAt(i);
+            if (input != null) {
+                markMarkoutHorizons(input);
+            }
+        }
+        if (plan instanceof SortPlan sort) {
+            markMarkoutHorizon(sort);
+        }
     }
 
     /**
