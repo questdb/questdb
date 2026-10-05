@@ -68,6 +68,14 @@ public class RecordToRowCopierUtils {
      * has no arm.
      */
     static final int COPY_NONE = 0;
+    /**
+     * The {@link #copyOpcode} of a NULL source into a type that does not represent NULL as its
+     * accessor family's namesake does, such as a never-null type on INT's accessor: the family's
+     * getter would read the namesake's NULL, so the copiers write nothing and the writer's null
+     * setter puts the type's own NULL there, from its type driver. Every existing type is its own
+     * namesake and keeps its same-type arm.
+     */
+    static final int COPY_SKIP = -1;
     // [source tag][target tag] -> the pair has a copier arm; filled from rule K (RelationRules.copier) at class init
     private static final boolean[][] COPIER_ARMS = new boolean[ColumnType.MAX_TAG + 1][ColumnType.MAX_TAG + 1];
 
@@ -103,8 +111,9 @@ public class RecordToRowCopierUtils {
      * when the copier is built: the source tag in the high byte and the target tag in the low byte,
      * or {@link #COPY_NONE} for a pair without an arm. VARCHAR_SLICE (the transient read_parquet
      * type) reads through VARCHAR's getter, and NULL through the target's getter, which returns the
-     * target's NULL. A same-tag pair takes {@link #sameTypeOpcode}; any other pair needs an arm in
-     * {@link RelationRules#copier} (rule K) and takes the opcodes of the two {@link
+     * target's NULL, or, for a target unlike its family's namesake, {@link #COPY_SKIP}. A same-tag
+     * pair takes {@link #sameTypeOpcode}; any other pair needs an arm in {@link RelationRules#copier}
+     * (rule K) and takes the opcodes of the two {@link
      * PhysicalDescriptor.Accessor accessor families}. {@code TypeRelationGoldenTest.testCopierArms}
      * pins the relation; {@code RelationCoverageTest.testCopierHasAnArmForEveryAdmittedPair} checks
      * it against {@link ColumnType#isConvertibleFrom} and lists the convertible pairs without an
@@ -117,6 +126,10 @@ public class RecordToRowCopierUtils {
             fromTag = ColumnType.VARCHAR;
         }
         if (fromTag == ColumnType.NULL) {
+            final TypeDriver toDriver = PhysicalDescriptor.storedTypeDriverOf(toColumnType);
+            if (toDriver != null && !PhysicalDescriptor.isLikeFamilyNamesake(toDriver)) {
+                return COPY_SKIP;
+            }
             fromTag = toTag;
         }
         if (fromTag == toTag) {
@@ -790,6 +803,10 @@ public class RecordToRowCopierUtils {
                 final int toColumnType = toMetadata.getColumnType(toColumnIndex);
                 final int fromColumnType = fromTypes.getColumnType(i);
                 final int opcode = copyOpcode(fromColumnType, toColumnType);
+                if (opcode == COPY_SKIP) {
+                    // the writer's null setter puts the type's own NULL
+                    continue;
+                }
                 if (opcode == COPY_NONE) {
                     throw noCopierArmForColumn(fromColumnType, toColumnType, toMetadata.getColumnName(toColumnIndex));
                 }
@@ -1951,6 +1968,10 @@ public class RecordToRowCopierUtils {
             final int toColumnType = toMetadata.getColumnType(toColumnIndex);
             final int fromColumnType = fromTypes.getColumnType(i);
             final int opcode = copyOpcode(fromColumnType, toColumnType);
+            if (opcode == COPY_SKIP) {
+                // the writer's null setter puts the type's own NULL
+                continue;
+            }
             if (opcode == COPY_NONE) {
                 throw noCopierArmForColumn(fromColumnType, toColumnType, toMetadata.getColumnName(toColumnIndex));
             }
