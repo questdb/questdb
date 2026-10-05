@@ -102,19 +102,19 @@ site of `sites.tsv`, a `pg_oid` that names no constant, or a new wire kind whose
 `refused_sites` takes the labels of the guarded sites (section 5, "Refused at setup"):
 `memoized virtual column`, `SAMPLE BY FILL(PREV)`, `SAMPLE BY FILL(LINEAR)`,
 `SAMPLE BY FILL(value)`, `COPY bind snapshot`, `ILP column kind`, `WAL columnar append`,
-`QWP WAL append`, `Parquet conversion`, `between`, `= NULL`.
+`QWP WAL append`, `Parquet conversion`, `between`, `= NULL`, `copier conversion`.
 
 ## 4. Predefined places, by kind
 
 <!-- counts: start -->
-The instrument table lists 557 sites where a type's behaviour could differ from its family's, by kind and by the instrument that names each when a type is added:
+The instrument table lists 560 sites where a type's behaviour could differ from its family's, by kind and by the instrument that names each when a type is added:
 
 | kind | build | test | refused at setup | manual | not type dependent | all |
 |---|---|---|---|---|---|---|
-| c-switch | 3 | 0 | 0 | 0 | 0 | 3 |
+| c-switch | 2 | 1 | 0 | 0 | 0 | 3 |
 | compare-arm | 0 | 0 | 1 | 0 | 0 | 1 |
-| family-arm | 0 | 6 | 18 | 12 | 43 | 79 |
-| family-opcode | 0 | 3 | 38 | 1 | 15 | 57 |
+| family-arm | 0 | 6 | 19 | 12 | 43 | 80 |
+| family-opcode | 0 | 4 | 38 | 1 | 16 | 59 |
 | kind-predicate | 0 | 3 | 0 | 0 | 3 | 6 |
 | pair-switch | 5 | 0 | 0 | 0 | 0 | 5 |
 | policy-switch | 18 | 0 | 0 | 0 | 0 | 18 |
@@ -123,7 +123,7 @@ The instrument table lists 557 sites where a type's behaviour could differ from 
 | tag-switch-default | 0 | 115 | 4 | 22 | 135 | 276 |
 | wire-kind-switch | 14 | 0 | 0 | 3 | 0 | 17 |
 | writer-arm | 0 | 0 | 0 | 0 | 30 | 30 |
-| all | 69 | 131 | 62 | 56 | 239 | 557 |
+| all | 68 | 133 | 63 | 56 | 240 | 560 |
 <!-- counts: end -->
 
 - **Registration.** Six places, each marked by a comment `type-registration: <anchor>`: the tag
@@ -192,7 +192,7 @@ The instrument table lists 557 sites where a type's behaviour could differ from 
 Every site of the instrument table has exactly one instrument, and none has "none": the build
 lists it, a test or a kit path reports it, a setup refusal names it, it is on the manual list
 (section 6), or it does not depend on the type, for the reason given. The sites the type drivers
-made type-dependent fall into these groups: the eleven guarded sites are refused at setup, and
+made type-dependent fall into these groups: the twelve guarded sites are refused at setup, and
 `WHERE key column`, which answers neutrally, is reported by the kit path `sql.where_key`; the
 predicates that read a value by the type's own tier and NULL policy are reported by their kit
 paths (SUBSAMPLE's stride and target, the WHERE bounds) or by `TypeDriverTest` (the cadence seed),
@@ -205,7 +205,7 @@ The columns: the site's label, its file and method, and how the site reaches the
 build, the test or kit path, the refusal text) or why it does not depend on the type.
 
 <!-- sites: start -->
-### Listed by the build (69)
+### Listed by the build (68)
 
 The compiler lists the site when a type is added: an exhaustive switch or match with no default arm.
 
@@ -273,7 +273,6 @@ The compiler lists the site when a type is added: an exhaustive switch or match 
 | schema::encoding_map match | `core/rust/qdbr/src/parquet_write/schema.rs` | `encoding_map` | an exhaustive match: rustc lists it for a tag added to the Rust enum |
 | update::generate_required_zero_page match | `core/rust/qdbr/src/parquet_write/update.rs` | `generate_required_zero_page` | an exhaustive match over the tag: rustc lists it for a tag added to the Rust enum |
 | column_type.h::var_layout switch | `core/src/main/c/share/column_type.h` | `var_layout` | a switch over the native ColumnType enum under -Wswitch as an error: the C++ build lists it for a new constant |
-| converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch | `core/src/main/c/share/converters.cpp` | `Java_io_questdb_griffin_ConvertersNative_fixedToFixed` | a switch over the native ColumnType enum under -Wswitch as an error: the C++ build lists it for a new constant |
 | converters.h::is_fixed_convertible switch | `core/src/main/c/share/converters.h` | `is_fixed_convertible` | a switch over the native ColumnType enum under -Wswitch as an error: the C++ build lists it for a new constant |
 | ColumnType tag constants | `core/src/main/java/io/questdb/cairo/ColumnType.java` | `` | where a new type registers itself: javac (or rustc, the C++ compiler) lists the exhaustive switch or the enum |
 | ColumnTypeTag enum | `core/src/main/java/io/questdb/cairo/ColumnTypeTag.java` | `` | where a new type registers itself: javac (or rustc, the C++ compiler) lists the exhaustive switch or the enum |
@@ -281,7 +280,7 @@ The compiler lists the site when a type is added: an exhaustive switch or match 
 | Rust ColumnTypeTag enum | `core/rust/qdb-core/src/col_type.rs` | `` | where a new type registers itself: javac (or rustc, the C++ compiler) lists the exhaustive switch or the enum |
 | native ColumnType enum | `core/src/main/c/share/column_type.h` | `` | where a new type registers itself: javac (or rustc, the C++ compiler) lists the exhaustive switch or the enum |
 
-### Reported by a test (131)
+### Reported by a test (133)
 
 A coverage test, `TypeDriverTest` or a kit path runs the type through the site and reports what is missing.
 
@@ -341,8 +340,9 @@ A coverage test, `TypeDriverTest` or a kit path runs the type through the site a
 | RecordToRowCopierUtils.generateSingleMethodCopier tag switch #16 | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `generateSingleMethodCopier` | `RelationCoverageTest`: a copier arm; INSERT admits a pair only with a copier arm (rule K), checked for every kit type by testCopierHasAnArmForEveryAdmittedPair |
 | RecordToRowCopierUtils.generateSingleMethodCopier tag switch #17 | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `generateSingleMethodCopier` | `RelationCoverageTest`: a copier arm; INSERT admits a pair only with a copier arm (rule K), checked for every kit type by testCopierHasAnArmForEveryAdmittedPair |
 | RecordToRowCopierUtils.sameTypeOpcode family switch | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `sameTypeOpcode` | `RelationCoverageTest`: the copier's pair opcode; INSERT admits a pair only with a copier arm (rule K), checked for every kit type by testCopierHasAnArmForEveryAdmittedPair |
-| RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1 | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `copyOpcode` | `RelationCoverageTest`: the copier's pair opcode; INSERT admits a pair only with a copier arm (rule K), checked for every kit type by testCopierHasAnArmForEveryAdmittedPair |
-| RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #2 | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `copyOpcode` | `RelationCoverageTest`: the copier's pair opcode; INSERT admits a pair only with a copier arm (rule K), checked for every kit type by testCopierHasAnArmForEveryAdmittedPair |
+| RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1 | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `copyOpcode` | `RelationCoverageTest`: the copier's pair opcode by the two accessor families, taken only when both sides are like their namesakes (the copier conversion guard); INSERT admits a pair only with an arm, and RelationCoverageTest lists an admitted pair without one |
+| RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #2 | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `copyOpcode` | `RelationCoverageTest`: the copier's pair opcode by the two accessor families, taken only when both sides are like their namesakes (the copier conversion guard); INSERT admits a pair only with an arm, and RelationCoverageTest lists an admitted pair without one |
+| copier conversion #1 | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `isUnlikeFamilyNamesake` | `RelationCoverageTest`: the guard's test of a conversion's two sides: a side unlike its family's namesake leaves the pair without a copier arm, so INSERT refuses it, and RelationCoverageTest lists the pair until the type adds its own arm or declares the refusal |
 | SqlCodeGenerator.isLatestOnKeyType family switch | `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java` | `isLatestOnKeyType` | `sql.latest_by_key`: LATEST ON ... PARTITION BY the column on every table mode: one row per key, the latest, reading back as written; a type the switch refuses fails with the column and its type |
 | SqlCodeGenerator.generateCastFunction tag switch #1 | `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java` | `generateCastFunction` | `RelationCoverageTest`: a UNION cast cell; testUnionHasACastForEveryAdmittedPair builds every cell the union matrix admits, for every kit type |
 | SqlCodeGenerator.generateCastFunction tag switch #2 | `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java` | `generateCastFunction` | `RelationCoverageTest`: a UNION cast cell; testUnionHasACastForEveryAdmittedPair builds every cell the union matrix admits, for every kit type |
@@ -418,8 +418,9 @@ A coverage test, `TypeDriverTest` or a kit path runs the type through the site a
 | LeastNumericFunctionFactory.newInstance tag switch | `core/src/main/java/io/questdb/griffin/engine/functions/math/LeastNumericFunctionFactory.java` | `newInstance` | `FunctionReachTest`: inside a function factory: a later type reaches it only through overload matching, which FunctionReachTest lists for every later type |
 | SortKeyEncoder.keyKind family switch | `core/src/main/java/io/questdb/griffin/engine/orderby/SortKeyEncoder.java` | `keyKind` | `GeneratedAccessorCoverageTest`: the sort-key kind by accessor; GeneratedAccessorCoverageTest reports a type keyKind does not handle (an unsigned INT look-alike, for example) |
 | PGOids.getTypeOid tag table TYPE_OIDS | `core/src/main/java/io/questdb/cutlass/pgwire/PGOids.java` | `getTypeOid` | `TypeDriverTest`: the PG type OID table by tag, filled from the type drivers; testProtocolAnswers pins every tag's OID |
+| converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch | `core/src/main/c/share/converters.cpp` | `Java_io_questdb_griffin_ConvertersNative_fixedToFixed` | `storage.alter`: a switch over a packed pair of native types, not over the enum, so -Wswitch does not list it; a pair it does not list fails ALTER COLUMN TYPE with "Unsupported conversion", which kit path storage.alter reports |
 
-### Refused at setup (62)
+### Refused at setup (63)
 
 A kit path reaches the site, which refuses the type before it allocates or copies anything; the refusal text maps the failure to the site.
 
@@ -442,6 +443,7 @@ A kit path reaches the site, which refuses the type before it allocates or copie
 | WAL columnar append #11 | `core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java` | `writeDecimalNullSentinel` | `ingest.qwp`, "no family arm for <type> at WAL columnar append": the switch keys on familyArmOpcodeOf; an unlike type reaches the default, which raises the guard error (unsupportedColumnType) |
 | WAL columnar append #12 | `core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java` | `writeDecimalValue` | `ingest.qwp`, "no family arm for <type> at WAL columnar append": the switch keys on familyArmOpcodeOf; an unlike type reaches the default, which raises the guard error (unsupportedColumnType) |
 | WAL columnar append #13 | `core/src/main/java/io/questdb/cairo/wal/WalColumnarRowAppender.java` | `unsupportedColumnType` | `ingest.qwp`, "no family arm for <type> at WAL columnar append": the switch keys on familyArmOpcodeOf; an unlike type reaches the default, which raises the guard error (unsupportedColumnType) |
+| copier conversion #2 | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `noFamilyArmForColumn` | ``, "no family arm for <type> at copier conversion": a copier built for a conversion without an arm because a side is unlike its namesake raises the guard's refusal; INSERT refuses such a pair before it builds one |
 | memoized virtual column | `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java` | `memoized` | `sql.memoized`, "no family arm for <type> at memoized virtual column": the family-arm guard refuses a type unlike its family's namesake before the switch |
 | SAMPLE BY FILL(PREV) #1 | `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java` | `isFixedSizePrevSlotEligible` | `sql.fill_prev`, "no family arm for <type> at SAMPLE BY FILL(PREV)": the family-arm guard refuses a type unlike its family's namesake before the switch |
 | SqlCodeGenerator.generateFill familyArmOpcodeOf | `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java` | `generateFill` | `sql.fill_prev`, "no family arm for <type> at SAMPLE BY FILL(PREV)": the FILL(PREV) slot key is the family arm opcode; SAMPLE BY FILL(PREV) refuses an unlike type first (isFixedSizePrevSlotEligible) |
@@ -488,7 +490,7 @@ A kit path reaches the site, which refuses the type before it allocates or copie
 | QWP WAL append #6 | `core/src/main/java/io/questdb/cutlass/line/tcp/QwpWalAppender.java` | `appendToWalColumnar` | `ingest.qwp`, "no family arm for <type> at QWP WAL append": the switch keys on familyArmOpcodeOf; an unlike type reaches the default, which raises the guard error |
 | col_type::try_from match | `core/rust/qdb-core/src/col_type.rs` | `try_from` | `storage.parquet`, "unknown QuestDB column tag code": decodes the tag number at the JNI boundary; a Java tag Rust does not know is refused |
 
-### Not type-dependent (239)
+### Not type-dependent (240)
 
 The site moves bytes by width, orders by tier or is reached by one family only, so it cannot treat a new type wrongly; the reason says which.
 
@@ -577,6 +579,7 @@ The site moves bytes by width, orders by tier or is reached by one family only, 
 | RecordToRowCopierUtils.hasComplexArm family switch | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `hasComplexArm` | moves or sizes bytes by the accessor family's width; no NULL test and no arithmetic |
 | RecordToRowCopierUtils.transferDecimal tag switch | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `transferDecimal` | reached only for a DECIMAL type: the switch tells the decimal widths apart |
 | RecordToRowCopierUtils.hasComplexArm accessorOf | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `hasComplexArm` | moves or sizes bytes by the accessor family's width; no NULL test and no arithmetic |
+| RecordToRowCopierUtils.isUnlikeFamilyNamesake accessorOpcodeOf | `core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java` | `isUnlikeFamilyNamesake` | compares the accessor and family-arm opcode tables, which differ only for a type unlike its namesake; the decision it serves is the copier conversion guard's row |
 | SqlExecutionContextImpl.getNow tag switch | `core/src/main/java/io/questdb/griffin/SqlExecutionContextImpl.java` | `getNow` | tells the timestamp or interval units apart; reached only for that family |
 | SqlOptimiser.checkSimpleIntegerColumn isIntegral | `core/src/main/java/io/questdb/griffin/SqlOptimiser.java` | `checkSimpleIntegerColumn` | a relation-kind test; the rewrite it gates reads the NULL policy, not a value |
 | SqlOptimiser.isConstantSdtCompdev isIntegralOrFloat | `core/src/main/java/io/questdb/griffin/SqlOptimiser.java` | `isConstantSdtCompdev` | reads the constant through getDouble and rejects NaN and negatives, which covers every NULL form |
@@ -900,9 +903,11 @@ Places outside the worklist that a type may still meet:
 - The kit derives a text family's `max` row with a character outside the Basic Multilingual Plane,
   which ILP over HTTP stores as `??` and ILP over UDP as `?` for VARCHAR as well, and CSV import reads
   an empty string back as NULL; a text type leaves those paths out of its kit line or expects those
-  rows to fail. `pg.binary` expects a fixed-size value in the type's own width, so a type that
-  PostgreSQL wire sends widened (an unsigned INT as `int8`) fails it until the kit reads by the
-  type's OID.
+  rows to fail. `pg.binary` reads a fixed-size value at the width of the type's PostgreSQL type:
+  a type sent wider than it stores (an unsigned INT as `int8`) sends its value widened by its tier.
+- ILP has no unsigned form: the client sends a value in its family's form, so an unsigned INT's
+  largest value goes out as -1. An unsigned type declares `ILP column kind` refused, which
+  the kit and the coverage tests then accept, or adds its own ILP parsing.
 
 ## 10. The cost of a type
 

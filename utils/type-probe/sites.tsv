@@ -205,6 +205,9 @@ RecordToRowCopierUtils.transferDecimal tag switch	tag-switch-default	core/src/ma
 RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1	family-opcode	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	copyOpcode	inconvertible types	implement-pair	test RelationCoverageTest
 RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #2	family-opcode	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	copyOpcode	inconvertible types	implement-pair	test RelationCoverageTest
 RecordToRowCopierUtils.hasComplexArm accessorOf	family-arm	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	hasComplexArm		-	not-type-dependent
+copier conversion #1	family-opcode	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	isUnlikeFamilyNamesake		implement-pair	test RelationCoverageTest
+RecordToRowCopierUtils.isUnlikeFamilyNamesake accessorOpcodeOf	family-opcode	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	isUnlikeFamilyNamesake		-	not-type-dependent
+copier conversion #2	family-arm	core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java	noFamilyArmForColumn	no family arm for <type> at copier conversion	declare-or-admit	refused-at-setup
 memoized virtual column	family-arm	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	memoized	no family arm for <type> at memoized virtual column	declare-or-admit	refused-at-setup sql.memoized
 SAMPLE BY FILL(PREV) #1	family-arm	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	isFixedSizePrevSlotEligible	no family arm for <type> at SAMPLE BY FILL(PREV)	declare-or-admit	refused-at-setup sql.fill_prev
 SqlCodeGenerator.isLatestOnKeyType family switch	family-arm	core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java	isLatestOnKeyType		implement-pair	test sql.latest_by_key
@@ -547,7 +550,7 @@ schema::validate_encoding match	rust-match	core/rust/qdbr/src/parquet_write/sche
 schema::encoding_map match	rust-match	core/rust/qdbr/src/parquet_write/schema.rs	encoding_map		name-yourself	build
 update::generate_required_zero_page match	rust-match	core/rust/qdbr/src/parquet_write/update.rs	generate_required_zero_page		name-yourself	build
 column_type.h::var_layout switch	c-switch	core/src/main/c/share/column_type.h	var_layout		name-yourself	build
-converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch	c-switch	core/src/main/c/share/converters.cpp	Java_io_questdb_griffin_ConvertersNative_fixedToFixed		name-yourself	build
+converters.cpp::Java_io_questdb_griffin_ConvertersNative_fixedToFixed switch	c-switch	core/src/main/c/share/converters.cpp	Java_io_questdb_griffin_ConvertersNative_fixedToFixed		implement-pair	test storage.alter
 converters.h::is_fixed_convertible switch	c-switch	core/src/main/c/share/converters.h	is_fixed_convertible		name-yourself	build
 FunctionParser.createFunction argument cast chain	tag-switch-default	core/src/main/java/io/questdb/griffin/FunctionParser.java	createFunction		manual	manual
 DecimalUtil.getImplicitCastType tag switch	tag-switch-default	core/src/main/java/io/questdb/griffin/DecimalUtil.java	getImplicitCastType		manual	manual
