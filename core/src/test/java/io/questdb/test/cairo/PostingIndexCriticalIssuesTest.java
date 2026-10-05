@@ -13524,9 +13524,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
-    // Writes a deliberately corrupt posting seal-purge pending file, truncated to
-    // an exact length (TRUNCATE_TO_POINTER) so the recovery bound-checks see the
-    // intended short/overrunning layout rather than a page-padded file.
     private void writeQueuedPostingSealPurgePendingFile(TableToken token) {
         ConcurrentQueue<PostingSealPurgeTask> queue = engine.getMessageBus().getPostingSealPurgeQueue();
         PostingSealPurgeTask task = new PostingSealPurgeTask();
@@ -13557,6 +13554,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    // Writes a deliberately corrupt posting seal-purge pending file, truncated to
+    // an exact length (TRUNCATE_TO_POINTER) so the recovery bound-checks see the
+    // intended short/overrunning layout rather than a page-padded file.
     private void writeCorruptPostingSealPurgePendingFile(TableToken token, int variant) {
         FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {

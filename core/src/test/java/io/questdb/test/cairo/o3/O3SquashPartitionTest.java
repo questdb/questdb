@@ -947,18 +947,17 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testSquashIntoOpenPartitionBehindParquetLastPartition() throws Exception {
-        // A FORMAT PARQUET table makes every brand-new partition parquet from inception, so once
-        // 2020-02-05 exists the writer's openLastPartition() no-ops (openLastPartitionAndSetAppendPosition
-        // returns early on a parquet last partition) and the writer keeps the earlier NATIVE
-        // 2020-02-04 open: lastOpenPartitionTs lags the real last partition.
+        // A FORMAT PARQUET table makes every brand-new partition parquet from inception. The
+        // commit that creates 2020-02-05 also closes the NATIVE 2020-02-04 the writer held open
+        // (finishO3Commit, without truncating), so the writer holds no partition open after it.
         //
         // A later O3 insert into 2020-02-04 splits it and the same commit squashes the split back
-        // in. squashSplitPartitions then appends into the very partition the writer holds open,
-        // through the frame's own file descriptors, so the writer's column append memories describe
-        // a SHORTER file than what is on disk. The next truncating close (doClose -> freeColumns ->
-        // closeAppendMemoryTruncate) trims every .d back to ceilPageSize(stale append offset),
-        // physically discarding the bytes the squash wrote. The 200-char strings make the discarded
-        // region clear a 64K page, so the loss is observable on every platform.
+        // in, appending through the frame's own file descriptors. Had the writer still held
+        // 2020-02-04 open, its column append memories would describe a SHORTER file than what is
+        // on disk, and the next truncating close (doClose -> freeColumns ->
+        // closeAppendMemoryTruncate) would trim every .d back to ceilPageSize(stale append
+        // offset), physically discarding the bytes the squash wrote. The 200-char strings make
+        // the discarded region clear a 64K page, so the loss is observable on every platform.
         //
         // A split of 2020-02-04 lives on disk only until the same commit squashes it away, and
         // table_partitions below can only show the aftermath -- a plain whole-partition rewrite
@@ -996,7 +995,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x SET FORMAT PARQUET");
             drainWalQueue();
 
-            // 2020-02-05 is born parquet, so the writer stays on native 2020-02-04.
+            // 2020-02-05 is born parquet; the writer releases native 2020-02-04 in the same commit.
             executeWithRewriteTimestamp(
                     "INSERT INTO x SELECT" +
                             " cast(x AS int) + 1440 i," +
@@ -1007,7 +1006,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            // O3 into the still-open 2020-02-04: split, then squash into the open partition.
+            // O3 into 2020-02-04: split, then squash back into the native partition.
             executeWithRewriteTimestamp(
                     "INSERT INTO x SELECT" +
                             " cast(x AS int) + 10000 i," +
@@ -1022,17 +1021,15 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     "test setup gap: the O3 insert must SPLIT 2020-02-04 -- no partition directory"
                             + " named after the 2020-02-04T20:01 insert's split point was ever opened,"
                             + " so this test"
-                            + " exercises a plain whole-partition rewrite, not a squash into the open"
+                            + " exercises a plain whole-partition rewrite, not a squash into the native"
                             + " partition",
                     splitDirOpens.get() > 0
             );
 
-            // The precondition chain in one check: 2020-02-05 is born parquet -- which is why
-            // openLastPartition() no-ops and the writer keeps NATIVE 2020-02-04 open -- and the
-            // O3 insert's split of 2020-02-04 was squashed back in by the same commit, leaving a
-            // single native 2020-02-04 with all 1440 + 200 rows and no split partition. Without
-            // it the test degrades to "insert data, read it back" if the split or the squash
-            // stops happening.
+            // The precondition chain in one check: 2020-02-05 is born parquet and the O3 insert's
+            // split of 2020-02-04 was squashed back in by the same commit, leaving a single native
+            // 2020-02-04 with all 1440 + 200 rows and no split partition. Without it the test
+            // degrades to "insert data, read it back" if the split or the squash stops happening.
             assertQuery("SELECT minTimestamp, numRows, name, isParquet FROM table_partitions('x') ORDER BY minTimestamp")
                     .noLeakCheck()
                     .expectSize()
@@ -1063,9 +1060,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     @Test
     public void testSquashIntoOpenPartitionBehindParquetLastPartitionPostingIndexed() throws Exception {
         // Same shape as testSquashIntoOpenPartitionBehindParquetLastPartition, with a POSTING
-        // index on the squashed partition. The squash's reseal restores the table's indexers to
-        // lastOpenPartitionTs, and a second O3 insert then re-enters the same branch, so the
-        // writer's indexer list and column memories must still be consistent afterwards.
+        // index on the squashed partition. Each squash reseals that index, and a second O3 insert
+        // splits and squashes 2020-02-04 again on the same writer, so the writer's indexer state
+        // must still be consistent after the first squash and reseal.
         //
         // Both O3 inserts land in the 2020-02-04T2x:xx range (20:01, then 21:01), so each split
         // shows up as a partition directory named after its split point -- one tick past the last
@@ -1136,8 +1133,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     splitDirOpensAfterFirstO3 > 0
             );
 
-            // A second O3 insert re-enters the same branch on a writer that already went
-            // through it once.
+            // A second O3 insert splits and squashes 2020-02-04 again on a writer that already
+            // squashed into it once.
             executeWithRewriteTimestamp(
                     "INSERT INTO y SELECT" +
                             " cast(x AS int) + 20000," +
@@ -1156,10 +1153,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     splitDirOpens.get() > splitDirOpensAfterFirstO3
             );
 
-            // The precondition chain in one check: 2020-02-05 is born parquet -- which is why
-            // openLastPartition() no-ops and the writer keeps NATIVE 2020-02-04 open -- and both
-            // O3 inserts split 2020-02-04 and were squashed back in by their own commits, leaving
-            // a single native 2020-02-04 with all 1440 + 200 + 200 rows and no split partition.
+            // The precondition chain in one check: 2020-02-05 is born parquet and both O3 inserts
+            // split 2020-02-04 and were squashed back in by their own commits, leaving a single
+            // native 2020-02-04 with all 1440 + 200 + 200 rows and no split partition.
             assertQuery("SELECT minTimestamp, numRows, name, isParquet FROM table_partitions('y') ORDER BY minTimestamp")
                     .noLeakCheck()
                     .expectSize()

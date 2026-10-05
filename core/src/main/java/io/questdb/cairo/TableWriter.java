@@ -12819,8 +12819,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Replays posting seal-purge intents that a prior {@link #closeDeferredPostingSealPurges()}
-     * spilled to {@link #POSTING_SEAL_PURGE_PENDING_FILE_NAME} because the ring
-     * queue was full and the shared purge-log writer was held. Reads are bounded
+     * spilled to {@link #POSTING_SEAL_PURGE_PENDING_FILE_NAME}: a writer without a
+     * message bus could not write them to the shared purge log. Reads are bounded
      * by the on-disk file length so a torn or corrupt file can never read past
      * the mapping; whatever parses cleanly is re-published through the normal
      * path. The file is always removed afterwards: a corrupt file is discarded,
@@ -14602,9 +14602,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // lastPartitionSquashed == false means a partition survives after the
             // target. openLastPartition would therefore re-open the wrong partition,
             // and it no-ops outright once that last partition is parquet (see
-            // openLastPartitionAndSetAppendPosition), which is exactly how the writer
-            // ends up holding an earlier partition open in the first place. Close
-            // WITHOUT truncating, then re-open the TARGET. openPartition also re-runs
+            // openLastPartitionAndSetAppendPosition). This branch is defensive: the
+            // writer used to keep an earlier partition open when an O3 commit made a
+            // parquet partition the last one, but finishO3Commit now closes it and
+            // resets lastOpenPartitionTs in that commit. Close WITHOUT truncating,
+            // then re-open the TARGET. openPartition also re-runs
             // configureFollowerAndWriter / configureCoveringIfNeeded /
             // populateDenseIndexerList, so the reseal below and the next commit see
             // live column memories and a dense indexer list that matches indexCount.

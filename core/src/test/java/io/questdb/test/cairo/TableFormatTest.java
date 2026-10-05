@@ -984,14 +984,6 @@ public class TableFormatTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Exercises both `writeFreshParquetFromO3` (first insert into each
-     * partition) and `copyO3ToRowGroup` (second insert into the same partition
-     * at a later timestamp) for a designated-timestamp column whose PARQUET
-     * encoding has been explicitly set. Catches any regression where the
-     * strided merge-index layout is mishandled on the Rust side for a given
-     * encoding.
-     */
     private void assertBlockApplyIntoEarlierPartitionAfterEmptying(String emptyTableSql) throws Exception {
         // Emptying the table must reset the writer's append horizon (partitionTimestampHi). A stale
         // horizon pointing at the removed 2024-01-05 partition survived the block apply below,
@@ -1038,6 +1030,14 @@ public class TableFormatTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Exercises both `writeFreshParquetFromO3` (first insert into each
+     * partition) and `copyO3ToRowGroup` (second insert into the same partition
+     * at a later timestamp) for a designated-timestamp column whose PARQUET
+     * encoding has been explicitly set. Catches any regression where the
+     * strided merge-index layout is mishandled on the Rust side for a given
+     * encoding.
+     */
     private void assertParquetTimestampRoundTrip(String encoding) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (" +
