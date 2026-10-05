@@ -1732,6 +1732,24 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Returns the preferred FLAT width, or zero for DELTA. FLAT uses int-sized
+     * counts and buffers; DELTA has long stride offsets and can exceed that limit.
+     */
+    public static int selectFlatBitWidth(long valueCount, int naturalBitWidth, int alignedBitWidth, int flatHeaderSize, long deltaSize) {
+        if (valueCount > Integer.MAX_VALUE) {
+            return 0;
+        }
+        // Prefer aligned FLAT when it fits and beats DELTA, even if natural
+        // FLAT is smaller. Include the header before checking the int limit.
+        long alignedFlatSize = flatHeaderSize + (valueCount * alignedBitWidth + 7) / 8;
+        if (alignedFlatSize <= Integer.MAX_VALUE && alignedFlatSize < deltaSize) {
+            return alignedBitWidth;
+        }
+        long naturalFlatSize = flatHeaderSize + (valueCount * naturalBitWidth + 7) / 8;
+        return naturalFlatSize <= Integer.MAX_VALUE && naturalFlatSize < deltaSize ? naturalBitWidth : 0;
+    }
+
+    /**
      * Number of stride blocks for the given key count.
      */
     public static int strideCount(int keyCount) {

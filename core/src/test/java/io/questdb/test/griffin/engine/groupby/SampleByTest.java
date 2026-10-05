@@ -216,6 +216,9 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE")
                 .fails(37, "Invalid unit: 1hour");
+        // ends in the nanosecond unit 'n', but must not pass as a 1-nanosecond stride
+        assertQuery("select b, sum(a), k from x sample by 1min")
+                .fails(37, "Invalid unit: 1min");
     }
 
     @Test
