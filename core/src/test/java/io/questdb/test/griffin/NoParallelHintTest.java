@@ -73,6 +73,12 @@ public class NoParallelHintTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinKeyedProjectedFilterWithParallelFiltersDisabled() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "false");
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, true, true);
+    }
+
+    @Test
     public void testAsOfJoinKeyedProjectedJitFilter() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
         assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_ENABLED, true, true);
@@ -80,6 +86,12 @@ public class NoParallelHintTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinNonKeyedFilter() throws Exception {
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, false, false);
+    }
+
+    @Test
+    public void testAsOfJoinNonKeyedFilterWithParallelFiltersDisabled() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "false");
         assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, false, false);
     }
 
@@ -98,6 +110,34 @@ public class NoParallelHintTest extends AbstractCairoTest {
     public void testAsOfJoinNonKeyedProjectedFilterWithParallelFiltersDisabled() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "false");
         assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, false, true);
+    }
+
+    @Test
+    public void testAsOfJoinUnmappedProjectionWithNoParallelHint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (ts TIMESTAMP, k SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (ts TIMESTAMP, k SYMBOL, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO master VALUES (0, 'x'), (1_000_000, 'y')");
+            execute("INSERT INTO slave VALUES (0, 'y', 10), (1_000_000, 'x', 20), (2_000_000, 'x', 30)");
+            assertQuery("""
+                    SELECT /*+ no_parallel */ * FROM master x ASOF JOIN (
+                        SELECT m.*, SUM(s.v) z FROM (SELECT * FROM slave WHERE v != 20) m
+                        WINDOW JOIN slave s ON (0 = 1)
+                        RANGE BETWEEN 0 SECONDS PRECEDING AND 0 SECONDS FOLLOWING
+                    ) w
+                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("ExtraNullColumnRecord", "AsOf Join\n")
+                    .withPlanNotContaining("Filtered AsOf Join Fast", "Async")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\tts1\tk1\tv\tz
+                            1970-01-01T00:00:00.000000Z\tx\t1970-01-01T00:00:00.000000Z\ty\t10\tnull
+                            1970-01-01T00:00:01.000000Z\ty\t1970-01-01T00:00:00.000000Z\ty\t10\tnull
+                            """);
+        });
     }
 
     @Test
@@ -394,7 +434,9 @@ public class NoParallelHintTest extends AbstractCairoTest {
                             .timestamp("ts")
                             .noRandomAccess()
                             .expectSize()
-                            .withPlanContaining("Filtered AsOf Join Fast")
+                            .withPlanContaining(i == 1 || context.isParallelFilterEnabled()
+                                    ? "Filtered AsOf Join Fast"
+                                    : isKeyed ? "AsOf Join Light" : "AsOf Join\n")
                             .withPlanNotContaining("Async")
                             .noLeakCheck()
                             .returns(expected);

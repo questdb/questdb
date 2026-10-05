@@ -5834,17 +5834,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
             if (!hasLinearHint && !slave.supportsTimeFrameCursor()) {
-                final IntList stolenCrossIndex = slave.isProjection() ? slave.getColumnCrossIndex() : null;
-                final RecordCursorFactory filterFactory = stolenCrossIndex != null ? slave.getBaseFactory() : slave;
-                if ((filterFactory.supportsFilterStealing() || filterFactory instanceof FilteredRecordCursorFactory)
+                final boolean isProjection = slave.isProjection();
+                final IntList stolenCrossIndex = isProjection ? slave.getColumnCrossIndex() : null;
+                final RecordCursorFactory filterFactory = isProjection ? slave.getBaseFactory() : slave;
+                if ((filterFactory.supportsFilterStealing()
+                        || (!isParallelismEnabled && filterFactory instanceof FilteredRecordCursorFactory
+                        && (!isProjection || stolenCrossIndex != null)))
                         && filterFactory.getBaseFactory().supportsTimeFrameCursor()) {
-                    // Filtered ASOF seeks and evaluates the filter on the caller thread, so it can
-                    // also consume serial filters. asof_linear keeps the original filter instead.
+                    // no_parallel lets filtered ASOF consume serial filters on the caller thread.
+                    // Require a projection mapping only for this hint-specific serial alternative.
                     RecordCursorFactory slaveBase = filterFactory.getBaseFactory();
-                    int slaveTimestampIndex = stolenCrossIndex != null
+                    assert !isProjection || stolenCrossIndex != null;
+                    int slaveTimestampIndex = isProjection
                             ? slaveMetadata.getTimestampIndex()
                             : validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
-                    assert stolenCrossIndex == null
+                    assert !isProjection
                             || stolenCrossIndex.get(slaveTimestampIndex) == slaveBase.getMetadata().getTimestampIndex();
                     Function stolenFilter = filterFactory.getFilter();
                     assert stolenFilter != null;
