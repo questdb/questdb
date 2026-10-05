@@ -1,0 +1,970 @@
+# Outer joins whose ON clause ties one column of the joined table to two columns of the
+# preceding side, as in ON pa.x = pb.k AND pa.y = pb.k, which implies pa.x = pa.y.
+# The expected rows come from DuckDB with every = rewritten to IS NOT DISTINCT FROM,
+# because QuestDB treats NULL = NULL as true in join keys and filters. The tables are not
+# partitioned, so they are not WAL tables and inserted rows are visible at once.
+
+# ==== INT keys ====
+
+statement ok
+DROP TABLE IF EXISTS z
+
+statement ok
+DROP TABLE IF EXISTS pa
+
+statement ok
+DROP TABLE IF EXISTS pb
+
+statement ok
+DROP TABLE IF EXISTS q
+
+statement ok
+CREATE TABLE z (rn INT, id INT, c INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE pa (rn INT, id INT, x INT, y INT, w INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE pb (rn INT, k INT, m INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE q (rn INT, id INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO z VALUES (1, 4, NULL, '2024-01-01T00:00:01.000000Z'), (2, 4, 1, '2024-01-01T00:00:02.000000Z'), (3, 3, 0, '2024-01-01T00:00:03.000000Z'), (4, 3, NULL, '2024-01-01T00:00:04.000000Z'), (5, NULL, 2, '2024-01-01T00:00:05.000000Z'), (6, 2, 2, '2024-01-01T00:00:06.000000Z')
+
+statement ok
+INSERT INTO pa VALUES (1, 2, NULL, 2, NULL, '2024-01-01T00:00:01.000000Z'), (2, NULL, 1, 0, 0, '2024-01-01T00:00:02.000000Z'), (3, 3, 2, 0, 1, '2024-01-01T00:00:03.000000Z'), (4, 4, 0, 0, 0, '2024-01-01T00:00:04.000000Z'), (5, 1, NULL, 1, NULL, '2024-01-01T00:00:05.000000Z'), (6, 4, 2, 2, 1, '2024-01-01T00:00:06.000000Z'), (7, 3, 0, 0, 0, '2024-01-01T00:00:07.000000Z'), (8, NULL, 0, NULL, 0, '2024-01-01T00:00:08.000000Z')
+
+statement ok
+INSERT INTO pb VALUES (1, NULL, 2, 3, '2024-01-01T00:00:01.000000Z'), (2, 2, 0, 3, '2024-01-01T00:00:02.000000Z'), (3, 1, 1, 3, '2024-01-01T00:00:03.000000Z'), (4, 1, NULL, 2, '2024-01-01T00:00:04.000000Z'), (5, 1, 0, NULL, '2024-01-01T00:00:05.000000Z'), (6, 2, 0, 1, '2024-01-01T00:00:06.000000Z')
+
+statement ok
+INSERT INTO q VALUES (1, NULL, '2024-01-01T00:00:02.000000Z'), (2, NULL, '2024-01-01T00:00:04.000000Z'), (3, 1, '2024-01-01T00:00:06.000000Z'), (4, 3, '2024-01-01T00:00:08.000000Z'), (5, 3, '2024-01-01T00:00:10.000000Z')
+
+# RIGHT JOIN after an INNER join of pa
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	6	2
+1	6	6
+2	6	2
+2	6	6
+NULL	NULL	1
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN after a CROSS JOIN of pa
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z CROSS JOIN pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	6	2
+1	6	6
+2	6	2
+2	6	6
+3	6	2
+3	6	6
+4	6	2
+4	6	6
+5	6	2
+5	6	6
+6	6	2
+6	6	6
+NULL	NULL	1
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN with pa as the first table
+query II rowsort
+SELECT pa.rn par, pb.rn pbr FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+6	2
+6	6
+NULL	1
+NULL	3
+NULL	4
+NULL	5
+
+# LEFT JOIN, which keeps the pa rows that fail pa.x = pa.y
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id LEFT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	4	NULL
+1	6	2
+1	6	6
+2	4	NULL
+2	6	2
+2	6	6
+3	3	NULL
+3	7	NULL
+4	3	NULL
+4	7	NULL
+5	2	NULL
+5	8	NULL
+6	1	NULL
+
+# FULL JOIN
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id FULL JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	4	NULL
+1	6	2
+1	6	6
+2	4	NULL
+2	6	2
+2	6	6
+3	3	NULL
+3	7	NULL
+4	3	NULL
+4	7	NULL
+5	2	NULL
+5	8	NULL
+6	1	NULL
+NULL	NULL	1
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN after a LEFT JOIN of pa
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z LEFT JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	6	2
+1	6	6
+2	6	2
+2	6	6
+NULL	NULL	1
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN after a RIGHT JOIN that can null pa
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN q ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+NULL	NULL	1	3
+NULL	NULL	2	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+NULL	NULL	6	NULL
+
+# RIGHT JOIN after a LEFT JOIN of q, which keeps the pa rows
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id LEFT JOIN q ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	6	2	NULL
+1	6	6	NULL
+2	6	2	NULL
+2	6	6	NULL
+NULL	NULL	1	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+
+# RIGHT JOIN with WHERE pa.x = pa.y
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k WHERE pa.x = pa.y
+----
+1	6	2
+1	6	6
+2	6	2
+2	6	6
+NULL	NULL	1
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN on three keys that share pb.k
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND pa.w = pb.k
+----
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+NULL	NULL	6
+
+# RIGHT JOIN whose keys imply pb.k = pb.m on the preserved side
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.x = pb.m
+----
+5	2	3
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	4
+NULL	NULL	5
+NULL	NULL	6
+
+# RIGHT JOIN followed by another RIGHT JOIN
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k RIGHT JOIN q ON q.id = pb.v
+----
+1	6	2	4
+1	6	2	5
+1	6	6	3
+2	6	2	4
+2	6	2	5
+2	6	6	3
+NULL	NULL	1	4
+NULL	NULL	1	5
+NULL	NULL	3	4
+NULL	NULL	3	5
+NULL	NULL	5	1
+NULL	NULL	5	2
+
+# RIGHT JOIN after INNER joins of pa and q
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id JOIN q ON q.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+NULL	NULL	1	NULL
+NULL	NULL	2	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+NULL	NULL	6	NULL
+
+# RIGHT JOIN whose keys also tie z.c to the pa columns
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND z.c = pb.k
+----
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+NULL	NULL	6
+
+# RIGHT JOIN with pa first, then an INNER join of z
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM pa JOIN z ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	6	2
+1	6	6
+2	6	2
+2	6	6
+NULL	NULL	1
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN after an INNER join of a filtered sub-query
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN (SELECT * FROM pa WHERE rn > 2) pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	6	2
+1	6	6
+2	6	2
+2	6	6
+NULL	NULL	1
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN after an ASOF JOIN
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id ASOF JOIN q RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	6	2	NULL
+1	6	6	NULL
+2	6	2	1
+2	6	6	1
+NULL	NULL	1	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+
+# RIGHT JOIN with the key operands reversed
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pb.k = pa.x AND pb.k = pa.y
+----
+1	6	2
+1	6	6
+2	6	2
+2	6	6
+NULL	NULL	1
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN with two groups of keys that share a column
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND pa.w = pb.m AND pa.x = pb.m
+----
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+NULL	NULL	6
+
+# RIGHT JOIN with keys on two preceding tables
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id JOIN q ON q.id = z.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND z.c = pb.k
+----
+NULL	NULL	1	NULL
+NULL	NULL	2	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+NULL	NULL	6	NULL
+
+# RIGHT JOIN after a CROSS JOIN and an INNER join
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM q CROSS JOIN z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	6	2	1
+1	6	2	2
+1	6	2	3
+1	6	2	4
+1	6	2	5
+1	6	6	1
+1	6	6	2
+1	6	6	3
+1	6	6	4
+1	6	6	5
+2	6	2	1
+2	6	2	2
+2	6	2	3
+2	6	2	4
+2	6	2	5
+2	6	6	1
+2	6	6	2
+2	6	6	3
+2	6	6	4
+2	6	6	5
+NULL	NULL	1	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+
+# RIGHT JOIN after a CROSS JOIN, with pa keyed to the later table
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z CROSS JOIN q JOIN pa ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+NULL	NULL	1	NULL
+NULL	NULL	2	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+NULL	NULL	6	NULL
+
+# RIGHT JOIN after a chain of INNER joins
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN q ON q.id = z.id JOIN pa ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+NULL	NULL	1	NULL
+NULL	NULL	2	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+NULL	NULL	6	NULL
+
+# RIGHT JOIN after an INNER join whose ON clause compares pa.x = pa.w
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id AND pa.x = pa.w RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+NULL	NULL	6
+
+# RIGHT JOIN followed by a LEFT JOIN
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k LEFT JOIN q ON q.id = pa.id
+----
+1	6	2	NULL
+1	6	6	NULL
+2	6	2	NULL
+2	6	6	NULL
+NULL	NULL	1	1
+NULL	NULL	1	2
+NULL	NULL	3	1
+NULL	NULL	3	2
+NULL	NULL	4	1
+NULL	NULL	4	2
+NULL	NULL	5	1
+NULL	NULL	5	2
+
+# RIGHT JOIN followed by a FULL JOIN
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k FULL JOIN q ON q.id = pa.id
+----
+1	6	2	NULL
+1	6	6	NULL
+2	6	2	NULL
+2	6	6	NULL
+NULL	NULL	1	1
+NULL	NULL	1	2
+NULL	NULL	3	1
+NULL	NULL	3	2
+NULL	NULL	4	1
+NULL	NULL	4	2
+NULL	NULL	5	1
+NULL	NULL	5	2
+NULL	NULL	NULL	3
+NULL	NULL	NULL	4
+NULL	NULL	NULL	5
+
+# two RIGHT JOINs, the first of which can null pa
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN q ON q.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND pa.w = pb.m
+----
+NULL	NULL	1	NULL
+NULL	NULL	2	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
+NULL	NULL	5	NULL
+NULL	NULL	6	NULL
+
+# ==== VARCHAR keys ====
+
+statement ok
+DROP TABLE IF EXISTS z
+
+statement ok
+DROP TABLE IF EXISTS pa
+
+statement ok
+DROP TABLE IF EXISTS pb
+
+statement ok
+DROP TABLE IF EXISTS q
+
+statement ok
+CREATE TABLE z (rn INT, id INT, c VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE pa (rn INT, id INT, x VARCHAR, y VARCHAR, w VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE pb (rn INT, k VARCHAR, m VARCHAR, v INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE q (rn INT, id INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO z VALUES (1, 3, 'a', '2024-01-01T00:00:01.000000Z'), (2, 1, 'c', '2024-01-01T00:00:02.000000Z'), (3, 2, 'b', '2024-01-01T00:00:03.000000Z'), (4, 1, 'a', '2024-01-01T00:00:04.000000Z'), (5, 2, 'c', '2024-01-01T00:00:05.000000Z'), (6, 3, 'a', '2024-01-01T00:00:06.000000Z')
+
+statement ok
+INSERT INTO pa VALUES (1, NULL, 'b', NULL, 'b', '2024-01-01T00:00:01.000000Z'), (2, 3, 'c', 'c', 'c', '2024-01-01T00:00:02.000000Z'), (3, 2, 'b', 'c', 'b', '2024-01-01T00:00:03.000000Z'), (4, 1, 'c', 'b', 'c', '2024-01-01T00:00:04.000000Z'), (5, 1, 'a', 'a', 'b', '2024-01-01T00:00:05.000000Z'), (6, 2, 'c', 'b', NULL, '2024-01-01T00:00:06.000000Z'), (7, 1, NULL, NULL, NULL, '2024-01-01T00:00:07.000000Z'), (8, NULL, 'a', 'c', 'a', '2024-01-01T00:00:08.000000Z')
+
+statement ok
+INSERT INTO pb VALUES (1, NULL, 'b', 1, '2024-01-01T00:00:01.000000Z'), (2, 'b', 'a', 2, '2024-01-01T00:00:02.000000Z'), (3, 'a', 'c', 1, '2024-01-01T00:00:03.000000Z'), (4, 'a', 'a', 1, '2024-01-01T00:00:04.000000Z'), (5, 'a', 'b', 2, '2024-01-01T00:00:05.000000Z'), (6, NULL, NULL, 1, '2024-01-01T00:00:06.000000Z')
+
+statement ok
+INSERT INTO q VALUES (1, 2, '2024-01-01T00:00:02.000000Z'), (2, 2, '2024-01-01T00:00:04.000000Z'), (3, 2, '2024-01-01T00:00:06.000000Z'), (4, 1, '2024-01-01T00:00:08.000000Z'), (5, 2, '2024-01-01T00:00:10.000000Z')
+
+# RIGHT JOIN after an INNER join of pa
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+NULL	NULL	2
+
+# RIGHT JOIN after a CROSS JOIN of pa
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z CROSS JOIN pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	5	3
+1	5	4
+1	5	5
+1	7	1
+1	7	6
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+3	5	3
+3	5	4
+3	5	5
+3	7	1
+3	7	6
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+5	5	3
+5	5	4
+5	5	5
+5	7	1
+5	7	6
+6	5	3
+6	5	4
+6	5	5
+6	7	1
+6	7	6
+NULL	NULL	2
+
+# RIGHT JOIN with pa as the first table
+query II rowsort
+SELECT pa.rn par, pb.rn pbr FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+5	3
+5	4
+5	5
+7	1
+7	6
+NULL	2
+
+# LEFT JOIN, which keeps the pa rows that fail pa.x = pa.y
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id LEFT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	2	NULL
+2	4	NULL
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+3	3	NULL
+3	6	NULL
+4	4	NULL
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+5	3	NULL
+5	6	NULL
+6	2	NULL
+
+# FULL JOIN
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id FULL JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	2	NULL
+2	4	NULL
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+3	3	NULL
+3	6	NULL
+4	4	NULL
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+5	3	NULL
+5	6	NULL
+6	2	NULL
+NULL	NULL	2
+
+# RIGHT JOIN after a LEFT JOIN of pa
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z LEFT JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+NULL	NULL	2
+
+# RIGHT JOIN after a RIGHT JOIN that can null pa
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN q ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3	4
+2	5	4	4
+2	5	5	4
+2	7	1	4
+2	7	6	4
+4	5	3	4
+4	5	4	4
+4	5	5	4
+4	7	1	4
+4	7	6	4
+NULL	NULL	2	NULL
+
+# RIGHT JOIN after a LEFT JOIN of q, which keeps the pa rows
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id LEFT JOIN q ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3	4
+2	5	4	4
+2	5	5	4
+2	7	1	4
+2	7	6	4
+4	5	3	4
+4	5	4	4
+4	5	5	4
+4	7	1	4
+4	7	6	4
+NULL	NULL	2	NULL
+
+# RIGHT JOIN with WHERE pa.x = pa.y
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k WHERE pa.x = pa.y
+----
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+NULL	NULL	2
+
+# RIGHT JOIN on three keys that share pb.k
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND pa.w = pb.k
+----
+2	7	1
+2	7	6
+4	7	1
+4	7	6
+NULL	NULL	2
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN whose keys imply pb.k = pb.m on the preserved side
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.x = pb.m
+----
+2	5	4
+2	7	6
+4	5	4
+4	7	6
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	3
+NULL	NULL	5
+
+# RIGHT JOIN followed by another RIGHT JOIN
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k RIGHT JOIN q ON q.id = pb.v
+----
+2	5	3	4
+2	5	4	4
+2	5	5	1
+2	5	5	2
+2	5	5	3
+2	5	5	5
+2	7	1	4
+2	7	6	4
+4	5	3	4
+4	5	4	4
+4	5	5	1
+4	5	5	2
+4	5	5	3
+4	5	5	5
+4	7	1	4
+4	7	6	4
+NULL	NULL	2	1
+NULL	NULL	2	2
+NULL	NULL	2	3
+NULL	NULL	2	5
+
+# RIGHT JOIN after INNER joins of pa and q
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id JOIN q ON q.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3	4
+2	5	4	4
+2	5	5	4
+2	7	1	4
+2	7	6	4
+4	5	3	4
+4	5	4	4
+4	5	5	4
+4	7	1	4
+4	7	6	4
+NULL	NULL	2	NULL
+
+# RIGHT JOIN whose keys also tie z.c to the pa columns
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND z.c = pb.k
+----
+4	5	3
+4	5	4
+4	5	5
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	6
+
+# RIGHT JOIN with pa first, then an INNER join of z
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM pa JOIN z ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+NULL	NULL	2
+
+# RIGHT JOIN after an INNER join of a filtered sub-query
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN (SELECT * FROM pa WHERE rn > 2) pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+NULL	NULL	2
+
+# RIGHT JOIN after an ASOF JOIN
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id ASOF JOIN q RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3	1
+2	5	4	1
+2	5	5	1
+2	7	1	1
+2	7	6	1
+4	5	3	2
+4	5	4	2
+4	5	5	2
+4	7	1	2
+4	7	6	2
+NULL	NULL	2	NULL
+
+# RIGHT JOIN with the key operands reversed
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pb.k = pa.x AND pb.k = pa.y
+----
+2	5	3
+2	5	4
+2	5	5
+2	7	1
+2	7	6
+4	5	3
+4	5	4
+4	5	5
+4	7	1
+4	7	6
+NULL	NULL	2
+
+# RIGHT JOIN with two groups of keys that share a column
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND pa.w = pb.m AND pa.x = pb.m
+----
+2	7	6
+4	7	6
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN with keys on two preceding tables
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id JOIN q ON q.id = z.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND z.c = pb.k
+----
+4	5	3	4
+4	5	4	4
+4	5	5	4
+NULL	NULL	1	NULL
+NULL	NULL	2	NULL
+NULL	NULL	6	NULL
+
+# RIGHT JOIN after a CROSS JOIN and an INNER join
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM q CROSS JOIN z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3	1
+2	5	3	2
+2	5	3	3
+2	5	3	4
+2	5	3	5
+2	5	4	1
+2	5	4	2
+2	5	4	3
+2	5	4	4
+2	5	4	5
+2	5	5	1
+2	5	5	2
+2	5	5	3
+2	5	5	4
+2	5	5	5
+2	7	1	1
+2	7	1	2
+2	7	1	3
+2	7	1	4
+2	7	1	5
+2	7	6	1
+2	7	6	2
+2	7	6	3
+2	7	6	4
+2	7	6	5
+4	5	3	1
+4	5	3	2
+4	5	3	3
+4	5	3	4
+4	5	3	5
+4	5	4	1
+4	5	4	2
+4	5	4	3
+4	5	4	4
+4	5	4	5
+4	5	5	1
+4	5	5	2
+4	5	5	3
+4	5	5	4
+4	5	5	5
+4	7	1	1
+4	7	1	2
+4	7	1	3
+4	7	1	4
+4	7	1	5
+4	7	6	1
+4	7	6	2
+4	7	6	3
+4	7	6	4
+4	7	6	5
+NULL	NULL	2	NULL
+
+# RIGHT JOIN after a CROSS JOIN, with pa keyed to the later table
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z CROSS JOIN q JOIN pa ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+1	5	3	4
+1	5	4	4
+1	5	5	4
+1	7	1	4
+1	7	6	4
+2	5	3	4
+2	5	4	4
+2	5	5	4
+2	7	1	4
+2	7	6	4
+3	5	3	4
+3	5	4	4
+3	5	5	4
+3	7	1	4
+3	7	6	4
+4	5	3	4
+4	5	4	4
+4	5	5	4
+4	7	1	4
+4	7	6	4
+5	5	3	4
+5	5	4	4
+5	5	5	4
+5	7	1	4
+5	7	6	4
+6	5	3	4
+6	5	4	4
+6	5	5	4
+6	7	1	4
+6	7	6	4
+NULL	NULL	2	NULL
+
+# RIGHT JOIN after a chain of INNER joins
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN q ON q.id = z.id JOIN pa ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	5	3	4
+2	5	4	4
+2	5	5	4
+2	7	1	4
+2	7	6	4
+4	5	3	4
+4	5	4	4
+4	5	5	4
+4	7	1	4
+4	7	6	4
+NULL	NULL	2	NULL
+
+# RIGHT JOIN after an INNER join whose ON clause compares pa.x = pa.w
+query III rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr FROM z JOIN pa ON z.id = pa.id AND pa.x = pa.w RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k
+----
+2	7	1
+2	7	6
+4	7	1
+4	7	6
+NULL	NULL	2
+NULL	NULL	3
+NULL	NULL	4
+NULL	NULL	5
+
+# RIGHT JOIN followed by a LEFT JOIN
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k LEFT JOIN q ON q.id = pa.id
+----
+2	5	3	4
+2	5	4	4
+2	5	5	4
+2	7	1	4
+2	7	6	4
+4	5	3	4
+4	5	4	4
+4	5	5	4
+4	7	1	4
+4	7	6	4
+NULL	NULL	2	NULL
+
+# RIGHT JOIN followed by a FULL JOIN
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k FULL JOIN q ON q.id = pa.id
+----
+2	5	3	4
+2	5	4	4
+2	5	5	4
+2	7	1	4
+2	7	6	4
+4	5	3	4
+4	5	4	4
+4	5	5	4
+4	7	1	4
+4	7	6	4
+NULL	NULL	2	NULL
+NULL	NULL	NULL	1
+NULL	NULL	NULL	2
+NULL	NULL	NULL	3
+NULL	NULL	NULL	5
+
+# two RIGHT JOINs, the first of which can null pa
+query IIII rowsort
+SELECT z.rn zr, pa.rn par, pb.rn pbr, q.rn qr FROM z JOIN pa ON z.id = pa.id RIGHT JOIN q ON q.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND pa.w = pb.m
+----
+2	5	5	4
+2	7	6	4
+4	5	5	4
+4	7	6	4
+NULL	NULL	1	NULL
+NULL	NULL	2	NULL
+NULL	NULL	3	NULL
+NULL	NULL	4	NULL
