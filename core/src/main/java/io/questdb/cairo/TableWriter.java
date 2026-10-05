@@ -4635,7 +4635,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // a NO_DEDUP transaction applied here would be deduplicated against the table's keys
         // after asking not to be, and an UPSERT_NEW one would be inserted beside the rows it
         // means to replace.
-        assert blockCarriesNoDedupMode(startSeqTxn, blockTransactionCount);
+        assert isBlockDedupModeDefault(startSeqTxn, blockTransactionCount);
         segmentCopyInfo.clear();
         walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyInfo, denseSymbolMapWriters.size() > 0);
         if (isLastPartitionClosed()) {
@@ -5295,15 +5295,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionPath.trimTo(rootLen);
             }
         }
-    }
-
-    private boolean blockCarriesNoDedupMode(long startSeqTxn, int blockTransactionCount) {
-        for (long seqTxn = startSeqTxn, n = startSeqTxn + blockTransactionCount; seqTxn < n; seqTxn++) {
-            if (walTxnDetails.getDedupMode(seqTxn) != WalUtils.WAL_DEDUP_MODE_DEFAULT) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private void bumpColumnStructureVersion() {
@@ -8234,6 +8225,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!isLastPartitionParquet()) {
             txWriter.initLastPartition(ts);
         }
+    }
+
+    private boolean isBlockDedupModeDefault(long startSeqTxn, int blockTransactionCount) {
+        for (long seqTxn = startSeqTxn, n = startSeqTxn + blockTransactionCount; seqTxn < n; seqTxn++) {
+            if (walTxnDetails.getDedupMode(seqTxn) != WalUtils.WAL_DEDUP_MODE_DEFAULT) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean isEmptyTable() {

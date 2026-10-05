@@ -440,22 +440,22 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
 
             @Override
             void phaseOne(LiveViewRefreshJob job) throws Exception {
-                insert(job, DAY_ONE, 0, "'acct-1', 9007199254740993, 1700000000001::date, "
-                        + "1700000000000003::timestamp");
+                insert(job, DAY_ONE, 0, "'acct-1', 9_007_199_254_740_993, 1_700_000_000_001::date, "
+                        + "1_700_000_000_000_003::timestamp");
                 insert(job, DAY_ONE, 10, "'acct-2', null, null, null");
-                insert(job, DAY_ONE, 20, "'acct-1', 9007199254740995, 1700000000000::date, "
-                        + "1700000000000001::timestamp");
+                insert(job, DAY_ONE, 20, "'acct-1', 9_007_199_254_740_995, 1_700_000_000_000::date, "
+                        + "1_700_000_000_000_001::timestamp");
             }
 
             @Override
             void phaseTwo(LiveViewRefreshJob job) throws Exception {
                 insert(job, DAY_ONE, 30, "'acct-2', 1, 5::date, 7::timestamp");
                 // One below the running maximum on every column: nothing may move.
-                insert(job, DAY_ONE, 40, "'acct-1', 9007199254740994, 1700000000000::date, "
-                        + "1700000000000002::timestamp");
+                insert(job, DAY_ONE, 40, "'acct-1', 9_007_199_254_740_994, 1_700_000_000_000::date, "
+                        + "1_700_000_000_000_002::timestamp");
                 assertHeadImage("acct-1", 2, extremum(9_007_199_254_740_995L));
-                insert(job, DAY_ONE, 50, "'acct-1', 9007199254740997, 1700000000009::date, "
-                        + "1700000000000009::timestamp");
+                insert(job, DAY_ONE, 50, "'acct-1', 9_007_199_254_740_997, 1_700_000_000_009::date, "
+                        + "1_700_000_000_000_009::timestamp");
                 insert(job, DAY_TWO, 0, "'acct-1', -5, 1::date, 1::timestamp");
             }
         });
@@ -508,24 +508,24 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
 
             @Override
             void phaseOne(LiveViewRefreshJob job) throws Exception {
-                insert(job, DAY_ONE, 0, "'acct-1', 9007199254740995, 1700000000001::date, "
-                        + "1700000000000003::timestamp");
+                insert(job, DAY_ONE, 0, "'acct-1', 9_007_199_254_740_995, 1_700_000_000_001::date, "
+                        + "1_700_000_000_000_003::timestamp");
                 insert(job, DAY_ONE, 10, "'acct-2', null, null, null");
-                insert(job, DAY_ONE, 20, "'acct-1', 9007199254740993, 1700000000000::date, "
-                        + "1700000000000001::timestamp");
+                insert(job, DAY_ONE, 20, "'acct-1', 9_007_199_254_740_993, 1_700_000_000_000::date, "
+                        + "1_700_000_000_000_001::timestamp");
             }
 
             @Override
             void phaseTwo(LiveViewRefreshJob job) throws Exception {
                 insert(job, DAY_ONE, 30, "'acct-2', 1, 5::date, 7::timestamp");
                 // One above the running minimum on every column: nothing may move.
-                insert(job, DAY_ONE, 40, "'acct-1', 9007199254740994, 1700000000001::date, "
-                        + "1700000000000002::timestamp");
+                insert(job, DAY_ONE, 40, "'acct-1', 9_007_199_254_740_994, 1_700_000_000_001::date, "
+                        + "1_700_000_000_000_002::timestamp");
                 assertHeadImage("acct-1", 2, extremum(9_007_199_254_740_993L));
-                insert(job, DAY_ONE, 50, "'acct-1', 9007199254740991, 1699999999999::date, "
-                        + "1699999999999999::timestamp");
-                insert(job, DAY_TWO, 0, "'acct-1', 9007199254740999, 1700000000100::date, "
-                        + "1700000000000100::timestamp");
+                insert(job, DAY_ONE, 50, "'acct-1', 9_007_199_254_740_991, 1_699_999_999_999::date, "
+                        + "1_699_999_999_999_999::timestamp");
+                insert(job, DAY_TWO, 0, "'acct-1', 9_007_199_254_740_999, 1_700_000_000_100::date, "
+                        + "1_700_000_000_000_100::timestamp");
             }
         });
     }
@@ -642,11 +642,11 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
             @Override
             void assertPlanShape(LiveViewWindowStatePlan plan) {
                 super.assertPlanShape(plan);
-                boolean guarded = false;
+                boolean isGuarded = false;
                 for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
-                    guarded |= plan.getProjection(i).isPartitionKeyGuarded();
+                    isGuarded |= plan.getProjection(i).isPartitionKeyGuarded();
                 }
-                Assert.assertTrue("count(account_id) must read the row count through the partition-key guard", guarded);
+                Assert.assertTrue("count(account_id) must read the row count through the partition-key guard", isGuarded);
             }
 
             @Override

@@ -2161,9 +2161,9 @@ public class LiveViewWindow implements QuietCloseable {
         // Read before the write below overwrites them, and only where they mean anything:
         // createValue() promises no zero fill, so a new entry's slots are whatever the
         // map's backing held.
-        final boolean wasInitialized = !isNewPartition && value.getByte(SLOT_INITIALIZED) != 0;
-        final long lastAnchor = wasInitialized ? value.getLong(SLOT_ANCHOR_VALUE) : Numbers.LONG_NULL;
-        if (wasInitialized && value.getByte(SLOT_TOMBSTONE) == 1) {
+        final boolean isAlreadyInitialized = !isNewPartition && value.getByte(SLOT_INITIALIZED) != 0;
+        final long lastAnchor = isAlreadyInitialized ? value.getLong(SLOT_ANCHOR_VALUE) : Numbers.LONG_NULL;
+        if (isAlreadyInitialized && value.getByte(SLOT_TOMBSTONE) == 1) {
             tombstoneCount--;
         }
         final long anchorValue = LiveViewCheckpointWindowRoot.readAnchorValue(payload);
@@ -2190,7 +2190,7 @@ public class LiveViewWindow implements QuietCloseable {
         for (int c = durableComponentCount, n = plan.getComponentCount(); c < n; c++) {
             plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
         }
-        if (!wasInitialized) {
+        if (!isAlreadyInitialized) {
             restoreFrontierEntry(anchorValue);
         } else if (lastAnchor != anchorValue) {
             movePartitionToCurrentBucket(false, lastAnchor);
@@ -2198,7 +2198,7 @@ public class LiveViewWindow implements QuietCloseable {
         // The anchor fact rather than "the replay rewrote everything": a transplanted key
         // whose anchor held may still carry the payload the predecessor root holds, and
         // that is exactly the key a repair over a partial domain wants to elide.
-        markCheckpointPartitionDirtyByKey(keySource, isNewPartition, !wasInitialized || lastAnchor != anchorValue);
+        markCheckpointPartitionDirtyByKey(keySource, isNewPartition, !isAlreadyInitialized || lastAnchor != anchorValue);
     }
 
     /**

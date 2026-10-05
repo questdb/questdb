@@ -133,16 +133,16 @@ public class LiveViewCheckpointDataStore implements Closeable {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
             segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
-            final boolean queueMatchesGeneration = LiveViewCheckpointRetirementQueue.read(
+            final boolean isQueueCurrent = LiveViewCheckpointRetirementQueue.read(
                     configuration,
                     retirementQueueScratch,
                     checkpointsDir,
                     retirementEntries,
                     retirementState
             ) && retirementState.generation == pin.getGeneration();
-            final boolean requiresPhysicalOrphanScan = !queueMatchesGeneration;
+            final boolean isPhysicalOrphanScanRequired = !isQueueCurrent;
             int catalogueEntriesVisited = 0;
-            if (!queueMatchesGeneration) {
+            if (!isQueueCurrent) {
                 // Upgrade/corruption recovery is deliberately the one full scan:
                 // rebuild the durable work set from the selected catalogue, then
                 // every steady sweep point-looks only these zero-reference ids.
@@ -201,7 +201,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
                     sweep.liveSegments,
                     sweep.obsoleteBytes,
                     sweep.retirableSegments,
-                    requiresPhysicalOrphanScan,
+                    isPhysicalOrphanScanRequired,
                     retirementEntries.size() / LiveViewCheckpointRetirementQueue.ENTRY_STRIDE,
                     catalogueEntriesVisited
             );
@@ -603,12 +603,12 @@ public class LiveViewCheckpointDataStore implements Closeable {
     public static final class PurgeResult {
         private final int failedSegmentCount;
         private final int catalogueEntriesVisited;
+        private final boolean isPhysicalOrphanScanRequired;
         private final int liveSegmentCount;
         private final long obsoleteBytes;
         private final long purgedBytes;
         private final int purgedSegmentCount;
         private final int queueEntriesVisited;
-        private final boolean requiresPhysicalOrphanScan;
         private final LongList retirableSegmentIds;
 
         private PurgeResult(
@@ -618,7 +618,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
                 int liveSegmentCount,
                 long obsoleteBytes,
                 @NotNull LongList retirableSegmentIds,
-                boolean requiresPhysicalOrphanScan,
+                boolean isPhysicalOrphanScanRequired,
                 int queueEntriesVisited,
                 int catalogueEntriesVisited
         ) {
@@ -628,7 +628,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
             this.liveSegmentCount = liveSegmentCount;
             this.obsoleteBytes = obsoleteBytes;
             this.retirableSegmentIds = new LongList(retirableSegmentIds);
-            this.requiresPhysicalOrphanScan = requiresPhysicalOrphanScan;
+            this.isPhysicalOrphanScanRequired = isPhysicalOrphanScanRequired;
             this.queueEntriesVisited = queueEntriesVisited;
             this.catalogueEntriesVisited = catalogueEntriesVisited;
         }
@@ -688,8 +688,8 @@ public class LiveViewCheckpointDataStore implements Closeable {
          * future generation is the durable trace of a pre-superblock publication
          * failure, so the caller must run one physical orphan scan as well.
          */
-        public boolean requiresPhysicalOrphanScan() {
-            return requiresPhysicalOrphanScan;
+        public boolean isPhysicalOrphanScanRequired() {
+            return isPhysicalOrphanScanRequired;
         }
     }
 

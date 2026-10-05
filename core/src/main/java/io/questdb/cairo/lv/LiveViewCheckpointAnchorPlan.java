@@ -263,12 +263,11 @@ public final class LiveViewCheckpointAnchorPlan {
         if (tzRules != null) {
             return tzSegmentEndExclusive(timestamp);
         }
+        // Every timestamp below a non-zero origin floors to the origin, and so does the whole
+        // first aligned bucket above it. Those timestamps therefore share the first bucket's
+        // segment and end where it ends: the floor names the origin as their start, and the
+        // end is computed from it the same way as from any other start.
         final long start = floor.floor(timestamp, stride, segmentOffset);
-        if (start > timestamp) {
-            // Every timestamp below the origin floors to the origin, so they share one
-            // segment that is open below and ends where the first aligned bucket starts.
-            return start;
-        }
         final long end = driver.add(start, addUnit, stride);
         // The end has to be the floor's own next boundary: one past it must floor back
         // to this segment, and it must floor to itself. A unit finer than the column's
@@ -295,20 +294,29 @@ public final class LiveViewCheckpointAnchorPlan {
     /**
      * Returns the inclusive start of the segment that contains {@code timestamp}, or
      * {@link Long#MIN_VALUE} when the segment is open below - which happens for a
-     * timestamp under a non-zero alignment origin, since every such row carries the
-     * origin as its anchor value, and for a zone floor a transition makes non-monotone -
-     * including a fall-back above the start that hands the rows it repeats an anchor value
-     * from below it. A caller that clamps the floor to {@code S} needs no separate branch
-     * for it. A caller that instead needs a closed segment to repair on its own must reject
-     * it: it is not a floor, and {@link #getSegmentEndExclusive(long)} reports a finite end
-     * beside it often enough that reading the end alone proves nothing about the start.
+     * timestamp under a non-zero alignment origin and for one in the first aligned bucket
+     * above it, since every such row carries the origin as its anchor value, and for a zone
+     * floor a transition makes non-monotone - including a fall-back above the start that
+     * hands the rows it repeats an anchor value from below it. A caller that clamps the floor
+     * to {@code S} needs no separate branch for it. A caller that instead needs a closed
+     * segment to repair on its own must reject it: it is not a floor, and
+     * {@link #getSegmentEndExclusive(long)} reports a finite end beside it often enough that
+     * reading the end alone proves nothing about the start.
      */
     public long getSegmentStart(long timestamp) {
         if (tzRules != null) {
             return tzSegmentStart(timestamp);
         }
         final long start = floor.floor(timestamp, stride, segmentOffset);
-        return start > timestamp ? Long.MIN_VALUE : start;
+        if (start > timestamp || start == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+        // The instant one below a genuine segment start belongs to the previous segment. Under
+        // a non-zero origin the floor clamps every instant below the origin to the origin
+        // itself, so the first aligned bucket's start floors back to it instead: the rows below
+        // the origin carry the same anchor value, and a replay floored at the origin would
+        // restart their run part way through. The zone branch runs the same check.
+        return floor.floor(start - 1, stride, segmentOffset) == start ? Long.MIN_VALUE : start;
     }
 
     /**

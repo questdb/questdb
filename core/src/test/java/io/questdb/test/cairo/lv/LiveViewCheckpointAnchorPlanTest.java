@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -296,6 +297,76 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testEveryFixedStrideBoundIsAWallOfTheRuntimeFloor() {
+        // The property the two bounds exist to carry, swept for the zone-less anchor: each
+        // bound the plan reports finite is a wall of the floor the runtime anchor calls -
+        // TimestampFloorOffsetFunction holds this same getTimestampFloorWithOffsetMethod - so
+        // the instant one below a start and the end itself carry another anchor value than
+        // the probe. Each bound is held to that on its own, because callers read them apart.
+        //
+        // A non-zero origin is where the two part company. The floor clamps every instant
+        // below the origin to the origin itself, and the first aligned bucket floors there
+        // too, so the origin is no wall: rows on either side of it are one run.
+        int finiteStarts = 0;
+        int openBelowStarts = 0;
+        int finiteEnds = 0;
+        for (int precision = 0; precision < 2; precision++) {
+            final int timestampType = precision == 0 ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final TimestampDriver.TimestampFloorWithOffsetMethod floor = driver.getTimestampFloorWithOffsetMethod('d');
+            for (int stride = 1; stride <= 2; stride++) {
+                for (int originMinutes = 0; originMinutes < 24 * 60; originMinutes += 15) {
+                    final long origin = driver.fromMinutes(originMinutes);
+                    final LiveViewCheckpointAnchorPlan plan =
+                            LiveViewCheckpointAnchorPlan.of('d', stride, origin, timestampType);
+                    Assert.assertNotNull(plan);
+                    // Four days of quarter-hour probes, each also one tick either side, so
+                    // every probe lands on, just below and just above a grid point.
+                    for (int probeMinutes = 0; probeMinutes < 4 * 24 * 60; probeMinutes += 15) {
+                        for (int tick = -1; tick <= 1; tick++) {
+                            final long probe = driver.fromMinutes(probeMinutes) + tick;
+                            if (probe < 0) {
+                                continue;
+                            }
+                            final long value = floor.floor(probe, stride, origin);
+                            final long start = plan.getSegmentStart(probe);
+                            if (start == Long.MIN_VALUE) {
+                                openBelowStarts++;
+                            } else {
+                                finiteStarts++;
+                                Assert.assertTrue(start <= probe);
+                                Assert.assertEquals(value, floor.floor(start, stride, origin));
+                                Assert.assertNotEquals(
+                                        "start is no wall [origin=" + origin + ", stride=" + stride
+                                                + ", probe=" + probe + ']',
+                                        value,
+                                        floor.floor(start - 1, stride, origin)
+                                );
+                            }
+                            final long end = plan.getSegmentEndExclusive(probe);
+                            if (end != Numbers.LONG_NULL) {
+                                finiteEnds++;
+                                Assert.assertTrue(end > probe);
+                                Assert.assertEquals(value, floor.floor(end - 1, stride, origin));
+                                Assert.assertNotEquals(
+                                        "end is no wall [origin=" + origin + ", stride=" + stride
+                                                + ", probe=" + probe + ']',
+                                        value,
+                                        floor.floor(end, stride, origin)
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // The sweep must not pass vacuously on either bound.
+        Assert.assertTrue(finiteStarts > 0);
+        Assert.assertTrue(openBelowStarts > 0);
+        Assert.assertTrue(finiteEnds > 0);
+    }
+
+    @Test
     public void testOffsetAlignedSegmentBoundaries() {
         final long origin = ts("1970-01-01T09:30:00.000000Z");
         final LiveViewCheckpointAnchorPlan plan = LiveViewCheckpointAnchorPlan.of('d', 1, origin, ColumnType.TIMESTAMP_MICRO);
@@ -306,11 +377,15 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
         Assert.assertEquals(bucketStart, plan.getSegmentStart(nextBucket - 1));
         Assert.assertEquals(nextBucket, plan.getSegmentEndExclusive(nextBucket - 1));
 
-        // Every row below the origin carries the origin as its anchor value, so they
-        // share one segment that is open below and ends where the first bucket starts.
+        // Every row below the origin carries the origin as its anchor value, and so does the
+        // whole first aligned bucket, so they share one segment that is open below and ends
+        // where the first bucket ends.
         final long belowOrigin = origin - 1;
+        final long firstBucketEnd = origin + Micros.DAY_MICROS;
         Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(belowOrigin));
-        Assert.assertEquals(origin, plan.getSegmentEndExclusive(belowOrigin));
+        Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(belowOrigin));
+        Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(origin));
+        Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(origin));
     }
 
     @Test
@@ -329,6 +404,50 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
         final LiveViewCheckpointAnchorPlan daily = LiveViewCheckpointAnchorPlan.of('d', 1, 0, ColumnType.TIMESTAMP_MICRO);
         Assert.assertNotNull(daily);
         Assert.assertEquals(Numbers.LONG_NULL, daily.getSegmentEndExclusive(Long.MAX_VALUE));
+    }
+
+    @Test
+    public void testTheOriginIsNoWallBetweenTheRowsAroundIt() throws Exception {
+        // ANCHOR DAILY '09:30' without a zone desugars to the three-argument timestamp_floor,
+        // which floors every instant below its origin to the origin itself. The instant below
+        // the origin, the origin and the last instant of the first aligned bucket therefore
+        // share one anchor value, and the next value starts a whole day later.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE probes (ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO probes VALUES
+                    ('1970-01-01T09:29:59.999999Z'),
+                    ('1970-01-01T09:30:00.000000Z'),
+                    ('1970-01-02T09:29:59.999999Z'),
+                    ('1970-01-02T09:30:00.000000Z')""");
+            assertQuery("SELECT ts, timestamp_floor('1d', ts, '1970-01-01T09:30:00.000000Z'::timestamp) anchor FROM probes")
+                    .expectSize()
+                    .returns("""
+                            ts\tanchor
+                            1970-01-01T09:29:59.999999Z\t1970-01-01T09:30:00.000000Z
+                            1970-01-01T09:30:00.000000Z\t1970-01-01T09:30:00.000000Z
+                            1970-01-02T09:29:59.999999Z\t1970-01-01T09:30:00.000000Z
+                            1970-01-02T09:30:00.000000Z\t1970-01-02T09:30:00.000000Z
+                            """);
+
+            // So the segment is open below for every probe in that run, and ends where the
+            // next value starts, whichever side of the origin the probe sits on.
+            final long origin = ts("1970-01-01T09:30:00.000000Z");
+            final long firstBucketEnd = ts("1970-01-02T09:30:00.000000Z");
+            final LiveViewCheckpointAnchorPlan plan =
+                    LiveViewCheckpointAnchorPlan.of('d', 1, origin, ColumnType.TIMESTAMP_MICRO);
+            Assert.assertNotNull(plan);
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(origin - 1));
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(origin));
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(firstBucketEnd - 1));
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(0));
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(origin - 1));
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(origin));
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(firstBucketEnd - 1));
+            // The second bucket opens on an ordinary wall.
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentStart(firstBucketEnd));
+            Assert.assertEquals(firstBucketEnd + Micros.DAY_MICROS, plan.getSegmentEndExclusive(firstBucketEnd));
+        });
     }
 
     @Test

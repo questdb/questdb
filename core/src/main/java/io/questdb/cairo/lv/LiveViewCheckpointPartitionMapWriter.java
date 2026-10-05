@@ -218,13 +218,13 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
         mutateSibling = null;
         if (node.isLeaf()) {
             final int index = node.lowerBound(mutations, mutationIndex);
-            final boolean exists = index < node.count() && node.keyEqualsAt(index, mutations, mutationIndex);
+            final boolean exists = index < node.count() && node.isKeyEqualAt(index, mutations, mutationIndex);
             if (mutations.operation(mutationIndex) == LiveViewCheckpointMutationArena.OP_REMOVE) {
                 if (!exists) {
                     return false;
                 }
                 node.removeEntry(index);
-            } else if (exists && node.valueEquals(index, mutations, mutationIndex)) {
+            } else if (exists && node.isValueEqual(index, mutations, mutationIndex)) {
                 return false;
             } else {
                 node.putEntry(index, mutations, mutationIndex);

@@ -52,8 +52,8 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
     private static final RecordMetadata METADATA;
     protected final int tokenPosition;
     protected final TableToken viewToken;
-    private final boolean isTokenRebindingEnabled;
     private final ShowCreateLiveViewCursor cursor = new ShowCreateLiveViewCursor();
+    private final boolean isTokenRebindingEnabled;
 
     public ShowCreateLiveViewRecordCursorFactory(TableToken viewToken, int tokenPosition) {
         this(viewToken, tokenPosition, true);

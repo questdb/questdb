@@ -484,7 +484,7 @@ public class LiveViewInstance implements QuietCloseable {
     // superblock on every restart, and the refresh worker clears it, under the refresh latch,
     // once the retire has removed that superblock. The reason goes down before the flag, so
     // a reader that sees the flag sees its reason. Volatile for live_views().
-    private volatile boolean checkpointUpgradeRebuildPending;
+    private volatile boolean isCheckpointUpgradeRebuildPending;
     private volatile String checkpointUpgradeRebuildReason;
     // Lifetime counts of the two destructive events a restart witness has to rule
     // out: applied-base rebuilds this instance started (one per restart at most
@@ -2158,7 +2158,7 @@ public class LiveViewInstance implements QuietCloseable {
      * that the file is still on disk. {@code live_views()} does not report it there
      */
     public boolean isCheckpointUpgradeRebuildPending() {
-        return checkpointUpgradeRebuildPending;
+        return isCheckpointUpgradeRebuildPending;
     }
 
     public boolean isInvalid() {
@@ -2367,7 +2367,7 @@ public class LiveViewInstance implements QuietCloseable {
                 + " was written by an older build (supported version " + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION
                 + "); the view rebuilds from its base table on its first refresh and then checkpoints in the supported format."
                 + " Rows the base table no longer holds, after TTL, DROP/DETACH PARTITION or TRUNCATE, are not rebuilt";
-        checkpointUpgradeRebuildPending = true;
+        isCheckpointUpgradeRebuildPending = true;
     }
 
     public void markAsDropped() {
@@ -2580,7 +2580,7 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void clearCheckpointUpgradeRebuildPending() {
         // Flag first, reason second, the reverse of the way in.
-        checkpointUpgradeRebuildPending = false;
+        isCheckpointUpgradeRebuildPending = false;
         checkpointUpgradeRebuildReason = null;
     }
 

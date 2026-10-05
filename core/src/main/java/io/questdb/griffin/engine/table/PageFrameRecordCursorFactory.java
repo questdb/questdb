@@ -418,9 +418,10 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         // key set re-adds fresh factories over those slots rather than reusing them, and
         // only the backing array's capacity survives a shrink. That costs nothing:
         // SymbolIndexRowCursorFactory holds no resource its no-op close() would release.
-        // Trimmed rather than left long, because the heap builds one row cursor per
-        // listed factory for every page frame - a surplus factory would open the index
-        // per frame for a key this repair is not following.
+        // The trim keeps the list exactly this call's keys for the heap factory's walks
+        // over its whole size - init(), prepareCursor() and toPlan(). It is not what keeps
+        // a surplus factory from opening the index per frame: HeapRowCursorFactory's
+        // getCursor() already builds row cursors only up to fwdIndexedCursorFactoriesIdx[0].
         final int keyCount = symbolKeys.size();
         for (int i = fwdIndexedRowCursorFactories.size(); i < keyCount; i++) {
             fwdIndexedRowCursorFactories.add(new SymbolIndexRowCursorFactory(

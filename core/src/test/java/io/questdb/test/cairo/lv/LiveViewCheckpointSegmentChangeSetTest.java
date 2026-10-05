@@ -91,7 +91,7 @@ public class LiveViewCheckpointSegmentChangeSetTest {
     public void testASegmentOpenBelowDeclinesRatherThanFlooringOneAtMinValue() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // Every row under a non-zero alignment origin shares one segment that is open below
-            // and ends where the first aligned bucket starts, so the plan answers Long.MIN_VALUE
+            // and ends where the first aligned bucket ends, so the plan answers Long.MIN_VALUE
             // for its start and a finite end for the same probe. Long.MIN_VALUE is a refusal, not
             // a floor: installed as one it would swallow every row below that end, however far
             // back, and nest the segments those rows belong to inside it.
@@ -101,7 +101,7 @@ public class LiveViewCheckpointSegmentChangeSetTest {
             Assert.assertNotNull("a daily anchor aligned to 09:30 must carry a fixed segment", plan);
             final long belowOrigin = 2 * Micros.HOUR_MICROS;
             Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(belowOrigin));
-            Assert.assertEquals(origin, plan.getSegmentEndExclusive(belowOrigin));
+            Assert.assertEquals(origin + DAY, plan.getSegmentEndExclusive(belowOrigin));
 
             try (LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet()) {
                 // Well above the segment's end, so nothing but the open-below start can decline it.
@@ -109,6 +109,36 @@ public class LiveViewCheckpointSegmentChangeSetTest {
                 Assert.assertFalse(changeSet.addRow(belowOrigin, SymbolTable.VALUE_IS_NULL, plan));
                 Assert.assertTrue(changeSet.isOverflowed());
                 Assert.assertEquals(0, changeSet.getClosedSegmentCount());
+            }
+        });
+    }
+
+    @Test
+    public void testTheFirstAlignedBucketUnderANonZeroOriginDeclinesRatherThanFlooringAtTheOrigin() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // The floor clamps every row below a non-zero origin to the origin, and the first
+            // aligned bucket floors there too, so the origin is no wall: a key's run reaches
+            // across it. A segment opened at the origin would replay that run from a reset part
+            // way through, so a row in the first bucket has no closed segment of its own.
+            final long origin = 9 * Micros.HOUR_MICROS + 30 * Micros.MINUTE_MICROS;
+            final LiveViewCheckpointAnchorPlan plan =
+                    LiveViewCheckpointAnchorPlan.of('d', 1, origin, ColumnType.TIMESTAMP_MICRO);
+            Assert.assertNotNull(plan);
+            final long inFirstBucket = origin + 2 * Micros.HOUR_MICROS;
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(inFirstBucket));
+
+            try (LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet()) {
+                changeSet.of(DAY_8 + origin);
+                Assert.assertFalse(changeSet.addRow(inFirstBucket, SymbolTable.VALUE_IS_NULL, plan));
+                Assert.assertTrue(changeSet.isOverflowed());
+                Assert.assertEquals(0, changeSet.getClosedSegmentCount());
+
+                // The second aligned bucket opens on an ordinary wall and is a closed segment.
+                changeSet.of(DAY_8 + origin);
+                Assert.assertTrue(changeSet.addRow(inFirstBucket + DAY, SymbolTable.VALUE_IS_NULL, plan));
+                Assert.assertEquals(1, changeSet.getClosedSegmentCount());
+                Assert.assertEquals(origin + DAY, changeSet.getSegmentStart(0));
+                Assert.assertEquals(origin + 2 * DAY, changeSet.getSegmentEndExclusive(0));
             }
         });
     }
@@ -284,9 +314,9 @@ public class LiveViewCheckpointSegmentChangeSetTest {
 
                 Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
                 Assert.assertEquals(2, changeSet.getResidualKeys().size());
-                Assert.assertTrue(contains(changeSet.getResidualKeys(), 1));
-                Assert.assertTrue(contains(changeSet.getResidualKeys(), 2));
-                Assert.assertFalse(contains(changeSet.getResidualKeys(), 9));
+                Assert.assertTrue(hasKey(changeSet.getResidualKeys(), 1));
+                Assert.assertTrue(hasKey(changeSet.getResidualKeys(), 2));
+                Assert.assertFalse(hasKey(changeSet.getResidualKeys(), 9));
                 Assert.assertFalse(changeSet.hasResidualNullKey());
             }
         });
@@ -307,7 +337,7 @@ public class LiveViewCheckpointSegmentChangeSetTest {
                 Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
                 Assert.assertTrue(changeSet.hasResidualNullKey());
                 Assert.assertEquals(1, changeSet.getResidualKeys().size());
-                Assert.assertTrue(contains(changeSet.getResidualKeys(), 1));
+                Assert.assertTrue(hasKey(changeSet.getResidualKeys(), 1));
             }
         });
     }
@@ -1058,7 +1088,7 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         return plan;
     }
 
-    private static boolean contains(DirectIntList keys, int key) {
+    private static boolean hasKey(DirectIntList keys, int key) {
         for (long i = 0, n = keys.size(); i < n; i++) {
             if (keys.get(i) == key) {
                 return true;
@@ -1079,7 +1109,7 @@ public class LiveViewCheckpointSegmentChangeSetTest {
      */
     static long keyListBytes(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
         @SuppressWarnings("unchecked") final ObjList<DirectIntList> keySets = (ObjList<DirectIntList>) fieldOf(changeSet, "keySets");
-        long bytes = ((DirectIntList) fieldOf(changeSet, "residualKeys")).getCapacity() * Integer.BYTES;
+        long bytes = changeSet.getResidualKeys().getCapacity() * Integer.BYTES;
         for (int i = 0, n = keySets.size(); i < n; i++) {
             bytes += keySets.getQuick(i).getCapacity() * Integer.BYTES;
         }

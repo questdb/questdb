@@ -84,8 +84,8 @@ import org.jetbrains.annotations.Nullable;
 public final class LiveViewCheckpointSealCarryover implements QuietCloseable {
     // Slot 0 is the anchored window's, slots 1..n each function's, in factory order.
     private final ObjList<LiveViewCheckpointSealState> states = new ObjList<>();
-    private boolean captured;
     private boolean hasAnchorWindow;
+    private boolean isCaptured;
     // The batch-minimum window the pre-repair runtime stood in. The replay lowers it to
     // the bottom of the range it reads and the restored runtime holds none of those rows,
     // so it has to go back up - which the monotone setLatestSeenTs cannot express.
@@ -120,7 +120,7 @@ public final class LiveViewCheckpointSealCarryover implements QuietCloseable {
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).detachCheckpointSealState(states.getQuick(i + 1));
         }
-        captured = true;
+        isCaptured = true;
     }
 
     /**
@@ -130,7 +130,7 @@ public final class LiveViewCheckpointSealCarryover implements QuietCloseable {
         for (int i = 0, n = states.size(); i < n; i++) {
             states.getQuick(i).clear();
         }
-        captured = false;
+        isCaptured = false;
         hasAnchorWindow = false;
         minSeenTsSinceCheckpoint = Long.MAX_VALUE;
         targetCount = 0;
@@ -140,14 +140,14 @@ public final class LiveViewCheckpointSealCarryover implements QuietCloseable {
     public void close() {
         Misc.freeObjList(states);
         states.clear();
-        captured = false;
+        isCaptured = false;
         hasAnchorWindow = false;
         minSeenTsSinceCheckpoint = Long.MAX_VALUE;
         targetCount = 0;
     }
 
     public boolean isCaptured() {
-        return captured;
+        return isCaptured;
     }
 
     /**
@@ -170,7 +170,7 @@ public final class LiveViewCheckpointSealCarryover implements QuietCloseable {
             @Nullable LiveViewWindow anchorWindow,
             long generation
     ) {
-        if (!captured) {
+        if (!isCaptured) {
             return;
         }
         if (generation == Numbers.LONG_NULL

@@ -1224,6 +1224,91 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCatalogueReportsNoDedupOnLiveView() throws Exception {
+        // A view with a single SYMBOL PARTITION BY key, created while sparse publication is
+        // on (the default), carries (ts, key) dedup keys in its own metadata so that a
+        // repair publication can upsert on them. Its forward commits keep rows that share
+        // (ts, key), so the catalogue does not present the view as deduplicating:
+        // tables().dedup and the upsertKey column of SHOW COLUMNS and table_columns() read
+        // false. A plain DEDUP table keeps reporting true.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE dedup_t (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS
+                    SELECT ts, sym, x, row_number() OVER w AS rn FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')
+                    """);
+            // The view's table metadata keeps the keys a sparse repair publication upserts on;
+            // only the catalogue's answer differs.
+            try (TableReader reader = engine.getReader("lv")) {
+                Assert.assertTrue(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("ts")));
+                Assert.assertTrue(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("sym")));
+            }
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2026-01-01T00:00:00.000000Z', 'a', 2),
+                    ('2026-01-01T00:00:00.000000Z', 'b', 3)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+            // The view holds two rows at ('2026-01-01T00:00:00.000000Z', 'a').
+            assertQuery("lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tx\trn
+                            2026-01-01T00:00:00.000000Z\ta\t1\t1
+                            2026-01-01T00:00:00.000000Z\ta\t2\t2
+                            2026-01-01T00:00:00.000000Z\tb\t3\t1
+                            """);
+
+            assertQuery("SELECT table_name, dedup, table_type FROM tables() WHERE table_name IN ('lv', 'dedup_t') ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\tdedup\ttable_type
+                            dedup_t\ttrue\tT
+                            lv\tfalse\tL
+                            """);
+            final String expectedViewColumns = """
+                    column\tupsertKey
+                    ts\tfalse
+                    sym\tfalse
+                    x\tfalse
+                    rn\tfalse
+                    """;
+            assertQuery("SELECT \"column\", upsertKey FROM (SHOW COLUMNS FROM lv)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedViewColumns);
+            assertQuery("SELECT \"column\", upsertKey FROM table_columns('lv')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedViewColumns);
+            final String expectedTableColumns = """
+                    column\tupsertKey
+                    ts\ttrue
+                    sym\ttrue
+                    x\tfalse
+                    """;
+            assertQuery("SELECT \"column\", upsertKey FROM (SHOW COLUMNS FROM dedup_t)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedTableColumns);
+            assertQuery("SELECT \"column\", upsertKey FROM table_columns('dedup_t')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedTableColumns);
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testInformationSchemaTablesShowsLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -1598,17 +1683,14 @@ public class LiveViewTest extends AbstractLiveViewTest {
             }
             drainWalQueue();
 
-            // The view itself still carries (ts, sym) as its upsert keys.
-            assertQuery("SELECT \"column\", upsertKey FROM (SHOW COLUMNS FROM lv)")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("""
-                            column\tupsertKey
-                            ts\ttrue
-                            sym\ttrue
-                            x\tfalse
-                            rn\tfalse
-                            """);
+            // The view's table metadata still carries (ts, sym) as its dedup keys; the catalogue
+            // does not report them (see testCatalogueReportsNoDedupOnLiveView).
+            try (TableReader reader = engine.getReader("lv")) {
+                Assert.assertTrue(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("ts")));
+                Assert.assertTrue(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("sym")));
+                Assert.assertFalse(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("x")));
+                Assert.assertFalse(reader.getMetadata().isDedupKey(reader.getMetadata().getColumnIndex("rn")));
+            }
             final String expectedRows = """
                     ts\tsym\tx\trn
                     2026-01-01T00:00:00.000000Z\ta\t1\t1
@@ -2768,15 +2850,15 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
-            // upsertKey is true on the designated timestamp and the projected partition key,
-            // which is the identity a sparse repair publication upserts on. A live view
-            // created while cairo.live.view.checkpoint.repair.sparse.publication.enabled is
-            // true carries them in its own _meta from CREATE, so SHOW COLUMNS reports them
-            // like it would for any other deduplicating table.
+            // upsertKey is false on every column. A live view created while
+            // cairo.live.view.checkpoint.repair.sparse.publication.enabled is true carries the
+            // designated timestamp and the projected partition key as dedup keys in its own
+            // _meta, the identity a sparse repair publication upserts on, but its forward
+            // commits keep rows that share them, so SHOW COLUMNS does not report them.
             assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\ttrue\t\t\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\tfalse\t\t\n" +
                     "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
                     "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             // A live view is a physical WAL table that owns its symbol maps, so SHOW COLUMNS
             // opens a reader on the LV table itself and reports the real symbol table size.
@@ -2792,9 +2874,9 @@ public class LiveViewTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
             }
             assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\ttrue\t\t\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\n" +
                     "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
                     "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             execute("DROP LIVE VIEW lv");
         });

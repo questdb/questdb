@@ -222,7 +222,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 // catalogue, purges segment 20 and writes the first durable queue,
                 // stamped generation 3.
                 final LiveViewCheckpointDataStore.PurgeResult coldStart = dataStore.purge();
-                Assert.assertTrue(coldStart.requiresPhysicalOrphanScan());
+                Assert.assertTrue(coldStart.isPhysicalOrphanScanRequired());
                 Assert.assertEquals(1, coldStart.getPurgedSegmentCount());
                 Assert.assertTrue(
                         "purge() must durably write a retirement queue file",
@@ -236,7 +236,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 final LiveViewCheckpointDataStore.PurgeResult current = dataStore.purge();
                 Assert.assertFalse(
                         "a queue naming the pinned generation must not force a rebuild",
-                        current.requiresPhysicalOrphanScan()
+                        current.isPhysicalOrphanScanRequired()
                 );
                 Assert.assertEquals(0, current.getCatalogueEntriesVisited());
                 Assert.assertEquals(2, current.getLiveSegmentCount());
@@ -251,7 +251,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 final LiveViewCheckpointDataStore.PurgeResult stale = dataStore.purge();
                 Assert.assertTrue(
                         "a queue naming an older generation must force a catalogue rebuild",
-                        stale.requiresPhysicalOrphanScan()
+                        stale.isPhysicalOrphanScanRequired()
                 );
                 // Trusting the stale image instead would visit no catalogue entry,
                 // carry its stale live count of 2 through, and work off the single
@@ -302,7 +302,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 // purges segment 20. This also writes the first valid queue
                 // file, which the rest of the test corrupts.
                 final LiveViewCheckpointDataStore.PurgeResult coldStart = dataStore.purge();
-                Assert.assertTrue(coldStart.requiresPhysicalOrphanScan());
+                Assert.assertTrue(coldStart.isPhysicalOrphanScanRequired());
                 Assert.assertEquals(1, coldStart.getPurgedSegmentCount());
                 Assert.assertFalse(dataFileExists(20));
                 Assert.assertTrue(dataFileExists(10));
@@ -319,7 +319,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 final LiveViewCheckpointDataStore.PurgeResult clean = dataStore.purge();
                 Assert.assertFalse(
                         "a valid, current-generation queue file must not force a rebuild",
-                        clean.requiresPhysicalOrphanScan()
+                        clean.isPhysicalOrphanScanRequired()
                 );
                 Assert.assertEquals(0, clean.getCatalogueEntriesVisited());
                 Assert.assertTrue(dataFileExists(10));
@@ -494,7 +494,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
 
     private void assertCorruptionRecoveryEngages(LiveViewCheckpointDataStore dataStore) {
         final LiveViewCheckpointDataStore.PurgeResult corrupted = dataStore.purge();
-        Assert.assertTrue("a corrupted queue file must force a catalogue rebuild", corrupted.requiresPhysicalOrphanScan());
+        Assert.assertTrue("a corrupted queue file must force a catalogue rebuild", corrupted.isPhysicalOrphanScanRequired());
         Assert.assertEquals(2, corrupted.getCatalogueEntriesVisited());
         Assert.assertEquals(0, corrupted.getPurgedSegmentCount());
         // The safety net the review credits: the rebuild trusts nothing from the

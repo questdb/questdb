@@ -27,7 +27,7 @@ public class LiveViewCheckpointOpenSegmentCostTest {
     public void testColdRestoreCanOverrideTheRowVerdict() {
         final LiveViewCheckpointOpenSegmentCost cost = new LiveViewCheckpointOpenSegmentCost();
 
-        Assert.assertTrue(cost.shouldOverrideWholeRange(
+        Assert.assertTrue(cost.isWholeRangeOverrideNeeded(
                 false,
                 70L * 1024 * 1024,
                 16_666,
@@ -41,7 +41,7 @@ public class LiveViewCheckpointOpenSegmentCostTest {
     public void testReusableRuntimeNeverAddsRestoreCost() {
         final LiveViewCheckpointOpenSegmentCost cost = new LiveViewCheckpointOpenSegmentCost();
 
-        Assert.assertFalse(cost.shouldOverrideWholeRange(
+        Assert.assertFalse(cost.isWholeRangeOverrideNeeded(
                 true,
                 2L * 1024 * 1024 * 1024,
                 16_666,
@@ -60,7 +60,7 @@ public class LiveViewCheckpointOpenSegmentCostTest {
         // keyed = 200_000 cost rows * 250 + 10_000 keys * 5_000 = 100_000_000 ns.
         // The 150% keyed upper bound (150_000_000) stays well under the 85% whole-range
         // hysteresis floor (328_100_000), so the model overrides the row verdict.
-        Assert.assertTrue(cost.shouldOverrideWholeRange(
+        Assert.assertTrue(cost.isWholeRangeOverrideNeeded(
                 false,
                 64_000_000,
                 20_000,
@@ -91,7 +91,7 @@ public class LiveViewCheckpointOpenSegmentCostTest {
         // keyed = 200_000_000 + 100_000_000 = 300_000_000 ns, so the 150% keyed upper
         // bound (450_000_000) now dwarfs the 85% hysteresis floor (28_050_000) and the
         // model leaves the row verdict alone.
-        Assert.assertFalse(cost.shouldOverrideWholeRange(
+        Assert.assertFalse(cost.isWholeRangeOverrideNeeded(
                 false,
                 64_000_000,
                 20_000,
@@ -106,7 +106,7 @@ public class LiveViewCheckpointOpenSegmentCostTest {
     public void testEstimatesSaturateInsteadOfWrapping() {
         final LiveViewCheckpointOpenSegmentCost cost = new LiveViewCheckpointOpenSegmentCost();
 
-        Assert.assertFalse(cost.shouldOverrideWholeRange(
+        Assert.assertFalse(cost.isWholeRangeOverrideNeeded(
                 false,
                 Long.MAX_VALUE,
                 Long.MAX_VALUE,
@@ -182,7 +182,7 @@ public class LiveViewCheckpointOpenSegmentCostTest {
                 LiveViewCheckpointOpenSegmentCost.NO_OVERRIDING_KEYED_COST,
                 cost.maxOverridingKeyedCostRows(true, 1_000_000, 0, 1)
         );
-        Assert.assertFalse(cost.shouldOverrideWholeRange(true, 1_000_000, 0, 0, 1));
+        Assert.assertFalse(cost.isWholeRangeOverrideNeeded(true, 1_000_000, 0, 0, 1));
         // Neither does a root of no bytes.
         Assert.assertEquals(
                 LiveViewCheckpointOpenSegmentCost.NO_OVERRIDING_KEYED_COST,
@@ -197,7 +197,7 @@ public class LiveViewCheckpointOpenSegmentCostTest {
                 LiveViewCheckpointOpenSegmentCost.NO_OVERRIDING_KEYED_COST,
                 cost.maxOverridingKeyedCostRows(false, 1_000_000, 0, 0)
         );
-        Assert.assertFalse(cost.shouldOverrideWholeRange(false, 1_000_000, 0, 0, 0));
+        Assert.assertFalse(cost.isWholeRangeOverrideNeeded(false, 1_000_000, 0, 0, 0));
     }
 
     @Test
@@ -210,7 +210,7 @@ public class LiveViewCheckpointOpenSegmentCostTest {
                 LiveViewCheckpointOpenSegmentCost.NO_OVERRIDING_KEYED_COST,
                 cost.maxOverridingKeyedCostRows(false, 1_470, 0, 1)
         );
-        Assert.assertFalse(cost.shouldOverrideWholeRange(false, 1_470, 0, 0, 1));
+        Assert.assertFalse(cost.isWholeRangeOverrideNeeded(false, 1_470, 0, 0, 1));
         // One byte more lifts the floor to ceil(7_502.1) = 7_503ns, which a scan of no rows
         // undercuts and a scan of one row, at 7_875ns, does not.
         Assert.assertEquals(0, cost.maxOverridingKeyedCostRows(false, 1_471, 0, 1));
@@ -231,13 +231,13 @@ public class LiveViewCheckpointOpenSegmentCostTest {
         // high, and the break-even is Long.MAX_VALUE itself rather than a wrapped value.
         cost.setRatesForTest(1_000_000_000L, 1, 1, 1, 1, 1, 1, Long.MAX_VALUE, 1, 1);
         Assert.assertEquals(Long.MAX_VALUE, cost.maxOverridingKeyedCostRows(false, 1_000, 0, 1));
-        Assert.assertTrue(cost.shouldOverrideWholeRange(false, 1_000, 0, Long.MAX_VALUE, 1));
+        Assert.assertTrue(cost.isWholeRangeOverrideNeeded(false, 1_000, 0, Long.MAX_VALUE, 1));
     }
 
     @Test
     public void testTheBreakEvenLeavesTheLastEstimatesAlone() {
         final LiveViewCheckpointOpenSegmentCost cost = new LiveViewCheckpointOpenSegmentCost();
-        Assert.assertTrue(cost.shouldOverrideWholeRange(false, 64_000_000, 20_000, 200_000, 10_000));
+        Assert.assertTrue(cost.isWholeRangeOverrideNeeded(false, 64_000_000, 20_000, 200_000, 10_000));
 
         Assert.assertEquals(13_579, cost.maxOverridingKeyedCostRows(false, 1_000_000, 0, 1));
 
@@ -260,13 +260,13 @@ public class LiveViewCheckpointOpenSegmentCostTest {
     ) {
         final String inputs = "bytes=" + bytes + ", rows=" + rows + ", keys=" + keys + ", maxCost=" + maxCost;
         if (maxCost == LiveViewCheckpointOpenSegmentCost.NO_OVERRIDING_KEYED_COST) {
-            Assert.assertFalse(inputs, cost.shouldOverrideWholeRange(false, bytes, rows, 0, keys));
+            Assert.assertFalse(inputs, cost.isWholeRangeOverrideNeeded(false, bytes, rows, 0, keys));
             return;
         }
         Assert.assertTrue(inputs, maxCost >= 0);
-        Assert.assertTrue(inputs, cost.shouldOverrideWholeRange(false, bytes, rows, maxCost, keys));
+        Assert.assertTrue(inputs, cost.isWholeRangeOverrideNeeded(false, bytes, rows, maxCost, keys));
         if (maxCost < Long.MAX_VALUE) {
-            Assert.assertFalse(inputs, cost.shouldOverrideWholeRange(false, bytes, rows, maxCost + 1, keys));
+            Assert.assertFalse(inputs, cost.isWholeRangeOverrideNeeded(false, bytes, rows, maxCost + 1, keys));
         }
     }
 }

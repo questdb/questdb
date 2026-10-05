@@ -140,11 +140,11 @@ public final class LiveViewCheckpointKeyedScanCost {
     public static final long UNPRICEABLE = Numbers.LONG_NULL;
     private long indexOpens;
     private long indexSeeks;
+    private boolean isSaturated;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private long postingRows;
     private TableReader reader;
-    private boolean saturated;
     private int sharedQueryWorkerCount;
 
     /**
@@ -288,7 +288,7 @@ public final class LiveViewCheckpointKeyedScanCost {
      * budget it was given.
      */
     public boolean isSaturated() {
-        return saturated;
+        return isSaturated;
     }
 
     /**
@@ -383,7 +383,7 @@ public final class LiveViewCheckpointKeyedScanCost {
             // reads back is the budget either way. The extra hasNext is the first call
             // for that position - the loop short-circuits before making it - so it costs
             // one step and misreports neither an exhausted cursor nor a truncated one.
-            saturated |= rows >= budgetRows && cursor.hasNext();
+            isSaturated |= rows >= budgetRows && cursor.hasNext();
             return rows;
         }
     }
@@ -401,7 +401,7 @@ public final class LiveViewCheckpointKeyedScanCost {
         indexOpens = 0;
         indexSeeks = 0;
         postingRows = 0;
-        saturated = false;
+        isSaturated = false;
         if (highTsInclusive < lowTs || symbolKeys.size() == 0 || reader.size() == 0) {
             return 0;
         }
@@ -460,7 +460,7 @@ public final class LiveViewCheckpointKeyedScanCost {
                         indexOpens++;
                         indexSeeks = seeksWithPartition;
                         postingRows = rows;
-                        saturated = true;
+                        isSaturated = true;
                         return rows;
                     }
                 }
@@ -491,7 +491,7 @@ public final class LiveViewCheckpointKeyedScanCost {
                     postingRows = rows;
                     final boolean hasPartitionAbove = i + 1 < partitionCount
                             && reader.getPartitionMinTimestampFromMetadata(i + 1) <= highTsInclusive;
-                    saturated |= k + 1 < keyCount || hasPartitionAbove;
+                    isSaturated |= k + 1 < keyCount || hasPartitionAbove;
                     return rows;
                 }
             }

@@ -231,7 +231,7 @@ final class LiveViewCheckpointPartitionMapNode {
 
     int find(LiveViewCheckpointMutationArena arena, int mutationIndex) {
         final int index = lowerBound(arena, mutationIndex);
-        return index < count && keyEqualsAt(index, arena, mutationIndex) ? index : -1;
+        return index < count && isKeyEqualAt(index, arena, mutationIndex) ? index : -1;
     }
 
     boolean isLeaf() {
@@ -252,7 +252,7 @@ final class LiveViewCheckpointPartitionMapNode {
         return lo;
     }
 
-    boolean keyEqualsAt(int index, LiveViewCheckpointMutationArena arena, int mutationIndex) {
+    boolean isKeyEqualAt(int index, LiveViewCheckpointMutationArena arena, int mutationIndex) {
         return compareMutationToKeyAt(arena, mutationIndex, index) == 0;
     }
 
@@ -416,11 +416,11 @@ final class LiveViewCheckpointPartitionMapNode {
         }
     }
 
-    boolean valueEquals(int index, LiveViewCheckpointMutationArena arena, int mutationIndex) {
+    boolean isValueEqual(int index, LiveViewCheckpointMutationArena arena, int mutationIndex) {
         final LiveViewCheckpointMutationArena storedArena = keyArenas[index];
         final int storedMutationIndex = keyMutationIndexes[index];
-        return arena.equalsScalar(mutationIndex, storedArena, storedMutationIndex)
-                && arena.refsEqual(mutationIndex, storedArena, storedMutationIndex);
+        return arena.isScalarEqual(mutationIndex, storedArena, storedMutationIndex)
+                && arena.hasEqualRefs(mutationIndex, storedArena, storedMutationIndex);
     }
 
     private int compareKeyAt(int index, long keyAddress, int keyLength) {

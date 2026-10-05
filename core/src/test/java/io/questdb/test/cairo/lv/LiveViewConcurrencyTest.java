@@ -700,7 +700,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
             final Thread worker = new Thread(() -> {
                 LiveViewInstance instance = null;
-                boolean refreshLocked = false;
+                boolean isRefreshLocked = false;
                 try {
                     if (!instanceRegistered.await(30, TimeUnit.SECONDS)) {
                         throw new AssertionError("timed out waiting for CREATE to register the instance");
@@ -710,7 +710,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     // Mirror refreshInstance: take the latch, clear the fresh-instance
                     // guards (all false), then hold it across the teardown.
                     Assert.assertTrue(instance.tryLockForRefresh());
-                    refreshLocked = true;
+                    isRefreshLocked = true;
                     Assert.assertFalse(instance.isDropped());
                     workerLatched.countDown();
                     // The rollback hook releases us immediately before the fence. The CREATE
@@ -737,7 +737,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } finally {
                     // Mirror refreshInstance's finally hook even if fixture setup fails, so
                     // the rollback fence cannot deadlock on an abandoned latch.
-                    if (refreshLocked) {
+                    if (isRefreshLocked) {
                         instance.unlockAfterRefresh();
                         instance.tryCloseIfDropped();
                     }

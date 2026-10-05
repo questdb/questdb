@@ -300,7 +300,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         );
     }
 
-    boolean equalsScalar(int mutationIndex, LiveViewCheckpointMutationArena other, int otherMutationIndex) {
+    boolean isScalarEqual(int mutationIndex, LiveViewCheckpointMutationArena other, int otherMutationIndex) {
         final int length = scalarLength(mutationIndex);
         if (length != other.scalarLength(otherMutationIndex)) {
             return false;
@@ -315,7 +315,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         return true;
     }
 
-    boolean refsEqual(int mutationIndex, LiveViewCheckpointMutationArena other, int otherMutationIndex) {
+    boolean hasEqualRefs(int mutationIndex, LiveViewCheckpointMutationArena other, int otherMutationIndex) {
         final int count = refCount(mutationIndex);
         if (count != other.refCount(otherMutationIndex)) {
             return false;
@@ -380,7 +380,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         return mutationIndex;
     }
 
-    boolean containsSortedKey(long keyAddress, int keyLength) {
+    boolean hasSortedKey(long keyAddress, int keyLength) {
         int lo = 0;
         int hi = sortedSize;
         while (lo < hi) {

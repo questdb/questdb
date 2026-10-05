@@ -980,11 +980,11 @@ public class LiveViewCheckpointMutationArenaTest {
         }
     }
 
-    private static void assertSorted(int count, boolean reverse) {
+    private static void assertSorted(int count, boolean isReverse) {
         try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
             final byte[] key = new byte[Integer.BYTES];
             for (int i = 0; i < count; i++) {
-                final int value = reverse ? count - i - 1 : i;
+                final int value = isReverse ? count - i - 1 : i;
                 putIntKey(key, value);
                 LiveViewCheckpointTestKeys.put(arena, key, NO_BYTES);
             }
@@ -994,8 +994,8 @@ public class LiveViewCheckpointMutationArenaTest {
                 Assert.assertTrue(arena.compareSortedKeysForTest(i - 1, i) < 0);
             }
             if (count > 0) {
-                Assert.assertEquals(reverse ? count - 1 : 0, arena.getSortedMutationIndex(0));
-                Assert.assertEquals(reverse ? 0 : count - 1, arena.getSortedMutationIndex(count - 1));
+                Assert.assertEquals(isReverse ? count - 1 : 0, arena.getSortedMutationIndex(0));
+                Assert.assertEquals(isReverse ? 0 : count - 1, arena.getSortedMutationIndex(count - 1));
             }
             arena.clear();
             LiveViewCheckpointTestKeys.put(arena, intKey(7), NO_BYTES);

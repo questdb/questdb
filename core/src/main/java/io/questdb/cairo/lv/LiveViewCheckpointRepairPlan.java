@@ -256,11 +256,16 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      */
     public static final int DENIAL_NO_DURABLE_OUTPUT = 9;
     /**
-     * The view cannot say where its runtime window state stands, because that state
-     * travels through the checkpoint freeze/restore contract and this view's functions
-     * do not support it. A ROWS dependency only, for the same reason as
-     * {@link #DENIAL_NO_CHANGE_CEILING}: without the frontier there is nothing to put
-     * back, and only ROWS needs the pre-repair state put back.
+     * The repair has no runtime frontier to plan against, for one of two causes. The
+     * view cannot say where its runtime window state stands, because that state travels
+     * through the checkpoint freeze/restore contract and this view's functions do not
+     * support it. Or the newest root's timestamp group has grown - an in-order row
+     * landed on the root's own timestamp after its seal - and the refresh job withholds
+     * the frontier for as long as the group stays grown, because a converging repair
+     * that put the runtime state back would keep that root without the tie. The second
+     * cause is transient and needs no operator action. A ROWS dependency only, for the
+     * same reason as {@link #DENIAL_NO_CHANGE_CEILING}: without the frontier there is
+     * nothing to put back, and only ROWS needs the pre-repair state put back.
      */
     public static final int DENIAL_NO_RUNTIME_FRONTIER = 10;
     /**
@@ -867,9 +872,12 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      * @param runtimeFrontierTs       the highest designated timestamp the runtime
      *                                window state has incorporated, or
      *                                {@link Numbers#LONG_NULL} when the repair
-     *                                cannot put that state back afterwards (no
-     *                                checkpoint-state support, or an anchored view
-     *                                whose anchor state this phase does not carry)
+     *                                cannot or must not put that state back
+     *                                afterwards (no checkpoint-state support, an
+     *                                anchored view whose anchor state this phase
+     *                                does not carry, or a newest root whose
+     *                                timestamp group has grown since its seal, which
+     *                                a converging repair would keep without the tie)
      * @param scanCostSource          prices a candidate scan interval against the pinned
      *                                snapshot, or null to leave the choice between a
      *                                qualifying anchor and a localized rebuild
@@ -1323,10 +1331,11 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
         // anchor arm below.
         final boolean isFiniteHighRequired = hasRows;
         if (isFiniteHighRequired && !isHighBoundDerivable) {
-            // The three inputs fail for three different reasons, and an operator can act
-            // on each: a change set nothing bounds from above, a view whose functions
-            // carry no checkpoint state, and output the runtime holds but has not
-            // flushed.
+            // The three inputs fail for three different reasons: a change set nothing
+            // bounds from above, a missing runtime frontier - a view whose functions
+            // carry no checkpoint state, or a newest root whose timestamp group has
+            // grown, which clears on its own - and output the runtime holds but has not
+            // flushed. An operator can act on each but the grown group.
             denialReason = changeMaxTs == Numbers.LONG_NULL
                     ? DENIAL_NO_CHANGE_CEILING
                     : runtimeFrontierTs == Numbers.LONG_NULL
@@ -1392,8 +1401,9 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
                 highTs = Math.max(highTs, armHighTs);
             }
             // getSegmentStart reports Long.MIN_VALUE for a segment that is open below -
-            // every row under a non-zero alignment origin shares one - and the clamp
-            // resolves it to S, which is as far down as the rebuild would read anyway.
+            // every row under a non-zero alignment origin or in the first aligned bucket
+            // above it shares one - and the clamp resolves it to S, which is as far down
+            // as the rebuild would read anyway.
             // The floor stands whether or not the arm proved a ceiling: L is derived from
             // R alone, and an arm that names no H still names where R's segment starts.
             lowTs = Math.min(lowTs, Math.max(viewLowerBoundTimestamp, anchorPlan.getSegmentStart(outputFloor)));

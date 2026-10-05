@@ -604,6 +604,41 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
+    public void testAnchorSegmentUnderANonZeroOriginReachesAcrossTheOrigin() throws SqlException {
+        // Segments 4_000 wide aligned to an origin at 2_000. The floor clamps every row below
+        // the origin to 2_000, and the first aligned bucket [2_000, 6_000) floors there too, so
+        // a key's run on that value reaches from S straight across the origin to 6_000.
+        final LiveViewCheckpointAnchorPlan originAt2000 =
+                LiveViewCheckpointAnchorPlan.of('U', 4_000, 2_000, ColumnType.TIMESTAMP_MICRO);
+        final LiveViewCheckpointRepairPlan plan = newPlan();
+
+        // R = 3_000 sits above the origin. A replay floored at the origin would restart every
+        // key there and drop its rows in [S, 2_000) from the run, so L falls back to S.
+        plan.of(new TestAnchors(), 3_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, originAt2000, true, 9_000, 3_000, 9_000, UNPRICED);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(1_000, plan.getReplayLowTs());
+        Assert.assertEquals(3_000, plan.getOutputLowTs());
+        Assert.assertEquals(HighBoundTag.FINITE, plan.getHighBoundTag());
+        Assert.assertEquals(6_000, plan.getHighTsExclusive());
+
+        // R = 1_500 sits below the origin. The change reaches every row of the run up to
+        // 6_000, so a replacement stopping at the origin would leave [2_000, 6_000) stale.
+        plan.of(new TestAnchors(), 1_500, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, originAt2000, true, 9_000, 1_500, 9_000, UNPRICED);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(1_000, plan.getReplayLowTs());
+        Assert.assertEquals(1_500, plan.getOutputLowTs());
+        Assert.assertEquals(HighBoundTag.FINITE, plan.getHighBoundTag());
+        Assert.assertEquals(6_000, plan.getHighTsExclusive());
+
+        // The second aligned bucket opens on an ordinary wall, so a change there localizes to it.
+        plan.of(new TestAnchors(), 7_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, originAt2000, true, 11_000, 7_000, 11_000, UNPRICED);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(6_000, plan.getReplayLowTs());
+        Assert.assertEquals(7_000, plan.getOutputLowTs());
+        Assert.assertEquals(10_000, plan.getHighTsExclusive());
+    }
+
+    @Test
     public void testApplyAheadKeepsAnchorBelowAheadFloor() throws SqlException {
         // Apply raced 3 seqTxns past the trigger and the lowest in-view timestamp
         // among them (150) sits below the trigger (400). The resume may only

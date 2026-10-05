@@ -218,10 +218,10 @@ public class LiveViewCheckpointMixedStateSealTest extends AbstractLiveViewTest {
         assertRestoredFromTimeline(VIEW_NAME);
         final LiveViewInstance instance = viewInstance(VIEW_NAME);
         final LongList ladder = snapshotCheckpointLadder(instance);
-        boolean carriesPreRestartLineage = false;
+        boolean hasPreRestartLineage = false;
         for (int i = 0, n = ladder.size(); i < n; i += 2) {
             if (ladder.getQuick(i) == newestBoundaryBeforeRestart) {
-                carriesPreRestartLineage = true;
+                hasPreRestartLineage = true;
                 break;
             }
         }
@@ -230,7 +230,7 @@ public class LiveViewCheckpointMixedStateSealTest extends AbstractLiveViewTest {
                         + " roots it had published: the rebuild retires the timeline, so the pre-restart"
                         + " boundary is no longer on the ladder [newestBoundaryBeforeRestart="
                         + newestBoundaryBeforeRestart + ", ladderEntries=" + (ladder.size() / 2) + ']',
-                carriesPreRestartLineage
+                hasPreRestartLineage
         );
     }
 

@@ -898,7 +898,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 }
                 Assert.assertFalse(
                         "a published splice owes no repair marker",
-                        repairMarkerExists()
+                        hasRepairMarker()
                 );
             }
 
@@ -950,7 +950,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 // retires outright - which is what the whole history costs once the bound
                 // refuses to keep it. The post-replay seal opens a fresh one.
                 Assert.assertEquals(1, entryCount(instance));
-                Assert.assertFalse("a retired timeline owes no marker", repairMarkerExists());
+                Assert.assertFalse("a retired timeline owes no marker", hasRepairMarker());
                 Assert.assertEquals(13, instance.getO3BoundaryReplayRows());
             }
 
@@ -1407,7 +1407,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     );
                     Assert.assertFalse(
                             "a parked splice has moved nothing durable, so it owes no repair marker yet",
-                            repairMarkerExists()
+                            hasRepairMarker()
                     );
                     Assert.assertEquals(0, lvSeqTxnAtMarkerWrites.size());
                 }
@@ -1433,7 +1433,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 );
                 Assert.assertFalse(
                         "the turn that finishes the repair owes the marker its clear",
-                        repairMarkerExists()
+                        hasRepairMarker()
                 );
 
                 // Identical to the single-turn run: the resume skips the rows its own turn
@@ -1499,7 +1499,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         HISTORY_COMMITS,
                         instance.getCheckpointRepairRootsVersioned()
                 );
-                Assert.assertFalse(repairMarkerExists());
+                Assert.assertFalse(hasRepairMarker());
             }
 
             engine.getLiveViewRegistry().clear();
@@ -2089,7 +2089,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals("the correction must be consumed", processedBefore + 1, instance.getLastProcessedSeqTxn());
                 Assert.assertEquals("no marker, no splice", 0, instance.getCheckpointRepairRootsVersioned());
                 Assert.assertEquals("a retired candidate owes no descriptor", 0, repairDescriptorCount());
-                Assert.assertFalse("a retired timeline owes no marker", repairMarkerExists());
+                Assert.assertFalse("a retired timeline owes no marker", hasRepairMarker());
                 Assert.assertTrue("the retire must have run", instance.getCheckpointTimelineResets() > 0);
                 Assert.assertEquals("the rebuild must stop at H", 6, instance.getO3ReplayScanRows());
                 Assert.assertEquals("the rebuild must re-emit [R, H) only", 4, instance.getO3BoundaryReplayRows());
@@ -2191,7 +2191,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     0,
                     repairDescriptorCount()
             );
-            Assert.assertFalse("the abandoned candidate leaves no repair marker for a restart", repairMarkerExists());
+            Assert.assertFalse("the abandoned candidate leaves no repair marker for a restart", hasRepairMarker());
             Assert.assertEquals(generationBefore, generation(instance));
             Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
 
@@ -2341,7 +2341,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 // Nor may it leave a repair marker standing over that timeline: a restart, or
                 // the in-place restore a failure recovery tries first, would rebuild from the
                 // applied base instead of restoring from roots that still describe the output.
-                Assert.assertFalse("a candidate that committed nothing owes no repair marker", repairMarkerExists());
+                Assert.assertFalse("a candidate that committed nothing owes no repair marker", hasRepairMarker());
             }
 
             // The pre-repair output, unchanged: the replacement never committed.
@@ -3194,7 +3194,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         }
     }
 
-    private static boolean repairMarkerExists() {
+    private static boolean hasRepairMarker() {
         try (Path dir = new Path()) {
             return LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), checkpointsDir(dir));
         }

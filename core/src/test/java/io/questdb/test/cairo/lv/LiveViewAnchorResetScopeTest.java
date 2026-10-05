@@ -50,12 +50,18 @@ import io.questdb.griffin.engine.functions.window.BasePartitionedBivariateWindow
 import io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -93,6 +99,38 @@ import org.junit.Test;
  * {@link #testANonMonotoneZoneAnchorResetsPerRunNotPerBucket()} is that case.
  */
 public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
+    // A zone-less DAILY anchor at a non-midnight wall time desugars to the three-argument
+    // timestamp_floor, which floors every row below 1970-01-01T02:30 to that origin. So those
+    // rows and the whole first aligned bucket, up to 1970-01-02T02:30, carry ONE anchor value
+    // and form one run per key.
+    private static final String EPOCH_DAY_ANCHOR = "ANCHOR DAILY '02:30'";
+    // The rows of EPOCH_DAY_SEED, then two head rows that move the frontier two buckets
+    // above the first one, so the first bucket is a closed segment.
+    private static final String EPOCH_DAY_CLOSED_SEED = """
+            ('1970-01-01T01:00:00.000000Z', 'a', 1.0),
+            ('1970-01-01T05:00:00.000000Z', 'a', 1.0),
+            ('1970-01-01T06:00:00.000000Z', 'b', 1.0),
+            ('1970-01-02T05:00:00.000000Z', 'b', 1.0),
+            ('1970-01-03T05:00:00.000000Z', 'a', 1.0)""";
+    private static final String EPOCH_DAY_CLOSED_SEED_COUNTS = """
+            ts\tsym\tc
+            1970-01-01T01:00:00.000000Z\ta\t1
+            1970-01-01T05:00:00.000000Z\ta\t2
+            1970-01-03T05:00:00.000000Z\ta\t1
+            1970-01-01T06:00:00.000000Z\tb\t1
+            1970-01-02T05:00:00.000000Z\tb\t1
+            """;
+    // Key 'a' has a row on each side of the origin, and the frontier stays in the first bucket.
+    private static final String EPOCH_DAY_SEED = """
+            ('1970-01-01T01:00:00.000000Z', 'a', 1.0),
+            ('1970-01-01T05:00:00.000000Z', 'a', 1.0),
+            ('1970-01-01T06:00:00.000000Z', 'b', 1.0)""";
+    private static final String EPOCH_DAY_SEED_COUNTS = """
+            ts\tsym\tc
+            1970-01-01T01:00:00.000000Z\ta\t1
+            1970-01-01T05:00:00.000000Z\ta\t2
+            1970-01-01T06:00:00.000000Z\tb\t1
+            """;
     // Reads the single partition key off a sweep stub's own partitionByRecord, which is a
     // VirtualRecord over one LongColumn and so carries the key at column 0.
     private static final RecordSink PARTITION_BY_SINK = new RecordSink() {
@@ -452,6 +490,159 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                                 """);
             }
         });
+    }
+
+    @Test
+    public void testAnEpochDayLateCommitDrainedAfterAHeadCommitMatchesAFreshView() throws Exception {
+        // An in-order commit and a late one share a drain pass, so the late row reaches the
+        // union range rather than the per-segment route. The union range floored its replay at
+        // the start of the late row's segment, which the plan placed at the origin, and so
+        // restarted 'a' there without its 01:00 row.
+        assertLateCommitsRepairMatchAFreshView(
+                EPOCH_DAY_ANCHOR,
+                EPOCH_DAY_CLOSED_SEED,
+                EPOCH_DAY_CLOSED_SEED_COUNTS,
+                """
+                        ts\tsym\tc
+                        1970-01-01T01:00:00.000000Z\ta\t1
+                        1970-01-01T04:00:00.000000Z\ta\t2
+                        1970-01-01T05:00:00.000000Z\ta\t3
+                        1970-01-03T05:00:00.000000Z\ta\t1
+                        1970-01-01T06:00:00.000000Z\tb\t1
+                        1970-01-02T05:00:00.000000Z\tb\t1
+                        1970-01-03T06:00:00.000000Z\tb\t1
+                        """,
+                -1,
+                "('1970-01-03T06:00:00.000000Z', 'b', 1.0)",
+                "('1970-01-01T04:00:00.000000Z', 'a', 1.0)"
+        );
+    }
+
+    @Test
+    public void testAnEpochDayLateRowBatchedWithAHeadRowMatchesAFreshView() throws Exception {
+        // One commit carries a row into the closed first bucket and a new head row.
+        assertLateRowRepairMatchesAFreshView(
+                EPOCH_DAY_ANCHOR,
+                EPOCH_DAY_CLOSED_SEED,
+                EPOCH_DAY_CLOSED_SEED_COUNTS,
+                "('1970-01-01T04:00:00.000000Z', 'a', 1.0), ('1970-01-03T06:00:00.000000Z', 'b', 1.0)",
+                """
+                        ts\tsym\tc
+                        1970-01-01T01:00:00.000000Z\ta\t1
+                        1970-01-01T04:00:00.000000Z\ta\t2
+                        1970-01-01T05:00:00.000000Z\ta\t3
+                        1970-01-03T05:00:00.000000Z\ta\t1
+                        1970-01-01T06:00:00.000000Z\tb\t1
+                        1970-01-02T05:00:00.000000Z\tb\t1
+                        1970-01-03T06:00:00.000000Z\tb\t1
+                        """
+        );
+    }
+
+    @Test
+    public void testAnEpochDayRepairBelowTheOriginReachesTheWholeFirstBucket() throws Exception {
+        // The late row sits below the origin while the frontier is still in the first bucket.
+        // The plan ended the late row's segment at the origin, so the repair replaced output
+        // only up to 02:30 and left 'a''s 05:00 row counting without the late row.
+        assertLateRowRepairMatchesAFreshView(
+                EPOCH_DAY_ANCHOR,
+                EPOCH_DAY_SEED,
+                EPOCH_DAY_SEED_COUNTS,
+                "('1970-01-01T01:30:00.000000Z', 'a', 1.0)",
+                """
+                        ts\tsym\tc
+                        1970-01-01T01:00:00.000000Z\ta\t1
+                        1970-01-01T01:30:00.000000Z\ta\t2
+                        1970-01-01T05:00:00.000000Z\ta\t3
+                        1970-01-01T06:00:00.000000Z\tb\t1
+                        """
+        );
+    }
+
+    @Test
+    public void testAnEpochDayRepairInsideTheFirstBucketReachesTheRowsBelowTheOrigin() throws Exception {
+        // The late row lands above the origin while the frontier is still in the first bucket.
+        // The plan reported the origin as the segment's start, so the replay started 'a' from a
+        // reset at 02:30 and dropped its 01:00 row from the run.
+        assertLateRowRepairMatchesAFreshView(
+                EPOCH_DAY_ANCHOR,
+                EPOCH_DAY_SEED,
+                EPOCH_DAY_SEED_COUNTS,
+                "('1970-01-01T04:00:00.000000Z', 'a', 1.0)",
+                """
+                        ts\tsym\tc
+                        1970-01-01T01:00:00.000000Z\ta\t1
+                        1970-01-01T04:00:00.000000Z\ta\t2
+                        1970-01-01T05:00:00.000000Z\ta\t3
+                        1970-01-01T06:00:00.000000Z\tb\t1
+                        """
+        );
+    }
+
+    @Test
+    public void testAnEpochDayRepairOfAClosedFirstBucketReachesTheRowsBelowTheOrigin() throws Exception {
+        // The first bucket is closed, so the decomposition used to take it as a segment of its
+        // own, [02:30, 1970-01-02T02:30), and replay it from a reset at the origin. Its start is
+        // no wall, so the decomposition declines it and no per-segment repair runs.
+        assertLateRowRepairMatchesAFreshView(
+                EPOCH_DAY_ANCHOR,
+                EPOCH_DAY_CLOSED_SEED,
+                EPOCH_DAY_CLOSED_SEED_COUNTS,
+                "('1970-01-01T04:00:00.000000Z', 'a', 1.0)",
+                """
+                        ts\tsym\tc
+                        1970-01-01T01:00:00.000000Z\ta\t1
+                        1970-01-01T04:00:00.000000Z\ta\t2
+                        1970-01-01T05:00:00.000000Z\ta\t3
+                        1970-01-03T05:00:00.000000Z\ta\t1
+                        1970-01-01T06:00:00.000000Z\tb\t1
+                        1970-01-02T05:00:00.000000Z\tb\t1
+                        """,
+                0
+        );
+    }
+
+    @Test
+    public void testAnEpochDayRepairOfAClosedSegmentBelowTheOriginReachesTheWholeFirstBucket() throws Exception {
+        // The late row sits below the origin and the frontier two buckets above it. The union
+        // range stopped at the origin, where the plan ended the late row's segment.
+        assertLateRowRepairMatchesAFreshView(
+                EPOCH_DAY_ANCHOR,
+                EPOCH_DAY_CLOSED_SEED,
+                EPOCH_DAY_CLOSED_SEED_COUNTS,
+                "('1970-01-01T01:30:00.000000Z', 'a', 1.0)",
+                """
+                        ts\tsym\tc
+                        1970-01-01T01:00:00.000000Z\ta\t1
+                        1970-01-01T01:30:00.000000Z\ta\t2
+                        1970-01-01T05:00:00.000000Z\ta\t3
+                        1970-01-03T05:00:00.000000Z\ta\t1
+                        1970-01-01T06:00:00.000000Z\tb\t1
+                        1970-01-02T05:00:00.000000Z\tb\t1
+                        """
+        );
+    }
+
+    @Test
+    public void testAnEpochDayRepairOfTheSecondBucketKeepsThePerSegmentRoute() throws Exception {
+        // The second bucket opens on an ordinary wall, so a late row there is still repaired
+        // over its own closed segment.
+        assertLateRowRepairMatchesAFreshView(
+                EPOCH_DAY_ANCHOR,
+                EPOCH_DAY_CLOSED_SEED,
+                EPOCH_DAY_CLOSED_SEED_COUNTS,
+                "('1970-01-02T04:00:00.000000Z', 'b', 1.0)",
+                """
+                        ts\tsym\tc
+                        1970-01-01T01:00:00.000000Z\ta\t1
+                        1970-01-01T05:00:00.000000Z\ta\t2
+                        1970-01-03T05:00:00.000000Z\ta\t1
+                        1970-01-01T06:00:00.000000Z\tb\t1
+                        1970-01-02T04:00:00.000000Z\tb\t1
+                        1970-01-02T05:00:00.000000Z\tb\t2
+                        """,
+                1
+        );
     }
 
     @Test
@@ -1406,6 +1597,117 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> assertScratchRebindBreachLeavesNoClosedScratch(new PartitionedSweepStub()));
     }
 
+    @Test
+    public void testSeededEpochDayLateRowsMatchAFreshView() throws Exception {
+        // A seeded walk over the epoch-day shapes the cases above pin one at a time: late rows
+        // on both sides of the origin, alone, batched with a head row in one commit, or drained
+        // after an in-order commit, while the frontier climbs out of the first bucket. After
+        // every turn the view must hold the anchor's own definition - a key's count restarts
+        // only where timestamp_floor('1d', ts, origin) changes value - and at the end a view
+        // built forward from scratch must hold the same.
+        assertMemoryLeak(() -> {
+            final long origin = ts("1970-01-01T02:30:00.000000Z");
+            final long firstBucketEnd = origin + Micros.DAY_MICROS;
+            final String select = "SELECT ts, sym, count(y) OVER w AS c FROM base"
+                    + " WINDOW w AS (PARTITION BY sym ORDER BY ts " + EPOCH_DAY_ANCHOR + ")";
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, y DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+
+            // One timestamp list per key, 'a' then 'b'; no timestamp repeats across them.
+            final ObjList<LongList> keyRows = new ObjList<>();
+            keyRows.add(new LongList());
+            keyRows.add(new LongList());
+            keyRows.getQuick(0).add(ts("1970-01-01T01:00:00.000000Z"));
+            keyRows.getQuick(0).add(ts("1970-01-01T05:00:00.000000Z"));
+            keyRows.getQuick(1).add(ts("1970-01-01T06:00:00.000000Z"));
+            final LongHashSet usedTimestamps = new LongHashSet();
+            usedTimestamps.add(keyRows.getQuick(0).getQuick(0));
+            usedTimestamps.add(keyRows.getQuick(0).getQuick(1));
+            usedTimestamps.add(keyRows.getQuick(1).getQuick(0));
+            long frontier = ts("1970-01-01T06:00:00.000000Z");
+
+            final Rnd rnd = new Rnd(1_970L, 230L);
+            final StringSink lateValues = new StringSink();
+            final StringSink headValues = new StringSink();
+            int lateRowsInTheFirstRun = 0;
+            int turnsAboveTheFirstBucket = 0;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, y) VALUES " + EPOCH_DAY_SEED);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT ts, sym, c FROM lv ORDER BY sym, ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(epochDayCounts(keyRows, origin));
+
+                for (int turn = 0; turn < 12; turn++) {
+                    if (frontier >= firstBucketEnd) {
+                        turnsAboveTheFirstBucket++;
+                    }
+                    lateValues.clear();
+                    for (int i = 0, n = 1 + rnd.nextInt(2); i < n; i++) {
+                        long lateTs;
+                        do {
+                            lateTs = rnd.nextInt((int) (frontier / Micros.MINUTE_MICROS)) * Micros.MINUTE_MICROS;
+                        } while (!usedTimestamps.add(lateTs));
+                        if (lateTs < firstBucketEnd) {
+                            lateRowsInTheFirstRun++;
+                        }
+                        appendEpochDayRow(lateValues, keyRows, rnd.nextInt(2), lateTs);
+                    }
+                    // 0: the late rows alone; 1: one commit with a head row beside them;
+                    // 2: an in-order commit ahead of them in the same drain pass.
+                    final int shape = rnd.nextInt(3);
+                    headValues.clear();
+                    if (shape > 0) {
+                        long headTs;
+                        do {
+                            headTs = frontier + (1 + rnd.nextInt(480)) * Micros.MINUTE_MICROS;
+                        } while (!usedTimestamps.add(headTs));
+                        frontier = headTs;
+                        appendEpochDayRow(headValues, keyRows, rnd.nextInt(2), headTs);
+                    }
+                    switch (shape) {
+                        case 0 -> execute("INSERT INTO base (ts, sym, y) VALUES " + lateValues);
+                        case 1 -> execute("INSERT INTO base (ts, sym, y) VALUES " + lateValues + ", " + headValues);
+                        default -> {
+                            execute("INSERT INTO base (ts, sym, y) VALUES " + headValues);
+                            execute("INSERT INTO base (ts, sym, y) VALUES " + lateValues);
+                        }
+                    }
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    assertNoRefreshFaults("lv");
+                    assertQuery("SELECT ts, sym, c FROM lv ORDER BY sym, ts")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(epochDayCounts(keyRows, origin));
+                }
+                // The walk has to reach both shapes for the comparison to mean anything.
+                Assert.assertTrue("late rows must land in the first run", lateRowsInTheFirstRun > 0);
+                Assert.assertTrue("the frontier must leave the first bucket", turnsAboveTheFirstBucket > 0);
+
+                execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveSeedToCompletion(job, "lv2");
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv2");
+                assertQuery("SELECT ts, sym, c FROM lv2 ORDER BY sym, ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(epochDayCounts(keyRows, origin));
+            }
+        });
+    }
+
     /**
      * Documents why {@code EXCLUDE CURRENT ROW} is the spelling that reaches the subset
      * unanchored, and pins the neighbouring route closed. An accumulator over a plain
@@ -1489,6 +1791,18 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
             break;
         }
         throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
+    }
+
+    /**
+     * Appends one row of key {@code keyIndex} ('a' or 'b') at {@code timestamp} to a VALUES
+     * list, and records it in that key's timestamp list for {@link #epochDayCounts}.
+     */
+    private static void appendEpochDayRow(StringSink values, ObjList<LongList> keyRows, int keyIndex, long timestamp) {
+        if (values.length() > 0) {
+            values.put(", ");
+        }
+        values.put("('").putISODate(timestamp).put("', '").put(keyIndex == 0 ? 'a' : 'b').put("', 1.0)");
+        keyRows.getQuick(keyIndex).add(timestamp);
     }
 
     private static void assertRingArenasReclaimed(ObjList<WindowFunction> anchorable, long[] seededArenaBytes) {
@@ -1652,6 +1966,32 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * What {@code count(y) OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '02:30')} reads over
+     * the rows in {@code keyRows}, computed from the anchor's definition rather than by a view:
+     * the runtime resets a key's count wherever the desugared
+     * {@code timestamp_floor('1d', ts, origin)} changes value, and this applies the floor the
+     * runtime function calls. Sorts each key's list in place.
+     */
+    private static String epochDayCounts(ObjList<LongList> keyRows, long origin) {
+        final StringSink sink = new StringSink();
+        sink.put("ts\tsym\tc\n");
+        for (int keyIndex = 0, n = keyRows.size(); keyIndex < n; keyIndex++) {
+            final LongList timestamps = keyRows.getQuick(keyIndex);
+            timestamps.sort();
+            long runAnchor = Numbers.LONG_NULL;
+            int count = 0;
+            for (int i = 0, m = timestamps.size(); i < m; i++) {
+                final long timestamp = timestamps.getQuick(i);
+                final long anchor = Micros.floorDD(timestamp, 1, origin);
+                count = anchor == runAnchor ? count + 1 : 1;
+                runAnchor = anchor;
+                sink.putISODate(timestamp).put('\t').put(keyIndex == 0 ? 'a' : 'b').put('\t').put(count).put('\n');
+            }
+        }
+        return sink.toString();
+    }
+
+    /**
      * A partition-state map with the sweep stubs' layout: one LONG key, one BYTE value.
      * Open and charged to no tracker, which is what {@code newCompactionScratch()} hands
      * the sweep and what the rebind then re-homes.
@@ -1697,37 +2037,25 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Asserts what the six-argument overload asserts of the rows, and nothing of the route the
-     * repair takes.
-     */
-    private void assertLateRowRepairMatchesAFreshView(
-            String anchorClause,
-            String seedRows,
-            String expectedBeforeLate,
-            String lateRow,
-            String expectedAfterLate
-    ) throws Exception {
-        assertLateRowRepairMatchesAFreshView(anchorClause, seedRows, expectedBeforeLate, lateRow, expectedAfterLate, -1);
-    }
-
-    /**
      * Builds a {@code count(y)} live view anchored by {@code anchorClause}, seeds it with
-     * {@code seedRows} in one commit, then commits {@code lateRow} below the view's frontier and
-     * drives the repair it triggers. The view must read {@code expectedBeforeLate} before the
-     * late row and {@code expectedAfterLate} after it, and a second view over the same SELECT,
-     * built forward from scratch once the late row is in the base, must read the same - that
-     * view shares no state with the repaired one and takes no repair.
+     * {@code seedRows} in one commit, then commits each of {@code lateCommits} - at least one of
+     * them below the view's frontier - and drives the repair they trigger in one drain pass. The
+     * view must read {@code expectedBeforeLate} before the late commits and
+     * {@code expectedAfterLate} after them, and a second view over the same SELECT, built forward
+     * from scratch once the late commits are in the base, must read the same - that view shares
+     * no state with the repaired one and takes no repair.
      *
-     * @param expectedSegmentRepairs how many per-segment repairs the late row must trigger, or a
-     *                               negative value to assert nothing of the route the repair takes
+     * @param expectedSegmentRepairs how many per-segment repairs the late commits must trigger,
+     *                               or a negative value to assert nothing of the route the repair
+     *                               takes
      */
-    private void assertLateRowRepairMatchesAFreshView(
+    private void assertLateCommitsRepairMatchAFreshView(
             String anchorClause,
             String seedRows,
             String expectedBeforeLate,
-            String lateRow,
             String expectedAfterLate,
-            long expectedSegmentRepairs
+            long expectedSegmentRepairs,
+            String... lateCommits
     ) throws Exception {
         assertMemoryLeak(() -> {
             final String select = "SELECT ts, sym, count(y) OVER w AS c FROM base"
@@ -1749,7 +2077,9 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         .returns(expectedBeforeLate);
                 final long segmentRepairsBeforeLate = job.segmentRepairCountForTest();
 
-                execute("INSERT INTO base (ts, sym, y) VALUES " + lateRow);
+                for (String lateCommit : lateCommits) {
+                    execute("INSERT INTO base (ts, sym, y) VALUES " + lateCommit);
+                }
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
@@ -1782,6 +2112,44 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 }
             }
         });
+    }
+
+    /**
+     * Asserts what the six-argument overload asserts of the rows, and nothing of the route the
+     * repair takes.
+     */
+    private void assertLateRowRepairMatchesAFreshView(
+            String anchorClause,
+            String seedRows,
+            String expectedBeforeLate,
+            String lateRow,
+            String expectedAfterLate
+    ) throws Exception {
+        assertLateRowRepairMatchesAFreshView(anchorClause, seedRows, expectedBeforeLate, lateRow, expectedAfterLate, -1);
+    }
+
+    /**
+     * Asserts what {@link #assertLateCommitsRepairMatchAFreshView} asserts, for one late commit.
+     *
+     * @param expectedSegmentRepairs how many per-segment repairs the late row must trigger, or a
+     *                               negative value to assert nothing of the route the repair takes
+     */
+    private void assertLateRowRepairMatchesAFreshView(
+            String anchorClause,
+            String seedRows,
+            String expectedBeforeLate,
+            String lateRow,
+            String expectedAfterLate,
+            long expectedSegmentRepairs
+    ) throws Exception {
+        assertLateCommitsRepairMatchAFreshView(
+                anchorClause,
+                seedRows,
+                expectedBeforeLate,
+                expectedAfterLate,
+                expectedSegmentRepairs,
+                lateRow
+        );
     }
 
     /**

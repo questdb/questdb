@@ -90,8 +90,8 @@ public final class LiveViewCheckpointSegmentLoop {
     private int inFlightKeySetIndex = -1;
     private long inFlightSegmentStart = Numbers.LONG_NULL;
     private boolean isOpen;
+    private boolean isResidualInsertOnly;
     private long residualAdvanceTo = Numbers.LONG_NULL;
-    private boolean residualInsertOnly;
     private long residualMaxTs = Numbers.LONG_NULL;
     private long residualMinTs = Numbers.LONG_NULL;
     private long runtimeFrontierTs = Numbers.LONG_NULL;
@@ -150,7 +150,7 @@ public final class LiveViewCheckpointSegmentLoop {
         residualMinTs = Numbers.LONG_NULL;
         residualMaxTs = Numbers.LONG_NULL;
         residualAdvanceTo = Numbers.LONG_NULL;
-        residualInsertOnly = false;
+        isResidualInsertOnly = false;
         segmentsRepaired = 0;
     }
 
@@ -178,7 +178,7 @@ public final class LiveViewCheckpointSegmentLoop {
         residualMinTs = src.residualMinTs;
         residualMaxTs = src.residualMaxTs;
         residualAdvanceTo = src.residualAdvanceTo;
-        residualInsertOnly = src.residualInsertOnly;
+        isResidualInsertOnly = src.isResidualInsertOnly;
         segmentsRepaired = src.segmentsRepaired;
     }
 
@@ -301,7 +301,7 @@ public final class LiveViewCheckpointSegmentLoop {
      * what lets the residual plan a bounded repair
      */
     public boolean isResidualInsertOnly() {
-        return residualInsertOnly;
+        return isResidualInsertOnly;
     }
 
     /**
@@ -327,7 +327,7 @@ public final class LiveViewCheckpointSegmentLoop {
             long runtimeFrontierTs,
             long residualMinTs,
             long residualMaxTs,
-            boolean residualInsertOnly,
+            boolean isResidualInsertOnly,
             long residualAdvanceTo
     ) {
         clear();
@@ -339,7 +339,7 @@ public final class LiveViewCheckpointSegmentLoop {
         this.runtimeFrontierTs = runtimeFrontierTs;
         this.residualMinTs = residualMinTs;
         this.residualMaxTs = residualMaxTs;
-        this.residualInsertOnly = residualInsertOnly;
+        this.isResidualInsertOnly = isResidualInsertOnly;
         this.residualAdvanceTo = residualAdvanceTo;
     }
 

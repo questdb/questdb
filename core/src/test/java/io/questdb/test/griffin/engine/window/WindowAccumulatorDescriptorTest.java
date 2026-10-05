@@ -791,14 +791,14 @@ public class WindowAccumulatorDescriptorTest {
             final WindowAccumulatorDescriptor component = captures.getQuick(i);
             final int family = component.getFamily();
             final String what = "family " + family + " over column " + component.getArgumentColumnIndex();
-            final boolean flagged = family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE
+            final boolean isFlagged = family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE
                     || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE
                     || family == WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE
                     || family == WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE;
             final boolean isDoubleState = family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_VALUE
                     || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE
                     || family == WindowAccumulatorDescriptor.FAMILY_DOUBLE_LAST_NOT_NULL_VALUE;
-            Assert.assertEquals(what, flagged ? 2 : 1, component.getSlotCount());
+            Assert.assertEquals(what, isFlagged ? 2 : 1, component.getSlotCount());
             Assert.assertEquals(
                     what,
                     0,
@@ -808,7 +808,7 @@ public class WindowAccumulatorDescriptorTest {
             // NULLS first value reads its emptiness off the value slot instead.
             Assert.assertEquals(
                     what + ": flag",
-                    flagged ? 1 : -1,
+                    isFlagged ? 1 : -1,
                     component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED)
             );
             Assert.assertEquals(what, -1, component.getFieldSlot(WindowAccumulatorDescriptor.FIELD_SUM));
@@ -831,7 +831,7 @@ public class WindowAccumulatorDescriptorTest {
                     isDoubleState ? Double.doubleToRawLongBits(Double.NaN) : Numbers.LONG_NULL,
                     component.getSlotIdentityBits(0)
             );
-            if (flagged) {
+            if (isFlagged) {
                 Assert.assertEquals(what + ": flag type", ColumnType.LONG, component.getSlotColumnType(1));
                 Assert.assertEquals(what + ": flag identity", 0L, component.getSlotIdentityBits(1));
             }

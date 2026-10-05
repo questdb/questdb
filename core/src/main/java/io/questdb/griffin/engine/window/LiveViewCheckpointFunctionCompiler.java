@@ -576,7 +576,7 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (projector == null) {
             return null;
         }
-        final boolean ownsProjector = projector != sharedProjector;
+        final boolean isProjectorOwned = projector != sharedProjector;
         try {
             return new LiveViewCheckpointRowsPlan(
                     rowsFunctionCount,
@@ -584,12 +584,12 @@ public final class LiveViewCheckpointFunctionCompiler {
                     firstRows.getPartitionSignature(),
                     firstRows.getOrderSignature(),
                     projector,
-                    ownsProjector,
+                    isProjectorOwned,
                     timestampIndex,
                     firstRows.getTimestampType()
             );
         } catch (Throwable th) {
-            if (ownsProjector) {
+            if (isProjectorOwned) {
                 Misc.free(projector);
             }
             throw th;

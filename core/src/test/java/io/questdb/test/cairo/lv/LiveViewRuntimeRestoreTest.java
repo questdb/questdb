@@ -90,6 +90,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * post-replay seal moves the coordinate, so the two cases take that repair with the seal failed
  * and with the seal left alone: the failed one must retire the prefix rather than leave it
  * addressable, and the sealed one must carry the repair's own coordinate.
+ * <p>
+ * The tie cases put an in-order commit on the newest root's own timestamp, after that root was
+ * sealed. No seal can record it - a root only extends the timeline upwards - so every restore
+ * has to replay it from the base WAL above the root, and a restore that skipped it would fail its
+ * own row count and fall back to the rebuild, which the guard refuses over a base that lost rows.
+ * The newest root comes from the first flush in some of them and from the seed sweep in others,
+ * and the last of them covers what the restore leaves for a resume anchored on that root. The
+ * splice-tie cases then land a late row below the tie: the repair it triggers publishes above the
+ * tie's commit, so it has to leave a newest root that holds the tie, whichever route it takes.
  */
 public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompatTest {
     // Brings the third and fourth account to a column sized for SMALL_ACCOUNT_SYMBOL_CAPACITY, past
@@ -161,6 +170,62 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             "('2026-01-03T09:00:00.000000Z', 'acct-1', 16.0)",
             "('2026-01-03T09:10:00.000000Z', 'acct-2', 32.0)"
     };
+    // One commit per entry. The first seals the only root the default cadence writes, and the second
+    // lands on that root's own timestamp after the seal.
+    private static final String[] TIED_ROWS = {
+            "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
+            "('2026-01-01T09:00:00.000000Z', 'acct-2', 2.0)",
+            "('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0)",
+            "('2026-01-02T09:10:00.000000Z', 'acct-1', 8.0)"
+    };
+    private static final String TIED_ROWS_OUTPUT = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:00:00.000000Z\tacct-2\t2.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+            """;
+    // The base the seed-root cases create their view over, in one commit. The seed sweep seals its
+    // root on the last row.
+    private static final String SEEDED_ROWS = "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0), "
+            + "('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0), "
+            + "('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0), "
+            + "('2026-01-02T09:10:00.000000Z', 'acct-1', 8.0)";
+    // A commit on the seed root's own timestamp, and what the view holds with it.
+    private static final String SEED_ROOT_TIE = "('2026-01-02T09:10:00.000000Z', 'acct-1', 16.0)";
+    private static final String SEED_ROOT_TIE_OUTPUT = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+            2026-01-02T09:10:00.000000Z\tacct-1\t28.0\t3
+            """;
+    // The base the splice-tie cases create their view over, in one commit: a row on each of three
+    // days. The seed sweep seals its root on the third day's row.
+    private static final String SPLICE_SEEDED_ROWS = "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0), "
+            + "('2026-01-02T09:00:00.000000Z', 'acct-1', 2.0), "
+            + "('2026-01-03T09:00:00.000000Z', 'acct-1', 4.0)";
+    // A commit on that seed root's own timestamp, and what the view holds with it.
+    private static final String SPLICE_ROOT_TIE = "('2026-01-03T09:00:00.000000Z', 'acct-2', 8.0)";
+    private static final String SPLICE_ROOT_TIE_OUTPUT = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t2.0\t1
+            2026-01-03T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-03T09:00:00.000000Z\tacct-2\t8.0\t1
+            """;
+    // A late row in the second day, a closed segment below the frontier, and what the view holds
+    // with it.
+    private static final String SPLICE_LATE_ROW = "('2026-01-02T10:00:00.000000Z', 'acct-1', 16.0)";
+    private static final String SPLICE_LATE_ROW_OUTPUT = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t2.0\t1
+            2026-01-02T10:00:00.000000Z\tacct-1\t18.0\t2
+            2026-01-03T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-03T09:00:00.000000Z\tacct-2\t8.0\t1
+            """;
     // ANCHOR DAILY resets each account's accumulators at midnight.
     private static final String SIX_ROWS_OUTPUT = """
             created_at\taccount_id\tcumulative_sum\tcumulative_count
@@ -1165,6 +1230,322 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     @Test
+    public void testARestartRestoresATieOnTheNewestRootOverABaseThatLostADay() throws Exception {
+        assertMemoryLeak(() -> {
+            createBase("");
+            createView();
+            insertAndRefresh(TIED_ROWS);
+            assertSingleRootAt("2026-01-01T09:00:00.000000Z");
+            dropPartitionAndRefresh("2026-01-01", TIED_ROWS_OUTPUT);
+
+            // The tied row and both day-two rows sit above the root's base seqTxn.
+            restartAndAssertRestoredOverATie(TIED_ROWS_OUTPUT, 3);
+            // The day the base lost stays, and the view keeps refreshing on top of the day-two
+            // accumulation the restore put back.
+            insertAndRefresh("('2026-01-02T09:20:00.000000Z', 'acct-1', 16.0)");
+            assertViewRows(TIED_ROWS_OUTPUT + "2026-01-02T09:20:00.000000Z\tacct-1\t28.0\t3\n");
+        });
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootOverABaseTtlEvicted() throws Exception {
+        assertMemoryLeak(() -> {
+            // TTL measures a partition's age against the earlier of the table's newest row and the
+            // wall clock, so the clock moves past every row first.
+            setCurrentMicros(ts("2026-01-05T00:00:00.000000Z"));
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                    + "TIMESTAMP(created_at) PARTITION BY DAY TTL 1 DAY WAL");
+            createView();
+            // The third commit moves the base's newest row to day three, which evicts day one.
+            insertAndRefresh(TIED_ROWS[0], TIED_ROWS[1], "('2026-01-03T09:00:00.000000Z', 'acct-1', 4.0)");
+            assertSingleRootAt("2026-01-01T09:00:00.000000Z");
+            assertQuery("SELECT min(created_at), count() FROM tx")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            min\tcount
+                            2026-01-03T09:00:00.000000Z\t1
+                            """);
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-03T09:00:00.000000Z\tacct-1\t4.0\t1
+                    """;
+            assertViewRows(viewRows);
+
+            restartAndAssertRestoredOverATie(viewRows, 2);
+            insertAndRefresh("('2026-01-03T09:10:00.000000Z', 'acct-1', 8.0)");
+            assertViewRows(viewRows + "2026-01-03T09:10:00.000000Z\tacct-1\t12.0\t2\n");
+        });
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootOverADeduplicatingBase() throws Exception {
+        assertMemoryLeak(() -> {
+            // The tied row carries a key of its own, so the base keeps both rows at the root's
+            // timestamp and the raw WAL the restore replays holds exactly what the base applied.
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            insertAndRefresh(TIED_ROWS);
+            assertSingleRootAt("2026-01-01T09:00:00.000000Z");
+
+            restartAndAssertRestoredOverATie(TIED_ROWS_OUTPUT, 3);
+            insertAndRefresh("('2026-01-02T09:20:00.000000Z', 'acct-1', 16.0)");
+            assertViewRows(TIED_ROWS_OUTPUT + "2026-01-02T09:20:00.000000Z\tacct-1\t28.0\t3\n");
+        });
+    }
+
+    @Test
+    public void testARestartAfterAnUpsertOnTheNewestRootsTimestampKeepsTheReplacement() throws Exception {
+        assertMemoryLeak(() -> {
+            // The second commit replaces the row the root folded. Reaching the frontier, it takes
+            // the out-of-order repair, which publishes a root over the replacement, so no restore
+            // replays it from the raw WAL - where it would read as a second row.
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            insertAndRefresh(
+                    "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
+                    "('2026-01-01T09:00:00.000000Z', 'acct-1', 5.0)",
+                    "('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0)"
+            );
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t5.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    """;
+            assertViewRows(viewRows);
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertNoRefreshFaults("lv");
+            assertViewRows(viewRows);
+            insertAndRefresh("('2026-01-02T09:10:00.000000Z', 'acct-1', 8.0)");
+            assertViewRows(viewRows + "2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2\n");
+        });
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheSeedRoot() throws Exception {
+        assertMemoryLeak(() -> assertRestartRestoresATieOnTheSeedRoot(false));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheSeedRootOverABaseThatLostADay() throws Exception {
+        assertMemoryLeak(() -> assertRestartRestoresATieOnTheSeedRoot(true));
+    }
+
+    @Test
+    public void testAMidDrainFailureRestoresATieOnTheNewestRootOverABaseThatLostADay() throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            fault.of(engine.verifyTableName("tx").getDirName());
+            insertAndRefresh(TIED_ROWS);
+            assertSingleRootAt("2026-01-01T09:00:00.000000Z");
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
+            drainWalQueue();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                insertThreeAndFailMidDrain(job, fault);
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            assertRestoredInProcess(instance("lv"), 1);
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NOT_EVALUATED, guard.getAbstention());
+            assertViewRows(TIED_ROWS_OUTPUT
+                    + "2026-01-02T09:20:00.000000Z\tacct-2\t16.0\t1\n"
+                    + "2026-01-02T09:30:00.000000Z\tacct-1\t44.0\t3\n"
+                    + "2026-01-02T09:40:00.000000Z\tacct-2\t80.0\t2\n");
+            // The restore replayed the tied row and both day-two rows, and nothing rebuilt.
+            capture.drain();
+            capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=mid-drain refresh failure, .*replayedRows=3]");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+        });
+    }
+
+    @Test
+    public void testALateCommitAfterARestartDoesNotResumeFromTheRootItsTieOutgrew() throws Exception {
+        assertMemoryLeak(() -> {
+            createBase("");
+            createView();
+            insertAndRefresh(
+                    "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
+                    "('2026-01-01T09:00:00.000000Z', 'acct-2', 2.0)",
+                    "('2026-01-01T09:20:00.000000Z', 'acct-2', 4.0)"
+            );
+            assertSingleRootAt("2026-01-01T09:00:00.000000Z");
+            restartAndAssertRestoredOverATie("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-01T09:20:00.000000Z\tacct-2\t6.0\t2
+                    """, 2);
+
+            // A late row between the root and the frontier. The root the restore stood on is the
+            // head again and the newest root below the late row, but it does not hold the tied
+            // row: a resume from it reads the base from just above it, and would answer 8.0 over
+            // one row and 12.0 over two for acct-2.
+            insertAndRefresh("('2026-01-01T09:10:00.000000Z', 'acct-2', 8.0)");
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t10.0\t2
+                    2026-01-01T09:20:00.000000Z\tacct-2\t14.0\t3
+                    """);
+            capture.drain();
+            capture.assertLogged("live view resume anchor no longer covers its timestamp group, re-anchoring below it "
+                    + "[view=lv, anchorMaxTs=2026-01-01T09:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterASegmentRepair() throws Exception {
+        assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(false));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterASegmentRepairOverABaseThatLostADay() throws Exception {
+        assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(true));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterAConvergingRepair() throws Exception {
+        // Without the decomposition the late row takes the union range, whose plan converges at the
+        // end of the late day just as the segment's does.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
+        assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(false));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterAConvergingRepairOverABaseThatLostADay() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
+        assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(true));
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterAKeyedResumeOfTheOpenSegment() throws Exception {
+        // One root per flush, so a root sits below the late row inside the open day and the repair
+        // resumes from it. A resume following the late row's own key - which the posting index on
+        // the key column is what makes available - re-versions the newest root from the old one for
+        // every other key, and the tied row's key is one of them.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL INDEX, amount DOUBLE) "
+                    + "TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            createView();
+            insertAndRefresh(
+                    "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
+                    "('2026-01-01T09:20:00.000000Z', 'acct-1', 2.0)",
+                    "('2026-01-01T09:20:00.000000Z', 'acct-2', 4.0)"
+            );
+            Assert.assertEquals("one root per flush, none on the tie", 2, countSealedBoundaries("lv"));
+            final long keyedResumes;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.setForceOpenSegmentKeyedReplayForTest(true);
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                        + "('2026-01-01T09:10:00.000000Z', 'acct-1', 8.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                keyedResumes = job.openSegmentKeyedResumeCountForTest();
+            }
+            assertNoRefreshFaults("lv");
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-1\t9.0\t2
+                    2026-01-01T09:20:00.000000Z\tacct-1\t11.0\t3
+                    2026-01-01T09:20:00.000000Z\tacct-2\t4.0\t1
+                    """;
+            assertViewRows(viewRows);
+
+            restartAndAssertRestoredOverATie(viewRows, 0);
+            insertAndRefresh("('2026-01-01T09:30:00.000000Z', 'acct-2', 16.0)");
+            assertViewRows(viewRows + "2026-01-01T09:30:00.000000Z\tacct-2\t20.0\t2\n");
+            Assert.assertEquals(
+                    "a resume by key would re-version the newest root without the tied row",
+                    0,
+                    keyedResumes
+            );
+        });
+    }
+
+    @Test
+    public void testARestartRestoresATieOnTheNewestRootAfterAColdKeyedRepairOfTheOpenSegment() throws Exception {
+        // The default cadence seals one root, on the first row, so no root sits below the late row
+        // and the repair replays the open day from its start. A replay following the late row's own
+        // key re-versions the newest root from the old one for every other key, and the tied row's
+        // key is one of them.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL INDEX, amount DOUBLE) "
+                    + "TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            createView();
+            insertAndRefresh(
+                    "('2026-01-01T09:20:00.000000Z', 'acct-1', 2.0)",
+                    "('2026-01-01T09:20:00.000000Z', 'acct-2', 4.0)"
+            );
+            assertSingleRootAt("2026-01-01T09:20:00.000000Z");
+            final long coldKeyedReplays;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.setForceOpenSegmentKeyedReplayForTest(true);
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                        + "('2026-01-01T09:10:00.000000Z', 'acct-1', 8.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                coldKeyedReplays = job.openSegmentColdKeyedReplayCountForTest();
+            }
+            assertNoRefreshFaults("lv");
+            final String viewRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:10:00.000000Z\tacct-1\t8.0\t1
+                    2026-01-01T09:20:00.000000Z\tacct-1\t10.0\t2
+                    2026-01-01T09:20:00.000000Z\tacct-2\t4.0\t1
+                    """;
+            assertViewRows(viewRows);
+
+            restartAndAssertRestoredOverATie(viewRows, 0);
+            insertAndRefresh("('2026-01-01T09:30:00.000000Z', 'acct-2', 16.0)");
+            assertViewRows(viewRows + "2026-01-01T09:30:00.000000Z\tacct-2\t20.0\t2\n");
+            Assert.assertEquals(
+                    "a cold replay by key would re-version the newest root without the tied row",
+                    0,
+                    coldKeyedReplays
+            );
+        });
+    }
+
+    @Test
+    public void testARestartRestoresATieTheLastRestartReplayedAfterASegmentRepair() throws Exception {
+        // The first restart replays the tied row onto the root it restores, as a live run would have
+        // folded it. Only the batch minimum the restore leaves behind tells the next repair that the
+        // root's timestamp group has grown.
+        assertMemoryLeak(() -> {
+            createBase("");
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + SPLICE_SEEDED_ROWS);
+            drainWalQueue();
+            createView();
+            insertAndRefresh(SPLICE_ROOT_TIE);
+            assertSingleRootAt("2026-01-03T09:00:00.000000Z");
+            restartAndAssertRestoredOverATie(SPLICE_ROOT_TIE_OUTPUT, 1);
+
+            final long segmentRepairs = landALateRowBelowATieOnTheNewestRoot();
+            restartAndAssertRestoredOverATie(SPLICE_LATE_ROW_OUTPUT, 0);
+            insertAndRefresh("('2026-01-03T09:10:00.000000Z', 'acct-2', 32.0)");
+            assertViewRows(SPLICE_LATE_ROW_OUTPUT + "2026-01-03T09:10:00.000000Z\tacct-2\t40.0\t2\n");
+            Assert.assertEquals("closed segments repaired over their own range", 0, segmentRepairs);
+        });
+    }
+
+    @Test
     public void testARebuildThatGetsPastAMidDrainFaultEndsTheRetryStreak() throws Exception {
         // A live repair marker declines the restore, so the mid-drain recovery rebuilds the view
         // from the applied base. See failMidDrainIntoARebuildThenIdleThenFailOnce.
@@ -1884,6 +2265,70 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         );
     }
 
+    /**
+     * Seeds the view over {@link #SPLICE_SEEDED_ROWS}, which seals its root on the third day's row,
+     * commits {@link #SPLICE_ROOT_TIE} on that root's timestamp, drops the base's first day when
+     * {@code isDayLost}, and lands {@link #SPLICE_LATE_ROW} in the second day. A restart then has to
+     * restore from the timeline, and the next row has to carry the tied row's amount forward.
+     * <p>
+     * The second day is a closed segment below the frontier, so the late row's repair converges
+     * at that day's end, below the newest root. A repair that kept the primary runtime published a
+     * splice stamped at the late commit and kept the newest root as it was, without the tied row
+     * whose commit sits below that stamp, so no restore could replay it: the row count failed and
+     * the rebuild took over, which the guard refuses over a base that lost a day.
+     */
+    private void assertRestartRestoresATieAfterALateRowBelowIt(boolean isDayLost) throws Exception {
+        createBase("");
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + SPLICE_SEEDED_ROWS);
+        drainWalQueue();
+        createView();
+        insertAndRefresh(SPLICE_ROOT_TIE);
+        assertSingleRootAt("2026-01-03T09:00:00.000000Z");
+        if (isDayLost) {
+            dropPartitionAndRefresh("2026-01-01", SPLICE_ROOT_TIE_OUTPUT);
+        }
+        final long segmentRepairs = landALateRowBelowATieOnTheNewestRoot();
+
+        restartAndAssertRestoredOverATie(SPLICE_LATE_ROW_OUTPUT, 0);
+        // A runtime that missed the tied row would answer 32.0 over one row.
+        insertAndRefresh("('2026-01-03T09:10:00.000000Z', 'acct-2', 32.0)");
+        assertViewRows(SPLICE_LATE_ROW_OUTPUT + "2026-01-03T09:10:00.000000Z\tacct-2\t40.0\t2\n");
+        Assert.assertEquals("closed segments repaired over their own range", 0, segmentRepairs);
+    }
+
+    /**
+     * Seeds the view over {@link #SEEDED_ROWS}, which seals its root on the last of them, and then
+     * commits {@link #SEED_ROOT_TIE} on that root's timestamp. Drops the base's first day when
+     * {@code isDayLost}, and restarts. The restart has to restore from the seed root with the tied
+     * row replayed, and the next row has to carry the tied row's amount forward.
+     */
+    private void assertRestartRestoresATieOnTheSeedRoot(boolean isDayLost) throws Exception {
+        createBase("");
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + SEEDED_ROWS);
+        drainWalQueue();
+        createView();
+        insertAndRefresh(SEED_ROOT_TIE);
+        assertSingleRootAt("2026-01-02T09:10:00.000000Z");
+        assertViewRows(SEED_ROOT_TIE_OUTPUT);
+        if (isDayLost) {
+            dropPartitionAndRefresh("2026-01-01", SEED_ROOT_TIE_OUTPUT);
+        }
+
+        restartAndAssertRestoredOverATie(SEED_ROOT_TIE_OUTPUT, 1);
+        // A runtime that missed the tied row would answer 44.0 over three rows.
+        insertAndRefresh("('2026-01-02T09:20:00.000000Z', 'acct-1', 32.0)");
+        assertViewRows(SEED_ROOT_TIE_OUTPUT + "2026-01-02T09:20:00.000000Z\tacct-1\t60.0\t4\n");
+    }
+
+    /**
+     * Asserts the view's timeline holds a single root, on {@code timestamp}, and that the head
+     * mirrors it: the root a tie case's restore stands on.
+     */
+    private void assertSingleRootAt(String timestamp) {
+        Assert.assertEquals("the default cadence seals one boundary", 1, countSealedBoundaries("lv"));
+        Assert.assertEquals(ts(timestamp), instance("lv").getHeadCheckpointMaxTs());
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery(VIEW_ROWS_QUERY)
                 .noLeakCheck()
@@ -1920,6 +2365,21 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum, "
                 + "count(account_id) OVER w AS cumulative_count "
                 + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
+    /**
+     * Drops one base partition the view has already derived rows from and lets the view walk past
+     * the DROP PARTITION, which keeps those rows: a rebuild from the applied base would drop them,
+     * and the restatement guard would refuse it.
+     */
+    private void dropPartitionAndRefresh(String day, String expectedViewRows) throws Exception {
+        execute("ALTER TABLE tx DROP PARTITION LIST '" + day + "'");
+        drainWalQueue();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        assertViewRows(expectedViewRows);
+        assertNoRefreshFaults("lv");
     }
 
     /**
@@ -2159,6 +2619,25 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         Assert.assertTrue("the mid-drain segment read must have been failed exactly once", fault.hasFired());
     }
 
+    /**
+     * Commits {@link #SPLICE_LATE_ROW} into the second day, below the tie on the newest root, and
+     * drives the repair it triggers.
+     *
+     * @return the closed segments the repair took over their own range
+     */
+    private long landALateRowBelowATieOnTheNewestRoot() throws Exception {
+        final long segmentRepairs;
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + SPLICE_LATE_ROW);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            segmentRepairs = job.segmentRepairCountForTest();
+        }
+        assertNoRefreshFaults("lv");
+        assertViewRows(SPLICE_LATE_ROW_OUTPUT);
+        return segmentRepairs;
+    }
+
     private long newestGeneration(LiveViewInstance instance) {
         try (
                 LiveViewCheckpointMetaStore store = openStore(instance);
@@ -2181,6 +2660,28 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             driveRefreshToQuiescence(job);
         }
+    }
+
+    /**
+     * Restarts the view and asserts the restart restored it from the timeline, replaying
+     * {@code replayedRows} base rows above the root - the tied row among them - with nothing
+     * rebuilt or blocked, and that the view still holds {@code expectedRows}. A replay floored
+     * above the root would also have dropped the tied row as one below the view's START FROM.
+     */
+    private void restartAndAssertRestoredOverATie(String expectedRows, int replayedRows) throws Exception {
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        final LiveViewInstance instance = instance("lv");
+        Assert.assertFalse("the view must keep refreshing", instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+        assertNoRefreshFaults("lv");
+        assertViewRows(expectedRows);
+        capture.drain();
+        capture.assertLoggedRE(
+                "restored live view from checkpoint timeline \\[view=lv, .*replayedRows=" + replayedRows + "]"
+        );
+        capture.assertNotLogged("live view is dropping in-order rows below its START FROM boundary");
     }
 
     /**

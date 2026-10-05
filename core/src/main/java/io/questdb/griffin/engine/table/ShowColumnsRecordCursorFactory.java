@@ -203,7 +203,10 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                     return cairoColumn.isDesignated();
                 }
                 if (col == N_UPSERT_KEY_COL) {
-                    return cairoColumn.isDedupKey();
+                    // A live view's dedup keys only serve its repair publications; its forward
+                    // commits keep rows that share those keys, so no column of a live view
+                    // reports as an upsert key.
+                    return cairoColumn.isDedupKey() && !cairoTable.getTableToken().isLiveView();
                 }
                 throw new UnsupportedOperationException();
             }

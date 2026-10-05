@@ -566,7 +566,7 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
         final int windowCount = isSkipEnabledGroupRequired ? 1 : 1 + rnd.nextInt(2);
         final String[] specs = new String[windowCount];
         final int[] frameKinds = new int[windowCount];
-        final boolean wholePartition = isSkipEnabledGroupRequired || rnd.nextInt(3) == 0;
+        final boolean isWholePartition = isSkipEnabledGroupRequired || rnd.nextInt(3) == 0;
         for (int w = 0; w < windowCount; w++) {
             // A key is a column or an expression over one or two of them, and which it is
             // decides how the group writes it: off the record's own columns, or through the
@@ -575,7 +575,7 @@ public class WindowMapFusionFuzzTest extends AbstractCairoTest {
             final String key = rnd.nextInt(4) == 0
                     ? KEY_EXPRESSIONS[rnd.nextInt(KEY_EXPRESSIONS.length)]
                     : KEY_COLUMNS[rnd.nextInt(KEY_COLUMNS.length)];
-            if (wholePartition) {
+            if (isWholePartition) {
                 frameKinds[w] = FRAME_WHOLE_PARTITION;
                 specs[w] = "partition by " + key;
                 continue;

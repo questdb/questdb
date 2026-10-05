@@ -178,9 +178,9 @@ public class LiveViewRefreshRetryBackoffTest extends AbstractLiveViewTest {
                 // At the deadline the fallback scan re-drives the view, with no notification left.
                 fault.disarm();
                 setCurrentMicros(notBeforeUs);
-                final boolean didWork0 = job0.run();
-                final boolean didWork1 = job1.run();
-                Assert.assertTrue("the owning worker's scan must re-drive the view at its deadline", didWork0 || didWork1);
+                final boolean hasDoneWork0 = job0.run();
+                final boolean hasDoneWork1 = job1.run();
+                Assert.assertTrue("the owning worker's scan must re-drive the view at its deadline", hasDoneWork0 || hasDoneWork1);
                 Assert.assertEquals(
                         "the scan must drive the view as far as the held-back notification asked",
                         baseSeqTxn,
@@ -959,13 +959,13 @@ public class LiveViewRefreshRetryBackoffTest extends AbstractLiveViewTest {
         }
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         final long processedBefore = instance.getLastProcessedSeqTxn();
-        final boolean didWork = job.run();
+        final boolean hasDoneWork = job.run();
         if (faultSkip >= 0 && fault.hasFired()) {
             faultingTurnsUs.add(nowUs);
             return;
         }
         if (instance.getLastProcessedSeqTxn() == processedBefore) {
-            Assert.assertFalse("a view waiting out its backoff must not report work [nowUs=" + nowUs + ']', didWork);
+            Assert.assertFalse("a view waiting out its backoff must not report work [nowUs=" + nowUs + ']', hasDoneWork);
         }
     }
 }

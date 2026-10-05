@@ -221,7 +221,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     }
 
     /**
-     * As above, with {@code asRepairBaseline} asking for the restored root to be
+     * As above, with {@code isRepairBaseline} asking for the restored root to be
      * adopted as the runtime's incremental baseline even though it is not the
      * generation's head.
      * <p>
@@ -244,7 +244,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             long expectedDefinitionTxn,
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
-            boolean asRepairBaseline
+            boolean isRepairBaseline
     ) {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
@@ -256,7 +256,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                     functions,
                     anchorWindow,
                     Numbers.LONG_NULL,
-                    asRepairBaseline
+                    isRepairBaseline
             );
         }
     }
@@ -664,7 +664,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
             long corruptCeilingMaxTs,
-            boolean asRepairBaseline
+            boolean isRepairBaseline
     ) {
         final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
         if (!timelineReader.findExact(pin.getTimelineRootRef(), maxTimestamp, checkpointId, entry)) {
@@ -688,7 +688,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         // freeze builds on, and nothing else may read that as a licence.
         final LiveViewCheckpointTimelineEntry headEntry = new LiveViewCheckpointTimelineEntry();
         final long baselineGeneration;
-        if (asRepairBaseline) {
+        if (isRepairBaseline) {
             baselineGeneration = LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION;
         } else {
             baselineGeneration = timelineReader.last(pin.getTimelineRootRef(), headEntry)

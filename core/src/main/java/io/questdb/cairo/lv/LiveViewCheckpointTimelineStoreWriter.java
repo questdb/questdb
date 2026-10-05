@@ -265,7 +265,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     // per checkpoint directory, waiting for the next seal of that view to carry
     // them out of the tree. A view whose seal is skipped keeps its proposal.
     private final LiveViewCheckpointLifecycleState lifecycleState;
-    private final boolean ownsLifecycleState;
+    private final boolean isLifecycleStateOwner;
     private final LiveViewCheckpointRingSeal ringSeal;
     private final RetirementQueueSeedVisitor retirementQueueSeedVisitor = new RetirementQueueSeedVisitor();
     private final RedirectPartitionVisitor redirectPartitionVisitor = new RedirectPartitionVisitor();
@@ -293,11 +293,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private LiveViewCheckpointTimelineStoreWriter(
             @NotNull CairoConfiguration configuration,
             @NotNull LiveViewCheckpointLifecycleState lifecycleState,
-            boolean ownsLifecycleState
+            boolean isLifecycleStateOwner
     ) {
         this.configuration = configuration;
         this.lifecycleState = lifecycleState;
-        this.ownsLifecycleState = ownsLifecycleState;
+        this.isLifecycleStateOwner = isLifecycleStateOwner;
         this.compactionScratch = new LiveViewCheckpointCompactionScratch(configuration);
         this.identityCheckMetaStore = new LiveViewCheckpointMetaStore(configuration);
         this.ringSeal = new LiveViewCheckpointRingSeal(configuration, null);
@@ -506,7 +506,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                      totals only. {@link RepairCapture#close()} frees the
      *                      scratch and detaches the tracker on the publish and
      *                      the discard path alike
-     * @param chained       true to freeze and publish the boundaries as a chain: each
+     * @param isChained     true to freeze and publish the boundaries as a chain: each
      *                      one imaging only the keys the replay touched since the one
      *                      below it, and each one's root seeded from that one's new
      *                      root rather than from its own pre-repair root. It is what
@@ -522,9 +522,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             @Transient @NotNull Path checkpointsDir,
             @Transient @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
             @Nullable MemoryTracker memoryTracker,
-            boolean chained
+            boolean isChained
     ) {
-        if (chained && outputKeys != null) {
+        if (isChained && outputKeys != null) {
             // A key-domain repair leaves every key outside Q to the old root, which is
             // the one thing a chain cannot do: its boundaries are seeded from each
             // other rather than from the roots they replace, so an unimaged key would
@@ -551,7 +551,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         superblock.timelineRootRef,
                         superblock.rowPositionDeltaRootRef,
                         superblock.segmentDirectoryRootRef,
-                        chained,
+                        isChained,
                         scratch
                 );
             } catch (Throwable th) {
@@ -604,7 +604,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         Misc.freeObjList(repairScratchPool);
         Misc.free(ringSeal);
         partitionMapObjectPool.clear();
-        if (ownsLifecycleState) {
+        if (isLifecycleStateOwner) {
             lifecycleState.clear();
         }
     }
@@ -1720,7 +1720,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             );
             if (!lifecycleState.isOrphanScanCompleted(lifecycleIdentity)
                     || lifecycleState.isOrphanScanNeeded(lifecycleIdentity)
-                    || purge.requiresPhysicalOrphanScan()
+                    || purge.isPhysicalOrphanScanRequired()
                     || sweepsSinceScan >= ORPHAN_SAFETY_SCAN_INTERVAL) {
                 final LiveViewCheckpointLifecycle.CleanupStats orphans =
                         LiveViewCheckpointLifecycle.purgeUncataloguedSegments(
@@ -2371,16 +2371,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         existing.clear();
         seed.clear();
         state.clear();
-        final boolean queueValid = LiveViewCheckpointRetirementQueue.read(
+        final boolean isQueueValid = LiveViewCheckpointRetirementQueue.read(
                 configuration,
                 shells.retirementQueueScratch,
                 checkpointsDir,
                 existing,
                 state
         );
-        final boolean advancesExisting = queueValid && state.generation + 1 == generation;
-        final boolean hasPriorOrphanRisk = queueValid && state.generation == generation;
-        if (queueValid && state.generation == generation) {
+        final boolean isAdvancingExisting = isQueueValid && state.generation + 1 == generation;
+        final boolean hasPriorOrphanRisk = isQueueValid && state.generation == generation;
+        if (isQueueValid && state.generation == generation) {
             // A queue for the generation we are only now attempting can only
             // have been staged by an earlier publication which failed before its
             // superblock commit. Preserve that durable orphan-recovery signal
@@ -2388,7 +2388,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             lifecycleState.markOrphanRisk(lifecycleIdentity);
         }
         final long liveDataSegmentCount;
-        if (advancesExisting) {
+        if (isAdvancingExisting) {
             liveDataSegmentCount = checkedAdd(state.liveDataSegmentCount, directoryWriter.getLiveDataSegmentDelta());
             if (liveDataSegmentCount < 0) {
                 throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
@@ -2419,7 +2419,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 shells.retirementQueueScratch,
                 checkpointsDir,
                 directoryWriter.getRetirementTransitions(),
-                advancesExisting ? existing : seed,
+                isAdvancingExisting ? existing : seed,
                 generation,
                 liveDataSegmentCount
         );
@@ -4312,13 +4312,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * head's {@code maxTimestamp}: every row the cycle produced shared that timestamp,
      * so the group the head already covers grew rather than a new one opening above it.
      * <p>
-     * A normal root may only extend the timeline strictly upwards - a restore reads a
-     * root's {@code maxTimestamp} as "everything at or below this is covered" and
-     * replays from one tick above it, and the seal's chunk sharing rests on the batch
+     * A normal root may only extend the timeline strictly upwards - a repair's resume
+     * reads a root's {@code maxTimestamp} as "everything at or below this is covered"
+     * and replays from one tick above it, and the seal's chunk sharing rests on the batch
      * sitting strictly above the head - so there is nothing to append. This is ordinary
      * data rather than a fault: a designated timestamp that spans two refresh cycles
      * produces it. The caller skips the seal and leaves its cadence counters open, so
      * the next cycle to reach a higher timestamp seals both cycles' rows at once.
+     * <p>
+     * Until then no root holds the rows the group gained after the seal, so neither a
+     * resume nor a restore may read the head as covering them. A resume re-anchors below
+     * a root whose group grew. A restore replays the base transactions above the root's
+     * base seqTxn from the root's own {@code maxTimestamp} rather than from one tick
+     * above it, which reads those rows back from the base.
      * <p>
      * A candidate strictly <em>below</em> the head is a different matter - it means a
      * cycle emitted output under a sealed boundary without retiring it - and keeps
@@ -4928,13 +4934,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LiveViewCheckpointPageRef timelineRootRef,
                 LiveViewCheckpointPageRef rowPositionDeltaRootRef,
                 LiveViewCheckpointPageRef segmentDirectoryRootRef,
-                boolean chained,
+                boolean isChained,
                 FreezeScratch scratch
         ) {
             this.checkpointsDir.of(checkpointsDir);
             this.dataSegmentId = dataSegmentId;
             this.generation = generation;
-            this.isChained = chained;
+            this.isChained = isChained;
             this.scratch = scratch;
             copy(timelineRootRef, this.timelineRootRef);
             copy(rowPositionDeltaRootRef, this.rowPositionDeltaRootRef);

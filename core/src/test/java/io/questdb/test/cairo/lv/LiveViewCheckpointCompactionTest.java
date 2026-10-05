@@ -1102,10 +1102,10 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
         }
     }
 
-    private static int[] visitorIdentities(LiveViewCheckpointTimelineStoreWriter writer, boolean compaction) {
+    private static int[] visitorIdentities(LiveViewCheckpointTimelineStoreWriter writer, boolean isCompaction) {
         final int[] identities = new int[3];
         for (int i = 0; i < identities.length; i++) {
-            identities[i] = compaction
+            identities[i] = isCompaction
                     ? writer.getCompactionVisitorShellIdentityForTest(i)
                     : writer.getRootBuilderVisitorShellIdentityForTest(i);
         }

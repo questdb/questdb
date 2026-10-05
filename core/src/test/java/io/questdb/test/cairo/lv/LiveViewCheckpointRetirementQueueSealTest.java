@@ -273,10 +273,10 @@ public class LiveViewCheckpointRetirementQueueSealTest extends AbstractCairoTest
      */
     private static void assertContainsEveryEntry(long[] before, long[] after) {
         for (int i = 0; i < before.length; i += ENTRY_STRIDE) {
-            boolean found = false;
+            boolean isFound = false;
             for (int j = 0; j < after.length; j += ENTRY_STRIDE) {
                 if (after[j] == before[i]) {
-                    found = true;
+                    isFound = true;
                     Assert.assertEquals(
                             "the merged queue changed the file length of segment id " + before[i],
                             before[i + 1],
@@ -295,7 +295,7 @@ public class LiveViewCheckpointRetirementQueueSealTest extends AbstractCairoTest
                     break;
                 }
             }
-            Assert.assertTrue("the merged queue dropped segment id " + before[i], found);
+            Assert.assertTrue("the merged queue dropped segment id " + before[i], isFound);
         }
     }
 

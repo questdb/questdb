@@ -167,16 +167,20 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     private final LiveViewCheckpointOutputKeyDomain outputKeys = new LiveViewCheckpointOutputKeyDomain();
     // Frames one of Q's values in place for the view's symbol map to resolve.
     private final DirectString storedKeyValue = new DirectString();
-    private boolean armed;
     private int baseKeyColumnIndex = -1;
     private RecordToRowCopier copier;
     private SqlExecutionContext executionContext;
     private boolean hasNullKey;
     private boolean hasPendingRow;
     private LiveViewInstance instance;
+    private boolean isArmed;
     // Whether the row the cursor holds is one of a recomputed key, which only a sparse
     // attempt stops on: it has to be paired before it is counted.
     private boolean isPendingRowSuperseded;
+    // Whether this repair is attempting a sparse publication, which is what decides
+    // whether the merge writes the rows it accounts for. Retracted by materializeMerge,
+    // which is the abandoning half of the fallback.
+    private boolean isSparse;
     private long mergedMaxTs = Numbers.LONG_NULL;
     private long mergedMinTs = Numbers.LONG_NULL;
     private long mergedRows;
@@ -193,10 +197,6 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     // once per key through the value it names. The replay reads Q's rows alone, so it holds
     // no more entries than Q and shares the retention above.
     private IntIntHashMap replayedToStoredKeys = new IntIntHashMap();
-    // Whether this repair is attempting a sparse publication, which is what decides
-    // whether the merge writes the rows it accounts for. Retracted by materializeMerge,
-    // which is the abandoning half of the fallback.
-    private boolean sparse;
     // Stored rows in the range whose key the replay recomputes. A replacement deletes
     // them outright; a sparse upsert replaces each with the block row carrying its pair,
     // which is why they are the rows the publication's row arithmetic turns on.
@@ -305,7 +305,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             // the view's map after the replay has begun.
             addOutputKey(key);
         }
-        armed = true;
+        isArmed = true;
         return true;
     }
 
@@ -325,7 +325,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
      *                         replay would have emitted itself, so it has to move it too,
      *                         sparse publication or not: the seal that follows must not be
      *                         able to tell the two publications apart
-     * @param sparse           whether this repair is attempting a sparse publication, in
+     * @param isSparse         whether this repair is attempting a sparse publication, in
      *                         which case the merge accounts for every stored row it walks
      *                         and writes none of them
      */
@@ -334,13 +334,13 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             @NotNull WalWriter walWriter,
             @NotNull SqlExecutionContext executionContext,
             @NotNull LiveViewInstance instance,
-            boolean sparse
+            boolean isSparse
     ) {
         this.copier = copier;
         this.walWriter = walWriter;
         this.executionContext = executionContext;
         this.instance = instance;
-        this.sparse = sparse;
+        this.isSparse = isSparse;
     }
 
     /**
@@ -361,7 +361,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             int storedTimestampIndex,
             int storedKeyColumnIndex
     ) {
-        if (!armed) {
+        if (!isArmed) {
             throw CairoException.critical(0).put("live view keyed replay merge opened without a key domain");
         }
         if (!(storedRowCursor.getSymbolTable(storedKeyColumnIndex) instanceof StaticSymbolTable storedSymbols)) {
@@ -424,7 +424,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
 
     public void clear() {
         releaseMergeState();
-        armed = false;
+        isArmed = false;
         hasNullKey = false;
         baseKeyColumnIndex = -1;
         baseSymbolKeys.clear();
@@ -459,7 +459,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         mergedMinTs = Numbers.LONG_NULL;
         mergedMaxTs = Numbers.LONG_NULL;
         supersededRows = 0;
-        sparse = false;
+        isSparse = false;
     }
 
     @Override
@@ -592,7 +592,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     }
 
     public boolean isArmed() {
-        return armed;
+        return isArmed;
     }
 
     /**
@@ -600,7 +600,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
      * makes {@link #getMergedRows()} a count of rows nothing wrote
      */
     public boolean isSparse() {
-        return sparse;
+        return isSparse;
     }
 
     /**
@@ -622,7 +622,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
      * @return false when there was no sparse attempt to abandon
      */
     public boolean materializeMerge() {
-        if (!sparse) {
+        if (!isSparse) {
             return false;
         }
         if (storedRowCursor == null || walWriter == null) {
@@ -632,7 +632,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         final long accountedRows = mergedRows;
         final long accountedSupersededRows = supersededRows;
         storedRowCursor.toTop();
-        sparse = false;
+        isSparse = false;
         hasPendingRow = false;
         isPendingRowSuperseded = false;
         pendingRowTs = Numbers.LONG_NULL;
@@ -667,7 +667,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
      *                        accounted one no longer describes
      */
     public boolean materializeUnaccountedMerge() {
-        if (!sparse) {
+        if (!isSparse) {
             return false;
         }
         if (storedRowCursor == null || walWriter == null) {
@@ -680,7 +680,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
                     .put(" [mergedRows=").put(mergedRows)
                     .put(", supersededRows=").put(supersededRows).put(']');
         }
-        sparse = false;
+        isSparse = false;
         drainRemaining();
         return true;
     }
@@ -769,7 +769,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
                 // sparse publication, upserted over by exactly the block row carrying its
                 // pair, which is what makes the count the publication's row arithmetic.
                 supersededRows++;
-                if (!sparse) {
+                if (!isSparse) {
                     continue;
                 }
                 // A sparse attempt stops on it instead of skipping ahead: the pair it
@@ -796,7 +796,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         // publication leaves the row where it stands rather than rewriting it, which is a
         // difference in what the block carries and not in what the segment then holds.
         instance.setLatestSeenTs(pendingRowTs);
-        if (!sparse) {
+        if (!isSparse) {
             final TableWriter.Row row = walWriter.newRow(pendingRowTs);
             copier.copy(executionContext, storedRecord, row);
             row.append();

@@ -75,7 +75,32 @@ public final class LiveViewCheckpointOpenSegmentCost {
     }
 
     /**
-     * The largest keyed cost, in keyed cost rows, at which {@link #shouldOverrideWholeRange}
+     * Whether restore setup makes the keyed route materially cheaper even though the
+     * posting-row model preferred the whole range. Static eligibility is intentionally not
+     * part of this method; the caller applies every correctness and configuration gate after
+     * pricing, just as it does for the row verdict.
+     */
+    public boolean isWholeRangeOverrideNeeded(
+            boolean isRuntimeAnchorReusable,
+            long selectedRootLogicalBytes,
+            long wholeRangeRows,
+            long keyedCostRows,
+            long keyCount
+    ) {
+        lastWholeEstimateNanos = estimateWhole(
+                isRuntimeAnchorReusable,
+                selectedRootLogicalBytes,
+                wholeRangeRows
+        );
+        lastKeyedEstimateNanos = estimateKeyed(keyedCostRows, keyCount);
+        if (isRuntimeAnchorReusable || selectedRootLogicalBytes <= 0 || keyCount <= 0) {
+            return false;
+        }
+        return isKeyedMateriallyCheaper(lastKeyedEstimateNanos, lastWholeEstimateNanos);
+    }
+
+    /**
+     * The largest keyed cost, in keyed cost rows, at which {@link #isWholeRangeOverrideNeeded}
      * overrides the row verdict for these inputs, or {@link #NO_OVERRIDING_KEYED_COST} when
      * no cost does: a reusable runtime or a root of no bytes leaves no restore to save, a
      * key count below one has nothing to follow, and a key-state term can reach the whole
@@ -97,15 +122,15 @@ public final class LiveViewCheckpointOpenSegmentCost {
      * uncounted postings hold.
      */
     public long maxOverridingKeyedCostRows(
-            boolean runtimeAnchorReusable,
+            boolean isRuntimeAnchorReusable,
             long selectedRootLogicalBytes,
             long wholeRangeRows,
             long keyCount
     ) {
-        if (runtimeAnchorReusable || selectedRootLogicalBytes <= 0 || keyCount <= 0) {
+        if (isRuntimeAnchorReusable || selectedRootLogicalBytes <= 0 || keyCount <= 0) {
             return NO_OVERRIDING_KEYED_COST;
         }
-        final long wholeEstimateNanos = estimateWhole(runtimeAnchorReusable, selectedRootLogicalBytes, wholeRangeRows);
+        final long wholeEstimateNanos = estimateWhole(isRuntimeAnchorReusable, selectedRootLogicalBytes, wholeRangeRows);
         if (!isKeyedMateriallyCheaper(estimateKeyed(0, keyCount), wholeEstimateNanos)) {
             return NO_OVERRIDING_KEYED_COST;
         }
@@ -167,14 +192,14 @@ public final class LiveViewCheckpointOpenSegmentCost {
      * both disappear when the runtime root is reusable, and both scale with retained state.
      */
     public void recordWhole(
-            boolean runtimeAnchorReusable,
+            boolean isRuntimeAnchorReusable,
             long scanCommitApplyNanos,
             long wholeRangeRows,
             long mapClearAndRestoreNanos,
             long selectedRootLogicalBytes
     ) {
         if (scanCommitApplyNanos > 0 && wholeRangeRows > 0) {
-            if (runtimeAnchorReusable) {
+            if (isRuntimeAnchorReusable) {
                 warmWholeScanNanos = foldEma(warmWholeScanNanos, scanCommitApplyNanos);
                 warmWholeScanRows = foldEma(warmWholeScanRows, wholeRangeRows);
             } else {
@@ -182,35 +207,10 @@ public final class LiveViewCheckpointOpenSegmentCost {
                 coldWholeScanRows = foldEma(coldWholeScanRows, wholeRangeRows);
             }
         }
-        if (!runtimeAnchorReusable && mapClearAndRestoreNanos > 0 && selectedRootLogicalBytes > 0) {
+        if (!isRuntimeAnchorReusable && mapClearAndRestoreNanos > 0 && selectedRootLogicalBytes > 0) {
             restoreNanos = foldEma(restoreNanos, mapClearAndRestoreNanos);
             restoreBytes = foldEma(restoreBytes, selectedRootLogicalBytes);
         }
-    }
-
-    /**
-     * Whether restore setup makes the keyed route materially cheaper even though the
-     * posting-row model preferred the whole range. Static eligibility is intentionally not
-     * part of this method; the caller applies every correctness and configuration gate after
-     * pricing, just as it does for the row verdict.
-     */
-    public boolean shouldOverrideWholeRange(
-            boolean runtimeAnchorReusable,
-            long selectedRootLogicalBytes,
-            long wholeRangeRows,
-            long keyedCostRows,
-            long keyCount
-    ) {
-        lastWholeEstimateNanos = estimateWhole(
-                runtimeAnchorReusable,
-                selectedRootLogicalBytes,
-                wholeRangeRows
-        );
-        lastKeyedEstimateNanos = estimateKeyed(keyedCostRows, keyCount);
-        if (runtimeAnchorReusable || selectedRootLogicalBytes <= 0 || keyCount <= 0) {
-            return false;
-        }
-        return isKeyedMateriallyCheaper(lastKeyedEstimateNanos, lastWholeEstimateNanos);
     }
 
     @TestOnly
@@ -248,13 +248,13 @@ public final class LiveViewCheckpointOpenSegmentCost {
         return saturatedAdd(scan, state);
     }
 
-    private long estimateWhole(boolean runtimeAnchorReusable, long logicalBytes, long rows) {
-        final long sampleNanos = runtimeAnchorReusable ? warmWholeScanNanos : coldWholeScanNanos;
-        final long sampleRows = runtimeAnchorReusable ? warmWholeScanRows : coldWholeScanRows;
+    private long estimateWhole(boolean isRuntimeAnchorReusable, long logicalBytes, long rows) {
+        final long sampleNanos = isRuntimeAnchorReusable ? warmWholeScanNanos : coldWholeScanNanos;
+        final long sampleRows = isRuntimeAnchorReusable ? warmWholeScanRows : coldWholeScanRows;
         final long scan = sampleNanos > 0 && sampleRows > 0
                 ? scale(sampleNanos, sampleRows, rows)
                 : saturatedMultiply(rows, COLD_WHOLE_NANOS_PER_ROW);
-        if (runtimeAnchorReusable) {
+        if (isRuntimeAnchorReusable) {
             return scan;
         }
         final long restore = restoreNanos > 0 && restoreBytes > 0
@@ -281,7 +281,7 @@ public final class LiveViewCheckpointOpenSegmentCost {
     }
 
     /**
-     * The override's comparison, shared by {@link #shouldOverrideWholeRange} and the
+     * The override's comparison, shared by {@link #isWholeRangeOverrideNeeded} and the
      * break-even search so the two cannot round apart.
      */
     private static boolean isKeyedMateriallyCheaper(long keyedEstimateNanos, long wholeEstimateNanos) {

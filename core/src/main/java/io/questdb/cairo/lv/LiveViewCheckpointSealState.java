@@ -56,7 +56,7 @@ public final class LiveViewCheckpointSealState implements QuietCloseable {
     private Map dirtySet;
     private boolean hasDirtyTracking;
     private boolean hasEvictionsRecorded;
-    private boolean held;
+    private boolean isHeld;
     private long logicalStateBytes;
 
     /**
@@ -67,7 +67,7 @@ public final class LiveViewCheckpointSealState implements QuietCloseable {
         hasDirtyTracking = false;
         hasEvictionsRecorded = false;
         logicalStateBytes = 0;
-        held = false;
+        isHeld = false;
     }
 
     @Override
@@ -103,7 +103,7 @@ public final class LiveViewCheckpointSealState implements QuietCloseable {
      * @return true once a detach has filled this slot and no attach has taken it back
      */
     public boolean isHeld() {
-        return held;
+        return isHeld;
     }
 
     /**
@@ -115,7 +115,7 @@ public final class LiveViewCheckpointSealState implements QuietCloseable {
         this.hasDirtyTracking = hasDirtyTracking;
         this.hasEvictionsRecorded = hasEvictionsRecorded;
         this.logicalStateBytes = logicalStateBytes;
-        this.held = true;
+        this.isHeld = true;
     }
 
     /**
@@ -126,7 +126,7 @@ public final class LiveViewCheckpointSealState implements QuietCloseable {
     public @Nullable Map takeDirtySet() {
         final Map taken = dirtySet;
         dirtySet = null;
-        held = false;
+        isHeld = false;
         return taken;
     }
 }

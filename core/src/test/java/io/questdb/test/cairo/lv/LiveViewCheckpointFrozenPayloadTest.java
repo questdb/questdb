@@ -95,12 +95,6 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
     private static final int GROUPED_SUMS = 16;
     private static final long LIFECYCLE_IDENTITY = 601;
     private static final int MEASURED_SEALS = 8;
-    /**
-     * Per-seal ceiling. The steady state is a few hundred bytes: the freeze walk's per-call
-     * member lists and the publication's shells, none of which scale with the key set. A
-     * payload imaged into a heap array per key costs this many bytes by the thirtieth key.
-     */
-    private static final long PER_SEAL_ALLOCATION_LIMIT_BYTES = 6_144;
     // The payload arena's page, which it grows by whole pages.
     private static final long PAYLOAD_ARENA_PAGE_BYTES = 4_096;
     // Keys whose records fill a page count no doubling from one page reaches, so an arena
@@ -222,8 +216,8 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
     @Test
     public void testAFusedSealJustInsideTheFrozenRetentionLimitStaysWarm() throws Exception {
         // A fused seal freezes one key and one payload per key, which the limit counts
-        // together, so this key set sits just inside it: its holders and handle lists stay
-        // pooled, and a warm seal allocates nothing that scales with its keys.
+        // together, so the wider key set sits just inside it: its holders and handle lists
+        // stay pooled, and a warm seal allocates nothing that scales with its keys.
         assertMemoryLeak(() -> {
             createView(1, false);
             try (
@@ -231,14 +225,12 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
                     TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()
             ) {
                 driveSeedToCompletion(job, "lv");
+                addKeys(job, 1_024, 1);
+                final long narrow = measureSeal(scope);
                 final int keys = LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES / 2 - 1_024;
                 addKeys(job, keys, 1);
-                final long allocated = measureSeal(scope);
-                Assert.assertTrue(
-                        "a warm complete seal of " + keys + " keys inside the frozen retention limit allocated "
-                                + allocated + " bytes on the Java heap",
-                        allocated < PER_SEAL_ALLOCATION_LIMIT_BYTES
-                );
+                final long wide = measureSeal(scope);
+                assertSealAllocation(1_024, narrow, keys, wide);
                 assertNoRefreshFaults("lv");
             }
         });
@@ -528,16 +520,15 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
         });
     }
 
+    /**
+     * Compares what one warm complete seal allocated at two key counts. A seal's steady state
+     * does not scale with its keys, but it is no fixed number of bytes either: every file the
+     * seal opens that the file descriptor cache does not already hold costs a copy of its
+     * path, so the steady state grows with the length of the test's temp root. The difference
+     * between the two key counts cancels that out, and a single object allocated per key
+     * moves it past the bound over the thousands of keys between the two counts.
+     */
     private static void assertSealAllocation(int narrowKeys, long narrow, int wideKeys, long wide) {
-        Assert.assertTrue(
-                "a warm complete seal of " + narrowKeys + " keys allocated " + narrow + " bytes on the Java heap",
-                narrow < PER_SEAL_ALLOCATION_LIMIT_BYTES
-        );
-        Assert.assertTrue(
-                "a warm complete seal of " + wideKeys + " keys allocated " + wide + " bytes on the Java heap;"
-                        + " a payload must not be imaged into a heap array",
-                wide < PER_SEAL_ALLOCATION_LIMIT_BYTES
-        );
         Assert.assertTrue(
                 "a seal of " + wideKeys + " keys allocated " + wide + " bytes against " + narrow + " at "
                         + narrowKeys + " keys; nothing a seal puts on the heap may scale with its keys",
@@ -687,16 +678,16 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
 
     /**
      * @param sums       how many sums the view projects
-     * @param withCounts whether it projects count(*) and count(account_id) beside them
+     * @param hasCounts whether it projects count(*) and count(account_id) beside them
      */
-    private void createView(int sums, boolean withCounts) throws Exception {
+    private void createView(int sums, boolean hasCounts) throws Exception {
         final StringBuilder columns = new StringBuilder();
         final StringBuilder projections = new StringBuilder();
         for (int i = 1; i <= sums; i++) {
             columns.append(", q").append(i).append(" DOUBLE");
             projections.append(", sum(q").append(i).append(") OVER w AS s").append(i);
         }
-        if (withCounts) {
+        if (hasCounts) {
             projections.append(", count(*) OVER w AS n, count(account_id) OVER w AS c");
         }
         execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL CAPACITY " + SYMBOL_CAPACITY + columns + ") "

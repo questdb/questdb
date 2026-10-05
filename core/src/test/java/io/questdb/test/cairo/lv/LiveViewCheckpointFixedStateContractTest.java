@@ -633,15 +633,15 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
     private static final class FixedWidthStub extends BaseWindowFunction {
         private final int declaredLength;
         private final int emittedLength;
-        private final boolean ringShaped;
-        private final boolean stateful;
+        private final boolean isRingShaped;
+        private final boolean isStateful;
 
-        private FixedWidthStub(int declaredLength, int emittedLength, boolean ringShaped, boolean stateful) {
+        private FixedWidthStub(int declaredLength, int emittedLength, boolean isRingShaped, boolean isStateful) {
             super(null);
             this.declaredLength = declaredLength;
             this.emittedLength = emittedLength;
-            this.ringShaped = ringShaped;
-            this.stateful = stateful;
+            this.isRingShaped = isRingShaped;
+            this.isStateful = isStateful;
             setCheckpointCompilerMetadata(
                     new LiveViewCheckpointFunctionIdentity(
                             "w0",
@@ -702,7 +702,7 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
 
         @Override
         public boolean isCheckpointStateless() {
-            return !stateful;
+            return !isStateful;
         }
 
         @Override
@@ -711,12 +711,12 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
 
         @Override
         public boolean supportsCheckpointRingState() {
-            return ringShaped;
+            return isRingShaped;
         }
 
         @Override
         public boolean supportsCheckpointState() {
-            return stateful;
+            return isStateful;
         }
     }
 }

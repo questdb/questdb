@@ -1896,7 +1896,7 @@ public class LiveViewNoGcSourceHygieneTest {
             }
             int openBrace = skipWhitespace(code, closeParenthesis + 1);
             if (openBrace >= code.length() || code.charAt(openBrace) != '{') {
-                if (!startsWithWord(code, openBrace, "throws")) {
+                if (!isWordAt(code, openBrace, "throws")) {
                     continue;
                 }
                 openBrace = code.indexOf('{', openBrace);
@@ -2008,7 +2008,7 @@ public class LiveViewNoGcSourceHygieneTest {
         return result;
     }
 
-    private static boolean startsWithWord(String code, int offset, String word) {
+    private static boolean isWordAt(String code, int offset, String word) {
         final int end = offset + word.length();
         return offset > -1
                 && end <= code.length()
@@ -2117,7 +2117,7 @@ public class LiveViewNoGcSourceHygieneTest {
      */
     private static void putVarSite(String code, int siteStart, String name, int offset, TreeMap<Integer, String> ordered) {
         final int start = skipWhitespace(code, offset);
-        if (!startsWithWord(code, start, "new")) {
+        if (!isWordAt(code, start, "new")) {
             return;
         }
         int end = skipInitializer(code, start);
@@ -2136,7 +2136,7 @@ public class LiveViewNoGcSourceHygieneTest {
      * null when that span is not a byte array creation alone
      */
     private static String findByteArrayCreationType(String code, int offset, int end) {
-        if (!startsWithWord(code, offset, "byte")) {
+        if (!isWordAt(code, offset, "byte")) {
             return null;
         }
         final StringBuilder type = new StringBuilder("byte");
@@ -2168,7 +2168,7 @@ public class LiveViewNoGcSourceHygieneTest {
         while (before > -1 && Character.isWhitespace(code.charAt(before))) {
             before--;
         }
-        if (before > 1 && startsWithWord(code, before - 2, "new")
+        if (before > 1 && isWordAt(code, before - 2, "new")
                 && (before < 3 || !Character.isJavaIdentifierPart(code.charAt(before - 3)))) {
             ordered.put(start, "new byte[]");
             return;

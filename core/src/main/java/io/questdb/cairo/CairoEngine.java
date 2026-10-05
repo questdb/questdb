@@ -239,7 +239,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private static volatile Runnable roleSwitchMintObserver;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
-    private final AtomicLong nextLiveViewLifecycleIdentity = new AtomicLong(1);
     private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
@@ -253,6 +252,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
+    private final AtomicLong nextLiveViewLifecycleIdentity = new AtomicLong(1);
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
@@ -2302,23 +2302,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return liveViewCheckpointLifecycleState;
     }
 
-    /**
-     * Issues the next process-local live view lifecycle identity. Every registration that
-     * builds a {@link LiveViewInstance} must take its identity from here, so that
-     * {@link LiveViewCheckpointLifecycleState} binds one generation per registration and
-     * never collapses two views onto a shared slot. Public because registrations also
-     * happen outside this class - a replica registers a replicated view from its
-     * downloaded metadata - and those must draw on this same counter rather than invent
-     * an identity of their own.
-     */
-    public long nextLiveViewLifecycleIdentity() {
-        final long identity = nextLiveViewLifecycleIdentity.getAndIncrement();
-        if (identity <= 0) {
-            throw CairoException.critical(0).put("live view lifecycle identity space exhausted");
-        }
-        return identity;
-    }
-
     public LiveViewRegistry getLiveViewRegistry() {
         return liveViewRegistry;
     }
@@ -3283,6 +3266,23 @@ public class CairoEngine implements Closeable, WriterSource {
      * Mounts a retained protocol-owned execution for another executable segment.
      */
     public void mountSqlExecution(long ownerId, SqlExecutionContext executionContext) {
+    }
+
+    /**
+     * Issues the next process-local live view lifecycle identity. Every registration that
+     * builds a {@link LiveViewInstance} must take its identity from here, so that
+     * {@link LiveViewCheckpointLifecycleState} binds one generation per registration and
+     * never collapses two views onto a shared slot. Public because registrations also
+     * happen outside this class - a replica registers a replicated view from its
+     * downloaded metadata - and those must draw on this same counter rather than invent
+     * an identity of their own.
+     */
+    public long nextLiveViewLifecycleIdentity() {
+        final long identity = nextLiveViewLifecycleIdentity.getAndIncrement();
+        if (identity <= 0) {
+            throw CairoException.critical(0).put("live view lifecycle identity space exhausted");
+        }
+        return identity;
     }
 
     public boolean notifyDropped(TableToken tableToken) {

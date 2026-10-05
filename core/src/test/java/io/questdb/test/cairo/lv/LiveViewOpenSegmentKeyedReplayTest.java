@@ -352,7 +352,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     @Test
     public void testAColdKeyedHeadMissWhosePrologueCleanupFaultsReleasesItsRepairSession() throws Exception {
         // The head-miss executor's third cleanup chain, and the only one that runs when the replay
-        // never started: the prologue's own finally, gated on replayEntered. It closes the stored-row
+        // never started: the prologue's own finally, gated on isReplayEntered. It closes the stored-row
         // cursor's pooled reader, drops the keyed merge state and frees the staged capture before it
         // ends the repair, and a throw from any of those used to take the release with it.
         //
@@ -1369,7 +1369,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // "not cheaper" whatever the uncounted keys and partitions hold. The restore-aware
         // override does not: it prices the keyed side against an elapsed model whose other
         // term is a state restore, and wholeRangeRows bounds only the whole side. Its whole
-        // population is !rowCheaper, which is exactly where a stopped count lands, so without
+        // population is !isRowCheaper, which is exactly where a stopped count lands, so without
         // a guard the route reads a floor as a total precisely when the real posting count is
         // furthest above it.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);

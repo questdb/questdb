@@ -163,7 +163,7 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
                     // cannot move the key under the address.
                     final long keyAddress = outputKeys.getKeyAddress(i);
                     final int keyLength = outputKeys.getKeyLength(i);
-                    if (!mutations.containsSortedKey(keyAddress, keyLength)) {
+                    if (!mutations.hasSortedKey(keyAddress, keyLength)) {
                         mutations.remove(keyAddress, keyLength);
                     }
                 }
@@ -473,7 +473,7 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
             // removal appends to, so the append cannot move it.
             final long keyAddress = entry.getKeyAddress();
             final int keyLength = entry.getKeyLength();
-            if (!mutations.containsSortedKey(keyAddress, keyLength)) {
+            if (!mutations.hasSortedKey(keyAddress, keyLength)) {
                 mutations.remove(keyAddress, keyLength);
             }
         }

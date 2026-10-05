@@ -146,10 +146,10 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // Whether the caller asked for the residual's keys. A caller that did not gets the
     // whole-commit shortcut and the empty set below, which isResidualKeyDomainComplete
     // reports as incomplete rather than as an empty domain.
-    private boolean collectsResidualKeys;
+    private boolean isCollectingResidualKeys;
     private boolean hasResidualNullKey;
-    private boolean residualKeyDomainOverflowed;
-    private boolean residualRowsSorted;
+    private boolean isResidualKeyDomainOverflowed;
+    private boolean isResidualRowSetSorted;
     // How many distinct keys one segment may collect before the collection stops being
     // worth its memory. Zero collects none, which is what a caller that cannot read the key
     // column asks for. This is not the configured budget's zero: the refresh job maps a
@@ -166,7 +166,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // by the first one after endClassification() or of() freed a table grown past
     // MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY.
     private DirectLongHashSet keyMembership;
-    private boolean overflowed;
+    private boolean isOverflowed;
     private long residualMaxTs;
     private long residualMinTs;
     // One WAL transaction's symbol integer -> the pinned reader's, so a key a transaction
@@ -199,13 +199,13 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             addResidualKey(key);
             // Only a complete domain reads the timestamps back, and an incomplete one never
             // completes again, so a row past the overflow costs the list nothing.
-            if (collectsResidualKeys && !residualKeyDomainOverflowed) {
+            if (isCollectingResidualKeys && !isResidualKeyDomainOverflowed) {
                 residualRowTimestamps.add(ts);
-                residualRowsSorted = false;
+                isResidualRowSetSorted = false;
             }
             return true;
         }
-        if (overflowed) {
+        if (isOverflowed) {
             return false;
         }
         if (ts < cachedSegmentStart || ts >= cachedSegmentEndExclusive) {
@@ -213,16 +213,16 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             final long end = anchorPlan.getSegmentEndExclusive(ts);
             if (start == Long.MIN_VALUE || end == Numbers.LONG_NULL || end > activeSegmentStart) {
                 // An open-below start is a refusal rather than a floor - the plan reports it
-                // for a row under a non-zero alignment origin and for a zone floor a
-                // transition makes non-monotone, and it comes with a finite end often
-                // enough that reading the end alone is not enough. Installed as a floor it
-                // would swallow every row below that end, however far back, and nest the
-                // segments those rows belong to inside it. No representable segment end is
-                // H = EOF, which no localized repair can stand on; an end above the active
-                // segment's start means the arithmetic does not agree with the runtime's own
-                // segmentation. In every case this row has no closed segment of its own, so
-                // the decomposition cannot describe it.
-                overflowed = true;
+                // for a row under a non-zero alignment origin or in the first aligned bucket
+                // above it, and for a zone floor a transition makes non-monotone, and it
+                // comes with a finite end often enough that reading the end alone is not
+                // enough. Installed as a floor it would swallow every row below that end,
+                // however far back, and nest the segments those rows belong to inside it. No
+                // representable segment end is H = EOF, which no localized repair can stand
+                // on; an end above the active segment's start means the arithmetic does not
+                // agree with the runtime's own segmentation. In every case this row has no
+                // closed segment of its own, so the decomposition cannot describe it.
+                isOverflowed = true;
                 return false;
             }
             cachedSegmentStart = start;
@@ -237,7 +237,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             return true;
         }
         if (segments.size() / STRIDE >= MAX_CLOSED_SEGMENTS) {
-            overflowed = true;
+            isOverflowed = true;
             return false;
         }
         final int base = insertAt(-index - 1, cachedSegmentStart, cachedSegmentEndExclusive, ts);
@@ -256,7 +256,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
         // carried are keys this change set never saw. A caller collecting the residual's
         // domain must walk those rows instead; one that takes the shortcut anyway gets an
         // incomplete domain rather than a domain short of the keys it skipped.
-        residualKeyDomainOverflowed = true;
+        isResidualKeyDomainOverflowed = true;
     }
 
     @Override
@@ -318,9 +318,9 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * semantics. Meaningful only when the residual key domain is complete.
      */
     public int getResidualRowCountAtOrBelow(long timestamp) {
-        if (!residualRowsSorted) {
+        if (!isResidualRowSetSorted) {
             residualRowTimestamps.sort();
-            residualRowsSorted = true;
+            isResidualRowSetSorted = true;
         }
         final int index = residualRowTimestamps.binarySearch(timestamp, Vect.BIN_SEARCH_SCAN_DOWN);
         return index >= 0 ? index + 1 : -index - 1;
@@ -364,7 +364,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * read every row above its anchor, which costs what it always did.
      */
     public boolean isResidualKeyDomainComplete() {
-        return collectsResidualKeys && !residualKeyDomainOverflowed;
+        return isCollectingResidualKeys && !isResidualKeyDomainOverflowed;
     }
 
     /**
@@ -453,7 +453,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * union range.
      */
     public boolean isOverflowed() {
-        return overflowed;
+        return isOverflowed;
     }
 
     /**
@@ -478,17 +478,17 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
 
     /**
      * As above, and also collects the keys the corrections at or above
-     * {@code activeSegmentStart} carry when {@code collectResidualKeys} holds.
+     * {@code activeSegmentStart} carry when {@code isResidualKeyCollectionRequested} holds.
      * <p>
      * A caller that asks for them owes the walk: {@link #addResidual}'s whole-commit
      * shortcut visits no row, so taking it leaves the domain incomplete rather than short.
      * A caller that does not ask keeps the shortcut and the resume reads every row above
      * its anchor, which is what every resume did before the keyed one existed.
      */
-    public void of(long activeSegmentStart, int maxKeysPerSegment, boolean collectResidualKeys) {
+    public void of(long activeSegmentStart, int maxKeysPerSegment, boolean isResidualKeyCollectionRequested) {
         this.activeSegmentStart = activeSegmentStart;
         this.maxKeysPerSegment = maxKeysPerSegment;
-        this.collectsResidualKeys = collectResidualKeys && maxKeysPerSegment > 0;
+        this.isCollectingResidualKeys = isResidualKeyCollectionRequested && maxKeysPerSegment > 0;
         for (int i = 0, n = keySets.size(); i < n; i++) {
             clearKeyList(keySets.getQuick(i));
         }
@@ -514,11 +514,11 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
         } else {
             residualRowTimestamps.clear();
         }
-        residualRowsSorted = true;
+        isResidualRowSetSorted = true;
         hasResidualNullKey = false;
-        residualKeyDomainOverflowed = false;
+        isResidualKeyDomainOverflowed = false;
         segments.clear();
-        overflowed = false;
+        isOverflowed = false;
         residualMinTs = Numbers.LONG_NULL;
         residualMaxTs = Numbers.LONG_NULL;
         // An empty cache must miss on the first row whatever it is.
@@ -609,7 +609,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * {@link #addKey} joins a closed segment's.
      */
     private void addResidualKey(int key) {
-        if (!collectsResidualKeys) {
+        if (!isCollectingResidualKeys) {
             return;
         }
         if (key == SymbolTable.VALUE_IS_NULL) {
@@ -617,7 +617,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             return;
         }
         if (!addDistinctKey(residualKeys, RESIDUAL_KEY_SET, key)) {
-            residualKeyDomainOverflowed = true;
+            isResidualKeyDomainOverflowed = true;
         }
     }
 

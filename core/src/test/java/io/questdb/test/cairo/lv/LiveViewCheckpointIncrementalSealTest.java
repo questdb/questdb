@@ -2185,7 +2185,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         assertHeadRootPartitionCount(expected, true, false);
     }
 
-    private void assertHeadRootPartitionCount(int expected, boolean isWindowRootRead, boolean areFunctionRootsRead) {
+    private void assertHeadRootPartitionCount(int expected, boolean isWindowRootRead, boolean isFunctionRootRead) {
         final LiveViewInstance instance = viewInstance();
         try (
                 Path dir = checkpointsDir(instance);
@@ -2218,7 +2218,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     assertPartitionCount("window state root", expected, partitions, partitionMapRoot);
                     stateRoots++;
                 }
-                if (areFunctionRootsRead) {
+                if (isFunctionRootRead) {
                     root.getFunctionDirectoryRef(functionDirectoryRef);
                     functions.of(dir, functionDirectoryRef);
                     for (int i = 0, n = functions.size(); i < n; i++) {

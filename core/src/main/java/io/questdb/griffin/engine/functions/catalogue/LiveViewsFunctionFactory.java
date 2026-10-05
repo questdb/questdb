@@ -222,14 +222,16 @@ import io.questdb.std.ObjList;
  *     past a seqTxn {@code ApplyWal2TableJob} has not reached yet defers rather than
  *     blocking on it, and retries on a back-off; while it waits these name the seqTxn and
  *     how long the view has been unable to get past it. Both are NULL as a pair whenever
- *     the view is not waiting, which is the steady state, and both reset on restart. The
- *     wait is ordinarily momentary, so it is the duration rather than the presence that
- *     matters: a base table whose WAL apply is suspended (see {@code wal_tables()}) keeps
- *     the view waiting until an operator resumes it, and the view stays {@code active} and
- *     lags meanwhile. Both the ordinary drain's deferral and a recovery's deferred rebuild
- *     report here; the second is the one that also reads {@code rebuild_deferred} in
- *     {@code checkpoint_recovery_phase}, so the two columns together say whether the view
- *     is merely waiting to drain or waiting to rebuild.</li>
+ *     the view is not waiting, which is the steady state, and both reset on restart. A row
+ *     read while one wait ends and the next begins can transiently pair the ended wait's
+ *     seqTxn with the next wait's duration. The wait is ordinarily momentary, so it is the
+ *     duration rather than the presence that matters: a base table whose WAL apply is
+ *     suspended (see {@code wal_tables()}) keeps the view waiting until an operator resumes
+ *     it, and the view stays {@code active} and lags meanwhile. Both the ordinary drain's
+ *     deferral and a recovery's deferred rebuild report here; the second is the one that
+ *     also reads {@code rebuild_deferred} in {@code checkpoint_recovery_phase}, so the two
+ *     columns together say whether the view is merely waiting to drain or waiting to
+ *     rebuild.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -451,10 +453,10 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private long[] checkpointRepair;
                 private long checkpointRepairOutcome;
                 private long[] checkpointTimeline;
-                private boolean checkpointUpgradeRebuildPending;
                 private LiveViewDefinition definition;
                 private CairoEngine engine;
                 private LiveViewInstance instance;
+                private boolean isCheckpointUpgradeRebuildPending;
                 private long o3BoundaryReplayRows;
                 private long o3ReplayScanRows;
                 private long o3ResumeReplayRows;
@@ -467,7 +469,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     checkpointRepair = null;
                     checkpointRepairOutcome = 0;
                     checkpointTimeline = null;
-                    checkpointUpgradeRebuildPending = false;
+                    isCheckpointUpgradeRebuildPending = false;
                     definition = null;
                     engine = null;
                     instance = null;
@@ -832,7 +834,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // Both NULL for a view whose recovery finished or never had to run.
                         case COLUMN_CHECKPOINT_RECOVERY_PHASE -> LiveViewCheckpointRecoveryPhase.name(
                                 checkpointRecoveryPhase,
-                                checkpointUpgradeRebuildPending
+                                isCheckpointUpgradeRebuildPending
                         );
                         case COLUMN_CHECKPOINT_RECOVERY_REASON -> checkpointRecoveryReason;
                         // The dependency plans a localized repair would union, read off
@@ -909,15 +911,17 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             && !instance.isInvalid()
                             && instance.isCheckpointUpgradeRebuildPending()) {
                         this.checkpointRecoveryReason = instance.getCheckpointUpgradeRebuildReason();
-                        this.checkpointUpgradeRebuildPending = checkpointRecoveryReason != null;
+                        this.isCheckpointUpgradeRebuildPending = checkpointRecoveryReason != null;
                     } else {
-                        this.checkpointUpgradeRebuildPending = false;
+                        this.isCheckpointUpgradeRebuildPending = false;
                     }
                     // The apply-lag wait, target then stamp. The writer publishes the target
                     // before the stamp and clears the stamp before the target, so a reader in
-                    // this order sees at worst a stamp whose target it read too early - which
-                    // the NULL-target gate above drops - and never a stamp paired with the
-                    // target of an episode that has already ended.
+                    // this order never pairs a target with an earlier episode's stamp, and the
+                    // NULL-target gate above drops a stamp whose target it read too early. The
+                    // order cannot rule out the reverse: a clear followed by a re-arm between
+                    // the two reads pairs the ended episode's target with the next episode's
+                    // stamp. The mismatch is transient and lasts for this read only.
                     this.applyLagDeferTargetSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
                     this.applyLagDeferSinceUs = instance.getApplyLagDeferSinceUs();
                     // The last repair's outcome and the rows it replayed, in that order

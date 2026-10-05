@@ -961,7 +961,7 @@ public final class LiveViewCheckpointLifecycle {
         private final long finalOrphanUpperBound;
         private final int foreignFormatVersion;
         private final boolean formatReset;
-        private final boolean formatUpgrade;
+        private final boolean isFormatUpgrade;
         private final int liveSegmentCount;
         private final long normalizedBaseSeqTxn;
         private final long obsoleteSegmentBytes;
@@ -974,7 +974,7 @@ public final class LiveViewCheckpointLifecycle {
         private ReconcileResult(
                 boolean epochReplaced,
                 boolean formatReset,
-                boolean formatUpgrade,
+                boolean isFormatUpgrade,
                 int foreignFormatVersion,
                 long walPurgeFloor,
                 long normalizedBaseSeqTxn,
@@ -988,7 +988,7 @@ public final class LiveViewCheckpointLifecycle {
         ) {
             this.epochReplaced = epochReplaced;
             this.formatReset = formatReset;
-            this.formatUpgrade = formatUpgrade;
+            this.isFormatUpgrade = isFormatUpgrade;
             this.foreignFormatVersion = foreignFormatVersion;
             this.walPurgeFloor = walPurgeFloor;
             this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
@@ -1158,7 +1158,7 @@ public final class LiveViewCheckpointLifecycle {
          * place to publish, until the rebuild retires it
          */
         public boolean isFormatUpgrade() {
-            return formatUpgrade;
+            return isFormatUpgrade;
         }
 
         /**

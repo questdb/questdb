@@ -1177,10 +1177,10 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                     for (int i = 0; i < theirs.length; i++) {
                         Unsafe.putByte(other + i, theirs[i]);
                     }
-                    final boolean expected = Arrays.equals(mine, theirs);
-                    outcomeCounts[expected ? 1 : 0]++;
+                    final boolean isEqualExpected = Arrays.equals(mine, theirs);
+                    outcomeCounts[isEqualExpected ? 1 : 0]++;
                     final String message = "[round=" + round + ", mine=" + mine.length + ", theirs=" + theirs.length + ']';
-                    Assert.assertEquals(message, expected, nativeEquals.invoke(entry, other, theirs.length));
+                    Assert.assertEquals(message, isEqualExpected, nativeEquals.invoke(entry, other, theirs.length));
                 }
                 Assert.assertTrue("both outcomes must occur", outcomeCounts[0] > rounds / 2 && outcomeCounts[1] >= rounds / 5);
             } finally {

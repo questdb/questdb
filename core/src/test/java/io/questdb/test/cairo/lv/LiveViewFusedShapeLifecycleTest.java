@@ -733,7 +733,7 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
      * are a Decimal128 or Decimal256 beside a flag or a counter, which the component
      * families do not describe.
      */
-    private Shape decimalShape(boolean withRingResidual) {
+    private Shape decimalShape(boolean hasRingResidual) {
         return new Shape() {
             @Override
             void assertMatchesRecompute() throws Exception {
@@ -741,7 +741,7 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
                         "sum(amount) " + FRAME + " as s, avg(amount) " + FRAME + " as a, "
                                 + "count(amount) " + FRAME + " as c",
                         "s, a, c",
-                        withRingResidual
+                        hasRingResidual
                 );
             }
 
@@ -752,7 +752,7 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
                 execute("create live view lv flush every 100ms start from beginning as "
                         + "select created_at, account_id, sum(amount) over w as s, "
                         + "avg(amount) over w as a, count(amount) over w as c"
-                        + (withRingResidual ? ", " + RING_PROJECTION : "")
+                        + (hasRingResidual ? ", " + RING_PROJECTION : "")
                         + " from tx window w as "
                         + "(partition by account_id order by created_at anchor daily '00:00')");
             }
@@ -990,7 +990,7 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
      * One component more than the leaf budget carries, so the plan keeps the prefix of
      * the canonical order that fits and turns the last one into a residual.
      */
-    private Shape truncatedShape(boolean withRingResidual) {
+    private Shape truncatedShape(boolean hasRingResidual) {
         return new Shape() {
             @Override
             void assertMatchesRecompute() throws Exception {
@@ -1000,7 +1000,7 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
                 assertMatchesRecompute(
                         "sum(q1) " + FRAME + " as s1, sum(q" + TRUNCATED_COLUMNS + ") " + FRAME + " as sn",
                         "s1, s" + TRUNCATED_COLUMNS + " as sn",
-                        withRingResidual
+                        hasRingResidual
                 );
             }
 
@@ -1016,7 +1016,7 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
                         + "timestamp(created_at) partition by hour wal");
                 execute("create live view lv flush every 100ms start from beginning as "
                         + "select created_at, account_id" + projections
-                        + (withRingResidual ? ", " + RING_PROJECTION : "")
+                        + (hasRingResidual ? ", " + RING_PROJECTION : "")
                         + " from tx window w as "
                         + "(partition by account_id order by created_at anchor daily '00:00')");
             }
@@ -1069,17 +1069,17 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
          * @param selected   the same aliases read off the view, so a shape whose view
          *                   names more columns than a case compares can rename them
          */
-        final void assertMatchesRecompute(String recomputed, String selected, boolean withRingResidual)
+        final void assertMatchesRecompute(String recomputed, String selected, boolean hasRingResidual)
                 throws Exception {
             final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
                     "(select created_at, account_id, " + recomputed
-                            + (withRingResidual ? ", " + RING_PROJECTION : "")
+                            + (hasRingResidual ? ", " + RING_PROJECTION : "")
                             + " from (select *, " + bucket + " as bucket from tx)) order by 2, 1",
                     "(select created_at, account_id, " + selected
-                            + (withRingResidual ? ", ring" : "")
+                            + (hasRingResidual ? ", ring" : "")
                             + " from lv) order by 2, 1",
                     LOG,
                     true

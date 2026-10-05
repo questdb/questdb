@@ -134,22 +134,22 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
 
     LiveViewCheckpointCompactionScratch(
             @NotNull CairoConfiguration configuration,
-            boolean ownsCandidate
+            boolean isCandidateOwner
     ) {
         this.configuration = configuration;
         // Only the worker's own scratch drives a compaction pass. The compatibility
         // scratch a repack candidate nests inside itself never opens a catalogue of
         // its own, so it builds none of the driver's stores or readers.
-        this.candidate = ownsCandidate ? new LiveViewCheckpointDataStore.Candidate(configuration) : null;
-        this.checkpointRoot = ownsCandidate ? new LiveViewCheckpointRoot(configuration) : null;
-        this.functionDirectory = ownsCandidate ? new LiveViewCheckpointFunctionDirectory(configuration) : null;
-        this.functionRoot = ownsCandidate ? new LiveViewCheckpointFunctionRoot(configuration) : null;
-        this.metaStore = ownsCandidate ? new LiveViewCheckpointMetaStore(configuration) : null;
-        this.partitionReader = ownsCandidate ? new LiveViewCheckpointPartitionMapReader(configuration) : null;
-        this.pathScratch = ownsCandidate ? new Path() : null;
-        this.segmentDirectory = ownsCandidate ? new LiveViewCheckpointSegmentDirectoryReader(configuration) : null;
-        this.timelineReader = ownsCandidate ? new LiveViewCheckpointTimelineReader(configuration) : null;
-        this.dataStore = ownsCandidate ? new LiveViewCheckpointDataStore(configuration, metaStore) : null;
+        this.candidate = isCandidateOwner ? new LiveViewCheckpointDataStore.Candidate(configuration) : null;
+        this.checkpointRoot = isCandidateOwner ? new LiveViewCheckpointRoot(configuration) : null;
+        this.functionDirectory = isCandidateOwner ? new LiveViewCheckpointFunctionDirectory(configuration) : null;
+        this.functionRoot = isCandidateOwner ? new LiveViewCheckpointFunctionRoot(configuration) : null;
+        this.metaStore = isCandidateOwner ? new LiveViewCheckpointMetaStore(configuration) : null;
+        this.partitionReader = isCandidateOwner ? new LiveViewCheckpointPartitionMapReader(configuration) : null;
+        this.pathScratch = isCandidateOwner ? new Path() : null;
+        this.segmentDirectory = isCandidateOwner ? new LiveViewCheckpointSegmentDirectoryReader(configuration) : null;
+        this.timelineReader = isCandidateOwner ? new LiveViewCheckpointTimelineReader(configuration) : null;
+        this.dataStore = isCandidateOwner ? new LiveViewCheckpointDataStore(configuration, metaStore) : null;
         pages = MapFactory.createOrderedMap(configuration, PAGE_KEY_TYPES, PAGE_VALUE_TYPES, false);
         liveBytesBySegment = MapFactory.createUnorderedMap(
                 configuration,
@@ -305,7 +305,7 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
         ensureActive();
         final MapValue page = pageValue(ref, true);
         if (!page.isNew()) {
-            if (!sameSourceMetadata(page, ref)) {
+            if (!hasSameSourceMetadata(page, ref)) {
                 throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                         .put("live view checkpoint shared data page metadata mismatch")
                         .put(" [segmentId=").put(ref.getSegmentId())
@@ -606,12 +606,20 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
         }
     }
 
-    private MapValue pageValue(@NotNull LiveViewCheckpointStatePageRef ref, boolean create) {
+    private MapValue pageValue(@NotNull LiveViewCheckpointStatePageRef ref, boolean isCreating) {
         final MapKey key = pages.withKey();
         key.putLong(ref.getSegmentId());
         key.putLong(ref.getOffset());
         key.putInt(ref.getStoredLength());
-        return create ? key.createValue() : key.findValue();
+        return isCreating ? key.createValue() : key.findValue();
+    }
+
+    private static boolean hasSameSourceMetadata(MapValue value, LiveViewCheckpointStatePageRef ref) {
+        return value.getInt(PAGE_SOURCE_DECODED_LENGTH) == ref.getDecodedLength()
+                && value.getInt(PAGE_SOURCE_KIND) == ref.getPageKind()
+                && value.getInt(PAGE_SOURCE_CODEC) == ref.getCodec()
+                && value.getInt(PAGE_SOURCE_ROW_COUNT) == ref.getRowCount()
+                && value.getInt(PAGE_SOURCE_FLAGS) == ref.getFlags();
     }
 
     private static void putSourceMetadata(MapValue value, LiveViewCheckpointStatePageRef ref) {
@@ -621,14 +629,6 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
         value.putInt(PAGE_SOURCE_ROW_COUNT, ref.getRowCount());
         value.putInt(PAGE_SOURCE_FLAGS, ref.getFlags());
         value.putLong(PAGE_TARGET_SEGMENT_ID, -1);
-    }
-
-    private static boolean sameSourceMetadata(MapValue value, LiveViewCheckpointStatePageRef ref) {
-        return value.getInt(PAGE_SOURCE_DECODED_LENGTH) == ref.getDecodedLength()
-                && value.getInt(PAGE_SOURCE_KIND) == ref.getPageKind()
-                && value.getInt(PAGE_SOURCE_CODEC) == ref.getCodec()
-                && value.getInt(PAGE_SOURCE_ROW_COUNT) == ref.getRowCount()
-                && value.getInt(PAGE_SOURCE_FLAGS) == ref.getFlags();
     }
 
     private final class LivePagePartitionVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
