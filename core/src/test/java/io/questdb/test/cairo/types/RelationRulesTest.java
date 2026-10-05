@@ -66,16 +66,19 @@ public class RelationRulesTest {
     public void testLookAlikesRelateAlike() {
         // every two stored types of one relation kind and width relate alike to every third type
         // (among the existing types, DATE with TIMESTAMP and STRING with VARCHAR); kind and width as
-        // the type drivers answer them
+        // the type drivers answer them. A type registered later is left out: a look-alike that
+        // stores no NULL or orders unsigned relates otherwise by design, as the two tests below
+        // pin with stub type drivers
         int pairs = 0;
         for (short a = 0; a <= ColumnType.MAX_TAG; a++) {
             final TypeDriver driverA = PhysicalDescriptor.storedTypeDriverOf(a);
-            if (driverA == null) {
+            if (driverA == null || TypeConformanceTypes.isLaterTag(a)) {
                 continue;
             }
             for (short b = (short) (a + 1); b <= ColumnType.MAX_TAG; b++) {
                 final TypeDriver driverB = PhysicalDescriptor.storedTypeDriverOf(b);
                 if (driverB != null
+                        && !TypeConformanceTypes.isLaterTag(b)
                         && driverA.getRelationKind() == driverB.getRelationKind()
                         && driverA.getRelationBits() == driverB.getRelationBits()) {
                     Assert.assertEquals(ColumnType.nameOf(a) + " and " + ColumnType.nameOf(b), "[]", tagsRelatingOtherwise(a, driverA, b, driverB, false).toString());

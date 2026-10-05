@@ -917,7 +917,7 @@ public class TypeDriverTest {
     public void testTypeConstantsAreTheDeletedRegistry() {
         // the CAST type constant Constants.getTypeConstant() returns, by encoded type: a real
         // type's from its type driver, REGCLASS, REGPROCEDURE and ARRAY_STRING's from Constants'
-        // own table; every other encoding but an array returns null
+        // own table; every other encoding but an array, and a type registered later, returns null
         final Object[][] expected = {
                 {ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE},
                 {ColumnType.BYTE, ByteTypeConstant.INSTANCE},
@@ -951,7 +951,7 @@ public class TypeDriverTest {
             listed.add(type);
         }
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-            if (!listed.contains(tag) && tag != ColumnType.ARRAY) {
+            if (!listed.contains(tag) && tag != ColumnType.ARRAY && !ExistingTags.IS_LATER[tag]) {
                 Assert.assertNull(ColumnTypeTag.of(tag).name(), Constants.getTypeConstant(tag));
             }
         }
