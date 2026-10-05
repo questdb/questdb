@@ -1435,7 +1435,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void destroyPartitionFrameStates() {
-        if (partitionFrameStates == null) {
+        if (partitionFrameStateFactory == null || partitionFrameStates == null) {
             return;
         }
         for (int i = 0, n = partitionCount; i < n; i++) {

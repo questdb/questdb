@@ -454,11 +454,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             pageFrameMemoryPool = new PageFrameMemoryPool(cairoConfiguration, 0L);
             pageFrameMemoryRecord = new PageFrameMemoryRecord();
         }
-        pageFrameAddressCache.of(
-                factory.getMetadata(),
-                pageFrameCursor.getColumnMapping(),
-                pageFrameCursor.isExternal()
-        );
+        pageFrameAddressCache.of(factory.getMetadata(), pageFrameCursor);
         pageFrameMemoryPool.setMemoryTracker(memoryTracker);
         pageFrameMemoryPool.of(pageFrameAddressCache);
         pageFrameMemoryRecord.of(pageFrameCursor);

@@ -1024,7 +1024,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, FRAME_CACHE_BYTES);
                 PageFrameMemoryRecord record = new PageFrameMemoryRecord()
         ) {
-            addressCache.of(metadata, cursor.getColumnMapping(), cursor.isExternal());
+            addressCache.of(metadata, cursor);
             pool.of(addressCache);
             record.of(cursor);
             int frameIndex = 0;

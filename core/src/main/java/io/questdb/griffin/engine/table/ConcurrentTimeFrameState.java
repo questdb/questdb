@@ -172,7 +172,6 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
      * @param frameCursor      page frame cursor (used for lazy partition opening)
      * @param metadata         slave table metadata
      * @param columnMapping    column mapping (column indexes + writer indexes)
-     * @param isExternal       whether the cursor wraps an external data source
      * @param pageFrameMinRows min rows per page frame (from SqlExecutionContext)
      * @param pageFrameMaxRows max rows per page frame (from SqlExecutionContext)
      * @param workerCount      shared query worker count
@@ -181,7 +180,6 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
             TablePageFrameCursor frameCursor,
             RecordMetadata metadata,
             ColumnMapping columnMapping,
-            boolean isExternal,
             int pageFrameMinRows,
             int pageFrameMaxRows,
             int workerCount,
@@ -200,7 +198,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         }
 
         // Initialize the address cache structure (no frames added yet)
-        addressCache.of(metadata, columnMapping, isExternal);
+        addressCache.of(metadata, frameCursor);
         framePartitionIndexes.reopen();
         framePartitionIndexes.clear();
         frameRowCounts.reopen();

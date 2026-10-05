@@ -101,6 +101,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
     private boolean hasCoveredFrames;
+    private boolean hasCustomFrames;
     private boolean hasDecodedFrames;
 
     public PageFrameAddressCache() {
@@ -129,7 +130,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getPageAddress(columnIndex));
                 pageSizes.add(frame.getPageSize(columnIndex));
-                pageTops.add(frame.getPageTop(columnIndex));
+                if (hasCustomFrames) {
+                    pageTops.add(frame.getPageTop(columnIndex));
+                }
                 if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
                     auxPageAddresses.add(frame.getAuxPageAddress(columnIndex));
                     auxPageSizes.add(frame.getAuxPageSize(columnIndex));
@@ -153,7 +156,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(0);
                 pageSizes.add(0);
-                pageTops.add(0);
+                if (hasCustomFrames) {
+                    pageTops.add(0);
+                }
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
             }
@@ -171,13 +176,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(format);
-        designatedTimestampPageAddresses.add(frame.getDesignatedTimestampPageAddress());
-        designatedTimestampPageSizes.add(frame.getDesignatedTimestampPageSize());
-        designatedTimestampPageTops.add(frame.getDesignatedTimestampPageTop());
         ParquetDecoder decoder = frame.getParquetDecoder();
         parquetDecoders.add(decoder);
-        final long partitionFrameState = frame.getPartitionFrameState();
-        partitionFrameStates.add(partitionFrameState);
+        final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
+        if (hasCustomFrames) {
+            // Keep frame indexes aligned across ordinary and custom frames in this cursor.
+            designatedTimestampPageAddresses.add(frame.getDesignatedTimestampPageAddress());
+            designatedTimestampPageSizes.add(frame.getDesignatedTimestampPageSize());
+            designatedTimestampPageTops.add(frame.getDesignatedTimestampPageTop());
+            partitionFrameStates.add(partitionFrameState);
+        }
         final int parquetRowGroup = frame.getParquetRowGroup();
         if (parquetRowGroup >= 0
                 && partitionFrameState != 0
@@ -373,15 +381,15 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     public long getDesignatedTimestampPageAddress(int frameIndex) {
-        return designatedTimestampPageAddresses.getQuick(frameIndex);
+        return hasCustomFrames ? designatedTimestampPageAddresses.getQuick(frameIndex) : 0;
     }
 
     public long getDesignatedTimestampPageSize(int frameIndex) {
-        return designatedTimestampPageSizes.getQuick(frameIndex);
+        return hasCustomFrames ? designatedTimestampPageSizes.getQuick(frameIndex) : 0;
     }
 
     public long getDesignatedTimestampPageTop(int frameIndex) {
-        return designatedTimestampPageTops.getQuick(frameIndex);
+        return hasCustomFrames ? designatedTimestampPageTops.getQuick(frameIndex) : 0;
     }
 
     public int getFrameCount() {
@@ -433,7 +441,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     public long getPartitionFrameState(int frameIndex) {
-        return partitionFrameStates.getQuick(frameIndex);
+        return hasCustomFrames ? partitionFrameStates.getQuick(frameIndex) : 0;
     }
 
     public long getRowIdOffset(int frameIndex) {
@@ -526,16 +534,20 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public void of(
             @Transient RecordMetadata metadata,
-            @Transient ColumnMapping columnMapping,
-            boolean external
+            @Transient PageFrameCursor frameCursor
     ) {
+        final boolean hasCustomFrames = frameCursor.hasCustomFrames();
         // Reopen off-heap lists atomically: reopen() can trip the memory limit, so if a
         // later one fails, close the ones already reopened. A caller that propagates the
         // failure without ever reaching close() then leaks nothing.
         try {
             pageAddresses.reopen();
             pageSizes.reopen();
-            pageTops.reopen();
+            if (hasCustomFrames) {
+                pageTops.reopen();
+            } else {
+                pageTops.close();
+            }
             auxPageAddresses.reopen();
             auxPageSizes.reopen();
         } catch (Throwable th) {
@@ -550,8 +562,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
-        this.columnMapping.copyFrom(columnMapping);
-        this.external = external;
+        this.columnMapping.copyFrom(frameCursor.getColumnMapping());
+        this.external = frameCursor.isExternal();
+        this.hasCustomFrames = hasCustomFrames;
     }
 
     /**
@@ -574,20 +587,26 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.set(offset + columnIndex, frame.getPageAddress(columnIndex));
                 pageSizes.set(offset + columnIndex, frame.getPageSize(columnIndex));
-                pageTops.set(offset + columnIndex, frame.getPageTop(columnIndex));
+                if (hasCustomFrames) {
+                    pageTops.set(offset + columnIndex, frame.getPageTop(columnIndex));
+                }
                 if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
                     auxPageAddresses.set(offset + columnIndex, frame.getAuxPageAddress(columnIndex));
                     auxPageSizes.set(offset + columnIndex, frame.getAuxPageSize(columnIndex));
                 }
             }
-            designatedTimestampPageAddresses.setQuick(frameIndex, frame.getDesignatedTimestampPageAddress());
-            designatedTimestampPageSizes.setQuick(frameIndex, frame.getDesignatedTimestampPageSize());
-            designatedTimestampPageTops.setQuick(frameIndex, frame.getDesignatedTimestampPageTop());
+            if (hasCustomFrames) {
+                designatedTimestampPageAddresses.setQuick(frameIndex, frame.getDesignatedTimestampPageAddress());
+                designatedTimestampPageSizes.setQuick(frameIndex, frame.getDesignatedTimestampPageSize());
+                designatedTimestampPageTops.setQuick(frameIndex, frame.getDesignatedTimestampPageTop());
+            }
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
         }
-        final long partitionFrameState = frame.getPartitionFrameState();
-        partitionFrameStates.setQuick(frameIndex, partitionFrameState);
+        final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
+        if (hasCustomFrames) {
+            partitionFrameStates.setQuick(frameIndex, partitionFrameState);
+        }
         final int parquetRowGroup = frame.getParquetRowGroup();
         parquetRowGroups.setQuick(frameIndex, parquetRowGroup);
         parquetRowGroupLos.setQuick(frameIndex, frame.getParquetRowGroupLo());

@@ -787,7 +787,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             this.groupBySymbolKey = groupBySymbolKey;
             this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.memoryTracker = sqlExecutionContext.getMemoryTracker();
-            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(metadata, frameCursor);
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;

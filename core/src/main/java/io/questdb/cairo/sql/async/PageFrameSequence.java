@@ -503,7 +503,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor);
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();

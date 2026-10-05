@@ -233,7 +233,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         this.pageFrameMaxRows = pageFrameMaxRows;
         this.workerCount = workerCount;
         final ColumnMapping mapping = frameCursor.getColumnMapping();
-        frameAddressCache.of(metadata, mapping, frameCursor.isExternal());
+        frameAddressCache.of(metadata, frameCursor);
         columnIndexes.clear();
         for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
             columnIndexes.add(mapping.getColumnIndex(i));
