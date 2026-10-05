@@ -31,6 +31,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,7 +51,8 @@ import java.util.regex.Pattern;
  * <p>
  * Each query runs against a reference that evaluates the body once per outer row, with the outer key
  * as a literal, and combines the results with UNION ALL. A query must return the reference rows, or
- * fail with the rewriter's error at the RIGHT or FULL keyword. On top of that, the tests pin the
+ * fail with the rewriter's error at the RIGHT or FULL keyword, or, for a bind variable that is NULL
+ * when the query runs, with the error that the plan raises at that variable. On top of that, the tests pin the
  * design: a filter that keeps NULL-extended rows fails, and so does one that the rewriter cannot
  * prove safe, while a provably safe filter returns rows.
  * <p>
@@ -108,7 +110,10 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             "{C} = 10::int", "{C} >= NULL::int", "{C} <= NULL::long", "{C} = NULL::int",
             "{C} = -2_147_483_648", "{C} <= -2_147_483_648", "{C} < -2_147_483_648", "{C} > -2_147_483_648"
     };
+    private static final String NULL_VALUE_SUFFIX = "is not supported in a correlated lateral sub-query when this value is NULL";
     private static final String[] OUTER_KEYS = {"1", "2", "3"};
+    // = <= and >= against a bind variable or now(), whose value the plan checks for NULL once per execution
+    private static final Pattern RUNTIME_CHECKED = Pattern.compile("^\\{C} (=|<=|>=) (\\$1|.*now\\(\\).*)$|^\\$1 (=|<=|>=) \\{C}$");
     private static final String[] STRING = {
             "{C} = 'abc'", "'abc' = {C}", "{C} != 'abc'", "{C} < 'zzz'", "{C} > ''", "{C} <= 'zzz'",
             "{C} >= ''", "{C} = ''", "{C} IN ('a', 'abc')", "{C} IN ('abc')", "{C} IN (NULL, 'abc')",
@@ -160,10 +165,11 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             new Column("arr", "DOUBLE[]", "ARRAY[1.0, 2.0]", "NULL", cat(NULL_CHECKS, new String[]{"{C} = ARRAY[1.0, 2.0]", "{C} != ARRAY[1.0, 2.0]"}), null, null),
     };
 
-    // A bind variable keeps its value across executions of a cached plan, so a filter that the
-    // rewriter accepts with a bind variable, < > or BETWEEN on a type with NULL, must hold for
-    // every value of the same compiled query. A filter whose acceptance would depend on the value,
-    // such as >=, fails whatever value the variable holds at compile time, see the matrix tests.
+    // A cached plan runs with every value of its bind variables, so a filter that the rewriter
+    // accepts with a bind variable must hold for every value of the same compiled query. < > and
+    // BETWEEN on a type with NULL drop the NULL-extended rows whatever the value. = <= and >= drop
+    // them only while the value is not NULL, so the plan checks the value once per execution and
+    // fails for NULL, and returns the reference rows again for the next non-NULL value.
     @Test
     public void testBindVariableValuesShareThePlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -187,6 +193,39 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                             final Outcome reference = run(referenceSql(shape, filters[f]));
                             Assert.assertNull(reference.error);
                             Assert.assertEquals(shape + " " + filters[f] + " " + values, reference.rows, actual);
+                        }
+                    }
+                }
+            }
+            final String[] checkedFilters = {"t.i >= $1", "t.i <= $1", "$1 <= t.i", "t.i = $1", "t.l >= $1", "t.d <= $1", "t.t2 >= $1", "t.st >= $1", "t.sy = $1"};
+            final String[] checkedBindTypes = {"int", "int", "int", "int", "long", "double", "timestamp", "str", "str"};
+            for (Shape shape : new Shape[]{Shape.RIGHT_ON, Shape.INNER_ON_RIGHT, Shape.INNER_ON_FULL}) {
+                for (int f = 0; f < checkedFilters.length; f++) {
+                    final String sql = lateralSql(shape, Form.TABLE, checkedFilters[f]);
+                    bindVariableService.clear();
+                    setBindVariables(checkedBindTypes[f], BindValues.LOW);
+                    try (RecordCursorFactory factory = select(sql)) {
+                        for (BindValues values : new BindValues[]{BindValues.LOW, BindValues.NULL, BindValues.HIGH, BindValues.LOW}) {
+                            setBindVariables(checkedBindTypes[f], values);
+                            final String header = shape + " " + checkedFilters[f] + " " + values;
+                            if (values == BindValues.NULL) {
+                                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                                    Assert.fail(header + ": expected the NULL value to fail the execution");
+                                } catch (SqlException e) {
+                                    TestUtils.assertContains(header, e.getFlyweightMessage(), NULL_VALUE_SUFFIX);
+                                    Assert.assertEquals(header, sql.indexOf("$1"), e.getPosition());
+                                }
+                                continue;
+                            }
+                            final List<String> actual;
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                final StringSink rows = new StringSink();
+                                println(factory.getMetadata(), cursor, rows);
+                                actual = sortedRows(rows);
+                            }
+                            final Outcome reference = run(referenceSql(shape, checkedFilters[f]));
+                            Assert.assertNull(reference.error);
+                            Assert.assertEquals(header, reference.rows, actual);
                         }
                     }
                 }
@@ -274,8 +313,11 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         if (!template.contains("$") && !template.contains("now()")) {
             return Expected.ROWS;
         }
-        // the value of a bind variable or now() may be NULL in another execution of the plan
-        return (isBetween(template) || LESS_OR_GREATER.matcher(template).matches()) && column.hasNull() ? Expected.ROWS : Expected.ERROR;
+        // the value of a bind variable or now() is known only when the query runs: < > and BETWEEN
+        // are false for a NULL column whatever the value, and = <= and >= are while the value is
+        // not NULL, which the plan checks once per execution
+        return (isBetween(template) || LESS_OR_GREATER.matcher(template).matches() || RUNTIME_CHECKED.matcher(template).matches())
+                && column.hasNull() ? Expected.ROWS : Expected.ERROR;
     }
 
     private static String instantiate(String template, String columnRef) {
@@ -321,6 +363,17 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     private static boolean isNullAndZeroRejecting(String op, String value) {
         final long v = parseLong(value);
         return v != Integer.MIN_VALUE && !compare(op, 0, v);
+    }
+
+    // the error of a plan that checks, when the query runs, that a bind variable is not NULL
+    private static boolean isNullValueError(Throwable error, String sql, String template, Form form, Column column) {
+        return error instanceof SqlException e
+                && form.isTypeKnown
+                && column.hasNull()
+                && template.contains("$1")
+                && RUNTIME_CHECKED.matcher(template).matches()
+                && Chars.contains(e.getFlyweightMessage(), NULL_VALUE_SUFFIX)
+                && e.getPosition() == sql.indexOf("$1");
     }
 
     private static boolean isRewriterError(Throwable error, int position) {
@@ -456,7 +509,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             case ERROR -> {
                 if (actual.error == null) {
                     failures.add(header + ": returned " + summary(actual) + ", expected the rewriter to reject the filter\n    " + sql);
-                } else if (!isRewriterError(actual.error, position)) {
+                } else if (!isRewriterError(actual.error, position) && !isNullValueError(actual.error, sql, template, form, column)) {
                     failures.add(header + ": failed with " + summary(actual) + ", expected [" + position + "] ... " + ERROR_SUFFIX + "\n    " + sql);
                 }
             }

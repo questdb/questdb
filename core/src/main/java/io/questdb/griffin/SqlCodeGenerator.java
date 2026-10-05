@@ -305,6 +305,7 @@ import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
+import io.questdb.griffin.engine.table.LateralNullCheckRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -512,6 +513,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+    // the lateral NULL checks of the models that the outermost generate() call has generated so far
+    private final ObjList<ExpressionNode> lateralNullChecks = new ObjList<>();
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
@@ -928,11 +931,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             if (parserIndex == 0) {
                 sharedFactoryCache.clear();
+                lateralNullChecks.clear();
                 generationState.begin(model, expressionNodePool);
             } else {
                 hasEntered = generationState.enterRegion(model, expressionNodePool);
             }
-            return generateQuery(model, executionContext, true);
+            final RecordCursorFactory factory = generateQuery(model, executionContext, true);
+            return parserIndex == 0 && lateralNullChecks.size() > 0
+                    ? applyLateralNullChecks(factory, executionContext)
+                    : factory;
         } catch (Throwable th) {
             failure = th;
             throw th;
@@ -1762,6 +1769,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * clause re-attaches by name). Requiring the metadata timestamp to equal timestampIndex rejects such
      * reordered bases, which would otherwise feed the aggregates rows out of timestamp order.
      */
+    // True when the expression holds a scalar sub-query. The sub-query runs once per execution, as
+    // an expression cannot read the rows of the query around it.
+    private static boolean hasSubQuery(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            return true;
+        }
+        if (node.paramCount < 3) {
+            return hasSubQuery(node.lhs) || hasSubQuery(node.rhs);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasSubQuery(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isBaseTimestampAscending(RecordCursorFactory factory, int timestampIndex) {
         return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
@@ -1976,6 +2003,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return maxConstructors.get(metadata.getColumnType(columnIndex));
         }
         return null;
+    }
+
+    // Compiles the checks that LateralJoinRewriter attached to models of the query, each one
+    // "value = NULL". A constant check is decided here: true fails the query, false needs no check.
+    // A check over a runtime constant, such as a bind variable, or over a scalar sub-query, which a
+    // cursor function compares without reporting a runtime constant, runs once per execution in a
+    // LateralNullCheckRecordCursorFactory on top of the plan. A value that can change from row to
+    // row is not checked, as before. Takes ownership of the factory.
+    private RecordCursorFactory applyLateralNullChecks(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
+        ObjList<Function> checks = null;
+        IntList positions = null;
+        try {
+            for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
+                final ExpressionNode node = lateralNullChecks.getQuick(i);
+                final Function check = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                if (check.isConstant()) {
+                    final boolean isNull;
+                    try {
+                        check.init(null, executionContext);
+                        isNull = check.getBool(null);
+                    } finally {
+                        Misc.free(check);
+                    }
+                    if (isNull) {
+                        throw SqlException.$(node.position, LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR);
+                    }
+                } else if (check.isRuntimeConstant() || hasSubQuery(node)) {
+                    if (checks == null) {
+                        checks = new ObjList<>();
+                        positions = new IntList();
+                    }
+                    checks.add(check);
+                    positions.add(node.position);
+                } else {
+                    Misc.free(check);
+                }
+            }
+            if (checks == null) {
+                return factory;
+            }
+            final RecordCursorFactory checked = new LateralNullCheckRecordCursorFactory(factory, checks, positions);
+            checks = null;
+            return checked;
+        } catch (Throwable th) {
+            Misc.freeObjList(checks);
+            Misc.free(factory);
+            throw th;
+        } finally {
+            lateralNullChecks.clear();
+        }
     }
 
     private boolean assembleKeysAndFunctionReferences(
@@ -2303,6 +2380,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @Nullable
+    private void collectLateralNullChecks(IQueryModel model) {
+        final ObjList<ExpressionNode> checks = model.getLateralNullChecks();
+        for (int i = 0, n = checks.size(); i < n; i++) {
+            final ExpressionNode check = checks.getQuick(i);
+            boolean isCollected = false;
+            for (int j = 0, m = lateralNullChecks.size(); j < m; j++) {
+                if (lateralNullChecks.getQuick(j) == check) {
+                    isCollected = true;
+                    break;
+                }
+            }
+            if (!isCollected) {
+                lateralNullChecks.add(check);
+            }
+        }
+    }
+
     private Function compileFilter(
             IntrinsicModel intrinsicModel,
             RecordMetadata readerMeta,
@@ -9078,6 +9172,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateQuery0Inner(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         generationState.enterModel(model);
+        collectLateralNullChecks(model);
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.

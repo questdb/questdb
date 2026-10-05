@@ -202,6 +202,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void addLateralCountTemplate(QueryColumn template);
 
+    void addLateralNullCheck(ExpressionNode check);
+
     void addLatestBy(ExpressionNode latestBy);
 
     boolean addModelAliasIndex(ExpressionNode node, int index);
@@ -317,6 +319,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getJoinType();
 
     ObjList<QueryColumn> getLateralCountTemplates();
+
+    // Boolean expressions that the code generator evaluates once per execution, failing the query
+    // when one is true; see LateralJoinRewriter.runtimeNullCheckOperand()
+    ObjList<ExpressionNode> getLateralNullChecks();
 
     ObjList<ExpressionNode> getLatestBy();
 

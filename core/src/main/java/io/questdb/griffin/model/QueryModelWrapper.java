@@ -123,6 +123,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addLateralNullCheck(ExpressionNode check) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         throw new UnsupportedOperationException();
     }
@@ -420,6 +425,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<QueryColumn> getLateralCountTemplates() {
         return delegate.getLateralCountTemplates();
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getLateralNullChecks() {
+        return delegate.getLateralNullChecks();
     }
 
     @Override
