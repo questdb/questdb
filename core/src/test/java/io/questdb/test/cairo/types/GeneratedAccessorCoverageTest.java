@@ -83,19 +83,19 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * FR-016 for record access (T091): the code generated per type and the opcode functions whose
- * consumers javac cannot check. Every type of the conformance kit takes part, the types registered
- * later included ({@link TypeConformanceTypes}), so a later type fails here unless every generator
- * runs for it and every opcode function handles it.
+ * Coverage of the per-type record-access code: the code generated per type and the opcode functions
+ * whose consumers javac cannot check. Every type of the conformance kit takes part, the types
+ * registered later included ({@link TypeConformanceTypes}), so a type registered later fails here
+ * unless every generator runs for it and every opcode function handles it.
  * <p>
- * The generators ({@link RecordSinkFactory}, {@link RecordValueSinkFactory},
- * {@link RecordToRowCopierUtils}, {@link RecordComparatorCompiler}) build code for one column of
- * the type, in every sink and copier kind, and the test runs it over a record that answers every
- * getter. The opcode functions are called by reflection, as {@code TypeRelationGoldenTest} does;
- * one that throws or returns its "unhandled" value fails the test, unless the type is on that
- * function's list below. The lists name today's types a site does not handle, each for a reason;
- * a type registered later is on none of them, and a listed type that becomes handled fails too, so
- * the lists cannot drift.
+ * The generators ({@link RecordSinkFactory}, {@link RecordValueSinkFactory}, {@link
+ * RecordToRowCopierUtils}, {@link RecordComparatorCompiler}) build code for one column of the type,
+ * in every sink and copier kind, and the test runs it over a record that answers every getter. The
+ * opcode functions are called by reflection, as {@code TypeRelationGoldenTest} does; one that
+ * throws or returns its "unhandled" value fails the test, unless the type is on that function's
+ * list below. The lists name the existing types a site does not handle, each for a reason; a type
+ * registered later is on none of them, and a listed type that becomes handled fails too, so the
+ * lists cannot drift.
  */
 public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
     private static final Set<String> INTERVALS = Set.of("INTERVAL", "INTERVAL(us)", "INTERVAL(ns)");
@@ -207,8 +207,9 @@ public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
                 return false;
             });
             check(failures, unhandled, "byteSizeOfType", entry, () -> (int) slot.invoke(null, type) < 0);
-            // the group-by column sink appends nothing for a type without an arm: its tag
-            // must be the type's accessor family, whose arm the sink has or lacks alike
+            // the group-by column sink appends nothing for a type without an arm: its tag must be
+            // the one the type's accessor family is named after, so the type has an arm exactly
+            // when its family has one
             if (!NOT_STORED.equals(entry.label) && GroupByColumnSink.argTag(type) != PhysicalDescriptor.accessorOpcodeOf(type)) {
                 failures.append("argTag: ").append(entry.label).append(" is not its accessor family's\n");
             }

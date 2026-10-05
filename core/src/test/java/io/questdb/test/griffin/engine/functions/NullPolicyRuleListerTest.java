@@ -47,27 +47,24 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
- * The lister of the function library's NULL-policy rule (F35, {@code r3-functions.md} "The rule").
- * A full-range type reaches a factory only when the factory computes its value in a static
- * {@code value(...)} method with no NULL test (step 2), so the full-range type's NOT_NULL and BITMAP
- * wrappers can call the same body. The lister checks that a factory declares such a method: it names
- * every factory with an argument of a type that will have a full-range counterpart, a fixed-width
- * type whose NULL is a sentinel, that declares none itself. It reads declarations only; whether the
- * factory's function classes call the body is not checked here. Since S15b every factory in scope
- * declares a body or has a stated reason, so the list is empty: a new factory in scope without
- * either fails here.
+ * Checks the function library's NULL rule: a factory with an argument of a fixed-width type whose
+ * NULL is a reserved value (LONG's {@code LONG_MIN}, DOUBLE's NaN) declares a static
+ * {@code value(...)} method that computes the result from plain values, with no NULL test. The
+ * lister names every factory in scope that declares no such method and has no reason in
+ * {@link #NO_VALUE_BODY}; the list must stay empty, so a new factory in scope without either fails
+ * here, and so does a reason for a factory that is out of scope or declares the method. The lister
+ * reads declarations only; whether the factory's function classes call the method is not checked
+ * here.
  * <p>
- * Operator aliases ({@code !=}, {@code <>}, swapped arguments) follow their delegate. Factories
- * whose step 2 is empty, because the function has no value computation apart from its NULL
- * handling, are listed in {@link #NO_VALUE_BODY} with the reason. The lists go to
- * {@code target/null-policy-rule-lister.txt}.
+ * Operator aliases ({@code !=}, {@code <>}, swapped arguments) follow their delegate. The lists go
+ * to {@code target/null-policy-rule-lister.txt}.
  */
 public class NullPolicyRuleListerTest extends AbstractCairoTest {
-    // every factory in scope has a body or a reason
+    // every factory in scope has a value(...) method or a reason
     private static final int EXPECTED_TO_CHANGE = 0;
-    // of those, factories with a LONG or DOUBLE argument, the first full-range counterparts
+    // of the factories with neither, those with a LONG or DOUBLE argument
     private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 0;
-    // class + signature -> why step 2 is empty
+    // class + signature -> why the factory has no value(...) method
     private static final Map<String, String> NO_VALUE_BODY = new TreeMap<>();
 
     @Test
@@ -162,8 +159,9 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         return false;
     }
 
-    // a type that will have a full-range counterpart: NULL is a reserved value in its data vector
-    // (STRING, VARCHAR, SYMBOL and BINARY keep NULL in the length or the aux entry)
+    // a fixed-width type whose NULL is a reserved value in its data vector; STRING, VARCHAR and
+    // BINARY keep NULL in the length or the aux entry, and a SYMBOL argument reaches a function as
+    // text
     private static boolean isFixedWidthSentinel(short tag) {
         final TypeDriver driver = ColumnType.findTypeDriver(tag);
         if (driver == null || driver.getNullPolicy() != NullPolicy.SENTINEL) {

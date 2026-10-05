@@ -32,10 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
 /**
- * Type driver for DATE.
- * <p>
- * Temporal arithmetic on DATE values lives in {@link MillisTimestampDriver}, a
- * separate facet fetched where a method needs it.
+ * Type driver for DATE. Temporal arithmetic on DATE values lives in {@link MillisTimestampDriver}.
  */
 public final class DateTypeDriver extends FixedSizeTypeDriver {
     public static final DateTypeDriver INSTANCE = new DateTypeDriver();

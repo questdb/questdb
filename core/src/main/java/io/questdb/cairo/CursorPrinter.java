@@ -295,16 +295,14 @@ public class CursorPrinter {
     }
 
     /**
-     * Picks the {@link #printColumn} arm for a column. Every tag is named, so a new type has to
-     * decide how it prints before any test can see its values; the tags without an arm yield
-     * UNDEFINED and print as the empty cell they always did. This is the test and log printer,
-     * so the enum switch per cell is acceptable.
+     * Picks the {@link #printColumn} arm for a column from its {@link WireKind}. This printer
+     * serves tests and logs, so a per-cell enum switch is acceptable.
      */
     private static int printOpcode(int columnType) {
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
-            // ARRAY_STRING and a NULL-typed column have arms; no other pseudo tag has one, and
-            // VARCHAR_SLICE never reaches a printed record: an empty cell, as before
+            // ARRAY_STRING and a NULL-typed column have arms; the other pseudo tags print an empty
+            // cell, and VARCHAR_SLICE never reaches a printed record
             final short tag = ColumnType.tagOf(columnType);
             return tag == ColumnType.ARRAY_STRING || tag == ColumnType.NULL ? tag : ColumnType.UNDEFINED;
         }

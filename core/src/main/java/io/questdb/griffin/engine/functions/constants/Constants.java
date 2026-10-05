@@ -38,7 +38,7 @@ public final class Constants {
     private static final ObjList<TypeConstant> doubleArrayTypeConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> nullDoubleArrayConstants = new ObjList<>();
-    // the CAST targets that are pseudo types, which have no definition to answer them
+    // type constants of the pseudo types that CAST accepts; pseudo types have no type driver
     private static final IntObjHashMap<TypeConstant> pseudoTypeConstants = new IntObjHashMap<>();
 
     public static ConstantFunction getGeoHashConstant(long hash, int bits) {
@@ -64,8 +64,9 @@ public final class Constants {
     }
 
     /**
-     * The NULL constant of an array type, cached for up to ten dimensions. The cache holds
-     * DOUBLE arrays and is keyed by dimensionality alone, as it always has been.
+     * The NULL constant of an array type, cached for up to ten dimensions. The cache holds DOUBLE
+     * arrays and is keyed by dimensionality alone, so an array of another element type with up to
+     * ten dimensions gets the DOUBLE array NULL.
      */
     public static ConstantFunction getNullArrayConstant(int columnType) {
         final int dims = ColumnType.decodeArrayDimensionality(columnType);
@@ -76,16 +77,15 @@ public final class Constants {
     }
 
     /**
-     * The NULL constant of {@code columnType}, from its definition. A pseudo type has no value of its
-     * own, so its NULL is the untyped one; so is VARCHAR_SLICE's, which is served by VARCHAR's
-     * definition elsewhere but has always had the untyped NULL here.
+     * The NULL constant of {@code columnType}, from its type driver. A pseudo type and
+     * VARCHAR_SLICE get the untyped {@link NullConstant#NULL}; a number that is no tag throws.
      */
     public static ConstantFunction getNullConstant(int columnType) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
         if (driver != null) {
             return driver.getNullConstant(columnType);
         }
-        // an encoding that is no tag has no NULL: the lookup throws, as it always has
+        // a number that is no tag has no NULL: getTypeDriver() throws for it
         if (ColumnTypeTag.of(columnType) == ColumnTypeTag.UNKNOWN) {
             return ColumnType.getTypeDriver(columnType).getNullConstant(columnType);
         }
@@ -109,9 +109,9 @@ public final class Constants {
     }
 
     /**
-     * The type constant a CAST names {@code columnType} with, or null when no type name resolves to
-     * it: the type's definition answers, and the pseudo types that are CAST targets (REGCLASS,
-     * REGPROCEDURE, ARRAY_STRING) answer from here. GEOHASH and DECIMAL casts take their own paths.
+     * The type constant that CAST uses for {@code columnType}, or null when no type name resolves
+     * to it. A real type's driver supplies it; this class holds the constants of the pseudo types
+     * REGCLASS, REGPROCEDURE and ARRAY_STRING. GEOHASH and DECIMAL casts resolve elsewhere.
      */
     public static TypeConstant getTypeConstant(int columnType) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnType);

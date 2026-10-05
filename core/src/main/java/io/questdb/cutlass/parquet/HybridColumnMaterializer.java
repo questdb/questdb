@@ -98,14 +98,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     }
 
     /**
-     * Picks the {@link #writeColumnValue} / {@link #writeComputedValue} arm for a column, once
-     * at setup. Every tag is named: the tags with an arm yield themselves, the rest yield
-     * UNDEFINED, which the per-cell switches reject as they always did.
-     */
-    /**
      * The {@link #writeColumnValue} / {@link #writeComputedValue} arm of a column, by its accessor
-     * family: an arm copies a value into the buffer the Parquet encoder reads for the family's
-     * layout. Every family is named, so adding one makes javac stop here.
+     * family, picked once at setup: an arm copies a value into the buffer the Parquet encoder reads
+     * for the family's layout. VARCHAR_SLICE yields its own tag, which writeColumnValue() writes
+     * through the VARCHAR arm; BINARY and the pseudo tags yield UNDEFINED, which the per-cell
+     * switches reject.
      */
     private static int exportOpcode(int columnType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);

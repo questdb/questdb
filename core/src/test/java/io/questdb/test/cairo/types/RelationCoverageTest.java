@@ -52,13 +52,13 @@ import java.lang.reflect.Method;
 import java.util.TreeSet;
 
 /**
- * The coverage check of F34: a relation the rules derive must never admit a pair of
- * types that nothing implements, because such a pair passes the compiler and then writes nothing
- * or fails at run time. For every registered type (every kit type, a type registered later
- * included), each test lists the pairs a relation admits without an implementation and compares
- * the list with today's known gaps. A new gap fails, and so does a closed one: the list may only
- * shrink, by editing it here. ALTER COLUMN TYPE has its own check, which converts every admitted
- * pair ({@code ColumnConversionSoundnessTest}).
+ * Coverage of the type relations ({@code RelationRules}): a relation the rules derive must never
+ * admit a pair of types that nothing implements, because such a pair passes the compiler and then
+ * writes nothing or fails at run time. For every registered type (every kit type, a type registered
+ * later included), each test lists the pairs a relation admits without an implementation and
+ * compares the list with the known gaps listed here. A new gap fails, and so does a closed one: the
+ * list may only shrink, by editing it here. ALTER COLUMN TYPE has its own check, which converts
+ * every admitted pair ({@code ColumnConversionSoundnessTest}).
  */
 public class RelationCoverageTest extends AbstractCairoTest {
 

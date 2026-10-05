@@ -31,9 +31,6 @@ import io.questdb.griffin.engine.functions.constants.IntTypeConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for INT.
- */
 public final class IntTypeDriver extends FixedSizeTypeDriver {
     public static final IntTypeDriver INSTANCE = new IntTypeDriver();
 

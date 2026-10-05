@@ -15,12 +15,14 @@ public final class LineUtils {
     }
 
     /**
-     * The tag the ILP appenders switch on for a column: the column's own tag for most types,
-     * {@link ColumnType#GEOHASH} for every geohash width, {@link ColumnType#DECIMAL} for every
-     * stored decimal width, and {@link ColumnType#UNDEFINED} for the pseudo tags, which no ILP
-     * entity can be cast to. The appenders' inner switches (one per entity type) label their arms
-     * with these values and keep a throwing default for the pairs ILP does not convert. One array
-     * read per value; the exhaustive switch behind it runs once, at class init.
+     * The tag the ILP appenders switch on for a column: the tag its accessor family is named after
+     * (the column's own tag for every existing type), {@link ColumnType#GEOHASH} for every geohash
+     * width, {@link ColumnType#DECIMAL} for every stored decimal width, {@link ColumnType#NULL} for
+     * NULL, and {@link ColumnType#UNDEFINED} for the other pseudo tags, for VARCHAR_SLICE and for a
+     * type unlike its family's namesake ({@link PhysicalDescriptor#isLikeFamilyNamesake}), none of
+     * which an ILP entity can be cast to. The appenders' inner switches (one per entity type) label
+     * their arms with these values and keep a throwing default for the pairs ILP does not convert.
+     * One array read per call; the mapping is computed once, at class init.
      */
     public static int columnKind(int columnType) {
         return COLUMN_KIND_BY_CODE[columnType & 0xFF];
@@ -87,14 +89,12 @@ public final class LineUtils {
     }
 
     /**
-     * By the column's accessor family: ILP parses and writes a value with its family's
-     * parser and putter, and NULL is a field the line leaves out, which the writer stores as the
-     * column's NULL. So a type that reads through an existing family takes that family's arms
-     * (E3 "S16 extension" finding 4). Every family is named, so adding one makes javac stop here.
-     * A type without a family (a pseudo tag, VARCHAR_SLICE) takes no arm; a NULL-typed value keeps
-     * its own kind. A type unlike its family's namesake (site "ILP column kind") takes no arm
-     * either, since the family's parser would read its values and NULL as the namesake's: its
-     * kind is UNDEFINED, so the ingest paths raise their cast error for the column.
+     * Maps a tag to its ILP kind by its accessor family: ILP parses and writes a value with its
+     * family's parser and putter, and a field the line leaves out is stored as the column's NULL,
+     * so a new type that reads through an existing family takes that family's arms. A tag without a
+     * family (a pseudo tag, VARCHAR_SLICE) maps to UNDEFINED, except NULL, which maps to itself. A
+     * type unlike its family's namesake maps to UNDEFINED as well, since the family's parser would
+     * read its values and NULL as the namesake's; ILP then refuses the column's values.
      */
     private static int columnKind(short code) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(code);

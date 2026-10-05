@@ -593,13 +593,12 @@ public final class LiveViewSnapshotKeyCodec {
     }
 
     /**
-     * The wire width of a fixed-width codec slot, or -1 when the codec has no fixed-width arm
-     * for the type. This is the relation the type gates read; the per-row switches above have
-     * an arm for exactly the types it sizes, plus STRING. STRING is -1 here because its slot
-     * is variable-width; {@link #isSupportedKeyType} admits it separately. The other -1 types
-     * are either not column types or fixed-width types without a codec arm (LONG256, UUID,
-     * LONG128, the DECIMALs, INTERVAL): a function or anchor map that keys on one of them
-     * takes the head-miss path instead of a checkpoint.
+     * The byte width of a fixed-width codec slot, or -1 when the codec has no fixed-width arm for
+     * the type. The per-row switches above have an arm for exactly the types this sizes, plus
+     * STRING, whose slot is variable-width and which {@link #isSupportedKeyType} admits separately.
+     * A function or anchor map that keys on any other -1 type (a var-size type other than STRING,
+     * LONG256, UUID, LONG128, a DECIMAL, INTERVAL, or a pseudo type) takes the head-miss path
+     * instead of a checkpoint.
      */
     static int byteSizeOfType(int columnType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);

@@ -38,22 +38,22 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * FR-031: code that keys on the physical descriptor must not decide NULL. Java cannot stop a
- * class from naming a sentinel, so this test scans the source of the record-access and page-frame
- * classes whose sites key on the descriptor and fails when a class names more NULL tokens than
- * its recorded baseline. Every token in the baseline is a NULL decision that already sits in
- * physical code; a change may move one out, never add one.
+ * Code that keys on the physical descriptor ({@code PhysicalDescriptor}) must not decide NULL. Java
+ * cannot stop a class from naming a sentinel, so this test scans the source of the record-access
+ * and page-frame classes whose sites key on the descriptor and fails when a class names more NULL
+ * tokens than its recorded baseline. Every token in the baseline is a NULL decision that already
+ * sits in physical code; a change may move one out, never add one.
  * <p>
- * The first 19 classes are R8's physical layers, 71 tokens at {@code s10-done}; S14a added the two
- * {@code getNullCount} names of the column-vector descriptor (a PA-3 field, not a decision). The
- * rest are the codecs S14b keys on the descriptor, counted at {@code s10-done}.
+ * The baseline covers the record-access layers, the page-frame classes (including the
+ * column-vector descriptor's {@code getNullCount}, a field rather than a decision) and the codecs
+ * that key on the descriptor.
  */
 public class PhysicalLayerNullScanTest {
     // class -> NULL tokens allowed
     private static final Map<String, Integer> BASELINE = new LinkedHashMap<>();
-    // the NULL policy is not a token: reading it once at setup (getNullPolicy(),
-    // getColumnNullPolicy()) and switching on it exhaustively, NOT_NULL included, is how physical
-    // code takes NULL into account
+    // the NULL policy is not a token: physical code reads it once at setup (getNullPolicy(),
+    // getColumnNullPolicy()) and switches on it exhaustively. The pattern also skips a bare
+    // NOT_NULL, so a policy constant of that name would not count either; NullPolicy has none
     private static final Pattern NULL_TOKEN = Pattern.compile(
             "\\b(?!NOT_NULL\\b)[A-Z0-9_]*_NULL\\b|\\bisNull\\(|NullMemory|\\bgetNull(?!Policy\\()\\w*\\(|\\bNaN\\b|isNaN\\(|setNull\\("
     );
@@ -90,7 +90,7 @@ public class PhysicalLayerNullScanTest {
     }
 
     static {
-        // R8's physical layers: 71 tokens at s10-done
+        // the record-access layers
         BASELINE.put("cairo/RecordSinkFactory.java", 0);
         BASELINE.put("cairo/LoopingRecordSink.java", 0);
         BASELINE.put("cairo/map/OrderedMap.java", 0);
@@ -111,10 +111,10 @@ public class PhysicalLayerNullScanTest {
         // per-getter column-top NULLs
         BASELINE.put("cairo/sql/PageFrameMemoryRecord.java", 41);
         BASELINE.put("cairo/sql/PageFrameMemoryPool.java", 2);
-        // S14a: the NULL count of the column-vector descriptor, a name
+        // the NULL count of the column-vector descriptor: a field name, not a decision
         BASELINE.put("cairo/sql/PageFrameAddressCache.java", 2);
         BASELINE.put("cairo/sql/ColumnVectorDescriptor.java", 2);
-        // the codecs S14b keys on the descriptor
+        // the codecs that key on the descriptor
         BASELINE.put("cairo/RecordChain.java", 0);
         BASELINE.put("cairo/map/RecordValueSinkFactory.java", 0);
         BASELINE.put("cairo/wal/WalEventWriter.java", 3);

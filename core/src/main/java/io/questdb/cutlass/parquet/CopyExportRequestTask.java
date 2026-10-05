@@ -954,8 +954,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 case LONG, DOUBLE, TIMESTAMP, DATE -> 8;
                 // Types using Simd<i32, 16> or Simd<f32, 16>
                 case INT, FLOAT, SYMBOL -> 4;
-                // All other types use scalar paths - no SIMD alignment required. A new family takes
-                // the alignment of the Rust encoder path it joins, so every family is named here.
+                // All other types use scalar paths - no SIMD alignment required.
                 case BOOLEAN, BYTE, SHORT, CHAR, STRING, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID,
                      LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
                      INTERVAL -> 1;

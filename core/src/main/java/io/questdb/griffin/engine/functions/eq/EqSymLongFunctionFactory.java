@@ -48,9 +48,9 @@ import org.jetbrains.annotations.Nullable;
  */
 public class EqSymLongFunctionFactory implements FunctionFactory {
     /**
-     * Prints {@code right} with {@code Numbers.append(sink, right, false)}, which prints LONG_MIN as
-     * a number where {@code StringSink.put(long)} prints it as null. The function tests NULL first,
-     * so its results do not change.
+     * Whether {@code left} equals the decimal text of {@code right}. Prints LONG_MIN as a number,
+     * where {@code StringSink.put(long)} prints null; the function tests NULL before it calls this
+     * method.
      */
     public static boolean value(StringSink sink, CharSequence left, long right) {
         sink.clear();

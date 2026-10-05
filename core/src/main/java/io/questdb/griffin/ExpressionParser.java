@@ -170,7 +170,8 @@ public class ExpressionParser {
         if (ColumnTypeTag.of(targetTag) == ColumnTypeTag.DECIMAL) {
             return false;
         }
-        // a real type answers for itself; the other pseudo types and VARCHAR_SLICE are refused
+        // a stored type's driver decides; storedTypeDriverOf() returns null for the other pseudo
+        // types and for VARCHAR_SLICE, which are refused
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(targetTag);
         return driver == null || !driver.isCastTarget(isFromNull);
     }

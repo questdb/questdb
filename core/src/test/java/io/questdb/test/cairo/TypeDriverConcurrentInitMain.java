@@ -105,7 +105,7 @@ public final class TypeDriverConcurrentInitMain {
 
     private static void touch(String start) throws ClassNotFoundException {
         switch (start) {
-            // ColumnType first, through the lazy width and name paths into the definitions
+            // ColumnType first, through the lazy width and name paths into the type drivers
             case "type" -> {
                 ColumnType.sizeOf(ColumnType.INT);
                 ColumnType.isVarSize(ColumnType.VARCHAR);

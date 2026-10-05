@@ -798,8 +798,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     }
             );
         } else if (ColumnType.isPersisted(columnTag)) {
-            // the definition's appender writes the column's NULL as a value: the sentinel, or for a
-            // type without NULL what it stores instead
+            // the type driver's appender writes the column's NULL as a value: the sentinel, or, for
+            // a type without NULL, the value stored instead
             nullers.add(switch (nullPolicy) {
                 case SENTINEL, NONE -> ColumnType.getTypeDriver(type).newNullAppender(dataMem, auxMem);
             });
@@ -1830,8 +1830,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             int colType = columnIndex == timestampIndex ? -columnType : columnType;
                             int newColumnType = columnIndex == convertColumnIndex ? convertToColumnType : colType;
                             final NullPolicy nullPolicy = metadata.getColumnNullPolicy(columnIndex);
-                            // the conversion target joins the metadata later; until ALTER carries a
-                            // NULL marker its policy is its type's
+                            // the conversion target is not in the metadata yet, so its NULL policy
+                            // comes from its type driver
                             final NullPolicy newNullPolicy = columnIndex == convertColumnIndex
                                     ? ColumnType.getTypeDriver(convertToColumnType).getNullPolicy()
                                     : nullPolicy;
@@ -2527,8 +2527,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     if (existingColumnType != newType) {
                         // Configure new column, it will be used if the uncommitted data is rolled to a new segment
                         int newColumnIndex = columnCount;
-                        // the new column joins the metadata after the roll; until ALTER carries a
-                        // NULL marker its policy is its type's
+                        // the new column joins the metadata after the roll, so its NULL policy
+                        // comes from its type driver
                         configureColumn(newColumnIndex, newType, ColumnType.getTypeDriver(newType).getNullPolicy());
                         if (ColumnType.isSymbol(newType)) {
                             configureSymbolMapWriter(newColumnIndex, columnName, 0, -1);

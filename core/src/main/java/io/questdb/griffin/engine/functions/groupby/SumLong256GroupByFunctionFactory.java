@@ -35,8 +35,10 @@ import io.questdb.std.ObjList;
 
 public class SumLong256GroupByFunctionFactory implements FunctionFactory {
     /**
-     * The 256-bit sum of {@link Long256Util#add} without its NULL test, written to {@code sum}; the
-     * function tests the increment for NULL first, so its results do not change.
+     * Adds {@code next} to {@code sum} as 256-bit integers and returns {@code sum}. Unlike {@link
+     * Long256Util#add}, it has no NULL test: {@code SumLong256GroupByFunction} skips a NULL
+     * increment, stores the increment over a NULL sum, and calls this method only when neither
+     * is NULL.
      */
     public static Long256 value(Long256 sum, Long256 next) {
         Long256Util.addValue(sum, next.getLong0(), next.getLong1(), next.getLong2(), next.getLong3());

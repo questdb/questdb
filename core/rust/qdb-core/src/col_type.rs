@@ -29,9 +29,9 @@ use std::num::NonZeroI32;
 
 pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
 
-/// How storage moves a column's values: a width class, or a var-size layout whose values live
-/// in a data vector addressed through an aux vector. The mirror of the Java definitions'
-/// `PhysicalDescriptor.Movement`; it says nothing about NULL.
+/// How storage moves a column's values: a fixed width, or a var-size layout whose values live in a
+/// data vector addressed through an aux vector. Mirrors Java's `PhysicalDescriptor.Movement`; it
+/// says nothing about NULL.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ColumnMovement {
     W1,
@@ -43,10 +43,10 @@ pub enum ColumnMovement {
     Var,
 }
 
-/// How a column type represents NULL, as far as native code needs it: the mirror of the Java
-/// definitions' `TypeDriver.getNullPolicy()` for the stored types. `None` for the types where every
-/// bit pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as leading default
-/// values; `Sentinel` for every other type, which keeps its NULL in a reserved value.
+/// How a column type represents NULL, as far as native code needs it; mirrors Java's
+/// `TypeDriver.getNullPolicy()` for the stored types. `None` for the types where every bit pattern
+/// is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as default values; `Sentinel`
+/// for every other type, which keeps its NULL in a reserved value.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ColumnNullPolicy {
     None,
@@ -188,8 +188,7 @@ impl ColumnTypeTag {
         self.movement().size()
     }
 
-    /// How storage moves this tag's values. Every tag has an arm, so a new tag stops the build
-    /// here and takes its width from this one answer.
+    /// How storage moves this tag's values; `fixed_size()` reads the width from it.
     pub const fn movement(self) -> ColumnMovement {
         match self {
             ColumnTypeTag::Boolean
@@ -230,8 +229,7 @@ impl ColumnTypeTag {
         }
     }
 
-    /// How this tag represents NULL. Every tag has an arm, so a new tag stops the build here and
-    /// declares its NULL policy once, for the Parquet read and write paths that key on it.
+    /// How this tag represents NULL; the Parquet read and write paths key on it.
     pub const fn null_policy(self) -> ColumnNullPolicy {
         match self {
             ColumnTypeTag::Boolean
@@ -808,7 +806,7 @@ mod tests {
 
     #[test]
     fn test_null_policy() {
-        // the Java definitions' NullPolicy.NONE types, and SENTINEL for every other stored type
+        // the types Java maps to NullPolicy.NONE; every other tag is Sentinel
         for tag in ColumnTypeTag::VALUES {
             let expected = if matches!(
                 tag,
@@ -827,7 +825,7 @@ mod tests {
 
     #[test]
     fn test_fixed_size_as_before_movement() {
-        // the widths the tag match gave before it derived from the movement tier
+        // each tag's width, listed independently of movement()
         let expected = |tag: ColumnTypeTag| -> Option<usize> {
             match tag {
                 ColumnTypeTag::Boolean

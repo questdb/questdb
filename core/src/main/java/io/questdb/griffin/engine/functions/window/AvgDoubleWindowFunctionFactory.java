@@ -79,10 +79,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(D)";
 
-    /**
-     * A sliding frame removes a value by adding its negation: IEEE 754 defines x - y as
-     * x + (-y), so the result does not change.
-     */
     public static double value(double sum, double delta) {
         return sum + delta;
     }

@@ -218,7 +218,6 @@ public class BindVariableServiceImpl implements BindVariableService {
             copy.define(index, type, 0);
             return dec;
         }
-        // the value copies through its accessor family's getter and setter
         return switch (driver.getAccessor()) {
             case BOOLEAN -> {
                 copy.setBoolean(index, f.getBool(null));
@@ -318,7 +317,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         if (driver == null) {
             return dec;
         }
-        // the value copies through its accessor family's getter and setter
         return switch (driver.getAccessor()) {
             case BOOLEAN -> {
                 copy.setBoolean(name, f.getBool(null));
@@ -393,8 +391,8 @@ public class BindVariableServiceImpl implements BindVariableService {
                 copy.setDecimal(name, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
                 yield dec;
             }
-            // no named IPv4 setter exists on the BindVariableService interface; ARRAY carries no value to
-            // copy. Skipped, as they always were, along with the types a bind variable never has.
+            // BindVariableService has no named IPv4 or ARRAY setter, so both are skipped; no bind
+            // variable holds a LONG128 or an INTERVAL
             case IPv4, ARRAY, LONG128, INTERVAL -> {
                 yield dec;
             }

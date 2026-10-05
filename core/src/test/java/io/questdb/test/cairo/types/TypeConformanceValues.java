@@ -45,35 +45,36 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
- * The value rows of the conformance kit (spec PA-18), per kit type.
+ * The value rows of the conformance kit, per kit type.
  * <p>
- * Every type has a {@code null} row. Existing types add, where the type has them: {@code min}
- * and {@code max}; {@code sentinel}, the type's NULL bit pattern written as a value, which
- * reads as NULL; for types without NULL (BOOLEAN excepted, whose every bit pattern is false or
- * true) {@code other_null}, a value equal to another type's sentinel (-1, the geohash NULL),
- * which reads as data; for FLOAT and DOUBLE {@code nan} (their sentinel), {@code negzero},
- * {@code literal_inf} (SQL stores every non-finite value as NaN) and the raw rows {@code inf}
- * and {@code ninf}, which store infinities; for var-size types {@code empty} and {@code escape}, a
- * value with the characters the text protocols quote. A type has no {@code sentinel} row where
- * the pattern lies outside what a literal can write: geohash (the bits are masked), decimal (the
- * pattern is outside the declared precision) and the var-size types (NULL lives in the length
- * or the aux entry).
+ * Every type has a {@code null} row. Existing types add, where the type has them: {@code min} and
+ * {@code max}; {@code sentinel}, the type's NULL bit pattern written as a value, which reads as
+ * NULL; for types without NULL (BOOLEAN excepted, whose every bit pattern is false or true) {@code
+ * other_null}, a value equal to another type's sentinel (-1, the geohash NULL), which reads as
+ * data; for FLOAT and DOUBLE {@code nan} (their sentinel), {@code negzero}, {@code literal_inf}
+ * (SQL stores every non-finite value as NaN) and the raw rows {@code inf} and {@code ninf}, which
+ * store infinities; for the text types and SYMBOL {@code empty} and {@code escape}, a value with
+ * the characters the text protocols quote; for BINARY and the arrays {@code empty}, and for the
+ * arrays {@code specials}, with NaN, the infinities and -0.0 as elements. A type has no
+ * {@code sentinel} row where the pattern lies outside what a literal can write: geohash (the bits
+ * are masked), decimal (the pattern is outside the declared precision) and the var-size types
+ * (NULL lives in the length or the aux entry); SYMBOL and INTERVAL have no {@code sentinel} row
+ * either.
  * <p>
  * Existing types write their rows as SQL literals, except where SQL cannot write the value
- * (infinities). A type registered later has no literal yet: apart from {@code null}, its rows
- * are raw bit patterns derived from its type definition: {@code zero}, {@code one},
- * {@code ones}, {@code sentinel} (its own {@code getNullLong}) and {@code sentinel_<TAG>}, the
- * NULL pattern of every existing type of the same width (for a full-range type the legacy
- * sentinels, the #6921 collision); the arithmetic tier of its definition adds {@code min},
- * {@code max} and the float rows. A var-size type registered later has no bit pattern to
- * derive: its rows follow the accessor family its definition answers, so a text family takes
- * the rows of the existing text types ({@code empty}, {@code min}, {@code max},
- * {@code escape}), as raw bytes. Raw rows go through the table writer, by width or by family
- * ({@link #writeRows}), and come after the literal rows; {@link #readValue} reads them back in
- * the same form.
+ * (infinities). A type registered later has no literal: apart from {@code null}, its rows are raw
+ * bit patterns derived from its type driver: {@code zero}, {@code one}, {@code ones}, {@code
+ * sentinel} (its own {@code getNullLong}) and {@code sentinel_<TAG>}, the NULL pattern of every
+ * existing type of the same width (for a type with no reserved NULL value, the existing types'
+ * sentinels, the #6921 collision); its arithmetic tier adds {@code min}, {@code max} and the float
+ * rows. A var-size type registered later has no bit pattern to derive: its rows follow its accessor
+ * family, so a text family takes the rows of the existing text types ({@code empty}, {@code min},
+ * {@code max}, {@code escape}), as raw bytes. Raw rows go through the table writer, by width or by
+ * family ({@link #writeRows}), and come after the literal rows; {@link #readValue} reads them back
+ * in the same form.
  * <p>
- * The table shapes the kit also runs: an empty table, an empty partition (a partition the
- * query's interval selects no row from, and a day between two partitions) and a single row.
+ * The table shapes the kit also runs: an empty table, an empty partition (a partition the query's
+ * interval selects no row from, and a day between two partitions) and a single row.
  */
 public final class TypeConformanceValues {
     public static final String SHAPE_EMPTY_PARTITION = "empty_partition";
@@ -245,9 +246,9 @@ public final class TypeConformanceValues {
     }
 
     /**
-     * Reads a later type's value from a record in the form its rows hold it: the raw bits of a
-     * fixed-size value by width; for a var-size value, by the accessor family of its definition,
-     * the byte length followed by the bytes, and {@code {-1}} for NULL.
+     * Reads a value of a type registered later from a record in the form its rows hold it: the raw
+     * bits of a fixed-size value by width; for a var-size value, by its accessor family, the byte
+     * length followed by the bytes, and {@code {-1}} for NULL.
      */
     public static long[] readValue(Record record, int column, TypeConformanceTypes.Entry type) {
         final TypeDriver driver = ColumnType.getTypeDriver(type.columnType);
@@ -359,8 +360,9 @@ public final class TypeConformanceValues {
         rows.add(Row.bits("one", width, 1, 0, 0, 0));
         rows.add(Row.bits("ones", width, -1, -1, -1, -1));
         rows.add(Row.bits("sentinel", width, driver.getNullLong(0), driver.getNullLong(1), driver.getNullLong(2), driver.getNullLong(3)));
-        // every sentinel of an existing type of the same width, written as a value: for a
-        // full-range type these are the legacy sentinels (#6921), for example LONG_MIN and NaN
+        // every sentinel of an existing type of the same width, written as a value: for a type with
+        // no reserved NULL value these are values that existing types treat as NULL (#6921), for
+        // example LONG_MIN and NaN
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
             if (TypeConformanceTypes.PSEUDO_TAGS.contains(tag) || tag == type.tag || tag == ColumnTypeTag.VARCHAR_SLICE) {
                 continue;
@@ -381,8 +383,8 @@ public final class TypeConformanceValues {
     }
 
     /**
-     * Rows the arithmetic tier of a later type's definition implies: the tier's minimum and
-     * maximum, and for float tiers NaN, the infinities and -0.0, as raw bits.
+     * Rows the arithmetic tier of a type registered later implies: the tier's minimum and maximum,
+     * and for float tiers NaN, the infinities and -0.0, as raw bits.
      */
     private static void addTierRows(TypeConformanceTypes.Entry type, int width, ObjList<Row> rows) {
         if (type.laterTier == null) {
@@ -417,9 +419,8 @@ public final class TypeConformanceValues {
     }
 
     /**
-     * Rows of a var-size type registered later, by the accessor family its definition answers: a
-     * text family takes the rows of the existing text types. A family without a row set here
-     * fails loudly, naming it.
+     * Rows of a var-size type registered later, by its accessor family: a text family takes the
+     * rows of the existing text types. A family without a row set here fails loudly, naming it.
      */
     private static void addVarSizeRows(TypeConformanceTypes.Entry type, TypeDriver driver, ObjList<Row> rows) {
         final PhysicalDescriptor.Accessor family = driver.getAccessor();

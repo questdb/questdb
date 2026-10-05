@@ -48,11 +48,11 @@ import java.util.Set;
 
 /**
  * The function library reaches the parser only through {@link FunctionFactoryScanner} and
- * {@link FunctionFactoryCache}, and both used to skip what they could not load with a log line
- * as the only trace. A factory for a new type that names it with an unknown signature
+ * {@link FunctionFactoryCache}, and with assertions off both skip what they cannot load, with a log
+ * line as the only trace. A factory for a new type that names it with an unknown signature
  * character would vanish that way, and the function would resolve to another type's overload.
- * These tests pin that nothing is skipped today and that, with assertions on (the test
- * configuration), a skip is an error.
+ * These tests pin that nothing is skipped and that, with assertions on (the test configuration), a
+ * skip is an error.
  */
 public class FunctionFactoryCacheTest extends AbstractCairoTest {
 

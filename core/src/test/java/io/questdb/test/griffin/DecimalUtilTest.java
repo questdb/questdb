@@ -517,8 +517,8 @@ public class DecimalUtilTest extends AbstractCairoTest {
 
     @Test
     public void testLoadCoversEveryAdmittedType() {
-        // Coverage of DecimalUtil.load (F34 keeps it per type): every value type the decimal code
-        // admits, through getTypePrecisionScale() or getImplicitCastType(), has a load arm. The value source
+        // Coverage of DecimalUtil.load: every value type the decimal code admits, through
+        // getTypePrecisionScale() or getImplicitCastType(), has a load arm. The value source
         // answers 7 through every getter, so a type load reads comes out as 7 at the type's scale;
         // a type with no arm leaves the target untouched. The list pins the types load reads.
         final StringSink loaded = new StringSink();

@@ -45,9 +45,9 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "rpad(ØIØ)";
 
     /**
-     * Undefined for a negative length and an empty fill text: the function gives NULL there, as
-     * for a NULL operand. The function also rejects a length above its buffer limit before it
-     * calls the body.
+     * Undefined for a negative length and an empty fill text: the function gives NULL there, as for
+     * a NULL operand. The function also rejects a length above its buffer limit before it calls
+     * this method.
      */
     public static void value(Utf8StringSink sink, Utf8Sequence str, int strLength, int len, Utf8Sequence fillText, int fillTextLength) {
         if (len > strLength) {

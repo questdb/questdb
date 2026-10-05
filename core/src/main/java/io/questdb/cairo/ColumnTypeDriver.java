@@ -45,7 +45,8 @@ public interface ColumnTypeDriver extends TypeDriver {
     }
 
     /**
-     * Var-size NULLs are encoded in the aux vector, so the appender is {@link #appendNull}.
+     * A var-size NULL needs an aux entry, and for STRING and BINARY also a length prefix in the
+     * data vector, so the appender calls {@link #appendNull}.
      */
     @Override
     default Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
@@ -53,7 +54,7 @@ public interface ColumnTypeDriver extends TypeDriver {
     }
 
     /**
-     * Var-size NULLs live in the aux vector; there is nothing to fill in the data vector.
+     * No-op: a var-size NULL has no fixed-width pattern to fill; {@link #appendNull} writes it.
      */
     @Override
     default void setNull(long addr, long count) {

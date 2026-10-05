@@ -675,8 +675,8 @@ public class RecordSinkFactory {
     }
 
     /**
-     * An opcode {@link #sinkOpcode} yields but the sink has no arm for: the relation and the
-     * arms went out of step.
+     * The error for an opcode {@link #sinkOpcode} yields but no sink arm handles: sinkOpcode() and
+     * the sink arms are out of step.
      */
     static IllegalStateException noSinkArm(int type) {
         return new IllegalStateException("no sink arm [type=" + ColumnType.nameOf(type) + "]");

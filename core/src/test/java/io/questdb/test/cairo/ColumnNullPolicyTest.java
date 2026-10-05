@@ -39,8 +39,8 @@ public class ColumnNullPolicyTest extends AbstractCairoTest {
     @Test
     public void testWriterReaderAndQueryMetadataAnswerTheDefinitionPolicy() throws Exception {
         // getColumnNullPolicy is a RecordMetadata default, so writer, reader and query metadata
-        // answer alike: the column type definition's policy, NONE exactly for the four value-only
-        // types; a deleted column, where the metadata keeps one, has no policy and is skipped
+        // answer alike: the column type driver's policy, NONE exactly for BOOLEAN, BYTE, SHORT and
+        // CHAR; a deleted column, where the metadata keeps one, has no policy and is skipped
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (

@@ -239,8 +239,9 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     }
 
     /**
-     * The arm of {@link #appendValue} for a column of this type: the type tag when the cursor can
-     * materialize it, an exception otherwise.
+     * The arm of {@link #appendValue} for a column of this type: its accessor family's opcode
+     * ({@link PhysicalDescriptor.Accessor#opcode()}) when the cursor can materialize it. Throws
+     * UnsupportedOperationException otherwise.
      */
     private static int materializeOpcode(int columnType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);

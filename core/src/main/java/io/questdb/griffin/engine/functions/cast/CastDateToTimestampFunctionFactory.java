@@ -37,8 +37,8 @@ import io.questdb.std.ObjList;
 public class CastDateToTimestampFunctionFactory implements FunctionFactory {
 
     /**
-     * The scaling of {@link TimestampDriver#fromDate} without its NULL test: {@code fromMillis}
-     * scales every value the same way. The function tests NULL first, so its results do not change.
+     * Scales a date to the timestamp unit of {@code driver}, like {@link TimestampDriver#fromDate}
+     * without its NULL test. The function tests NULL before it calls this method.
      */
     public static long value(TimestampDriver driver, long operand) {
         return driver.fromMillis(operand);

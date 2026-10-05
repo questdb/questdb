@@ -76,7 +76,8 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
             long rowCount,
             long baseRowId
     ) {
-        // LONG_NULL == Long.MIN_VALUE, so the body's Math.max handles every LONG_NULL combination naturally.
+        // LONG_NULL == Long.MIN_VALUE, so Math.max in MaxLongGroupByFunctionFactory.value() handles
+        // every LONG_NULL combination.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct long column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.

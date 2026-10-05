@@ -70,24 +70,24 @@ import java.util.regex.Pattern;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 /**
- * The storage part of the conformance kit (User Story 4): every kit type through INSERT,
- * out-of-order merge, WAL apply, column tops, dedup, ALTER COLUMN TYPE and partition-to-Parquet
- * conversion, read through record cursors and through page frames, over the table shapes of
- * {@link TypeConformanceValues}, and as the key of LATEST ON ... PARTITION BY on each table mode
- * (the SQL path {@code sql.latest_by_key}, run here for the WAL and non-partitioned tables).
+ * The storage part of the conformance kit: every kit type through INSERT, out-of-order merge, WAL
+ * apply, column tops, dedup, ALTER COLUMN TYPE and partition-to-Parquet conversion, read through
+ * record cursors and through page frames, over the table shapes of {@link TypeConformanceValues},
+ * and as the key of LATEST ON ... PARTITION BY on each table mode (the SQL path
+ * {@code sql.latest_by_key}, run here because this class has the WAL and non-partitioned tables).
  * {@code storage.parquet_convert} converts a Parquet partition's VARCHAR column into the type: the
  * values as they print go into a VARCHAR column, the partition goes to Parquet, the column's type
  * changes to the type, which a read converts on the fly, and the partition comes back to native
  * storage, which converts it for good.
  * <p>
  * Each path runs in the modes that change it (WAL and non-WAL, in-order and out-of-order,
- * partitioned and not), and every mode must give the one recording made at S12
+ * partitioned and not), and every mode must give the same recording
  * ({@link TypeConformanceRecording}); a difference between modes is a failure. The page-frame
  * sections print each row's stored bytes, so a change in the column files fails here byte for
- * byte. Types registered later are checked by {@link TypeConformanceInvariants} on the paths
- * their resource line lists.
+ * byte. Types registered later are checked by {@link TypeConformanceInvariants} on the paths their
+ * resource line lists.
  * <p>
- * Edge cases from the spec: ADD COLUMN between WAL transactions that one
+ * The paths include these edge cases: ADD COLUMN between WAL transactions that one
  * {@code drainWalQueue} applies together, out-of-order writes into partitions with column tops,
  * and the SYMBOL table after NULL writes.
  */
@@ -781,13 +781,13 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     }
 
     /**
-     * Dedup on a type registered later. SQL refuses only arrays as dedup keys, so a
-     * persisted type that is no array is one. Writing the rows again replaces k; rows at the same
+     * Dedup on a type registered later. SQL refuses only arrays as dedup keys, so every persisted
+     * type except an array can be one. Writing the rows again replaces k; rows at the same
      * timestamps with the next row's value replace k where the two values are one key, and add a
-     * row where they are not. Two values are one key when their bits are equal; the NULL row is
-     * the sentinel-pattern row's key under SENTINEL, the zero row's under NONE, and a key of its
-     * own under BITMAP. Under NOT_NULL the NULL row is left out: writing it must fail, which
-     * invariant 2 checks on the other paths.
+     * row where they are not. Two values are one key when their bits are equal; the NULL row is the
+     * sentinel-pattern row's key under SENTINEL, the zero row's under NONE, and a key of its own
+     * under BITMAP. Under NOT_NULL the NULL row is left out: writing it must fail, which invariant
+     * 2 checks on the other paths.
      */
     private void checkLaterDedup(String mode) throws Exception {
         final String path = "storage.dedup";

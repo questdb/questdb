@@ -30,9 +30,6 @@ import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.ByteTypeConstant;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for BYTE.
- */
 public final class ByteTypeDriver extends FixedSizeTypeDriver {
     public static final ByteTypeDriver INSTANCE = new ByteTypeDriver();
 

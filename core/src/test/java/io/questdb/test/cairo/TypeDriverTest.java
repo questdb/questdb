@@ -173,8 +173,8 @@ public class TypeDriverTest {
 
     @Test
     public void testColumnNullPolicyFollowsDefinition() {
-        // a column's NULL policy is its type definition's, for every real type and encoded
-        // variant, and NONE exactly for the four value-only types
+        // a column's NULL policy is its type driver's, for every real type and encoded variant, and
+        // NONE exactly for BOOLEAN, BYTE, SHORT and CHAR
         final IntObjHashMap<String> names = s10TypeNames();
         final int noKey = names.getNoEntryKey();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -350,10 +350,11 @@ public class TypeDriverTest {
 
     @Test
     public void testNamesAsAtS10() {
-        // the type definitions name every type ColumnType's name table named at s10-done, and
-        // nothing else: every registered type, every tag with every value of bits 8 to 23
-        // (geohash bits and flag, decimal precision, array element and dimensions, timestamp and
-        // interval flags), and random encodings
+        // ColumnType.nameOf (the type drivers, and ColumnType's own names for the pseudo tags)
+        // names exactly the types of the reference name table, and nothing else: every registered
+        // type, every tag with every value of bits 8 to 23 (geohash bits and flag, decimal
+        // precision, array element and dimensions, timestamp and interval flags), and random
+        // encodings
         final IntObjHashMap<String> s10Names = s10TypeNames();
         final int noKey = s10Names.getNoEntryKey();
         for (int type : s10Names.getKeys()) {
@@ -400,7 +401,7 @@ public class TypeDriverTest {
 
     @Test
     public void testColumnFunctionsPerType() {
-        // the classes FunctionParser.createColumn and GroupByUtils.createColumnFunction used to name
+        // the column function class each type driver's newColumnFunction() returns, per type
         final Object[][] expected = {
                 {ColumnType.BOOLEAN, "BooleanColumn"},
                 {ColumnType.BYTE, "ByteColumn"},
@@ -466,7 +467,8 @@ public class TypeDriverTest {
 
     @Test
     public void testNullAsLongIsTheDeletedLongNullUtilsTable() {
-        // the values the deleted LongNullUtils table held, per tag; a widening read of the storage NULL
+        // the expected getNullAsLong() per tag: a widening read of the storage NULL, and 0 for
+        // types wider than 8 bytes and for var-size types
         Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.BOOLEAN).getNullAsLong());
         Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.BYTE).getNullAsLong());
         Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.SHORT).getNullAsLong());
@@ -477,7 +479,8 @@ public class TypeDriverTest {
         Assert.assertEquals(Numbers.LONG_NULL, ColumnType.getTypeDriver(ColumnType.TIMESTAMP).getNullAsLong());
         Assert.assertEquals(Float.floatToIntBits(Float.NaN), ColumnType.getTypeDriver(ColumnType.FLOAT).getNullAsLong());
         Assert.assertEquals(Double.doubleToLongBits(Double.NaN), ColumnType.getTypeDriver(ColumnType.DOUBLE).getNullAsLong());
-        // the query engine has always parked a missing SYMBOL as INT_NULL, not as VALUE_IS_NULL
+        // the query engine parks a missing SYMBOL as INT_NULL, which is also the value of
+        // SymbolTable.VALUE_IS_NULL
         Assert.assertEquals(Numbers.INT_NULL, ColumnType.getTypeDriver(ColumnType.SYMBOL).getNullAsLong());
         Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.LONG256).getNullAsLong());
         Assert.assertEquals(GeoHashes.NULL, ColumnType.getTypeDriver(ColumnType.GEOBYTE).getNullAsLong());
@@ -518,7 +521,7 @@ public class TypeDriverTest {
 
     @Test
     public void testNullConstantsAreTheDeletedPreFill() {
-        // the instances the deleted Constants.nullConstants pre-fill held, per tag
+        // the NULL constant Constants.getNullConstant() returns, per tag
         final Object[][] expected = {
                 {ColumnType.BOOLEAN, BooleanConstant.FALSE},
                 {ColumnType.BYTE, ByteConstant.ZERO},
@@ -547,7 +550,7 @@ public class TypeDriverTest {
                 {ColumnType.INTERVAL_RAW, IntervalConstant.RAW_NULL},
                 {ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalConstant.TIMESTAMP_MICRO_NULL},
                 {ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalConstant.TIMESTAMP_NANO_NULL},
-                // pseudo tags, and VARCHAR_SLICE, have always yielded the untyped NULL
+                // pseudo tags and VARCHAR_SLICE yield the untyped NULL
                 {ColumnType.UNDEFINED, NullConstant.NULL},
                 {ColumnType.CURSOR, NullConstant.NULL},
                 {ColumnType.VAR_ARG, NullConstant.NULL},
@@ -567,7 +570,8 @@ public class TypeDriverTest {
             Assert.assertSame(ColumnType.nameOf(type), row[1], Constants.getNullConstant(type));
             covered.add(ColumnTypeTag.of(type));
         }
-        // encoded types: typed NULLs, cached where they always were
+        // encoded types: typed NULLs; geohash NULLs are cached per encoding, DOUBLE array NULLs up
+        // to ten dimensions
         for (int bits = 1; bits <= ColumnType.GEOLONG_MAX_BITS; bits++) {
             final int type = ColumnType.getGeoHashTypeWithBits(bits);
             final ConstantFunction c = Constants.getNullConstant(type);
@@ -599,7 +603,7 @@ public class TypeDriverTest {
 
     @Test
     public void testNullSentinelsAreTheDocumentedValues() {
-        // the values the deleted TableUtils.setNull / getNullLong switches produced, per type
+        // the expected getNullLong() per type
         Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.BOOLEAN).getNullLong(0));
         Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.BYTE).getNullLong(0));
         Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.SHORT).getNullLong(0));
@@ -644,9 +648,9 @@ public class TypeDriverTest {
 
     @Test
     public void testProtocolAnswers() {
-        // every definition's PostgreSQL OIDs and wire kind, next to what the protocols read:
-        // WireKind.of(), which gives VARCHAR_SLICE and the pseudo tags none, and PGOids' OID table,
-        // which holds the OIDs pgwire advertised before S16 for every tag
+        // every type driver's PostgreSQL OIDs and wire kind, next to what the protocols read:
+        // WireKind.of(), which gives VARCHAR_SLICE and the pseudo tags none, and the OID table
+        // PGOids.getTypeOid() reads
         final StringSink sink = new StringSink();
         final EnumSet<WireKind> answered = EnumSet.noneOf(WireKind.class);
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
@@ -712,7 +716,8 @@ public class TypeDriverTest {
         // arrays take the element type's array OID
         Assert.assertEquals(PgTypeOids.PG_ARR_FLOAT8, PGOids.getTypeOid(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)));
         Assert.assertEquals(PgTypeOids.PG_ARR_FLOAT8, PGOids.getTypeOid(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
-        // every kind is some type's: a kind no definition answers would be a writer no type reaches
+        // every kind belongs to some type: a kind no type driver returns would be a writer no type
+        // reaches
         Assert.assertEquals(EnumSet.allOf(WireKind.class), answered);
         // encoded types take their tag's kind
         Assert.assertSame(WireKind.GEOINT, WireKind.of(ColumnType.getGeoHashTypeWithBits(20)));
@@ -723,8 +728,8 @@ public class TypeDriverTest {
 
     @Test
     public void testRelationFactsAreConsistent() {
-        // the facts the relation rules read: a type's implicit-cast list starts with the type
-        // itself (VARCHAR_SLICE reads through VARCHAR's list), and the width in bits the rules read for
+        // the facts RelationRules reads: a type's implicit-cast list starts with the type itself
+        // (VARCHAR_SLICE reads through VARCHAR's list), and the width in bits the rules read for
         // integers, CHAR and geohashes is the storage width
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
             final TypeDriver driver = ColumnType.findTypeDriver(tag.code());
@@ -861,8 +866,8 @@ public class TypeDriverTest {
 
     @Test
     public void testSizesAsAtS10() {
-        // sizeOf, pow2SizeOf and isFixedSize answer as s10-done's tables and switch did, for every
-        // tag with every value of bits 8 to 23 and for random encodings
+        // sizeOf, pow2SizeOf and isFixedSize match reference tables written out independently of
+        // the type drivers, for every tag with every value of bits 8 to 23 and for random encodings
         for (int tag = 0; tag < 256; tag++) {
             for (int bits = 0; bits < 1 << 16; bits++) {
                 assertS10Sizes(tag | bits << 8);
@@ -904,8 +909,9 @@ public class TypeDriverTest {
 
     @Test
     public void testTypeConstantsAreTheDeletedRegistry() {
-        // the CAST type constants the definitions answer since S15a (T094), exactly the entries of
-        // the registry Constants held before, by encoded type; every other encoding answers null
+        // the CAST type constant Constants.getTypeConstant() returns, by encoded type: a real
+        // type's from its type driver, REGCLASS, REGPROCEDURE and ARRAY_STRING's from Constants'
+        // own table; every other encoding but an array returns null
         final Object[][] expected = {
                 {ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE},
                 {ColumnType.BYTE, ByteTypeConstant.INSTANCE},
@@ -948,7 +954,7 @@ public class TypeDriverTest {
         }
         Assert.assertNull(Constants.getTypeConstant(ColumnType.getDecimalType(18, 3)));
         Assert.assertNull("no type", Constants.getTypeConstant(-1));
-        // DOUBLE arrays, cached for up to ten dimensions; other element types throw, as before
+        // DOUBLE arrays, cached for up to ten dimensions; other element types throw
         for (int dims = 1; dims <= 12; dims++) {
             final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dims);
             final TypeConstant c = Constants.getTypeConstant(type);
@@ -966,10 +972,10 @@ public class TypeDriverTest {
 
     @Test
     public void testTypeFactsAsAtS10() {
-        // sizeOf, pow2SizeOf, isFixedSize and nameOf as they answered at s10-done, when parallel
-        // tables held them: every tag number (pseudo tags included, they keep their own facts),
-        // the encoded variants, and a deleted column's type (-INT); isFixedSize answers by exact
-        // value, so an encoded geohash, decimal or designated timestamp reads false
+        // sizeOf, pow2SizeOf, isFixedSize and nameOf for every tag number (pseudo tags included,
+        // they keep their own facts), the encoded variants, and a deleted column's type (-INT);
+        // isFixedSize answers by exact value, so an encoded geohash, decimal or designated
+        // timestamp reads false
         final StringSink sink = new StringSink();
         for (int tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
             appendTypeFacts(sink, "tag " + tag + ' ' + ColumnTypeTag.of(tag).name(), tag);
@@ -1158,7 +1164,7 @@ public class TypeDriverTest {
     }
 
     private static void assertS10Sizes(int type) {
-        // s10-done's TYPE_SIZE and TYPE_SIZE_POW2 by tag, and the exact values its isFixedSize listed
+        // the reference sizeOf and pow2SizeOf by tag, and the exact values isFixedSize accepts
         final int[] s10Size = {
                 -1, 1, 1, 2, 2, 4, 8, 8, 8, 4, 8, 0, 4, 32, 1, 2, 4, 8, 0, 16, -1, -1, -1, 0, 16, 4, 0, 0, 1, 2, 4, 8, 16,
                 32, 0, 0, 0, 0, -1, 16, 0, 0
@@ -1179,7 +1185,7 @@ public class TypeDriverTest {
         final short tag = ColumnType.tagOf(type);
         Assert.assertEquals("isFixedSize " + type, s10FixedSize, ColumnType.isFixedSize(type));
         if (tag < 0) {
-            return; // -1, "no type": both tables threw
+            return; // -1, "no type": sizeOf and pow2SizeOf both throw, so neither is checked
         }
         Assert.assertEquals("sizeOf " + type, tag < s10Size.length ? s10Size[tag] : -1, ColumnType.sizeOf(type));
         if (tag < s10Pow2Size.length) {
@@ -1202,7 +1208,7 @@ public class TypeDriverTest {
     }
 
     /**
-     * ColumnType's name table as its static initialiser filled it at s10-done.
+     * Reference names of every encoded type, written out independently of the type drivers.
      */
     private static IntObjHashMap<String> s10TypeNames() {
         final IntObjHashMap<String> names = new IntObjHashMap<>();

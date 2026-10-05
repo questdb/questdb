@@ -34,9 +34,10 @@ import io.questdb.std.ObjList;
 
 public class ArgMaxTimestampDoubleGroupByFunctionFactory implements FunctionFactory {
     /**
-     * Whether {@code nextKey} orders after {@code maxKey}: NaN orders after every other value,
-     * and -0.0 and 0.0 are equal, so the first seen stays. The function keeps today's
-     * comparison, which skips NULL keys first: the body's NaN test would cost every row.
+     * Whether {@code nextKey} orders after {@code maxKey}: NaN orders after every other value, and
+     * -0.0 equals 0.0, so the first key seen stays. {@code ArgMaxTimestampDoubleGroupByFunction}
+     * does not call this method: it skips NULL keys first, and the NaN test here would cost every
+     * row.
      */
     public static boolean value(double maxKey, double nextKey) {
         return nextKey > maxKey || (Double.isNaN(nextKey) && !Double.isNaN(maxKey));

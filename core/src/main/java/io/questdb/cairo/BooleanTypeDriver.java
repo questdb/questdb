@@ -30,9 +30,6 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanTypeConstant;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for BOOLEAN.
- */
 public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     public static final BooleanTypeDriver INSTANCE = new BooleanTypeDriver();
 

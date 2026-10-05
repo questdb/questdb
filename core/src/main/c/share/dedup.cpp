@@ -34,9 +34,9 @@
 #include "dedup_comparers.h"
 #include "ooo.h"
 
-// Every switch over VarLayout in this file lists each layout, so a new layout stops the build at
-// every var-size comparer choice here. -Wswitch covers the switches without a default,
-// -Wswitch-enum the ones with a default.
+// Every switch over VarLayout in this file lists each layout, so a new layout fails the build at
+// every var-size comparer choice here. None of these switches has a default, so -Wswitch catches
+// the missing layout; -Wswitch-enum also catches it in a switch that has a default.
 #pragma GCC diagnostic error "-Wswitch"
 #pragma GCC diagnostic error "-Wswitch-enum"
 

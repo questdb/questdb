@@ -1235,8 +1235,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // the JIT lane a bind variable is passed in, by the accessor family of its value
     private static byte bindVariableTypeCode(int columnTypeTag) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnTypeTag);
-        // pseudo types and VARCHAR_SLICE have no bind variable lane, nor has a type that does not order like
-        // its accessor family: every lane compares as the family's namesake
+        // pseudo types and VARCHAR_SLICE have no bind variable lane, nor has a type that orders
+        // differently from its accessor family: each lane compares values as the type the family is
+        // named after
         if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return UNDEFINED_CODE;
         }
@@ -1275,12 +1276,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return token.charAt(1);
     }
 
-    // the JIT lane a column is read in, by the accessor family its values are read through (F43: the
-    // lanes are a closed physical set); VARCHAR_SLICE reads through VARCHAR's family
+    // the JIT lane a column is read in, by the accessor family its values are read through;
+    // VARCHAR_SLICE reads through VARCHAR's family
     private static int columnTypeCode(int columnTypeTag) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnTypeTag);
-        // pseudo types have no JIT lane, nor has a type that does not order like its accessor family: every
-        // lane compares as the family's namesake, so such a column's filter runs in Java
+        // pseudo types have no JIT lane, nor has a type that orders differently from its accessor
+        // family: each lane compares values as the type the family is named after, so such a
+        // column's filter runs in Java
         if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return UNDEFINED_CODE;
         }
@@ -1470,7 +1472,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // LONG, DATE and TIMESTAMP; the other types on the I4 and I8 lanes do not compare as integers
     private static boolean isGenuineIntegerType(int columnType) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnType);
-        // pseudo types have no lane, nor has a type that does not order like its accessor family
+        // pseudo types have no lane, nor has a type that orders differently from its accessor
+        // family
         if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return false;
         }
@@ -1493,9 +1496,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return node != null && node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
     }
 
-    // the NULL an I4 lane compares a value of this type with, by its accessor family: the geohashes'
-    // and IPv4's own sentinels; INT_NULL for INT and SYMBOL columns, STRING-typed (symbol) bind
-    // variables, and any other type an I4 lane carries, as before
+    // the NULL an I4 lane compares a value of this type with, by its accessor family: the
+    // geohashes' and IPv4's own sentinels; INT_NULL for INT and SYMBOL columns, STRING-typed
+    // (symbol) bind variables and any other type an I4 lane carries
     private static long i4NullOf(int columnType) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnType);
         if (driver == null) {
@@ -1514,7 +1517,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Stands for PredicateType.NUMERIC
     private static boolean isNumeric(int columnTypeTag) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnTypeTag);
-        // pseudo types are not numbers; a type that does not order like its accessor family has no lane
+        // pseudo types are not numbers; a type that orders differently from its accessor family has
+        // no lane
         if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return false;
         }
@@ -1607,7 +1611,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // IN semantics
     private static boolean isWidthSensitiveType(int columnType) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnType);
-        // pseudo types have no lane, nor has a type that does not order like its accessor family
+        // pseudo types have no lane, nor has a type that orders differently from its accessor
+        // family
         if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return false;
         }
@@ -4417,8 +4422,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void rejectOrderingComparison(final CharSequence token, int position) throws SqlException {
         final short tag = ColumnType.tagOf(predicateContext.columnType);
         final TypeDriver driver = ColumnType.findTypeDriver(tag);
-        // the lanes compare SYMBOL keys, UUID and LONG128 for equality only; a pseudo type has no lane
-        // and is ordered as before
+        // the lanes compare SYMBOL keys, UUID and LONG128 for equality only; a pseudo type has no
+        // lane and passes this check
         final boolean isOrderable = driver == null || switch (driver.getAccessor()) {
             case SYMBOL, UUID, LONG128 -> false;
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, LONG256,
@@ -4530,11 +4535,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         .put("unsupported column type: ")
                         .put(ColumnType.nameOf(columnTypeTag));
             }
-            // FR-021: the column's NULL policy decides whether a lane's NULL checks fit it. The lanes
-            // implement SENTINEL: a value that equals the lane's sentinel is NULL, and arithmetic keeps it
-            // NULL. A column without NULL (NONE) fits the one- and two-byte lanes only, which have no
-            // sentinel; on a wider lane its sentinel pattern would read as NULL, so its filter stays in Java
-            // a switch expression, so that a new NULL policy fails to compile here until it decides its lanes
+            // The column's NULL policy decides whether a lane's NULL checks fit it. The lanes treat
+            // a value equal to the lane's sentinel as NULL, and arithmetic keeps it NULL
+            // (SENTINEL). A column without NULL (NONE) fits only the one- and two-byte lanes, which
+            // have no sentinel; on a wider lane a value equal to the sentinel would read as NULL,
+            // so its filter runs in Java.
             final boolean isLaneNullCorrect = switch (metadata.getColumnNullPolicy(index)) {
                 case SENTINEL -> true;
                 case NONE -> typeCode == I1_TYPE || typeCode == I2_TYPE;

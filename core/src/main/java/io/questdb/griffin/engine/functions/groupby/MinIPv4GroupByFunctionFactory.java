@@ -36,8 +36,8 @@ import io.questdb.std.ObjList;
 public class MinIPv4GroupByFunctionFactory implements FunctionFactory {
     /**
      * The lesser of two addresses, compared unsigned; 0.0.0.0, IPv4's NULL, is the least address
-     * here. The function keeps its own test and does not call it: it skips NULL and stores only
-     * when the minimum changes, where calling the body would store on every row.
+     * here. {@code MinIPv4GroupByFunction} does not call this method: it skips NULL and stores only
+     * when the minimum changes.
      */
     public static int value(int min, int next) {
         return Numbers.ipv4ToLong(next) < Numbers.ipv4ToLong(min) ? next : min;

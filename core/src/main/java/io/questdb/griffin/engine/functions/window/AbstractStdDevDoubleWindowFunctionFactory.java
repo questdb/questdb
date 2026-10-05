@@ -71,18 +71,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
-    /**
-     * A sliding frame removes a value by adding its negation: IEEE 754 defines x - y as
-     * x + (-y), so the result does not change.
-     */
     public static double value(double sum, double delta) {
         return sum + delta;
     }
 
-    /**
-     * A sliding frame removes a product by negating its first factor: (-x) * y is -(x * y)
-     * exactly, and sum - p is sum + (-p), so the result does not change.
-     */
     public static double accumulateProduct(double sum, double x, double y) {
         return sum + x * y;
     }

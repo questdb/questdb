@@ -31,9 +31,6 @@ import io.questdb.griffin.engine.functions.constants.IPv4TypeConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for IPv4.
- */
 public final class IPv4TypeDriver extends FixedSizeTypeDriver {
     public static final IPv4TypeDriver INSTANCE = new IPv4TypeDriver();
 

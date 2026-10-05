@@ -439,9 +439,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             int geoHashBits = 0;
             if (valueType != ColumnType.NULL) {
                 final int valueTypeTag = ColumnType.tagOf(valueType);
-                // the column's ILP kind (LineUtils.columnKind()): a type takes its accessor family's
-                // row, as the appender takes its arm; every other type's kind is its tag, or a family
-                // kind (GEOHASH, DECIMAL) that no row names
+                // the column's ILP kind (LineUtils.columnKind()); no row below names the GEOHASH or
+                // DECIMAL kinds, and a geohash column takes a text value through its bits
                 final int columnTypeTag = LineUtils.columnKind(columnType);
                 valid = switch (valueTypeTag) {
                     case ColumnType.LONG -> columnTypeTag == ColumnType.LONG

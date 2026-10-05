@@ -775,7 +775,7 @@ public class SqlOptimiser implements Mutable {
     private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
         final int columnType = metadata.getColumnType(0);
         sink.clear();
-        // the value as a SQL literal, by the column's wire kind: its text form and its NULL test
+        // the value as a SQL literal; the column's WireKind gives its text form and its NULL test
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
             final short tag = ColumnType.tagOf(columnType);
@@ -7810,7 +7810,7 @@ public class SqlOptimiser implements Mutable {
                                     .put(columnCount);
                         }
                         final int columnType = inListMetadata.getColumnMetadata(0).getColumnType();
-                        // whether the SQL literal of a value is quoted, by the column's wire kind
+                        // whether the value's SQL literal is quoted, by the column's WireKind
                         final WireKind kind = WireKind.of(columnType);
                         final boolean quote = kind != null && switch (kind) {
                             case SYMBOL, STRING, VARCHAR, TIMESTAMP, DATE, CHAR, UUID, IPV4, ARRAY, LONG128,
@@ -8413,8 +8413,8 @@ public class SqlOptimiser implements Mutable {
         ExpressionNode count = expressionNodePool.next();
         count.token = "COUNT";
         count.type = FUNCTION;
-        // COUNT(column) skips the column's NULLs; a type without NULL counts every row with COUNT(*).
-        // The model knows the column's type only, and a column never holds more NULLs than its type.
+        // COUNT(column) skips NULLs, so for a type without NULL it equals COUNT(*). The model knows
+        // only the column's type, which is enough: a column of a type without NULL holds no NULLs.
         final boolean hasNulls = switch (ColumnType.getTypeDriver(qc.getColumnType()).getNullPolicy()) {
             case SENTINEL -> true;
             case NONE -> false;

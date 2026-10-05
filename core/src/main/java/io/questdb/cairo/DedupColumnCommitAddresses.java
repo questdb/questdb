@@ -124,8 +124,9 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.putInt(addr + VAL_SIZE_32, valueSizeBytes);
         Unsafe.putLong(addr + COL_TOP_64, columnTop);
 
-        // A column-top row compares as the type's NULL: its sentinel, or for a type without NULL
-        // the value its column top reads as. A switch expression, so a new policy lists this site.
+        // A column-top row compares as the type's NULL: its sentinel, or, for a type without NULL,
+        // the value a column top reads as. The switch makes a new NullPolicy value fail to compile
+        // here.
         final TypeDriver typeDriver = switch (nullPolicy) {
             case SENTINEL, NONE -> ColumnType.getTypeDriver(columnType);
         };

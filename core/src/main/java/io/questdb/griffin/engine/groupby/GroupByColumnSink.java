@@ -101,9 +101,11 @@ public class GroupByColumnSink implements Mutable {
     }
 
     /**
-     * The tag {@link #put} and {@link #putAt} switch on for a batch argument of this type. The
-     * second group has no arm in either: the sink appends nothing for such an argument (PB5,
-     * preserved).
+     * The tag {@link #put} and {@link #putAt} switch on for a batch argument of this type: the
+     * opcode of its accessor family ({@link PhysicalDescriptor.Accessor#opcode()}), or the type's
+     * own tag when it has none. Known inconsistency: for STRING, SYMBOL, VARCHAR, LONG256, BINARY,
+     * ARRAY, INTERVAL, VARCHAR_SLICE and the pseudo types both methods append nothing and do not
+     * fail.
      */
     public static short argTag(int argType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(argType);
@@ -187,7 +189,7 @@ public class GroupByColumnSink implements Mutable {
                  ColumnType.ARRAY, ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
                  ColumnType.ARRAY_STRING, ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE,
                  ColumnType.NULL:
-                // no arm: nothing is appended
+                // the sink appends nothing for these types; see argTag()
                 break;
             default:
                 throw noArm(argType);
@@ -269,7 +271,7 @@ public class GroupByColumnSink implements Mutable {
                  ColumnType.ARRAY, ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
                  ColumnType.ARRAY_STRING, ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE,
                  ColumnType.NULL:
-                // no arm: nothing is written
+                // the sink writes nothing for these types; see argTag()
                 break;
             default:
                 throw noArm(argType);
@@ -333,8 +335,8 @@ public class GroupByColumnSink implements Mutable {
     }
 
     /**
-     * A tag {@link #argTag} yields but neither {@link #put} nor {@link #putAt} lists: the relation
-     * and the arms went out of step.
+     * Thrown for a tag that {@link #argTag} returns but neither {@link #put} nor {@link #putAt}
+     * lists: a new accessor family needs an arm in both.
      */
     private static IllegalStateException noArm(short argType) {
         return new IllegalStateException("no column sink arm [type=" + ColumnType.nameOf(argType) + "]");

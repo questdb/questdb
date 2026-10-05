@@ -85,46 +85,45 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * The ingestion part of the conformance kit (User Story 4): every kit type through ILP over
- * TCP, UDP and HTTP, QWP ingest and egress, CSV import ({@code /imp}) and Parquet import
- * ({@code read_parquet}), into WAL and non-WAL tables.
+ * The ingestion part of the conformance kit: every kit type through ILP over TCP, UDP and HTTP, QWP
+ * ingest and egress, CSV import ({@code /imp}) and Parquet import ({@code read_parquet}), into WAL
+ * and non-WAL tables.
  * <p>
- * Every client is the real {@code java-questdb-client} at the commit the branch pins
- * ({@link #CLIENT_COMMIT}); nothing here forges a frame. Each value row goes out in the
- * protocol's natural form for the column type (the form is part of the recording), with the
- * NULL row as an omitted column; a type a protocol has no form for sends its text form, and
- * the recording holds what the server does with it. A section records what was sent, what the
- * server or the client answered, and what the table stores.
+ * Every client is the real {@code java-questdb-client} of the pinned submodule
+ * ({@link #CLIENT_COMMIT}); nothing here forges a frame. Each value row goes out in the protocol's
+ * natural form for the column type (the form is part of the recording), with the NULL row as an
+ * omitted column; a type a protocol has no form for sends its text form, and the recording holds
+ * what the server does with it. A section records what was sent, what the server or the client
+ * answered, and what the table stores.
  * <p>
- * ILP over TCP and UDP answers nothing: the test sends a last row, the fence, on the same
- * connection and polls, with a bound, until the fence is visible, so every row before it has
- * been processed. ILP over TCP runs with {@code line.tcp.disconnect.on.error=false}, so a
- * rejected line does not drop the rows after it. ILP over HTTP and QWP answer per row: each
- * row goes in its own request or sender, so a rejected row does not hide the others.
+ * ILP over TCP and UDP answer nothing: the test sends a last row, the fence, on the same connection
+ * and polls, with a bound, until the fence is visible, so every row before it has been processed.
+ * ILP over TCP runs with {@code line.tcp.disconnect.on.error=false}, so a rejected line does not
+ * drop the rows after it. ILP over HTTP and QWP answer per row: each row goes in its own request or
+ * sender, so a rejected row does not hide the others.
  * <p>
- * CSV import uses {@code /imp}: it needs no import root, answers synchronously, and takes the
- * CSV that {@code /exp} writes for the same rows, the round trip users run. Parquet import
- * reads the file of a partition converted with {@code CONVERT PARTITION TO PARQUET}.
+ * CSV import uses {@code /imp}: it needs no import root, answers synchronously, and takes the CSV
+ * that {@code /exp} writes for the same rows. Parquet import reads the file of a partition
+ * converted with {@code CONVERT PARTITION TO PARQUET}.
  * <p>
- * A type registered later runs where its resource line enables a path, with no recording.
- * It sends the form of its definition's accessor family: a type in INT's family sends
- * INT's form, one in VARCHAR's family VARCHAR's, and a family the kit has no form for fails,
- * naming it. Its NULL row is the omitted column, as for every type. {@link #checkLater} judges
- * what the table stores, or what QWP egress sends, by invariants 1 and 2
- * ({@link TypeConformanceInvariants}). The NULL row's error, which NOT_NULL requires, is the
- * protocol's answer where the protocol answers per row (ILP over HTTP, QWP). ILP over TCP and
- * UDP answer nothing, so there NOT_NULL requires that the row is not stored. The other paths
- * take their values from a table the kit writes with SQL, so the error is that write's. The
- * ILP fence rows of a NOT_NULL later type carry a value, so the type does not refuse them. ILP
- * over HTTP and QWP refuse a non-WAL table for every type, so there a later type's rows must
- * all be refused and none stored.
+ * A type registered later runs where its resource line enables a path, with no recording. It sends
+ * the protocol form of its accessor family ({@code TypeDriver.getAccessor()}): a type in INT's
+ * family sends INT's form, and a family the kit has no form for fails, naming it. {@link
+ * #checkLater} judges what the table stores, or what QWP egress sends, by invariants 1 and 2
+ * ({@link TypeConformanceInvariants}). Under the NOT_NULL policy the NULL row must be refused: by
+ * the protocol's answer where it answers per row (ILP over HTTP, QWP), by the missing row over ILP
+ * TCP and UDP, and by the SQL write on the paths that read from a table the kit writes. The ILP
+ * fence rows of a NOT_NULL type carry a value, so the type does not refuse them. A type the
+ * resource declares refused at a guarded site the path reaches must have none of its value rows
+ * stored ({@link #checkDeclaredRefusal}).
  * <p>
  * ILP over HTTP and QWP refuse non-WAL tables by design, so their non-WAL runs have sections of
- * their own ({@code ilp-http-nonwal}, {@code qwp-nonwal}).
+ * their own ({@code ilp-http-nonwal}, {@code qwp-nonwal}); there a later type's rows must all be
+ * refused and none stored.
  * <p>
- * Masks, applied before the comparison: the test root directory becomes {@code <root>}; the
- * mode's own table names ({@code dst_n1}, {@code dst_w1}) become {@code dst}; the error id of
- * an ILP over HTTP response, whose prefix is random per server, becomes {@code id: <id>}.
+ * Masks, applied before the comparison: the test root directory becomes {@code <root>}; the mode's
+ * own table names ({@code dst_n1}, {@code dst_w1}) become {@code dst}; the error id of an ILP over
+ * HTTP response, whose prefix is random per server, becomes {@code id: <id>}.
  */
 @RunWith(Parameterized.class)
 public class TypeConformanceIngestTest extends AbstractBootstrapTest {
@@ -673,9 +672,9 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Invariants 1 and 2 for a type registered later, on what the path stored in the
-     * mode's target table or, for QWP egress, on what the server sent. A failure message ends
-     * with the path's section, which holds each row's form and answer.
+     * Invariants 1 and 2 for a type registered later, on what the path stored in the mode's target
+     * table or, for QWP egress, on what the server sent. A failure message ends with the path's
+     * section, which holds each row's form and answer.
      */
     private void checkLater(TestServerMain server, String path, String mode, StringSink section) {
         try {
@@ -829,8 +828,9 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
 
     /**
      * The tag whose protocol form the kit sends: the type's own for an existing type, as the
-     * recordings hold it; for a type registered later, its definition's accessor family.
-     * A family the kit has no form for fails, naming it.
+     * recordings hold it; for a type registered later, the tag its accessor family is named after
+     * ({@code TypeDriver.getAccessor().opcode()}). A family the kit has no form for fails, naming
+     * it.
      */
     private int formTag() {
         if (!type.isLater()) {

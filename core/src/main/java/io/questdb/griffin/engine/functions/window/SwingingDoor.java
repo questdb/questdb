@@ -82,9 +82,9 @@ public class SwingingDoor {
         reset();
     }
 
-    // The corridor step for a point that is not NULL. It has no NULL test: a NaN or infinite
-    // value gives a non-finite slope, which restarts the series, and a Long.MIN_VALUE timestamp
-    // orders before every other one, so a NULL pattern that reaches it is an ordinary point.
+    // Handles a point that is not NULL. It needs no NULL test: a NaN or infinite value gives a
+    // non-finite slope, and a Long.MIN_VALUE timestamp is never after the last point; both restart
+    // the series.
     public void acceptValue(long index, long ts, double value, Sink sink) {
         if (!hasAnchor) {
             anchor(index, ts, value);

@@ -27,7 +27,6 @@
 #include "simd.h"
 
 // Used to clean up noise in the switch statement
-// every row names two types is_fixed_convertible lists, so each has an EnumTypeMap specialisation
 #define macro_dispatch_fixed_to_fixed(a, b) case pack_column_types(a, b): { \
     static_assert(is_fixed_convertible(a) && is_fixed_convertible(b), "conversion row for an unclassified type"); \
     return convert_from_type_to_type<a, b>(src, dst, row_count); \

@@ -222,10 +222,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         try {
             for (int i = 0, n = columnTypes.size(); i < n; i++) {
                 int type = columnTypes.getQuick(i);
-                // The tier stores exactly the types isTierSupported admits; the per-row copy
-                // loops below have an arm for each of them and a tripwire default. Both
-                // production callers gate on areColumnTypesSupported first, so this rejects
-                // only an ungated construction.
+                // The per-row copy loops below have an arm for each type isTierSupported admits.
+                // Both production callers check areColumnTypesSupported first, so this throws only
+                // for a caller that skipped that check.
                 if (!isTierSupported(ColumnType.tagOf(type))) {
                     throw unsupportedColumnType(type);
                 }
@@ -592,10 +591,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     /**
-     * The relation behind {@link #areColumnTypesSupported} and the constructor: the tags the
-     * tier stores, i.e. the arms of {@link #copyRowFrom} and {@link #copyRowFromRecord}. The
-     * rest are not column types (or not persisted ones, INTERVAL), so an LV output never
-     * carries them; such a schema reads disk-only.
+     * Whether the in-memory tier stores columns of this type, i.e. whether {@link #copyRowFrom} and
+     * {@link #copyRowFromRecord} have an arm for it; {@link #areColumnTypesSupported} and the
+     * constructor both use it. The other types (pseudo types, VARCHAR_SLICE, and INTERVAL, which is
+     * not persisted) never appear in an LV output; a schema with one reads from disk only.
      */
     private static boolean isTierSupported(int type) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);

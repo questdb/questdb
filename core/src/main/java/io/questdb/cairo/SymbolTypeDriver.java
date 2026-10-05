@@ -32,14 +32,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
 /**
- * Type driver for SYMBOL.
- * <p>
- * The data vector is a 4-byte symbol key; the symbol table is a separate facet.
- * {@link ColumnType#isFixedSize(int)} reports SYMBOL as not fixed-size; this driver only
- * states the data vector width. The table and WAL writers write a SYMBOL NULL themselves
- * ({@code TableWriter} and {@code WalWriter} build its appender): the NULL key and the symbol
- * map's NULL flag together. {@link #newNullAppender} refuses, since an appender that wrote the
- * key alone would leave the flag unset.
+ * Type driver for SYMBOL. The data vector holds a 4-byte symbol key; the symbol table lives
+ * elsewhere. {@link ColumnType#isFixedSize(int)} reports SYMBOL as not fixed-size; this driver
+ * states only the key width. TableWriter and WalWriter build their own SYMBOL NULL appenders, which
+ * also raise the symbol map's null flag, and do not call {@link #newNullAppender}, which throws: an
+ * appender that wrote the key alone would leave the flag unset.
  */
 public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     public static final SymbolTypeDriver INSTANCE = new SymbolTypeDriver();
@@ -83,10 +80,6 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
         );
     }
 
-    /**
-     * The query engine parks a missing symbol as INT_NULL, not as the storage key
-     * {@link SymbolTable#VALUE_IS_NULL}; both resolve to a null symbol. Kept as is.
-     */
     @Override
     public long getNullAsLong() {
         return Numbers.INT_NULL;

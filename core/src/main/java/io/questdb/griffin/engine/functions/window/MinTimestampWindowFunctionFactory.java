@@ -43,10 +43,9 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     private static final String SIGNATURE = NAME + "(N)";
 
     /**
-     * The choice of {@link #LESS_THAN}: the earlier of the two timestamps. The function keeps
-     * today's comparator and does not call it: the classes, shared with {@code max}, store the new
-     * value only when it wins and order their sliding-frame deques by the comparator, where the
-     * body would store on every row.
+     * The earlier of the two timestamps, as {@link #LESS_THAN} chooses. The window functions do not
+     * call this method: their classes, shared with {@code max}, take the comparator, store a value
+     * only when it wins and order their sliding-frame deques by it.
      */
     public static long value(long min, long next) {
         return next < min ? next : min;

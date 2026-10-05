@@ -32,17 +32,17 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Compares kit output with the S12 recording of an existing type.
+ * Compares kit output with the recording of an existing type.
  * <p>
- * A recording is a text block per type and kit class, split into sections, one per path: a
- * line {@code ## <path>} opens a section. A test computes one section per path and mode and
- * asserts it against the section of the same name; the expected text is the same in every
- * mode. Lines are tab-separated and start with the value row's label, so a failure names the
- * type, the value row, the path and the mode.
+ * A recording is a text block per type and kit class, split into sections, one per path: a line
+ * {@code ## <path>} opens a section. A test computes one section per path and mode and asserts it
+ * against the section of the same name; the expected text is the same in every mode. Lines are
+ * tab-separated and start with the value row's label, so a failure names the type, the value row,
+ * the path and the mode.
  * <p>
  * Output is escaped before it is compared ({@link #escape}): a character that does not print
- * (controls other than tab and newline, U+FFFE, U+FFFF, lone surrogates) becomes
- * {@code \\uXXXX}, so recordings hold no invisible characters.
+ * (controls other than tab and newline, U+FFFE, U+FFFF, lone surrogates) becomes {@code \\uXXXX},
+ * so recordings hold no invisible characters.
  * <p>
  * There is no switch that rewrites a recording: a difference is a behaviour change to explain.
  */

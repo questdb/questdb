@@ -168,7 +168,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         final int columnType = metadata.getColumnType(index);
         final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
-        // SYMBOL's column function needs the symbol table, which its definition does not hold
+        // SYMBOL's column function needs the symbol table, which its type driver does not have
         if (tag == ColumnTypeTag.SYMBOL) {
             return new SymbolColumn(index, metadata.isSymbolTableStatic(index));
         }
@@ -190,19 +190,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     /**
      * Whether a type name token becomes a {@link Constants#getTypeConstant(int) type constant}
-     * here, the cast target of {@code cast(x as <type>)}: a real type whose definition answers a
-     * type constant, and the pseudo types that are CAST targets. Geohash and decimal type names take
+     * here, the cast target of {@code cast(x as <type>)}: a stored type whose driver returns a type
+     * constant, and the pseudo types that are CAST targets. Geohash and decimal type names take
      * their own paths further down {@code createConstant}; the rest are not cast targets.
      */
     static boolean isTypeConstantTag(ColumnTypeTag tag) {
         final TypeDriver driver = ColumnType.findTypeDriver(tag.code());
         if (driver == null) {
-            // the pseudo types that are CAST targets have no definition; Constants holds theirs
+            // the pseudo types that are CAST targets have no type driver; Constants holds their
+            // constants
             return tag == ColumnTypeTag.REGCLASS || tag == ColumnTypeTag.REGPROCEDURE || tag == ColumnTypeTag.ARRAY_STRING;
         }
-        // Quirk type-constant-tag-list: the tag list this answer replaces held the geohash tags and ARRAY
-        // as whole tags. A geohash type name carries bits and resolves to no constant here, and only
-        // DOUBLE arrays have one (Constants.getArrayTypeConstant throws for the rest); both stay in
+        // the geohash tags and ARRAY count as type-constant tags for compatibility, although a
+        // geohash type name carries bits and resolves to no constant here, and only DOUBLE arrays
+        // have one (Constants.getArrayTypeConstant throws for the others)
         if (tag == ColumnTypeTag.GEOBYTE || tag == ColumnTypeTag.GEOSHORT || tag == ColumnTypeTag.GEOINT
                 || tag == ColumnTypeTag.GEOLONG || tag == ColumnTypeTag.ARRAY) {
             return true;

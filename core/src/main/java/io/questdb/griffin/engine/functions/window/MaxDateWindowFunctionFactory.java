@@ -50,10 +50,10 @@ public class MaxDateWindowFunctionFactory extends AbstractWindowFunctionFactory 
     private static final String SIGNATURE = MaxTimestampWindowFunctionFactory.NAME + "(M)";
 
     /**
-     * The choice of {@link MaxTimestampWindowFunctionFactory#GREATER_THAN}: the later of the two
-     * dates. The function keeps today's comparator and does not call it: the classes, shared with
-     * {@code min}, store the new value only when it wins and order their sliding-frame deques by the
-     * comparator, where the body would store on every row.
+     * The later of the two dates, as {@link MaxTimestampWindowFunctionFactory#GREATER_THAN}
+     * chooses. The window functions do not call this method: their classes, shared with {@code
+     * min}, take the comparator, store a value only when it wins and order their sliding-frame
+     * deques by it.
      */
     public static long value(long max, long next) {
         return next > max ? next : max;

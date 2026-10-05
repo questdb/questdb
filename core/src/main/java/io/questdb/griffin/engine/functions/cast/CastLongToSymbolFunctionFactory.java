@@ -51,9 +51,8 @@ import org.jetbrains.annotations.Nullable;
 public class CastLongToSymbolFunctionFactory implements FunctionFactory {
 
     /**
-     * The append of {@code put(long)} without its NULL test: it prints the reserved pattern
-     * LONG_MIN as a number, where {@code put(long)} prints null. The function tests NULL first,
-     * so its output does not change.
+     * Appends {@code operand} like {@code put(long)}, except that it prints LONG_MIN as a number
+     * where {@code put(long)} prints null. The function tests NULL before it calls this method.
      */
     public static void value(CharSink<?> sink, long operand) {
         Numbers.append(sink, operand, false);

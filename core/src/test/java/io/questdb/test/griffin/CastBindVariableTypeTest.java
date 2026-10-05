@@ -34,13 +34,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
- * Coverage of the type an untyped bind variable takes under a CAST ({@code $1::T}), which
- * {@code FunctionParser.createFunction} answers per CAST target (F34 keeps it per type). Text
- * targets give STRING, number targets DOUBLE, array and decimal targets themselves; any other
- * target leaves the variable to the cast overload that matches first. The table pins every type's
- * answer, the overload picks included, so a new CAST target shows up here with the type its
- * variable takes. ARRAY_STRING refuses the variable: the cast to a text array parses its text at
- * compile time, so it takes a constant only.
+ * Coverage of the type an untyped bind variable takes under a CAST ({@code $1::T}), which {@code
+ * FunctionParser.createFunction} answers per CAST target. Text targets give STRING, number targets
+ * DOUBLE, array and decimal targets themselves; any other target leaves the variable to the cast
+ * overload that matches first. The table pins every type's answer, the overload picks included, so
+ * a new CAST target shows up here with the type its variable takes. ARRAY_STRING refuses the
+ * variable: the cast to a text array parses its text at compile time, so it takes a constant only.
  */
 public class CastBindVariableTypeTest extends AbstractCairoTest {
 

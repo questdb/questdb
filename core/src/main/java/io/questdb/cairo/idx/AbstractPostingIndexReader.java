@@ -3425,7 +3425,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 colCacheCapacities[includeIdx] = (int) needed;
             }
             ensureDecodeWorkspaceCapacity(count);
-            // the same relation the writer compressed with (CoveringCompressor.codecKind)
+            // the writer picks the codec with the same CoveringCompressor.codecKind()
             switch (CoveringCompressor.codecKind(colType)) {
                 case CoveringCompressor.CODEC_DOUBLE ->
                         CoveringCompressor.decompressDoublesToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);

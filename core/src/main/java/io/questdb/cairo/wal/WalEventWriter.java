@@ -133,9 +133,10 @@ class WalEventWriter implements Closeable {
     }
 
     /**
-     * The arm {@link #appendFunctionValue} writes and {@code WalEventCursor.SqlInfo} reads
-     * for a bind variable of this type: its tag for the 26 types the SQL event carries,
-     * {@link #BIND_VALUE_NONE} otherwise. One relation for both sides of the format.
+     * The arm {@link #appendFunctionValue} writes and {@code WalEventCursor.SqlInfo} reads for a
+     * bind variable of this type: the accessor family's opcode for the 26 types the SQL event
+     * carries, {@link #BIND_VALUE_NONE} otherwise. Writer and reader both switch on this value, so
+     * the two sides of the format stay in step.
      */
     static int bindValueOpcode(int columnType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
@@ -146,7 +147,6 @@ class WalEventWriter implements Closeable {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, GEOBYTE, GEOSHORT,
                  GEOINT, GEOLONG, BINARY, UUID, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
                  DECIMAL128, DECIMAL256 -> accessor.opcode();
-            // SYMBOL, LONG256, LONG128 and INTERVAL bind variables have no event arm either
             case SYMBOL, LONG256, LONG128, INTERVAL -> BIND_VALUE_NONE;
         };
     }

@@ -28,17 +28,16 @@ import io.questdb.cairo.sql.Function;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * What storage and record access need to know about a type's physical form, as closed sets its
- * type definition answers. Code that only moves values keys on these sets, never on
- * the tag, so a type that stores like an existing one adds no arm there; a new value of
- * a set makes javac list every switch over it. None of them says anything about NULL: code that
- * decides NULL reads the column's NULL policy.
+ * A type's physical form as three closed sets, each returned by the type's driver: {@link
+ * Movement}, how storage moves a value; {@link Arithmetic}, how it computes, compares and sorts;
+ * {@link Accessor}, the getter and putter family records read and write it with. Code that only
+ * moves or computes values switches on these sets instead of the tag, so a type that stores like an
+ * existing one adds no arm there. None of the sets says anything about NULL: code that decides NULL
+ * reads the column's {@link NullPolicy}.
  * <p>
- * Three sets: {@link Movement}, how a value moves; {@link Arithmetic}, how it computes, compares
- * and sorts; {@link Accessor}, the getter and putter family records read and write it with. The
- * accessor family sits next to the two tiers, not in them: today the getter decides NULL (the
- * column-top value of a read differs by getter, F42), so only a site that already dispatches on
- * the getter keys on it.
+ * Only code that already dispatches on the record getter keys on {@link Accessor}: the getter
+ * decides what a column-top row reads as, so two types of one width may still need different
+ * getters.
  */
 public final class PhysicalDescriptor {
 
@@ -56,10 +55,9 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * The opcode of a column type's accessor family ({@link Accessor#opcode()}), or -1 for a
-     * pseudo type and for VARCHAR_SLICE. For the per-row switches that dispatch on the getter: it
-     * reads a table filled from the type definitions on first use, so a per-row call asks no
-     * definition, as {@link ColumnType#sizeOf(int)} reads the movement tier.
+     * The opcode of a column type's accessor family ({@link Accessor#opcode()}), or -1 for a pseudo
+     * type and for VARCHAR_SLICE. Safe in per-row code: it reads a table filled from the type
+     * drivers on first use and calls no driver.
      */
     public static short accessorOpcodeOf(int columnType) {
         final short tag = ColumnType.tagOf(columnType);
@@ -67,11 +65,10 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * The per-row arm that compares or sort-encodes values of this type: the accessor family's
-     * opcode when the type orders like the family's namesake, which every existing type does
-     * because each is its own family's namesake. A type that reads through a family but orders
-     * otherwise (an unsigned type on INT's accessor, for example) has no arm yet: it throws,
-     * naming the type, the site and the decision, and the first such type adds its arm here.
+     * The opcode of the per-row arm that compares or sort-encodes values of this type: the accessor
+     * family's opcode when the type orders like the tag the family is named after, which holds for
+     * every existing type. Throws {@link CairoException} for a type that reads through a family but
+     * orders differently, such as an unsigned type on INT's accessor: no arm exists for it.
      *
      * @param site the label of the asking site, as the refusal names it
      */
@@ -162,9 +159,9 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * Whether values of this type order as the namesake of its accessor family does: the same
-     * arithmetic tier. Code that reads a value through the family's getter and then compares,
-     * sorts or ranges over it may take the family's arm only then.
+     * Whether values of this type order like the tag its accessor family is named after, that is,
+     * both have the same arithmetic tier. Code that reads a value through the family's getter and
+     * then compares, sorts or range-scans it may use the family's arm only when this is true.
      */
     public static boolean isOrderedLikeFamily(TypeDriver driver) {
         return driver.getArithmetic() == ColumnType.getTypeDriver(driver.getAccessor().opcode()).getArithmetic();
@@ -190,8 +187,8 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * The type definition of a stored column type, or null for a pseudo type and for
-     * VARCHAR_SLICE (see {@link #accessorOf(int)}).
+     * The type driver of a stored column type, or null for a pseudo type and for VARCHAR_SLICE (see
+     * {@link #accessorOf(int)}).
      */
     public static @Nullable TypeDriver storedTypeDriverOf(int columnType) {
         final short tag = ColumnType.tagOf(columnType);
@@ -202,11 +199,13 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * The getter and putter family a type's values are read and written with: the
-     * record getters, the row and sink putters and the map-key putters. Each existing type is its
-     * own family; a later type may answer an existing family and then takes that family's arm at
-     * every per-row switch that dispatches on the getter. {@link #opcode()} is the tag the family
-     * is named after, the value those per-row switches have always dispatched on.
+     * The getter and putter family a type's values are read and written with: the record getters,
+     * the row and sink putters and the map-key putters. Each existing type is its own family. A new
+     * type may return an existing family and then takes that family's arm at the per-row switches
+     * on the getter, except that a switch that computes or decides NULL requires it to be like the
+     * family's namesake ({@link PhysicalDescriptor#familyArmOf}) and a compare switch requires it
+     * to order like the namesake ({@link PhysicalDescriptor#compareOpcode}). {@link #opcode()} is
+     * the tag the family is named after, the value those switches dispatch on.
      */
     public enum Accessor {
         BOOLEAN(ColumnType.BOOLEAN),
@@ -255,10 +254,10 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * The arithmetic tier: width, integer or floating-point representation, and
-     * signedness. Code that computes, compares, sorts or takes a minimum or maximum keys on it,
-     * never on the tag. {@link #WIDE} is a 16- or 32-byte value with comparators of its
-     * own; {@link #NONE} has no arithmetic order here (symbol keys, intervals, var-size values).
+     * The arithmetic tier: width, integer or floating-point representation, and signedness. Code
+     * that computes, compares, sorts or takes a minimum or maximum switches on it instead of the
+     * tag. {@link #WIDE} is a 16- or 32-byte value with comparators of its own; {@link #NONE} has
+     * no arithmetic order here (symbol keys, intervals, var-size values).
      */
     public enum Arithmetic {
         I8,
@@ -310,11 +309,8 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * The accessor opcodes by tag, filled from the type definitions on first use and never from a
-     * static initialiser the definitions reach (the class-init order of phase 1).
-     * {@link #FAMILY_ARM} holds the same opcode for a type like its family's namesake and -1
-     * otherwise, so it equals {@link #ACCESSOR} cell by cell while every type is its own
-     * namesake.
+     * The accessor opcodes by tag, filled from the type drivers on first use. The holder class
+     * keeps the fill out of every static initialiser the type drivers reach.
      */
     private static final class Opcodes {
         static final short[] ACCESSOR = new short[ColumnType.MAX_TAG + 1];

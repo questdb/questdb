@@ -269,10 +269,11 @@ public class PGOids {
     }
 
     /**
-     * The PostgreSQL array type OID for a QuestDB array whose elements have the given tag: the
-     * element type's definition answers. Only DOUBLE and VARCHAR elements have one; every
-     * other element type, and a pseudo tag or VARCHAR_SLICE, is 0, which
-     * {@code PGPipelineEntry.rejectLongArrayResults()} and {@code PGOidsTest} rely on.
+     * The PostgreSQL array type OID for a QuestDB array whose elements have the given tag, from
+     * TypeDriver.getPgArrayOid(). Only DOUBLE and VARCHAR elements have one; every other element
+     * type, and a pseudo tag or VARCHAR_SLICE, is 0: {@code PGOidsTest} asserts it for LONG, and
+     * {@code PGPipelineEntry.rejectLongArrayResults()} refuses a LONG array result set for that
+     * reason.
      */
     private static int arrayTypeOid(int elementTag) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(elementTag);
@@ -280,8 +281,8 @@ public class PGOids {
     }
 
     /**
-     * The PostgreSQL type OID for a non-array QuestDB column type: the definition answers.
-     * 0 means "no OID": the type is never described to a client (pseudo tags, VARCHAR_SLICE), or
+     * The PostgreSQL type OID for a non-array QuestDB column type, from TypeDriver.getPgOid(). 0
+     * means "no OID": the type is never described to a client (pseudo tags, VARCHAR_SLICE), or
      * pgwire has no representation for it (LONG128, see {@code PGPipelineEntry.outRecord()}).
      * ARRAY_STRING is no type: it is a hack for PostgreSQL metadata functions, sent as VARCHAR.
      */

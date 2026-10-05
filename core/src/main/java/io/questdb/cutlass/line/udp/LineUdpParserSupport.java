@@ -154,7 +154,9 @@ public class LineUdpParserSupport {
     ) {
         if (!value.isEmpty()) {
             try {
-                // the column's tag or its family tag (GEOHASH); LineUtils.columnKind() names every tag
+                // the column's ILP kind (LineUtils.columnKind()): its accessor family's tag,
+                // GEOHASH for every geohash width or DECIMAL for every decimal width; kinds without
+                // an arm are ignored
                 switch (LineUtils.columnKind(columnType)) {
                     case ColumnType.LONG:
                         row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
@@ -289,7 +291,7 @@ public class LineUdpParserSupport {
                 break;
             case ColumnType.IPv4:
                 row.putIPv4(columnIndex, Numbers.IPv4_NULL);
-                // no break: falls into the SHORT arm, as it always has (issues/udp-null-ipv4-falls-through-to-short)
+                // known inconsistency: no break, so an IPv4 NULL also runs the SHORT arm
             case ColumnType.SHORT:
                 row.putShort(columnIndex, (short) 0);
                 break;

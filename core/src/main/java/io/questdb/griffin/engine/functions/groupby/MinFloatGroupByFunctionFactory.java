@@ -33,10 +33,10 @@ import io.questdb.std.ObjList;
 
 public class MinFloatGroupByFunctionFactory implements FunctionFactory {
     /**
-     * The lesser of two values in PA-13's order: NaN orders after every other value, and of -0.0
-     * and 0.0 the first stays. The function keeps its own test and does not call it: it skips a
-     * NaN row, replaces a NaN or infinite accumulator (FLOAT's NULL), and stores only when the
-     * minimum changes, where calling the body would store on every row.
+     * The lesser of two values: NaN orders after every other value, and of -0.0 and 0.0 the first
+     * stays. {@code MinFloatGroupByFunction} does not call this method: it skips a NaN row,
+     * replaces a NaN or infinite accumulator (FLOAT's NULL), and stores only when the minimum
+     * changes.
      */
     public static float value(float min, float next) {
         return next < min || (min != min && next == next) ? next : min;

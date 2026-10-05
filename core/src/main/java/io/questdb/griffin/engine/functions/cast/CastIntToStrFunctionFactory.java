@@ -36,11 +36,10 @@ import io.questdb.std.str.StringSink;
 
 public class CastIntToStrFunctionFactory implements FunctionFactory {
     /**
-     * Prints the reserved INT_NULL as a number too: {@link Numbers#append(CharSink, int)} prints
-     * it as null, so the body prints through the LONG form. The function keeps its NULL test and
-     * its INT print, which gives the same digits for every other value without the widening.
-     * <p>
-     * Not called yet: the NULL wrappers of {@code cast(INT AS STRING)} will call it.
+     * Prints {@code operand} in decimal, INT_NULL included: the body widens to long because {@link
+     * Numbers#append(CharSink, int)} prints INT_NULL as null. The function does not call this
+     * method: it returns NULL for INT_NULL and prints other values in the int form, which gives the
+     * same digits.
      */
     public static void value(CharSink<?> sink, int operand) {
         Numbers.append(sink, operand, false);

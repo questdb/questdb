@@ -98,8 +98,8 @@ public class OverloadSoundnessTest extends BaseFunctionFactoryTest {
             }
             // IPv4Function.getVarcharA throws; the parser casts IPv4 only for a STRING signature,
             // so a function with a VARCHAR overload and no STRING or IPv4 one would fail at
-            // runtime. No such single-argument function exists today. Pre-existing; see
-            // issues/ipv4-varchar-overload-row-unimplemented.md
+            // runtime, a known inconsistency. No single-argument function has that set of
+            // overloads.
             TestUtils.assertEquals("IPv4 -> VARCHAR\n", unimplemented);
         });
     }

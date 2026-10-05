@@ -488,7 +488,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         }
 
         /**
-         * How the stored column represents NULL, derived from its stored type's definition;
+         * How the stored column represents NULL: the NULL policy of the type stored in the file;
          * see {@link ParquetDecoder#getColumnNullPolicy(int)}.
          */
         public NullPolicy getColumnNullPolicy(int columnIndex) {

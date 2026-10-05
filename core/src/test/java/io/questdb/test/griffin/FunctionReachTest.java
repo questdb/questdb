@@ -44,14 +44,13 @@ import java.util.TreeSet;
 
 /**
  * A type without functions of its own must never silently reach another type's function through
- * overload matching (User Story 8, scenario 2). For every type registered after the kit's
- * recording ({@link TypeConformanceTypes}' hook for later types), the test calls every function
- * and operator with a column of that type in each argument slot the signature declares for a
- * concrete value type, the other arguments of their declared types (a DECIMAL, GEOHASH or DOUBLE
- * array slot takes a column of that family, a variadic slot one value of the slot before it). A
- * call that compiles reached a function written for another type, and the test lists it by its
- * argument types (the overload the parser chose is not visible from SQL): the list is the gap the
- * type's PR closes, by functions of its own or by stating that the reach is meant.
+ * overload matching. For every type registered later ({@link TypeConformanceTypes}), the test calls
+ * every function and operator with a column of that type in each argument slot the signature
+ * declares for a concrete value type, the other arguments of their declared types (a DECIMAL,
+ * GEOHASH or DOUBLE array slot takes a column of that family, a variadic slot one value of the slot
+ * before it). A call that compiles reached a function written for another type, and the test lists
+ * it by its argument types (the overload the parser chose is not visible from SQL): the new type
+ * must close each listed gap, by functions of its own or by stating that the reach is meant.
  * <p>
  * Operators take their SQL form: {@code a OP b}, {@code OP a}, {@code a IN (b)},
  * {@code a BETWEEN b AND c}; element access ({@code []}) and casts are left out (the kit's cast
@@ -59,9 +58,9 @@ import java.util.TreeSet;
  * reach, nor is a slot of the overload itself declared for a pseudo type such as a cursor; a cursor
  * or NULL slot of another overload does not hide this one's value slots. A call that does not
  * compile, for any reason, is not listed, so the list is a lower bound. The test proves its harness
- * on BYTE, which has no trigonometric functions of its own and reaches DOUBLE's through its implicit
- * casts, and INT's {@code &}, {@code =} and {@code <} operators, the last two of which also have
- * cursor and NULL overloads.
+ * on BYTE, which has no trigonometric functions of its own and reaches DOUBLE's through its
+ * implicit casts, and INT's {@code &}, {@code =} and {@code <} operators, the last two of which
+ * also have cursor and NULL overloads.
  */
 public class FunctionReachTest extends AbstractCairoTest {
 
@@ -89,7 +88,8 @@ public class FunctionReachTest extends AbstractCairoTest {
                     }
                 }
             }
-            // no type is registered later on this branch; a later type's PR lists its reaches here
+            // no kit type is registered later, so nothing reaches; a new type lists its reaches
+            // here
             TestUtils.assertEquals("", gaps);
         });
     }

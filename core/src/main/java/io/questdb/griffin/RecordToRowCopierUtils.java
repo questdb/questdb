@@ -99,17 +99,16 @@ public class RecordToRowCopierUtils {
     }
 
     /**
-     * The arm the three copiers (single-method, chunked, looping) take for a column, decided
-     * once per column when the copier is built: the source tag in the high byte and the target
-     * tag in the low byte, or {@link #COPY_NONE} for a pair without an arm. Two source types
-     * are read as another tag: VARCHAR_SLICE (the transient read_parquet type) through VARCHAR's
-     * getter, and NULL through the target's getter, which then answers with the target's NULL
-     * value. A pair of one tag takes the same-type arm of the type's definition
-     * ({@link #sameTypeOpcode}); every other pair is a relation (rule K, {@link RelationRules#copier}),
-     * and its arm is the two accessor families' opcodes.
-     * {@code TypeRelationGoldenTest.testCopierArms} pins the relation;
-     * {@code RecordToRowCopierSoundnessTest} checks it against
-     * {@link ColumnType#isConvertibleFrom}, the relation INSERT admits.
+     * The arm the three copiers (single-method, chunked, looping) take for a column, chosen once
+     * when the copier is built: the source tag in the high byte and the target tag in the low byte,
+     * or {@link #COPY_NONE} for a pair without an arm. VARCHAR_SLICE (the transient read_parquet
+     * type) reads through VARCHAR's getter, and NULL through the target's getter, which returns the
+     * target's NULL. A same-tag pair takes {@link #sameTypeOpcode}; any other pair needs an arm in
+     * {@link RelationRules#copier} (rule K) and takes the opcodes of the two {@link
+     * PhysicalDescriptor.Accessor accessor families}. {@code TypeRelationGoldenTest.testCopierArms}
+     * pins the relation; {@code RelationCoverageTest.testCopierHasAnArmForEveryAdmittedPair} checks
+     * it against {@link ColumnType#isConvertibleFrom} and lists the convertible pairs without an
+     * arm, which INSERT refuses ({@link #hasCopierArm}).
      */
     static int copyOpcode(int fromColumnType, int toColumnType) {
         final int toTag = ColumnType.tagOf(toColumnType);
@@ -799,7 +798,8 @@ public class RecordToRowCopierUtils {
                 final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
 
                 int timestampTypeRef = 0;
-                // a NULL source reads through the target's arm, which puts the value as is
+                // a NULL source reads through the target's own getter, so its value needs no
+                // timestamp-unit conversion
                 if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) {
                     timestampTypeRef = fromColumnType_0 + 2 * i;
                 } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != ColumnType.NULL && (fromColumnTypeTag == ColumnType.DATE ||
@@ -1961,7 +1961,8 @@ public class RecordToRowCopierUtils {
             int timestampTypeRef = 0;
             // determine the `TimestampDriver` during bytecode generation to avoid
             // calling `ColumnType.getTimestampDriver()` at runtime much times.
-            // A NULL source reads through the target's arm, which puts the value as is.
+            // A NULL source reads through the target's own getter, so its value needs no
+            // timestamp-unit conversion.
             if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) { // Timestamp -> Date
                 timestampTypeRef = fromColumnType_0 + 2 * i;
             } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != ColumnType.NULL && (fromColumnTypeTag == ColumnType.DATE || // Date -> Timestamp
@@ -3019,11 +3020,11 @@ public class RecordToRowCopierUtils {
     }
 
     /**
-     * The same-type arm of a column type, keyed on its definition: the accessor family's
-     * getter and putter, so a type that reads and writes like an existing one takes that type's
-     * arm without a row of its own in rule K ({@link RelationRules#copier}). The column's value carries its NULL in
-     * its own bits (SENTINEL) or has none (NONE), so the family's pair copies it as is. INTERVAL
-     * is not a column type and has no arm; neither has a pseudo type.
+     * The same-type arm of a column type: its accessor family's getter and putter, so a type that
+     * reads and writes like an existing one shares that type's arm and needs no row of its own in
+     * rule K ({@link RelationRules#copier}). The value carries its own NULL (SENTINEL) or has none
+     * (NONE), so the arm copies it as is. INTERVAL is not a column type and has no arm; neither has
+     * a pseudo type.
      */
     private static int sameTypeOpcode(int columnType) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);

@@ -46,9 +46,10 @@ import io.questdb.std.Vect;
 
 public class InDoubleFunctionFactory implements FunctionFactory {
     /**
-     * The comparison of {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an
-     * infinity equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's
-     * extra clauses would cost every element that compares unequal.
+     * Same as {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an infinity
+     * equals itself. The IN function does not call this method: it compares with {@link
+     * Numbers#equals(double, double)}, because the extra clauses here would cost every element that
+     * compares unequal.
      */
     public static boolean value(double key, double element) {
         return EqDoubleFunctionFactory.value(key, element);

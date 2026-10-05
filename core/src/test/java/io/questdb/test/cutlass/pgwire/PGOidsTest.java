@@ -54,9 +54,10 @@ public class PGOidsTest extends AbstractTest {
 
     @Test
     public void testNoOidForTagsPgwireNeverDescribes() {
-        // PB7: the positional OID table left these slots at 0, and every tag now names 0 explicitly.
-        // outRowDescription() substitutes STRING for NULL before asking, LONG128 is rejected by
-        // outRecord(), and the pseudo tags never reach a result set.
+        // these types have no OID (0): outRowDescription() substitutes STRING for NULL before
+        // asking, outRecord() rejects LONG128, and VARCHAR_SLICE and the pseudo tags never reach a
+        // result set. An array takes its element type's array OID, which the bare ARRAY tag and
+        // a DECIMAL256 element lack.
         Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.NULL));
         Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.VARCHAR_SLICE));
         Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.LONG128));

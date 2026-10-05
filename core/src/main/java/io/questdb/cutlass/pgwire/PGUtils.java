@@ -101,7 +101,7 @@ public final class PGUtils {
             long maxBlobSize,
             int resumePoint
     ) throws PGMessageProcessingException {
-        // the wire kind reads a table filled from the definitions, so this per-row path asks none
+        // WireKind.of() reads a table, so this per-row path calls no type driver
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
             final short tag = ColumnType.tagOf(columnType);
@@ -314,12 +314,10 @@ public final class PGUtils {
         // matches calculateColumnBinSize(), which also reads the wire kind of the full column type
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
-            // ARRAY_STRING: txtAndBinSizesCanBeDifferent() reports it as same-sized in both
-            // formats, so calculateColumnBinSize() sizes it and it never reaches here.
-            // The pseudo tags and VARCHAR_SLICE must not raise here: this runs inside outRecord()'s
-            // NoSpaceLeftInResponseBufferException handler, where a thrown AssertionError
-            // replaces the in-flight exception and derails the rewind. outRecord()'s own
-            // unsupported arm is what reports an unsupported type to the client.
+            // ARRAY_STRING and VARCHAR_SLICE never reach here: txtAndBinSizesCanBeDifferent()
+            // reports them as same-sized, so the callers ask calculateColumnBinSize() instead. The
+            // other pseudo tags must not throw here, for the reason given in
+            // calculateColumnBinSize().
             return ColumnType.tagOf(columnType) == ColumnType.NULL ? Integer.BYTES : -1;
         }
         return switch (kind) {

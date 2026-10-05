@@ -612,10 +612,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Picks the {@link #appendCell} arm for a column from its wire kind, once per batch, and
-     * with it the columnar arm of {@link #appendPageFrame}. Every kind is named, so adding one makes
-     * javac stop here: a kind that shares an existing QWP wire type still needs a writer of its own
-     * when its width or NULL test differs from that wire type's.
+     * Picks the {@link #appendCell} arm for a column from its {@link WireKind}, once per batch, and
+     * with it the columnar arm of {@link #appendPageFrame}. A kind that shares an existing QWP wire
+     * type still needs a writer of its own when its width or NULL test differs from that wire
+     * type's.
      */
     private static int appendOpcode(int columnType) {
         final WireKind kind = WireKind.of(columnType);

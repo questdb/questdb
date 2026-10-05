@@ -100,7 +100,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     private final StringSink columnNameSink = new StringSink();
     private final ObjList<String> columnNames = new ObjList<>();
-    // the per-cell writer of each column, chosen at setup from the column's wire kind
+    // the doQueryRecord() arm of each column, picked at setup by jsonOpcode()
     private final IntList columnOpcodes = new IntList();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
@@ -530,10 +530,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * The {@link #doQueryRecord} arm of a column: the column's wire kind picks it, and the
-     * pseudo tags that name a result set column (RECORD, NULL) take their own. UNDEFINED means JSON
-     * does not render the column: LONG128 has no JSON rendering, and no other pseudo tag, nor
-     * VARCHAR_SLICE, names a result set column.
+     * The {@link #doQueryRecord} arm of a column, picked by its {@link WireKind}; RECORD and NULL
+     * columns take arms of their own. UNDEFINED means JSON does not render the column: LONG128 has
+     * no JSON rendering, and no other pseudo tag, nor VARCHAR_SLICE, names a result set column.
      */
     private static int jsonOpcode(int columnType) {
         final WireKind kind = WireKind.of(columnType);
@@ -773,9 +772,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         int columnType = metadata.getColumnType(i);
         String columnName = metadata.getColumnName(i);
 
-        // What the JSON REST API renders, kept in sync with doQueryRecord(): a column's wire kind
-        // picks its per-cell writer here, at setup, and a column no writer renders is refused, so
-        // the per-cell switch never meets it. Every kind is named, so adding one makes javac stop here.
+        // jsonOpcode() picks the per-cell writer at setup; a column no writer renders is refused
+        // here, so the per-cell switch in doQueryRecord() never meets it
         final int opcode = jsonOpcode(columnType);
         if (opcode == ColumnType.UNDEFINED) {
             throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');

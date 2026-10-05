@@ -41,11 +41,10 @@ import io.questdb.std.ObjList;
 
 public class EqDoubleFunctionFactory implements FunctionFactory {
     /**
-     * The value comparison of {@link Numbers#equals(double, double)} without its NULL test: the
-     * tolerance compare answers every pair of finite values, and the body also answers the values
-     * a type without a reserved NULL carries: every NaN equals every NaN, and an infinity
-     * equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's extra
-     * clauses would cost every row that compares unequal.
+     * Whether two doubles are equal: within {@link Numbers#DOUBLE_TOLERANCE}, which is the test
+     * {@link Numbers#equals(double, double)} makes after its NULL test, or both NaN; an infinity
+     * equals itself. The function does not call this method: it uses {@link Numbers#equals(double,
+     * double)}, because the extra clauses here would cost every row that compares unequal.
      */
     public static boolean value(double left, double right) {
         return Math.abs(left - right) <= Numbers.DOUBLE_TOLERANCE

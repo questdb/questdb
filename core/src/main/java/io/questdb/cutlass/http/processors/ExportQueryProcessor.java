@@ -398,17 +398,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     /**
-     * Picks the {@link #putValue} arm for a column from its wire kind, once per export rather than
-     * per cell. Every kind is named, so adding one makes javac stop here. LONG128 has no CSV form:
-     * its arm refuses the column, as the JSON endpoint does, and the export's handler answers 400
-     * because no byte of the response has gone out yet.
+     * Picks the {@link #putValue} arm for a column from its {@link WireKind}, once per export
+     * rather than per cell. LONG128's arm throws, and the export answers 400, since no byte of
+     * the response has gone out yet.
      */
     private static int csvOpcode(int columnType, CharSequence columnName) {
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
-            // PB8: the unlabelled default of putValue() was `assert false`, which writes an empty
-            // cell in production. The pseudo tags and VARCHAR_SLICE keep that rendering through the
-            // NULL arm; RECORD has an empty-cell arm of its own
+            // a pseudo tag or VARCHAR_SLICE has no wire kind and renders as an empty cell through
+            // the NULL arm; RECORD keeps its own label on that arm
             return ColumnType.tagOf(columnType) == ColumnType.RECORD ? ColumnType.RECORD : ColumnType.NULL;
         }
         return switch (kind) {
@@ -1328,7 +1326,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.NULL:
             case ColumnType.BINARY:
             case ColumnType.RECORD:
-                // an empty cell; csvOpcode() sends the pseudo tags here too
+                // an empty cell; csvOpcode() sends the pseudo tags and VARCHAR_SLICE here too
                 break;
             case ColumnType.STRING:
                 putStringOrNull(response, rec.getStrA(columnIndex));

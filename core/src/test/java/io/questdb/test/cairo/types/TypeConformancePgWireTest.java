@@ -47,27 +47,27 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * The PostgreSQL wire part of the conformance kit (User Story 4): every kit type's value rows
- * as the server sends them, in text format (simple query, path {@code pg.text}) and in binary
- * format (extended query with binary results, path {@code pg.binary}).
+ * The PostgreSQL wire part of the conformance kit: every kit type's value rows as the server sends
+ * them, in text format (simple query, path {@code pg.text}) and in binary format (extended query
+ * with binary results, path {@code pg.binary}).
  * <p>
- * The recording holds the server's answer to the query, one message per line: DataRow
- * messages are labelled by their value row (column k), every other message by its type byte.
- * The answer to the startup and password messages is the same for every type, so it is
- * recorded once ({@link #AUTH_REQUEST}, {@link #READY}) and asserted in every test. The test
- * captures the answer with {@link PGHexScripts#exchange}, compares it with the recording
- * section by section ({@link TypeConformanceRecording}), and then replays the whole
- * conversation, client messages generated and server bytes recorded, as a hex script through
- * {@link PGHexScripts#playScript} on a fresh connection.
+ * The recording holds the server's answer to the query, one message per line: DataRow messages are
+ * labelled by their value row (column k), every other message by its type byte. The answer to the
+ * startup and password messages is the same for every type, so it is recorded once ({@link
+ * #AUTH_REQUEST}, {@link #READY}) and asserted in every test. The test captures the answer with
+ * {@link PGHexScripts#exchange}, compares it with the recording section by section ({@link
+ * TypeConformanceRecording}), and then replays the whole conversation, client messages generated
+ * and server bytes recorded, as a hex script through {@link PGHexScripts#playScript} on a fresh
+ * connection.
  * <p>
- * One mode: reads over the PG wire do not depend on WAL, partitioning or write order, which
- * the storage part covers. Types registered later run where their resource line lists
- * {@code pg.text} or {@code pg.binary}; {@link TypeConformanceInvariants} checks them: on
- * {@code pg.binary} every value must travel as its stored bits (big-endian, the type's width)
- * or, for a var-size type, as its accessor family's bytes, and the NULL row and the
- * sentinel-pattern row must behave as the NULL policy says; on {@code pg.text} only the
- * SENTINEL and BITMAP comparisons of those two rows are checked, because the kit does not
- * derive a later type's text form.
+ * One mode: reads over the PG wire do not depend on WAL, partitioning or write order, which the
+ * storage part covers. Types registered later run where their resource line lists {@code pg.text}
+ * or {@code pg.binary}; {@link TypeConformanceInvariants} checks them: on {@code pg.binary} every
+ * value must travel as its stored bits (big-endian, the type's width) or, for a var-size type, as
+ * its accessor family's bytes, and the NULL row and the sentinel-pattern row must behave as the
+ * NULL policy says; on {@code pg.text} only the SENTINEL and BITMAP comparisons of those two rows
+ * are checked, because the kit does not derive such a type's text form. On both paths another
+ * type's sentinel pattern must not read as the NULL row, except under SENTINEL.
  * <p>
  * Masks: none. The server that {@code createPGServer(configuration, true)} starts sends a fixed
  * process id and secret key in BackendKeyData, and no other message carries a per-run value.
@@ -79,10 +79,9 @@ public class TypeConformancePgWireTest extends BasePGTest {
     private static final Log LOG = LogFactory.getLog(TypeConformancePgWireTest.class);
     private static final String MODE = "nonwal-day";
     private static final String PASSWORD = PGHexScripts.passwordMessage("quest");
-    // the server's answer to the password, recorded at S12: AuthenticationOk; ParameterStatus
-    // TimeZone=GMT, application_name=QuestDB, server_version=11.3, integer_datetimes=on,
-    // client_encoding=UTF8; BackendKeyData with the fixed process id and secret key;
-    // ReadyForQuery idle
+    // the server's answer to the password: AuthenticationOk; ParameterStatus TimeZone=GMT,
+    // application_name=QuestDB, server_version=11.3, integer_datetimes=on, client_encoding=UTF8;
+    // BackendKeyData with the fixed process id and secret key; ReadyForQuery idle
     private static final String READY = "520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549";
     private static final Map<String, String> RECORDINGS = new HashMap<>();
     private static final String SQL = "SELECT k, v FROM t";

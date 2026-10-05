@@ -25,10 +25,10 @@
 package io.questdb.cairo;
 
 /**
- * How a column represents NULL. Code that decides NULL reads the column's value through a
- * per-column accessor ({@link io.questdb.cairo.sql.RecordMetadata#getColumnNullPolicy(int)}),
- * never from the type, and switches on it exhaustively at setup, so each new value makes
- * javac list every such site.
+ * How a column represents NULL. Code that holds a column reads the column's policy through a
+ * per-column accessor such as {@link io.questdb.cairo.sql.RecordMetadata#getColumnNullPolicy(int)};
+ * code that holds only a type reads {@link TypeDriver#getNullPolicy()}. Switch on it exhaustively
+ * at setup, so javac lists every such site when a policy is added.
  */
 public enum NullPolicy {
     /**

@@ -52,14 +52,11 @@ final class ParquetColumnTypeConverter {
 
     /**
      * Picks the {@link #writeFixedParsedValue} / {@link #writeFixedNull} arm for a var-to-fixed
-     * conversion target, once per column, by the target's accessor family: an arm parses the
-     * text and writes the value with its family's width. Every family is named: the families with
-     * a parse arm yield their opcode, the rest yield UNDEFINED, which reaches no arm. A target that
-     * reads through an existing family takes that family's arm, NULL included, only when it is
-     * like the family's namesake; any other target is refused here, before the caller's row loop
-     * writes any target memory: an UNDEFINED opcode would write nothing and leave the memory as it
-     * was, and the family's arm would parse and NULL-fill it as the namesake's value. Each caller
-     * frees or owns its target buffer on the throw.
+     * conversion target, once per column, from the target's {@link PhysicalDescriptor.Accessor}
+     * family. Families with a parse arm yield their opcode; the rest yield UNDEFINED, which no arm
+     * handles. A type that reads through an existing family takes that family's arm, NULL included,
+     * only when it is like the family's namesake; for any other type {@link
+     * PhysicalDescriptor#familyArmOf} throws before the caller's row loop writes any target memory.
      */
     private static int fixedTargetOpcode(int targetType) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(targetType);
@@ -72,8 +69,7 @@ final class ParquetColumnTypeConverter {
         return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, IPv4, UUID,
                  DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> accessor.opcode();
-            // no parse arm and no NULL sentinel arm: the target memory stays as allocated, as it
-            // did when these tags fell through both switches
+            // no parse arm and no NULL arm: the target memory stays as allocated
             case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY,
                  INTERVAL -> ColumnType.UNDEFINED;
         };
@@ -125,8 +121,8 @@ final class ParquetColumnTypeConverter {
         };
     }
 
-    // the estimates' allowance for a type without a wire kind: the surrogate DECIMAL tag sat in the
-    // isDecimal() branch, with precision 0; every other pseudo tag and VARCHAR_SLICE had 40
+    // the size allowance for a type without a wire kind: the DECIMAL pseudo tag gets its precision
+    // plus 3, every other pseudo tag and VARCHAR_SLICE 40
     private static int noKindAllowance(int sourceType) {
         return ColumnType.tagOf(sourceType) == ColumnType.DECIMAL ? ColumnType.getDecimalPrecision(sourceType) + 3 : 40;
     }
@@ -166,8 +162,8 @@ final class ParquetColumnTypeConverter {
                 Unsafe.putLong(address + 3L * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
             }
             default -> {
-                // fixedTargetOpcode() yields UNDEFINED for a target with no sentinel arm: nothing
-                // is written, as before
+                // fixedTargetOpcode() yields UNDEFINED for a target with no NULL arm: nothing is
+                // written
             }
         }
     }
@@ -445,9 +441,8 @@ final class ParquetColumnTypeConverter {
         }
     }
 
-    // Upper bound on the UTF-16 chars a fixed-size value renders to, by the source's wire kind:
-    // the text form decides the length. Every kind is named; the 40-char allowance is what
-    // the unlisted tags always received.
+    // Upper bound on the UTF-16 chars a fixed-size value renders to. The source's WireKind picks
+    // it, because the text form decides the length.
     static long estimateStringDataSize(int sourceType, int rowCount) {
         final WireKind kind = WireKind.of(sourceType);
         final int maxCharsPerRow = kind != null ? maxCharsPerRow(kind, sourceType) : noKindAllowance(sourceType);

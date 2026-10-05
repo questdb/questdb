@@ -43,9 +43,9 @@ public class LPadStrFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "lpad(SIS)";
 
     /**
-     * Undefined for a negative length and an empty fill text: the function gives NULL there, as
-     * for a NULL operand. The function also rejects a length above its buffer limit before it
-     * calls the body.
+     * Undefined for a negative length and an empty fill text: the function gives NULL there, as for
+     * a NULL operand. The function also rejects a length above its buffer limit before it calls
+     * this method.
      */
     public static void value(StringSink sink, CharSequence str, int len, CharSequence fillText) {
         if (len > str.length()) {

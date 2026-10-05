@@ -43,10 +43,10 @@ import org.jetbrains.annotations.Nullable;
 
 public class SubStringFunctionFactory implements FunctionFactory {
     /**
-     * Undefined for a negative length: the function rejects it with an error. Where a constant
-     * start and length end before the first character ({@code start + len < 1}) the function
-     * gives NULL without calling the body; the body gives the empty text there, as the function
-     * does when it reads such values per row.
+     * Undefined for a negative length: the function rejects it with an error. For a constant start
+     * and length that end before the first character ({@code start + len < 1}) the function gives
+     * NULL without calling this method; for such values read per row it calls this method, which
+     * gives the empty text.
      */
     public static void value(StringSink sink, CharSequence str, int start, int len) {
         final int lo = Math.max(0, start - 1);

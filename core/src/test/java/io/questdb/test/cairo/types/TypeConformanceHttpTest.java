@@ -59,48 +59,46 @@ import java.util.HexFormat;
 import java.util.Map;
 
 /**
- * The HTTP part of the conformance kit (User Story 4): every kit type through {@code /query}
- * (JSON), {@code /exp} as CSV and {@code /exp} as Parquet, against an HTTP server of
- * {@link HttpQueryTestBuilder}, under its memory-leak check.
+ * The HTTP part of the conformance kit: every kit type through {@code /query} (JSON), {@code /exp}
+ * as CSV and {@code /exp} as Parquet, against an HTTP server of {@link HttpQueryTestBuilder}, under
+ * its memory-leak check.
  * <p>
  * What is recorded, per type ({@link TypeConformanceRecording}):
  * <ul>
- * <li>the status line and every response header, one line each;</li>
- * <li>{@code http.json}: the {@code /query} body, split losslessly into a head line, one line
- * per dataset row labelled with its value row, and a tail line; the rows join with a comma;</li>
- * <li>{@code http.csv}: the {@code /exp} CSV body, one line per CSV line labelled with its value
- * row; CSV lines end with CR LF, and the escaped CR prints as a backslash, {@code u} and
- * {@code 000d};</li>
- * <li>{@code http.parquet}: the byte length and SHA-256 of the {@code /exp} Parquet body, its
- * {@code created_by} and {@code questdb} key-value metadata, and the file read back through
- * {@code read_parquet} (column names and types, then the rows). The digest makes any byte
- * change fail; the decoded rows keep the content reviewable without committing binary
- * recordings. To see which bytes changed, run the kit at {@code s12-done} and at the tip.</li>
+ * <li> the status line and every response header, one line each;</li>
+ * <li> {@code http.json}: the {@code /query} body, split losslessly into a head line, one line per
+ * dataset row labelled with its value row, and a tail line; the rows join with a comma;</li>
+ * <li> {@code http.csv}: the {@code /exp} CSV body, one line per CSV line labelled with its value
+ * row; CSV lines end with CR LF, and the escaped CR prints as a backslash, {@code u} and {@code
+ * 000d};</li>
+ * <li> {@code http.parquet}: the byte length and SHA-256 of the {@code /exp} Parquet body, its
+ * {@code created_by} and {@code questdb} key-value metadata, and the file read back through {@code
+ * read_parquet} (column names and types, then the rows). The digest makes any byte change fail; the
+ * decoded rows keep the content reviewable without committing binary recordings.</li>
  * </ul>
  * <p>
- * Modes: the Parquet export takes one of several paths by query shape
- * ({@code ParquetExportMode}): {@code direct} ({@code SELECT k, v FROM t}, page frames zero-copy),
- * {@code cursor} (the same rows through a filter, materialized row by row; BINARY goes through a
- * temp table) and {@code hybrid} (a computed column next to the zero-copy ones). Each has its
- * own section ({@code http.parquet}, {@code http.parquet-cursor}, {@code http.parquet-hybrid}):
- * the cursor path writes SYMBOL as STRING (type code 11) where the direct path keeps SYMBOL
- * (type code 12), and the hybrid query exports one more column. JSON and CSV print through
- * record cursors and run once. The table is non-WAL and partitioned by day: while recording,
- * WAL gave the same output on every path (the storage kit shows why: both modes store the
- * same bytes), so WAL is not a mode here.
+ * Modes: the Parquet export takes one of several paths by query shape ({@code ParquetExportMode}):
+ * {@code direct} ({@code SELECT k, v FROM t}, page frames zero-copy), {@code cursor} (the same rows
+ * through a filter, materialized row by row; BINARY goes through a temp table) and {@code hybrid}
+ * (a computed column next to the zero-copy ones). Each has its own section ({@code http.parquet},
+ * {@code http.parquet-cursor}, {@code http.parquet-hybrid}): the cursor path writes SYMBOL as
+ * STRING (type code 11) where the direct path keeps SYMBOL (type code 12), and the hybrid query
+ * exports one more column. JSON and CSV print through record cursors and run once. The table is
+ * non-WAL and partitioned by day: WAL gives the same output on every path (both modes store the
+ * same bytes, as the storage part shows), so WAL is not a mode here.
  * <p>
- * Masks: the value of the {@code Date} header (the test server's clock) becomes
- * {@code <date>}; the clock number in the export file name ({@code questdb-query-<n>}) becomes
- * {@code <clock>}; the database root becomes {@code <dbRoot>}; in the client's error when the
- * server closes the connection, the errno becomes {@code <errno>}. The Parquet bytes need no mask:
- * {@code created_by} is the fixed text {@code QuestDB version 9.0}, and the {@code questdb} key
- * holds only the schema version and the column type codes.
+ * Masks: the value of the {@code Date} header (the test server's clock) becomes {@code <date>}; the
+ * clock number in the export file name ({@code questdb-query-<n>}) becomes {@code <clock>}; the
+ * database root becomes {@code <dbRoot>}; in the client's error when the server closes the
+ * connection, the errno becomes {@code <errno>}. The Parquet bytes need no mask: {@code created_by}
+ * is the fixed text {@code QuestDB version 9.0}, and the {@code questdb} key holds only the schema
+ * version and the column type codes.
  * <p>
  * A type registered later runs where {@link TypeConformanceInvariants#isEnabled} says so and is
- * checked without a recording: invariant 2 by the printed values of its NULL, sentinel-pattern
- * and zero rows on every path, and invariant 1 on {@code http.parquet} by the bits read back from
- * the exported file. Invariant 1 on JSON and CSV needs the value's expected text, which the
- * arithmetic tier will let the kit derive; until then it is not checked there.
+ * checked without a recording: invariant 2 on every path by the printed values of its NULL and
+ * sentinel-pattern rows (under NONE, on JSON and CSV, also of its zero row), and invariant 1 on the
+ * three Parquet paths by the bits read back from the exported file. Invariant 1 is not checked on
+ * JSON and CSV, because the kit does not derive the expected text of such a type's values.
  */
 @RunWith(Parameterized.class)
 public class TypeConformanceHttpTest extends AbstractTest {
@@ -451,8 +449,8 @@ public class TypeConformanceHttpTest extends AbstractTest {
     }
 
     /**
-     * The server closed the connection instead of answering: today's behaviour for an existing
-     * type, which the recording holds; a failure for a type registered later.
+     * The server closed the connection instead of answering. The recording holds this outcome for
+     * an existing type; for a type registered later it is a failure.
      */
     private void assertAnswered(String path, String mode, StringSink section) {
         if (type.isLater()) {

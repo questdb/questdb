@@ -67,7 +67,7 @@ public class FunctionFactoryDescriptorTest {
 
     @Test
     public void testGetArgTypeTagOfNonSignatureChars() {
-        // 'y' is the one free ASCII letter; the brackets and the old '[' | 32 map key are not types
+        // 'y' is the one free ASCII letter; the brackets, '{' ('[' | 32) included, are not types
         for (char c : new char[]{'y', 'Y', '[', ']', '{', '(', ')', ',', ' ', '0', '\u00e0'}) {
             Assert.assertEquals("char " + c, -1, FunctionFactoryDescriptor.getArgTypeTag(c));
         }

@@ -38,13 +38,12 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
 /**
- * The per-type facts the query engine reads from the type definitions instead of a list of
- * types: integers and numbers, WHERE key columns and timestamp bounds, the compiled filter's
- * integer lanes, the FILL(PREV) type match. Each expected list is the list of types the code
- * named before it asked the definitions, so a type that answers differently is a behaviour
- * change. The sweep covers every tag and the encoded types that carry parameters (timestamp
- * unit, geohash bits, decimal precision and scale, array dimensions, interval unit); a new tag
- * joins the sweep and answers here.
+ * The per-type facts the query engine reads from the type drivers: integers and numbers, WHERE key
+ * columns and timestamp bounds, the compiled filter's integer lanes; and the FILL(PREV) type match,
+ * which compares whole types. Each expected list pins the types the engine treats that way, so a
+ * type that answers differently is a behaviour change. The sweep covers every tag and the encoded
+ * types that carry parameters (timestamp unit, geohash bits, decimal precision and scale, array
+ * dimensions, interval unit); a new tag joins the sweep and answers here.
  */
 public class QueryEngineTypeFactsTest {
     // the type sweep, shared with the coverage tests of the per-type answers the relation rules
@@ -55,11 +54,11 @@ public class QueryEngineTypeFactsTest {
 
     @Test
     public void testFillPrevMatchesTheWholeType() {
-        // FILL(PREV(col)) admits a source column whose type matches the target's. The list it
-        // replaced compared the whole type for DECIMAL, GEOHASH, ARRAY, TIMESTAMP and INTERVAL, and
-        // the tag for every other type: those two agree for every pair because an encoding without
-        // parameters is its tag. The list found a geohash by its flag, so a bare GEOBYTE..GEOLONG tag
-        // took tag equality; no column has such a type, since every geohash type carries its bits.
+        // FILL(PREV(col)) admits a source column whose type equals the target's. `listed` is a
+        // per-type rule: the whole type for DECIMAL, GEOHASH, ARRAY, TIMESTAMP and INTERVAL, the
+        // tag for every other type. The two agree for every pair, because an encoding without
+        // parameters is its tag, except a bare GEOBYTE..GEOLONG tag, which takes tag equality; no
+        // column has such a type, because every geohash type carries its bits.
         final StringBuilder mismatches = new StringBuilder();
         for (int t = 0; t < TYPES.length; t++) {
             for (int s = 0; s < TYPES.length; s++) {

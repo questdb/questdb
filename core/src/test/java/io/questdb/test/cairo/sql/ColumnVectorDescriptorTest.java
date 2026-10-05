@@ -59,9 +59,9 @@ import org.junit.Test;
 import java.lang.management.ManagementFactory;
 
 /**
- * The column-vector descriptor: every field for every existing type on frames with
- * and without a column top, native and Parquet; release on the success, error and reuse paths;
- * no allocation per frame; and concurrent use of one address cache by several workers.
+ * Tests the column-vector descriptor: every field for every storable existing type on frames with
+ * and without a column top, native and Parquet; release on the success, error and reuse paths; no
+ * allocation per frame; and concurrent use of one address cache by several workers.
  */
 public class ColumnVectorDescriptorTest extends AbstractCairoTest {
 

@@ -835,7 +835,8 @@ public class WalEventCursor {
                         // Multiple arrayView objects might be bind to variables, and in `ArrayBindVariable`,
                         // arrayView does not clone its meta information, so `arrayViewPool` is needed.
                         // Same as `setBin`
-                        // binds by index, not by name (pre-existing, preserved as is)
+                        // known inconsistency: unlike the other named-variable arms, ARRAY binds by
+                        // index, not by name
                         bindVariableService.setArray(i, readArray(arrayViewPool.next()));
                         break;
                     case ColumnType.DECIMAL8:

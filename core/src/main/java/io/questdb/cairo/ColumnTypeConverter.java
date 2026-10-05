@@ -129,10 +129,10 @@ public class ColumnTypeConverter {
 
     /**
      * The fixed-size types a STRING, VARCHAR or SYMBOL column converts to by parsing each value
-     * (ALTER COLUMN TYPE); {@code srcType} names the source in the error only. Decimal targets
-     * do not go through here, see {@link #convertFromString}. The row must cover every
-     * text-to-fixed cell {@code SqlCompilerImpl.columnConversionRow} admits;
-     * {@code ColumnConversionSoundnessTest} checks that.
+     * (ALTER COLUMN TYPE); {@code srcType} names the source in the error only. Decimal targets do
+     * not go through here, see {@link #convertFromString}. The switch must cover every other
+     * text-to-fixed pair {@code SqlCompilerImpl.columnConversionSupport} allows; {@code
+     * ColumnConversionSoundnessTest} checks that.
      */
     public static Var2FixedConverter<CharSequence> getConverterFromVarToFixed(short srcType, int dstColumnType) {
         return switch (ColumnTypeTag.of(dstColumnType)) {
@@ -1000,7 +1000,6 @@ public class ColumnTypeConverter {
             long appendPageSize,
             ColumnConversionOffsetSink columnSizesSink
     ) {
-        // the source tag picks the reader family; the destination is resolved inside each family
         return switch (ColumnTypeTag.of(srcColumnType)) {
             case SYMBOL -> {
                 assert symbolTable != null;

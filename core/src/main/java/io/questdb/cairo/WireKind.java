@@ -28,15 +28,15 @@ package io.questdb.cairo;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * How a type's values travel on the result protocols: one kind per distinct byte form, so
- * types that write the same bytes under the same NULL test share a kind, and a protocol keeps one
- * writer per kind. A type definition answers its kind ({@link TypeDriver#getWireKind()}); the
- * PostgreSQL wire opcodes, its size arithmetic and the JSON and CSV writers switch exhaustively on
- * it, so a new kind is listed by the build at every protocol that must write it.
+ * How a type's values travel on the result protocols: one kind per distinct byte form, so types
+ * that write the same bytes under the same NULL test share a kind, and a protocol keeps one writer
+ * per kind. A type driver returns its kind ({@link TypeDriver#getWireKind()}); the PostgreSQL wire
+ * opcodes and size arithmetic, and the JSON, CSV and QWP writers switch exhaustively on it, so the
+ * build lists every protocol that must write a new kind.
  * <p>
- * A kind names the byte form and the NULL test together: a type whose bytes equal another's but
- * whose NULL is not a reserved value (a full-range type) needs a kind of its own. Today each
- * existing type has its own writer, so each has its own kind.
+ * A kind covers the byte form and the NULL test together: a type with another type's bytes but no
+ * reserved NULL value needs a kind of its own. Each existing type has its own writer, so each has
+ * its own kind.
  */
 public enum WireKind {
     BOOLEAN,
@@ -74,9 +74,9 @@ public enum WireKind {
     ;
 
     /**
-     * The wire kind of a stored column type, or null for a pseudo type and for VARCHAR_SLICE,
-     * which no protocol writes as a type of its own. It reads a table filled from the type
-     * definitions on first use, so a per-row caller asks no definition.
+     * The wire kind of a stored column type, or null for a pseudo type and for VARCHAR_SLICE, which
+     * no protocol writes as a type of its own. Safe in per-row code: it reads a table filled from
+     * the type drivers on first use and calls no driver.
      */
     public static @Nullable WireKind of(int columnType) {
         final short tag = ColumnType.tagOf(columnType);

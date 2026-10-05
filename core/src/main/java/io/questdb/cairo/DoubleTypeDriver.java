@@ -30,9 +30,6 @@ import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleTypeConstant;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for DOUBLE.
- */
 public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     public static final DoubleTypeDriver INSTANCE = new DoubleTypeDriver();
 

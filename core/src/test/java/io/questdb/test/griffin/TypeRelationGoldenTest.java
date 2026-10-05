@@ -63,27 +63,27 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 
 /**
- * Golden truth tables for the pairwise relations between column types. Each table was
- * generated once from the implementation and committed as the expected value; the tests
- * compare the current output against it character by character.
+ * Golden truth tables for the pairwise relations between column types. Each table was generated
+ * once from the implementation and committed as the expected value; the tests compare the current
+ * output against it character by character.
  * <p>
- * The tables freeze today's behaviour, including its quirks, so that a refactor of the
- * relation code can be checked for behaviour preservation. A diff in any table is a
- * behaviour change to be explained, not a golden to be regenerated. Cells that encode a
- * known pre-existing bug carry the bug id in a comment next to the table.
+ * The tables pin the current behaviour, quirks included, so that a change to the relation code that
+ * alters any relation fails here. A diff in any table is a behaviour change to be explained, not a
+ * golden to be regenerated. Cells that encode a known inconsistency carry a comment next to the
+ * table.
  * <p>
- * The type set is every tag from 0 to {@link ColumnType#MAX_TAG} in tag order, followed by a
- * few encoded types (timestamp precision, geohash bits, decimal precision and scale, array
- * dimensionality, interval kind) that the relations inspect beyond the tag. Row labels double
- * as the column legend: column {@code k} is the type on row {@code k}. Adding a tag grows the
- * set, so every table then reports the new row and column.
+ * The type set is every tag from 0 to {@link ColumnType#MAX_TAG} in tag order, followed by a few
+ * encoded types (timestamp precision, geohash bits, decimal precision and scale, array
+ * dimensionality, interval kind) that the relations inspect beyond the tag. Row labels double as
+ * the column legend: column {@code k} is the type on row {@code k}. Adding a tag grows the set, so
+ * every table then reports the new row and column.
  * <p>
- * Cell notation: {@code X} true, {@code .} false, {@code !} the call threw, an integer the
- * index into the type set of the returned type, {@code -} a returned -1, {@code #} a returned
- * type outside the set, spelled out in a note under the table. The overload table is sparse:
- * each row lists {@code name=distance} for every cell that is not {@code OVERLOAD_NONE},
- * where -1 is {@code OVERLOAD_FULL}. The CASE cast table is sparse the same way: each row
- * lists {@code name=factory} for every cell with a cast factory.
+ * Cell notation: {@code X} true, {@code .} false, {@code !} the call threw, an integer the index
+ * into the type set of the returned type, {@code -} a returned -1, {@code #} a returned type
+ * outside the set, spelled out in a note under the table. The overload table is sparse: each row
+ * lists {@code name=distance} for every cell that is not {@code OVERLOAD_NONE}, where -1 is {@code
+ * OVERLOAD_FULL}. The CASE cast table is sparse the same way: each row lists {@code name=factory}
+ * for every cell with a cast factory.
  */
 public class TypeRelationGoldenTest {
     private static final String[] LABELS;
@@ -1186,11 +1186,11 @@ public class TypeRelationGoldenTest {
     @Test
     public void testPerRowSinkArms() throws Exception {
         // the unary relations behind the per-row sinks, sorts and updates: which arm a type takes
-        // (its own tag), that the site writes nothing for it (none), or that the site rejects it (!).
-        // sink: RecordSinkFactory and LoopingRecordSink; vsink: RecordValueSinkFactory; cmp:
+        // (its own tag), that the site writes nothing for it (none), or that the site rejects it
+        // (!). sink: RecordSinkFactory and LoopingRecordSink; vsink: RecordValueSinkFactory; cmp:
         // RecordComparatorCompiler; key: SortKeyEncoder kind/width (signed, unsigned, float,
         // double, wide, symbol, variable); mat: SortKeyMaterializingRecordCursor; agg:
-        // GroupByColumnSink (none = the sink appends nothing, PB5); upd: UpdateOperatorImpl (none =
+        // GroupByColumnSink (none = the sink appends nothing); upd: UpdateOperatorImpl (none =
         // rejected at the first row); map: the single-column key eligibility of Unordered4/8Map
         final Method sink = method(RecordSinkFactory.class, "sinkOpcode", int.class, String.class);
         final Method vsink = method(RecordValueSinkFactory.class, "isSupportedColumnType", int.class);
@@ -1203,7 +1203,8 @@ public class TypeRelationGoldenTest {
         final Method map4 = method(Unordered4Map.class, "isSupportedKeyType", int.class);
         final Method map8 = method(Unordered8Map.class, "isSupportedKeyType", int.class);
         final String[] kinds = {"signed", "unsigned", "float", "double", "wide", "symbol", "variable"};
-        // TIMESTAMP_NS map=. is PB3: only the plain TIMESTAMP type takes the 8-byte map
+        // TIMESTAMP_NS map=. is a known inconsistency: only the plain TIMESTAMP type takes the
+        // 8-byte map
         assertGolden(
                 """
                          0 UNDEFINED     sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.

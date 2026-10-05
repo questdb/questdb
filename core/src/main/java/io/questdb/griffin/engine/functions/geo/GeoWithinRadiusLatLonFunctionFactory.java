@@ -65,11 +65,11 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
     private static final double METERS_PER_DEG_LAT = 111_320.0;
 
     /**
-     * The general form: a negative radius holds no point; otherwise the body validates the ranges,
-     * so it takes the argument positions it reports, and scales the longitude difference by the
-     * center latitude's cosine. The general function answers a negative radius before it reads the
-     * other arguments, so its results do not change. The specialisation for a constant center and
-     * radius computes the same cosine and squared radius once at setup and does not call the body.
+     * Whether the point lies within {@code radius} meters of the center; a negative radius holds no
+     * point. Throws a CairoException at the argument's position for a coordinate out of range. The
+     * longitude difference scales by the cosine of the center latitude. {@code
+     * ConstCenterGeoWithinRadiusLatLonFunction} computes that cosine and the squared radius once at
+     * setup and does not call this method.
      */
     public static boolean value(
             double lat,

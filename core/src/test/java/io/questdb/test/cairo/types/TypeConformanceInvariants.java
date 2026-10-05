@@ -49,35 +49,31 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Checks a type registered after the S12 recording, which has no recording of its own (F28,
- * {@code contracts/conformance-kit.md} section 4). The {@code TypeConformance*Test} classes
- * call it for every type whose {@link TypeConformanceTypes.Entry#isLater()} is true; it needs
- * no per-type test code.
+ * Checks a type registered later, which has no recording of its own. The
+ * {@code TypeConformance*Test} classes call it for every type whose
+ * {@link TypeConformanceTypes.Entry#isLater()} is true; it needs no per-type test code.
  * <p>
- * Paths: a later type runs on the paths its resource line lists
- * ({@link TypeConformanceTypes#LATER_TYPES_RESOURCE}); tracer types list F31's paths of the
- * converted layers (F26's at the final tip), design-proof types the paths E3 implements. A
- * pattern is {@code <path>} or {@code <path>@<mode>}, where {@code *} matches any text, and
- * {@code -} lists none. A later tag without a resource line fails every kit class.
+ * Paths: such a type runs on the paths its resource line lists
+ * ({@link TypeConformanceTypes#LATER_TYPES_RESOURCE}). A pattern is {@code <path>} or
+ * {@code <path>@<mode>}, where {@code *} matches any text, and {@code -} lists none. A tag
+ * registered later without a resource line fails every kit class.
  * <p>
  * The invariants:
  * <ol>
  * <li>every value reads back as written ({@link #assertReadsBackAsWritten}), bit for bit, except
  * that for a float tier every NaN is the same value;</li>
  * <li>the NULL row and the sentinel-pattern row behave as the NULL policy says
- * ({@link #assertNullPolicy}): SENTINEL, both read the same; NONE, the NULL row reads as false
- * or 0; BITMAP, the two stay distinct; NOT_NULL, writing NULL fails with a clear error and the
- * sentinel-pattern row reads back as a value; another type's sentinel pattern of the same
- * width reads as a value except under SENTINEL ({@link #assertOtherSentinel});</li>
+ * ({@link #assertNullPolicy}): SENTINEL, both read the same; NONE, the NULL row reads as false or
+ * 0; BITMAP, the two stay distinct; NOT_NULL, writing NULL fails with a clear error and the
+ * sentinel-pattern row reads back as a value; another type's sentinel pattern of the same width
+ * reads as a value except under SENTINEL ({@link #assertOtherSentinel});</li>
  * <li>rows compare and sort by the order the type's arithmetic tier implies
- * ({@link #assertOrdered}), when the resource declares the tier; from S14b the definition
- * answers it;</li>
- * <li>design-proof mixing cases give the results the R9 note states: the resource's
+ * ({@link #assertOrdered}), for an integer or float tier;</li>
+ * <li>the mixing cases give the results the resource states: its
  * {@code mix|<name>|<sql>|<expected>} lines ({@link #mixingCases()}), which the SQL class runs;</li>
- * <li>the relation paths follow the type's declared relations: a cast, CASE branch,
- * ALTER COLUMN TYPE target or dedup key the rules admit runs, and gives what the rules and the
- * declared tier imply ({@link #castRule}, {@link #widened}); the SQL and storage classes state
- * each path's checks;</li>
+ * <li>the relation paths follow the type's declared relations: a cast, CASE branch, ALTER COLUMN
+ * TYPE target or dedup key the rules admit runs, and gives what the rules and the tier imply
+ * ({@link #castRule}, {@link #widened}); the SQL and storage classes state each path's checks;</li>
  * <li>a path that reaches a guarded site the type declares it is refused at fails there with the
  * site's refusal ({@link #assertDeclaredRefusal}), under the memory-leak check of the test that
  * runs the path, so the refusing factory's cleanup is checked too. The site map
@@ -234,10 +230,9 @@ public final class TypeConformanceInvariants {
     }
 
     /**
-     * Invariant 3: rows other than the NULL row come in the order the declared arithmetic tier
-     * implies: signed or unsigned integers, or floats where every NaN is one value above
-     * +Infinity and -0.0 equals 0.0. Without a declared tier the order is not checked;
-     * the definition answers the tier from S14b.
+     * Invariant 3: rows other than the NULL row come in the order the type's arithmetic tier
+     * implies: signed or unsigned integers, or floats where every NaN is one value above +Infinity
+     * and -0.0 equals 0.0. A WIDE or NONE tier implies no order, so the order is not checked.
      */
     public static void assertOrdered(TypeConformanceTypes.Entry type, String path, String mode, ObjList<String> labels, ObjList<long[]> bits, boolean ascending) {
         if (type.laterTier == null) {
@@ -326,8 +321,8 @@ public final class TypeConformanceInvariants {
     }
 
     /**
-     * Whether two values of a target type are the same value: equal bits, or for a float kind
-     * both NaN.
+     * Whether two values of a target type are the same value: equal bits, or for a float kind both
+     * NaN.
      */
     public static boolean isSameValue(RelationKind kind, int width, long[] a, long[] b) {
         if (Arrays.equals(a, b)) {
@@ -386,9 +381,9 @@ public final class TypeConformanceInvariants {
     }
 
     /**
-     * The design-proof mixing cases (invariant 4): {@code mix|<name>|<sql>|<expected>} lines of
-     * the resource, where {@code \n} and {@code \t} in the expected text stand for newline and
-     * tab. Each entry is {name, sql, expected}.
+     * The mixing cases (invariant 4): {@code mix|<name>|<sql>|<expected>} lines of the resource,
+     * where {@code \n} and {@code \t} in the expected text stand for newline and tab. Each entry is
+     * {name, sql, expected}.
      */
     public static ObjList<String[]> mixingCases() {
         final ObjList<String[]> cases = new ObjList<>();
@@ -415,7 +410,7 @@ public final class TypeConformanceInvariants {
     }
 
     /**
-     * The type's NULL policy: SENTINEL or NONE for an existing type, from its definition; for a
+     * The type's NULL policy: SENTINEL or NONE for an existing type, from its type driver; for a
      * type registered later, as its resource line declares it.
      */
     public static String policyOf(TypeConformanceTypes.Entry type) {

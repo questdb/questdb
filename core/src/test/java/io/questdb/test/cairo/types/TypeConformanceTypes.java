@@ -40,28 +40,26 @@ import java.util.EnumSet;
 import java.util.Set;
 
 /**
- * The column types the conformance kit runs, each with the name a {@code CREATE TABLE}
- * declares it by.
+ * The column types the conformance kit runs, each with the name a {@code CREATE TABLE} declares it
+ * by.
  * <p>
- * Existing types: every real {@link ColumnTypeTag} (pseudo tags excluded, as
- * {@code TypeDriverTest} does), then the encoded variants the golden tables use
- * ({@code TypeRelationGoldenTest}). A tag whose column type carries parameters (geohash bits,
- * decimal precision and scale, array element and dimensions) is represented by one encoding of
- * its own, distinct from the variants, so every tag and every variant is a case of its own. The
- * ARRAY tag's entry is the DOUBLE[] variant, listed once. Existing types have a recording in
- * every {@code TypeConformance*Test}.
+ * Existing types: every real {@link ColumnTypeTag} (pseudo tags excluded, as {@code TypeDriverTest}
+ * does), then the encoded variants the golden tables use ({@code TypeRelationGoldenTest}). A tag
+ * whose column type carries parameters (geohash bits, decimal precision and scale, array element
+ * and dimensions) is represented by one encoding of its own, distinct from the variants, so every
+ * tag and every variant is a case of its own. The ARRAY tag's entry is the DOUBLE[] variant, listed
+ * once. Existing types have a recording in every {@code TypeConformance*Test}.
  * <p>
  * Types registered later: a real tag the list below does not name. It joins the kit by its
- * registration lines alone; the kit reads its declarations, NULL policy and paths from the
- * resource {@link #LATER_TYPES_RESOURCE}, one line each,
+ * registration lines alone; the kit reads its declarations, NULL policy and paths from the resource
+ * {@link #LATER_TYPES_RESOURCE}, one line each,
  * {@code tag | DDL | NULL policy | paths [| arithmetic tier [| refused sites]]}, and checks it with
- * {@link TypeConformanceInvariants} instead of a recording. The arithmetic tier comes from the
- * type's definition ({@code TypeDriver.getArithmetic()}); a tier on the line, which stood in for
- * that answer before S14b, must agree with it. The refused sites, comma-separated, are the guarded
- * sites the type is refused at on purpose, labelled as the site map
- * ({@link TypeConformanceInvariants#SITES_FILE}) labels them: a path that reaches one must fail
- * with that site's refusal. A later tag without a resource line is still listed, so every kit
- * class fails on it with a message that names it.
+ * {@link TypeConformanceInvariants} instead of a recording. The arithmetic tier comes from the type
+ * driver ({@code TypeDriver.getArithmetic()}); a tier on the line must match it. The refused sites,
+ * comma-separated, are the guarded sites the type is refused at on purpose, labelled as the site
+ * map ({@link TypeConformanceInvariants#SITES_FILE}) labels them: a path that reaches one must fail
+ * with that site's refusal. A tag registered later without a resource line is still listed, so
+ * every kit class fails on it with a message that names it.
  */
 public final class TypeConformanceTypes {
     public static final ObjList<Entry> ALL = new ObjList<>();
@@ -163,9 +161,9 @@ public final class TypeConformanceTypes {
     }
 
     /**
-     * The arithmetic tier the kit derives rows and order from, as the definition answers it:
-     * null for WIDE and NONE, whose minimum, maximum and order the tier alone does not give. A
-     * tier the resource line declares must be the definition's.
+     * The arithmetic tier the kit derives rows and order from, as the type driver returns it: null
+     * for WIDE and NONE, whose minimum, maximum and order the tier alone does not give. A tier the
+     * resource line declares must match the type driver's.
      */
     @Nullable
     private static String tierOf(ColumnTypeTag tag, @Nullable String declaredTier) {
@@ -241,7 +239,7 @@ public final class TypeConformanceTypes {
         public final ObjList<String> laterRefusedSites;
         /**
          * For a type registered later: its arithmetic tier (I8, I16, I32, I64, U8, U16, U32, F32,
-         * F64) as its definition answers it; null for WIDE and NONE, and for an existing type.
+         * F64) as its type driver returns it; null for WIDE and NONE, and for an existing type.
          */
         @Nullable
         public final String laterTier;
@@ -276,8 +274,8 @@ public final class TypeConformanceTypes {
         }
 
         /**
-         * True for a type registered after the S12 recording: it has no recording and the kit
-         * checks it by invariants.
+         * True for a type registered later: it has no recording and the kit checks it by
+         * invariants.
          */
         public boolean isLater() {
             return laterPolicy != null || (tag != null && !EXISTING_TAGS.contains(tag));
@@ -289,7 +287,7 @@ public final class TypeConformanceTypes {
         }
     }
 
-    // the real tags at the S12 recording
+    // the real tags the recordings cover
     private static final Set<ColumnTypeTag> EXISTING_TAGS;
 
     static {

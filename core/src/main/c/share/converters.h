@@ -55,9 +55,9 @@ enum class ConversionError {
 #pragma GCC diagnostic error "-Wswitch"
 
 /**
- * Whether the fixed-to-fixed conversion table converts values of type t: exactly the types
- * with an EnumTypeMap specialisation below. Every tag has an arm, so a new tag stops the build
- * here and has to be classified.
+ * Whether the fixed-to-fixed conversion table converts values of type t: exactly the types with an
+ * EnumTypeMap specialisation below. The switch names every tag and -Wswitch is an error here, so a
+ * new tag must be classified before the build passes.
  */
 constexpr bool is_fixed_convertible(ColumnType t) {
     switch (t) {

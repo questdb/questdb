@@ -1409,10 +1409,10 @@ public class BindVariableServiceImplTest {
 
     @Test
     public void testSetterPairs() throws Exception {
-        // Coverage of the setters' pairs (F34 keeps them per type): a value of each setter's type
-        // into a variable of each type define() accepts, including the encoded types. X accepts,
-        // "." refuses with the setter's error, e refuses the value with another error, "!" crashes:
-        // a pair no setter arm handles. A type define() refuses has no row.
+        // Coverage of the setters' pairs: a value of each setter's type into a variable of each
+        // type define() accepts, including the encoded types. X accepts, "." refuses with the
+        // setter's error, e refuses the value with another error, "!" crashes: a pair no setter arm
+        // handles. A type define() refuses has no row.
         assertMemoryLeak(() -> {
             try (
                     DirectArray array = new DirectArray(new DefaultTestCairoConfiguration(null));

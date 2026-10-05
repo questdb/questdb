@@ -1444,11 +1444,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * The memoizing wrapper for a virtual column function of this type, or the function itself
-     * for a type without one (the geohashes, BINARY, LONG128, INTERVAL and the non-column tags).
-     * A memoizer caches the value its accessor family's getter reads, so the family picks it. A
-     * type unlike its family's namesake is refused: the namesake's memoizer would read its NULL
-     * the namesake's way. The caller frees the function and the base factory on the throw.
+     * The memoizing wrapper for a virtual column function of this type, or the function itself for
+     * a type without one (the geohashes, BINARY, LONG128, INTERVAL and the pseudo types). A
+     * memoizer caches what the getter of the type's {@link PhysicalDescriptor.Accessor accessor
+     * family} reads, so the family picks the memoizer. Throws {@link CairoException} for a type
+     * unlike its family's namesake ({@link PhysicalDescriptor#familyArmOf}), whose NULL the
+     * namesake's memoizer would misread; the caller frees the functions and the base factory.
      */
     private static Function memoized(Function function) {
         final TypeDriver driver = ColumnType.findTypeDriver(function.getType());
@@ -1475,7 +1476,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     new DecimalFunctionMemoizer(function);
             case ARRAY -> new ArrayFunctionMemoizer(function);
             case STRING -> new StrFunctionMemoizer(function);
-            // VARCHAR_SLICE reads through VARCHAR's definition
+            // VARCHAR_SLICE shares VARCHAR's type driver, so it lands here too
             case VARCHAR -> new VarcharFunctionMemoizer(function);
             case SYMBOL -> new SymbolFunctionMemoizer(function);
             // other families do not have memoization yet
@@ -1767,7 +1768,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return false;
         }
         return switch (driver.getAccessor()) {
-            // VARCHAR_SLICE reads through VARCHAR's definition
+            // VARCHAR_SLICE shares VARCHAR's type driver, so it lands here too
             case BOOLEAN, BYTE, CHAR, SHORT, INT, IPv4, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, STRING, VARCHAR,
                  SYMBOL, UUID, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, LONG128 -> true;
             case BINARY, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> false;
@@ -3350,11 +3351,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * The cast that reads column {@code i} of a UNION operand, typed {@code fromType}, as the
-     * union's column type {@code toType}. The union type is the one {@link #getUnionCastType}
-     * picks, so every reachable (from, to) pair has a cell: a cast function, or the "unsupported
-     * cast" error for a pair the matrix produces but no cast converts. A pair no arm names
-     * throws {@link #unreachableCast(int, int)}, never an empty cell, since the caller's cast
-     * list must hold one function per column.
+     * union's column type {@code toType}. {@link #getUnionCastType} picks the union type, so every
+     * reachable (from, to) pair has a cell: a cast function, or the "unsupported cast"
+     * {@link SqlException} for a pair the matrix produces but no cast converts. A pair no cell
+     * names throws {@link #unreachableCast(int, int)} and never returns null, since the caller's
+     * cast list must hold one function per column.
      */
     private Function generateCastFunction(
             SqlExecutionContext executionContext,
@@ -3648,7 +3649,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int toType = castToMetadata.getColumnType(i);
             int fromType = castFromMetadata.getColumnType(i);
             if (tagOf(fromType) == NULL) {
-                // a NULL branch reads as the union type's NULL, which that type's definition answers
+                // a NULL branch reads as the union type's NULL constant
                 castFunctions.add(Constants.getNullConstant(toType));
             } else {
                 castFunctions.add(generateCastFunction(executionContext, castFromMetadata, i, fromType, toType, modelPosition));

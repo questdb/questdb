@@ -214,73 +214,37 @@ public class PushdownFilterExtractor implements Mutable {
     }
 
     /**
-     * Reports whether a null predicate over this column type may drive row group pruning. The
-     * column's NULL policy decides first: a column without NULL (NONE) prunes nothing, except for
-     * CHAR's IS NOT NULL, and a SENTINEL column answers by its accessor family. A new type in a
-     * family takes that family's answer, and a new policy fails to compile here until it has one.
+     * Reports whether a null predicate over this column type may drive row group pruning. A column
+     * without NULL (NONE) prunes nothing, except for CHAR's IS NOT NULL; a SENTINEL column answers
+     * by its accessor family.
      * <p>
-     * Pruning is exact only where the parquet null bit and the SQL NULL denote the same rows.
-     * The parquet writer marks column-top rows - rows that predate the ADD COLUMN - with
-     * definition level 0, and decides every other row's null bit through its {@code Nullable}
-     * impl in {@code core/rust/qdbr/src/parquet_write/mod.rs}. Two type groups break the
-     * correspondence, in opposite directions:
-     * <ul>
-     * <li>BOOLEAN, BYTE and SHORT carry no null sentinel, so {@code EqBooleanFunctionFactory},
-     * {@code EqByteFunctionFactory} and {@code EqShortFunctionFactory} fold a null constant to
-     * {@code BooleanConstant.FALSE} and every stored row is non-null - a column-top row reads
-     * back as 0/false, a legitimate value. A row group built entirely from column-top rows
-     * reports {@code null_count == num_values}, which {@link ParquetRowGroupFilter} would
-     * discard for IS NOT NULL even though every one of its rows matches. Neither direction may
-     * consult the file's null bit.</li>
-     * <li>CHAR, FLOAT and DOUBLE call more values NULL than the writer marks null, so parquet
-     * nulls are a strict subset of SQL NULLs. IS NOT NULL still prunes exactly - a row group
-     * with {@code null_count == num_values} holds only NULLs, so no row matches - but IS NULL
-     * does not: {@code null_count == 0} no longer implies the group holds no NULL. CHAR's null
-     * is {@code Numbers.CHAR_NULL} while the writer's {@code Nullable} impl for {@code u16}
-     * reports every stored value non-null; {@code Numbers.isNull(double)} masks
-     * {@code EXP_BIT_MASK} and {@code isNull(float)} tests {@code isInfinite}, so both count
-     * +/-Infinity as NULL, while the writer's impls for {@code f32}/{@code f64} test only
-     * {@code is_nan()} and {@code simd.rs} compares strictly greater than the infinity bits.
-     * A stored CHAR_NULL or infinity therefore reaches the file as a non-null value, and a row
-     * group of them reports {@code null_count == 0} while every row matches IS NULL.</li>
-     * </ul>
-     * Every other type's null detection - a {@code Nullable} impl for the fixed-size types, a
-     * length or key check for the variable-size ones, which do not implement that trait -
-     * recognises the same values SQL does, so both directions stay exact. That includes IPv4,
-     * whose in-band 0 the writer does map to a parquet null.
-     * <p>
-     * This gates on the column's <em>metadata</em> type; soundness also needs the file's stored
-     * type to agree, which {@link ParquetRowGroupFilter} enforces separately by dropping any
-     * condition whose parquet column type differs, before it reaches the null-op branch.
-     * <p>
-     * Relaxing either arm would recover no pruning, so the two {@code false} answers cost nothing.
-     * The native side declines the same skips independently: {@code writer_undercounts_nulls}
-     * refuses the {@code null_count == 0} skip for CHAR, FLOAT and DOUBLE, and
-     * {@code is_null_free_type} refuses the {@code null_count == num_values} skip for BOOLEAN, BYTE
-     * and SHORT, both in {@code parquet_read::row_groups} and its {@code parquet_metadata::skip}
-     * twin. A newly pushed condition would therefore prune nothing and merely mark pushdown active,
-     * which costs the page frame cursor its up-front {@code size()}. For BOOLEAN, BYTE and SHORT it
-     * would also reopen the {@code filter == null} alongside active pushdown state that
-     * {@code ParquetRowGroupPruningTest.testLimitOverConstantFoldedByteNullFilter} pins closed,
-     * because {@code b IS NOT NULL} folds to a constant TRUE the code generator drops. The
-     * remaining pair - IS NULL over those three - folds to a constant FALSE that
-     * {@code SqlCodeGenerator} replaces with an empty factory, so no scan runs there to prune.
+     * Pruning is exact only where the parquet null bit and the SQL NULL denote the same rows. The
+     * parquet writer marks column-top rows null. BOOLEAN, BYTE and SHORT have no NULL: a column-top
+     * row reads back as 0 or false, a value, so a row group of column-top rows reports every row
+     * null while every row matches IS NOT NULL. CHAR, FLOAT and DOUBLE call more values NULL than
+     * the writer marks null: the writer stores CHAR_NULL as a value, and {@code Numbers.isNull}
+     * counts +/-Infinity as NULL while the writer tests only NaN. For them IS NOT NULL prunes
+     * exactly and IS NULL does not. The native side declines the same skips
+     * ({@code writer_undercounts_nulls}, {@code is_null_free_type}), and
+     * {@link ParquetRowGroupFilter} drops a condition whose parquet column type differs from the
+     * column's.
      */
     private static boolean isNullOpPushable(int columnType, NullPolicy nullPolicy, int opType) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
-        // pseudo tags and VARCHAR_SLICE never name a table column; they answered true and still do
+        // pseudo tags and VARCHAR_SLICE never name a table column
         if (driver == null) {
             return true;
         }
         return switch (nullPolicy) {
-            // no NULL: the row-group null counts say nothing about these. Quirk char-top-null: CHAR has
-            // no NULL either, yet a column top reads back as CHAR_NULL, which SQL treats as NULL, so its
-            // IS NOT NULL prunes exactly and stays pushable, as before
+            // no NULL: the row-group null counts say nothing about these types. CHAR is the
+            // exception: a column-top row reads back as CHAR_NULL, which SQL treats as NULL, so IS
+            // NOT NULL prunes CHAR exactly
             case NONE -> driver.getAccessor() == PhysicalDescriptor.Accessor.CHAR && opType == OP_IS_NOT_NULL;
             case SENTINEL -> switch (driver.getAccessor()) {
-                // IS NOT NULL only, as before
+                // IS NOT NULL only: the parquet writer marks fewer rows null than SQL does (see
+                // above)
                 case CHAR, FLOAT, DOUBLE -> opType == OP_IS_NOT_NULL;
-                // both operators, as before
+                // both operators
                 case BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT,
                      GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
                      DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> true;

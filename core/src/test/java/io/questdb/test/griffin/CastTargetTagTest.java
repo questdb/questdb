@@ -35,10 +35,10 @@ import java.lang.reflect.Method;
 
 /**
  * Pins, per tag, the two parse-time cast-target predicates: whether a type name becomes a type
- * constant in {@code FunctionParser.createConstant} (the cast target of {@code cast(x as T)}),
- * and whether {@code ExpressionParser} refuses {@code T} as a cast target, from a value and from
- * {@code null}. Both were ranges over tag numbers; now they are exhaustive switches, and this
- * table is what the switches must keep saying.
+ * constant in {@code FunctionParser.createConstant} (the cast target of {@code cast(x as T)}), and
+ * whether {@code ExpressionParser} refuses {@code T} as a cast target, from a value and from {@code
+ * null}. Both read the tag's type driver, with the pseudo-type and compatibility cases written
+ * out, and this table pins their answers.
  * <p>
  * Cell notation: {@code X} true, {@code .} false. The predicates are package-private, hence
  * reflection.

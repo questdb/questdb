@@ -145,7 +145,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 GroupByFunction function = groupByFunctions.getQuick(i);
                 if (function.isScalar()) {
                     groupByScalarFunctions.add(function);
-                    // the endpoints are stored and interpolated as the accessor family's value
                     final TypeDriver driver = ColumnType.findTypeDriver(function.getType());
                     if (driver == null) {
                         Misc.freeObjList(groupByScalarFunctions);

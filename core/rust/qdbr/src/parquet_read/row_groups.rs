@@ -1464,8 +1464,7 @@ fn is_int_null(val: i64, src_tag: ColumnTypeTag) -> bool {
         ColumnTypeTag::Byte | ColumnTypeTag::Short => false,
         ColumnTypeTag::Int => val == i32::MIN as i64,
         ColumnTypeTag::Long => val == i64::MIN,
-        // only the integer sources reach here (convert_fixed_to_decimal); every tag is named, so a
-        // new integer tag stops the build here and declares its NULL test
+        // only the integer sources reach here (convert_fixed_to_decimal)
         ColumnTypeTag::Boolean
         | ColumnTypeTag::Char
         | ColumnTypeTag::Date
@@ -1529,7 +1528,7 @@ fn scale_or_null_i64(val: i64, factor: i64, limit: i64, null_sentinel: i64) -> i
     }
 }
 
-/// The width of a fixed-size source tag, from its movement tier; a var-size tag has none.
+/// The width of a fixed-size source tag; an error for a var-size tag.
 fn fixed_tag_size(tag: ColumnTypeTag) -> ParquetResult<usize> {
     tag.fixed_size()
         .ok_or_else(|| fmt_err!(InvalidType, "no fixed width for column type {}", tag.name()))

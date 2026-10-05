@@ -794,7 +794,6 @@ pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
         ColumnTypeTag::Binary | ColumnTypeTag::Varchar | ColumnTypeTag::String => {
             Encoding::DeltaLengthByteArray
         }
-        // every tag is named, so a new tag stops the build here and chooses its default encoding
         ColumnTypeTag::Boolean
         | ColumnTypeTag::Byte
         | ColumnTypeTag::Short

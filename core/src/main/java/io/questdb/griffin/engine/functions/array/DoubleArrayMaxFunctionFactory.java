@@ -42,11 +42,10 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_max";
 
     /**
-     * The larger of two values; a tie keeps {@code max} (of -0.0 and 0.0 the first stays), as the
-     * {@code v > max} test of the vanilla kernel {@code FlatArrayView.maxDouble} does. It also
-     * answers the values a type without a reserved NULL carries: NaN orders after every other
-     * value, so a NaN operand wins. The function keeps today's comparison, which skips NULL
-     * elements first: the body's NaN test would cost every element that beats {@code max}.
+     * The larger of two values; a tie keeps {@code max}, so of -0.0 and 0.0 the first stays, as in
+     * {@code FlatArrayView.maxDouble}. NaN orders after every other value, so a NaN operand wins.
+     * The array_max function does not call this method: it skips non-finite elements first and
+     * compares with {@code v > max}.
      */
     public static double value(double max, double element) {
         return element <= max || Double.isNaN(max) ? max : element;

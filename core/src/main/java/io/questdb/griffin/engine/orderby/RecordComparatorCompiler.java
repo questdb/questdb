@@ -199,10 +199,11 @@ public class RecordComparatorCompiler {
     }
 
     /**
-     * The comparator arm for a column of this type: the compare opcode of its accessor family
-     * ({@link PhysicalDescriptor#compareOpcode}) when {@link #poolFieldArtifacts} has an arm for
-     * the family (CHAR and IPv4 are the unsigned arms; IPv4 compares through
-     * {@code getLongIPv4}), and the ORDER BY error for a type it cannot compare.
+     * The {@link #poolFieldArtifacts} arm for a column of this type: {@link
+     * PhysicalDescriptor#compareOpcode} of its type driver, which throws {@link
+     * io.questdb.cairo.CairoException} for a type that orders unlike its accessor family. Throws
+     * the ORDER BY error for BINARY, ARRAY and INTERVAL, which have no order, and for a pseudo type
+     * or VARCHAR_SLICE.
      */
     private static int comparatorOpcode(int columnType) throws SqlException {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);

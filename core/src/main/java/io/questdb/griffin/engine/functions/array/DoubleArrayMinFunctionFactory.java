@@ -42,12 +42,10 @@ public class DoubleArrayMinFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_min";
 
     /**
-     * The smaller of two values; a tie keeps {@code min} (of -0.0 and 0.0 the first stays), as the
-     * {@code v < min} test of the vanilla kernel {@code FlatArrayView.minDouble} does. It also
-     * answers the values a type without a reserved NULL carries: NaN orders after every other
-     * value, so the other operand wins over a NaN. The function keeps today's comparison,
-     * which skips NULL elements first: the body's NaN test would cost every element that beats
-     * {@code min}.
+     * The smaller of two values; a tie keeps {@code min}, so of -0.0 and 0.0 the first stays, as in
+     * {@code FlatArrayView.minDouble}. NaN orders after every other value, so the other operand
+     * wins over a NaN. The array_min function does not call this method: it skips non-finite
+     * elements first and compares with {@code v < min}.
      */
     public static double value(double min, double element) {
         return element >= min || Double.isNaN(element) ? min : element;

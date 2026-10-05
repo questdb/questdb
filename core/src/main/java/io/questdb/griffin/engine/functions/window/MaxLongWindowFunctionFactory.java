@@ -81,10 +81,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     private static final String SIGNATURE = NAME + "(L)";
 
     /**
-     * The choice of {@link #GREATER_THAN}: the greater of the two values. The function keeps
-     * today's comparator and does not call it: the classes, shared with {@code min}, store the new
-     * value only when it wins and order their sliding-frame deques by the comparator, where the
-     * body would store on every row.
+     * The greater of the two values, as {@link #GREATER_THAN} chooses. The window functions do not
+     * call this method: their classes, shared with {@code min}, take the comparator, store a value
+     * only when it wins and order their sliding-frame deques by it.
      */
     public static long value(long max, long next) {
         return next > max ? next : max;

@@ -45,7 +45,7 @@ public class RPadVarcharFunctionFactory implements FunctionFactory {
 
     /**
      * Undefined for a negative length: the function gives NULL there, as for a NULL operand. The
-     * function also rejects a length above its buffer limit before it calls the body.
+     * function also rejects a length above its buffer limit before it calls this method.
      */
     public static void value(Utf8StringSink sink, Utf8Sequence str, int len) {
         final int length = Utf8s.validateUtf8(str);

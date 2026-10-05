@@ -43,7 +43,6 @@ public class WeightedStdDevReliabilityGroupByFunctionFactory implements Function
         double mean = mapValue.getDouble(valueIndex + 2);
         double s = mapValue.getDouble(valueIndex + 3);
 
-        // Update computation state with values from record
         wSum += weight;
         wSum2 += weight * weight;
         double meanOld = mean;

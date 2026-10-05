@@ -520,8 +520,8 @@ public class QwpWalAppender implements QuietCloseable {
                 }
 
                 // Regular columns
-                // the column's accessor family: QWP parses and copies a value with its
-                // family's width and putter, and NULL is a set bit in the null bitmap
+                // by the column's accessor family: QWP copies a value with its family's width and
+                // putter, and NULL is a set bit in the null bitmap
                 switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
                     case ColumnType.IPv4 -> {
                         // IPv4 wire is 4 LE bytes, identical to INT. QuestDB stores IPv4 as

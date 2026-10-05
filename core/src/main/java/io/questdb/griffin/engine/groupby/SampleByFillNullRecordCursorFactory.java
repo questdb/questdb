@@ -140,8 +140,9 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
     }
 
     /**
-     * The FILL(NULL) placeholder of an aggregate column: the type's NULL constant, from its definition,
-     * for the accessor families whose rows the fill cursor reads through a placeholder.
+     * The FILL(NULL) placeholder of an aggregate column: the NULL constant of its type driver.
+     * Throws SqlException at the function's position for a type the fill cursor cannot read through
+     * a placeholder.
      */
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
@@ -152,7 +153,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         return switch (driver.getAccessor()) {
             case INT, IPv4, LONG, FLOAT, DOUBLE, BYTE, SHORT, UUID, TIMESTAMP, ARRAY,
                  DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> driver.getNullConstant(type);
-            // the geohash placeholder has always been the bare-tag constant, whatever the bit count
+            // the geohash placeholder is the bare-tag NULL constant, whatever the column's bit
+            // count
             case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> driver.getNullConstant(ColumnType.tagOf(type));
             case BOOLEAN, CHAR, DATE, STRING, SYMBOL, LONG256, BINARY, LONG128, VARCHAR, INTERVAL ->
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));

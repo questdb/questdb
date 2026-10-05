@@ -169,9 +169,9 @@ public interface ParquetDecoder {
     int getColumnId(int columnIndex);
 
     /**
-     * Returns how the parquet column at the given index represents NULL, for code that
-     * decides NULL for a stored column whose type may differ from the table's (a lazy
-     * ALTER COLUMN TYPE). Derived from the stored type's definition.
+     * Returns how the parquet column at the given index represents NULL: the NULL policy of the
+     * type stored in the file, which may differ from the table's column type after ALTER COLUMN
+     * TYPE.
      *
      * @param columnIndex zero-based column index within the parquet file
      */

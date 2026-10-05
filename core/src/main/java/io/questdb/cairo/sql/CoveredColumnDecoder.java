@@ -84,18 +84,17 @@ public final class CoveredColumnDecoder {
     }
 
     /**
-     * The buffer layout the callers allocate, grow and publish for a covered column of this
-     * type, decided once per column at setup next to {@link #coveredOpcode}: one of the four
-     * var-size layouts for VARCHAR, STRING / BINARY and ARRAY, {@link #LAYOUT_FIXED} for every
-     * other tag (the fixed-width types {@link #writeFixedWidthCovered} writes; a type without an
-     * arm never reaches a buffer, {@link #writeCoveredRow} throws on its {@link #COVERED_NONE}).
+     * The buffer layout the callers allocate, grow and publish for a covered column of this type,
+     * decided once per column at setup: {@link #LAYOUT_VARCHAR}, {@link #LAYOUT_OFFSET} (STRING,
+     * BINARY) or {@link #LAYOUT_ARRAY} for the var-size types, {@link #LAYOUT_FIXED} for every
+     * other type. A type without a {@link #writeCoveredRow} arm never reaches a buffer: that method
+     * throws on its {@link #COVERED_NONE}.
      */
     public static int coveredLayout(int columnType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
         if (accessor == null) {
             return LAYOUT_FIXED;
         }
-        // the var-size families each have a layout of their own
         return switch (accessor) {
             case VARCHAR -> LAYOUT_VARCHAR;
             case STRING, BINARY -> LAYOUT_OFFSET;

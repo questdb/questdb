@@ -135,10 +135,11 @@ public class TypeManager implements Mutable {
     }
 
     /**
-     * The adapter that parses a CSV field into a column, by the column's wire kind: the kind
-     * names the text form the export writes, so the adapter that reads it back parses that form, and
-     * an empty field is NULL, left for the writer to store. Every kind is named, so adding one makes
-     * javac stop here, also for a type whose text form is not its accessor family's.
+     * The adapter that parses a CSV field into a column, by the column's {@link WireKind}: the kind
+     * names the text form the export writes, so the adapter that reads it back parses that form. An
+     * empty field is NULL, left for the writer to store. Throws for a type with no adapter here;
+     * DATE and TIMESTAMP take a format-specific adapter instead, such as a format probe or one
+     * TextMetadataParser builds from a schema pattern.
      */
     public TypeAdapter getTypeAdapter(int columnType) {
         final WireKind kind = WireKind.of(columnType);

@@ -73,22 +73,22 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The SQL part of the conformance kit (User Story 4): every kit type through filters,
- * ORDER BY, GROUP BY, inner and outer JOIN, UNION ALL, CASE, CAST, {@code lag}, SAMPLE BY and
- * LATEST ON, and the "not computed yet" versus NULL cases: {@code first}, {@code last},
- * {@code first_not_null} and {@code last_not_null} over groups whose first row is NULL,
- * SAMPLE BY FILL(PREV) over a leading NULL, and SAMPLE BY FILL(NULL), FILL(value) and
- * FILL(LINEAR) over gaps between two values and before a NULL.
+ * The SQL part of the conformance kit: every kit type through filters, ORDER BY, GROUP BY, inner
+ * and outer JOIN, UNION ALL, CASE, CAST, {@code lag}, SAMPLE BY and LATEST ON, and the "not
+ * computed yet" versus NULL cases: {@code first}, {@code last}, {@code first_not_null} and
+ * {@code last_not_null} over groups whose first row is NULL, SAMPLE BY FILL(PREV) over a leading
+ * NULL, and SAMPLE BY FILL(NULL), FILL(value) and FILL(LINEAR) over gaps between two values and
+ * before a NULL.
  * <p>
- * Some paths run one query per value row and record one line per row: the labels of the rows
- * the query selects, or its error. The row's value goes into the query as a constant of the type
- * (its literal, the NULL row as a NULL of the type), as the value as it prints (quoted unless the
- * type is a number) or as a bind variable of the type set from that text; a row that reads as
- * NULL goes in as NULL in the last two forms. SUBSAMPLE
- * takes a value of the type as the stride of {@code cadence(...)} and as the target point count
- * of {@code uniform(...)}; a WHERE bound over the designated timestamp cast to LONG takes it as a
- * constant and as a bind variable; a key column (LATEST ON ... PARTITION BY the column, with
- * {@code WHERE v = <value>}) takes the plain constant.
+ * Some paths run one query per value row and record one line per row: the labels of the rows the
+ * query selects, or its error. The row's value goes into the query as a constant of the type (its
+ * literal, the NULL row as a NULL of the type), as the value as it prints (quoted unless the type
+ * is a number) or as a bind variable of the type set from that text; a row that reads as NULL goes
+ * in as NULL in the last two forms. SUBSAMPLE takes a value of the type as the stride of
+ * {@code cadence(...)} and as the target point count of {@code uniform(...)}; a WHERE bound over
+ * the designated timestamp cast to LONG takes it as a constant and as a bind variable; a key column
+ * (LATEST ON ... PARTITION BY the column, with {@code WHERE v = <value>}) takes the value as it
+ * prints.
  * <p>
  * {@code sql.copy_bind} exports {@code SELECT k, v FROM t WHERE v = $1} with COPY to a Parquet
  * file, {@code $1} a bind variable of the type set to the high value: COPY snapshots the bind
@@ -114,11 +114,11 @@ import java.util.regex.Pattern;
  * worker pool of four, the parallel factories on) with compiled and with interpreted filters. A
  * filter compiles only on the parallel path ({@code SqlCodeGenerator} gives the JIT to the async
  * filter alone), so a single-threaded compiled mode would repeat the interpreted one and is not
- * run. Every mode must give the one recording made at S12 ({@link TypeConformanceRecording}). A section holds the query's
- * output and the factory properties it pins: random access, whether the cursor knows its size,
- * and the designated timestamp with its order. A query that runs is also asserted with
- * {@code assertQuery(sql).returns(...)} under those properties, which reads the cursor twice
- * and checks its size. A query that fails records today's error. Casts to every kit type run
+ * run. Every mode must give the same recording ({@link TypeConformanceRecording}). A section holds
+ * the query's output and the factory properties it pins: random access, whether the cursor knows
+ * its size, and the designated timestamp with its order. A query that runs is also asserted with
+ * {@code assertQuery(sql).returns(...)} under those properties, which reads the cursor twice and
+ * checks its size. A query that fails records its error. Casts to every kit type run
  * single-threaded with interpreted filters only: a projection has no filter and no parallel
  * factory, so the other modes cannot change it.
  * <p>
@@ -129,11 +129,14 @@ import java.util.regex.Pattern;
  * two seconds apart (the other FILL paths). Queries that need a literal use the {@code max}
  * row's; FILL(value) fills with the high value as it prints.
  * <p>
- * A type registered later runs the queries whose value survives unchanged (filters on NULL,
- * ORDER BY, UNION ALL) and the FILL paths over {@code g} where its resource line enables them,
- * checked by {@link TypeConformanceInvariants}; the design-proof mixing cases of the resource run once, in
- * the first later type's instance. Other queries need literals or relations a later type does
- * not have yet, and fail when enabled.
+ * A type registered later runs the paths its resource line enables, checked by
+ * {@link TypeConformanceInvariants} instead of a recording: the queries whose value survives
+ * unchanged (filters on NULL, ORDER BY, UNION ALL), CASE, the FILL paths over {@code g}, the
+ * memoized path, {@code sql.between_timestamp}, {@code sql.eq_null_double}, the per-row paths, the
+ * casts, {@code sql.bind_value}, {@code sql.copy_bind} and {@code lv.window_anchor}. A path that
+ * reaches a guarded site the type declares it is refused at must fail there with the site's
+ * refusal. The mixing cases of the resource run once, in the first such type's instance. The other
+ * queries need literals or relations such a type does not have, and fail when enabled.
  */
 @RunWith(Parameterized.class)
 public class TypeConformanceSqlTest extends AbstractCairoTest {
@@ -599,7 +602,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
 
-    // the value a widening of the type gives for each row, by its declared tier (F89 invariant 4)
+    // the value a widening of the type gives for each row, by its declared tier (invariant 5)
     private void addWideningGaps(String pair, TypeConformanceTypes.Entry target, Map<String, long[]> actual, ObjList<String> gaps) {
         if (type.laterTier == null) {
             return;
@@ -634,9 +637,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     /**
      * Asserts the query with the full {@code returns} battery, under the factory properties the
      * recording pins. The base engine keeps the assertion's own leak check; the worker pool's
-     * engine is checked by the enclosing {@code assertMemoryLeak}. An exception the query raises
-     * on one of the battery's read paths (not an assertion) is today's behaviour: it returns as
-     * a line for the recording, {@code returns: <exception>: <message>}; null when the battery
+     * engine is checked by the enclosing {@code assertMemoryLeak}. An exception the query raises on
+     * one of the battery's read paths (not an assertion) is recorded behaviour: it returns as a
+     * line for the recording, {@code returns: <exception>: <message>}; null when the battery
      * passes.
      */
     @Nullable
@@ -780,11 +783,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     /**
-     * {@code sql.case_else} for a type registered later, from its declared relations: for
-     * every kit type rule E pairs it with, {@code CASE WHEN ... THEN v ELSE <NULL of that type>}
-     * compiles, takes the common type the rule names, and gives the selected row as {@code v}
-     * converted to that type (as written when the common type is the type itself). With the type
-     * itself in the ELSE branch, every row reads back as written.
+     * {@code sql.case_else} for a type registered later, from its declared relations: for every kit
+     * type rule E pairs it with, {@code CASE WHEN ... THEN v ELSE <NULL of that type>} compiles,
+     * takes the common type the rule names, and gives the selected row as {@code v} converted to
+     * that type (as written when the common type is the type itself). With the type itself in the
+     * ELSE branch, every row reads back as written.
      */
     private void checkLaterCaseElse(CairoEngine eng, SqlExecutionContext ctx, String mode) throws Exception {
         final String path = "sql.case_else";
@@ -866,8 +869,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     /**
      * {@code sql.case_no_else} for a type registered later: {@code CASE WHEN ... THEN v END} has
      * the type itself, gives the selected row as written, and every other row as the NULL row
-     * reads. A type without NULL (NOT_NULL) is excepted from the NULL rows: CASE without ELSE
-     * introduces NULL.
+     * reads. A NOT_NULL type is excepted from the NULL rows, because CASE without ELSE introduces
+     * NULL.
      */
     private void checkLaterCaseNoElse(CairoEngine eng, SqlExecutionContext ctx, String mode) throws Exception {
         final String path = "sql.case_no_else";
@@ -906,8 +909,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
      * Casts of a type registered later, from its declared relations:
      * <ol>
      * <li>a cast to the type itself reads every row back as written;</li>
-     * <li>a cast rule W, C or N admits resolves and runs, so a pair the rules admit without a
-     * cast function fails here, naming the pair and the rule;</li>
+     * <li>a cast rule W, C or N admits resolves, so a pair the rules admit without a cast function
+     * fails here, naming the pair and the rule; a pair whose conversion refuses a value at run
+     * time skips the two checks below;</li>
      * <li>the NULL row converts as a NULL literal does;</li>
      * <li>a widening (rule W) of a type with a declared tier into an integer, temporal or float
      * target gives the row's value by that tier.</li>

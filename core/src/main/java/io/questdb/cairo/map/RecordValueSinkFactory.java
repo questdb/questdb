@@ -112,7 +112,6 @@ public class RecordValueSinkFactory {
             asm.iconst(index);
             // stack: [MapValue, index, Record, columnIndex]
 
-            // the arm of the type's accessor family
             switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:

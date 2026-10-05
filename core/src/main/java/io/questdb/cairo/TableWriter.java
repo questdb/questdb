@@ -4007,8 +4007,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             });
         } else if (ColumnType.isPersisted(columnTag)) {
             assert nullPolicy != null;
-            // the definition's appender writes the column's NULL as a value: the sentinel, or for a
-            // type without NULL what it stores instead
+            // the type driver's appender writes the column's NULL as a value: the sentinel, or, for
+            // a type without NULL, the value stored instead
             nullers.add(switch (nullPolicy) {
                 case SENTINEL, NONE -> ColumnType.getTypeDriver(columnType).newNullAppender(dataMem, auxMem);
             });

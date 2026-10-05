@@ -342,8 +342,9 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     /**
-     * The arm of {@link #appendRowUpdate} for a table column of this type: the type tag when there is
-     * one, {@link #UPDATE_NONE} for a type UPDATE does not write.
+     * The arm of {@link #appendRowUpdate} for a table column of this type: its accessor family's
+     * opcode ({@link PhysicalDescriptor.Accessor#opcode()}), or {@link #UPDATE_NONE} for a type
+     * UPDATE does not write.
      */
     private static int updateOpcode(int columnType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);

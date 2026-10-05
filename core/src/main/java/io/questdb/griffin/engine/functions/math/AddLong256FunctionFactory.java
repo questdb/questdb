@@ -39,8 +39,8 @@ import io.questdb.std.str.CharSink;
 
 public class AddLong256FunctionFactory implements FunctionFactory {
     /**
-     * The sum of {@link Long256Impl#add} without its NULL test, written to {@code sum}; the
-     * function tests both operands for NULL first, so its results do not change.
+     * Adds {@code left} and {@code right} into {@code sum}, like {@link Long256Impl#add} without
+     * its NULL test. The function tests both operands for NULL before it calls this method.
      */
     public static Long256Impl value(Long256Impl sum, Long256 left, Long256 right) {
         sum.copyFrom(left);

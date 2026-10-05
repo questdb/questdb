@@ -67,21 +67,22 @@ import static io.questdb.cairo.ColumnType.*;
  * </ul>
  */
 public final class RelationRules {
-    // A: SYMBOL converts to what today's row holds, which no kind rule gives; text into IPv4
+    // A: cells no kind rule gives: SYMBOL's conversions, and text into IPv4
     private static final short[][] ALTER_ADD = {
             {STRING, IPv4}, {VARCHAR, IPv4},
             {SYMBOL, BOOLEAN}, {SYMBOL, BYTE}, {SYMBOL, CHAR}, {SYMBOL, DATE}, {SYMBOL, DOUBLE}, {SYMBOL, FLOAT},
             {SYMBOL, INT}, {SYMBOL, IPv4}, {SYMBOL, LONG}, {SYMBOL, SHORT}, {SYMBOL, STRING}, {SYMBOL, SYMBOL},
             {SYMBOL, TIMESTAMP}, {SYMBOL, UUID}, {SYMBOL, VARCHAR}
     };
-    // W: the cells today's rows hold that the rule does not derive (ADD), and the reverse (REMOVE)
+    // W: cells the rule does not derive but the relation has (ADD), and cells it derives that the
+    // relation lacks (REMOVE)
     private static final short[][] BUILT_IN_ADD = {{LONG, FLOAT}, {DATE, FLOAT}, {TIMESTAMP, FLOAT}};
     private static final short[][] BUILT_IN_REMOVE = {{TIMESTAMP, DATE}, {SYMBOL, CHAR}, {SYMBOL, INT}, {SYMBOL, TIMESTAMP}, {LONG256, LONG}};
     // C
     private static final short[][] CAST_ADD = {{BYTE, CHAR}, {CHAR, GEOBYTE}, {CHAR, SYMBOL}, {SYMBOL, TIMESTAMP}, {UUID, VARCHAR}};
     private static final short[][] CAST_REMOVE = {{IPv4, STRING}, {IPv4, VARCHAR}, {INTERVAL, STRING}};
-    // E: {from, other, today's result}: LONG with FLOAT is FLOAT (the rule says DOUBLE), both ways;
-    // SYMBOL then CHAR is STRING (the rule says SYMBOL)
+    // E: {from, other, result} cells that override the rule: LONG with FLOAT is FLOAT (the rule
+    // gives DOUBLE), both ways; SYMBOL then CHAR is STRING (the rule gives SYMBOL)
     private static final int[][] CASE_REPLACE = {{LONG, FLOAT, FLOAT}, {FLOAT, LONG, FLOAT}, {SYMBOL, CHAR, STRING}};
     // K: BYTE has a BOOLEAN arm
     private static final short[][] COPIER_ADD = {{BYTE, BOOLEAN}};
@@ -309,9 +310,10 @@ public final class RelationRules {
     }
 
     /**
-     * The implicit-cast list of {@code tag}, its overload row: the definition's declared list for a
-     * real type. Of the pseudo tags, UNDEFINED (an unbound bind variable) overloads to the types it
-     * can be defined as, and CURSOR to itself; the rest overload to nothing.
+     * The implicit-cast list of {@code tag}, its overload row: the type driver's {@link
+     * TypeDriver#getImplicitCasts()} for a real type. Of the pseudo tags, UNDEFINED (an unbound
+     * bind variable) overloads to the types it can be defined as, and CURSOR to itself; the rest
+     * overload to nothing.
      */
     public static short[] implicitCasts(short tag) {
         final TypeDriver driver = findTypeDriver(tag);
@@ -456,8 +458,9 @@ public final class RelationRules {
     }
 
     /**
-     * The relation kind of {@code tag}: its definition's answer, or the rules' own kind for a pseudo
-     * tag. {@link ColumnType#isIntegral(int)} and {@link ColumnType#isIntegralOrFloat(int)} read it too.
+     * The relation kind of {@code tag}: its type driver's {@link TypeDriver#getRelationKind()}, or
+     * the rules' own kind for a pseudo tag. {@link ColumnType#isIntegral(int)} and {@link
+     * ColumnType#isIntegralOrFloat(int)} read it too.
      */
     static RelationKind kind(short tag) {
         final TypeDriver driver = findTypeDriver(tag);

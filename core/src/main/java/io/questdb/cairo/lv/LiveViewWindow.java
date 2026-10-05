@@ -293,9 +293,9 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * The anchor expression's admissible return types, the arms of {@link #readAnchorValue}.
-     * The CREATE-time check ({@code CairoEngine.validateAnchorReturnType}) and
-     * {@link #build} share this one relation.
+     * Whether an anchor expression may return this type, i.e. whether {@link #readAnchorValue} has
+     * an arm for it. The CREATE-time check ({@code CairoEngine.validateAnchorReturnType}) and
+     * {@link #build} both call it.
      */
     public static boolean isAnchorType(int type) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);

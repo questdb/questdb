@@ -26,10 +26,9 @@
 package io.questdb.cairo;
 
 /**
- * The PostgreSQL type OIDs (the {@code pg_type} catalog's numbers), written once. A type
- * definition answers its OIDs with these ({@link TypeDriver#getPgOid()},
- * {@link TypeDriver#getPgArrayOid()}), and {@code PGOids} in the PostgreSQL wire protocol
- * re-exports them, so {@code cairo} depends on no protocol package and no OID is written twice.
+ * The PostgreSQL type OIDs (the numbers of the {@code pg_type} catalog). The type drivers return
+ * them ({@link TypeDriver#getPgOid()}, {@link TypeDriver#getPgArrayOid()}) and {@code PGOids}
+ * re-exports them, so {@code cairo} depends on no protocol package and each OID is defined once.
  */
 public final class PgTypeOids {
     public static final int PG_ARR_BOOL = 1000;

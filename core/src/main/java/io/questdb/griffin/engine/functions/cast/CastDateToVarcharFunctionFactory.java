@@ -41,8 +41,9 @@ import io.questdb.std.str.Utf8StringSink;
 public class CastDateToVarcharFunctionFactory implements FunctionFactory {
 
     /**
-     * The ISO format of {@link CharSink#putISODateMillis} without its NULL test, which prints
-     * nothing for {@code LONG_NULL}; the function tests NULL first, so its results do not change.
+     * Formats {@code operand} as an ISO date, like {@link CharSink#putISODateMillis} without its
+     * NULL test (that method prints nothing for {@code LONG_NULL}). The function tests NULL before
+     * it calls this method.
      */
     public static void value(CharSink<?> sink, long operand) {
         DateFormatUtils.UTC_FORMAT.format(operand, DateLocaleFactory.EN_LOCALE, "Z", sink);

@@ -76,7 +76,8 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
             long rowCount,
             long baseRowId
     ) {
-        // INT_NULL == Integer.MIN_VALUE, so the body's Math.max handles every INT_NULL combination naturally.
+        // INT_NULL == Integer.MIN_VALUE, so Math.max in MaxIntGroupByFunctionFactory.value()
+        // handles every INT_NULL combination.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct int column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.

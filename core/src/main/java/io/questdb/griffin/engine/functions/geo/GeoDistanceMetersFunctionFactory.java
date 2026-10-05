@@ -62,10 +62,10 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
     private static final double METERS_PER_DEG = 111_320.0;
 
     /**
-     * The general form, which scales the longitude difference by the midpoint latitude's cosine.
-     * It validates the ranges, so it takes the argument positions it reports. The specialisation
-     * for a constant first point keeps its own formula (the first latitude's cosine, computed once
-     * at setup), so its results differ from this body's; it stays as it is.
+     * Planar distance in meters, with the longitude difference scaled by the cosine of the midpoint
+     * latitude. Throws a CairoException at the argument's position for a coordinate out of range.
+     * {@code ConstPoint1GeoDistanceFunction} scales by the first point's latitude instead, computed
+     * once at setup, so its results can differ from this method's.
      */
     public static double value(
             double lat1,

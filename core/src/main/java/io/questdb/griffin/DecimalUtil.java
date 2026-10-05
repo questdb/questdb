@@ -203,12 +203,13 @@ public final class DecimalUtil {
             return Numbers.encodeLowHighShorts(p, s);
         }
         final TypeDriver driver = ColumnType.findTypeDriver(type);
-        // pseudo types have no definition and no precision
+        // pseudo types have no type driver and no precision
         if (driver == null) {
             return 0;
         }
-        // an integer's precision is the digits of its largest value, from its arithmetic tier; DATE and TIMESTAMP
-        // count their unit in 64 bits. The kinds and tiers are closed sets, so a new one decides here
+        // an integer's precision is the number of digits of its largest value, which its arithmetic
+        // tier (PhysicalDescriptor.Arithmetic) gives; DATE and TIMESTAMP are 64-bit counts of their
+        // unit
         return switch (driver.getRelationKind()) {
             case INT -> integerPrecisionScale(driver.getArithmetic());
             case TEMPORAL -> Numbers.encodeLowHighShorts((short) 19, (short) 0);

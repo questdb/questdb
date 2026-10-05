@@ -1201,13 +1201,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     /**
-     * Picks the {@link #outRecord} arm for one result set column from its wire kind and the
-     * format code the client asked for, once per query. Every kind is named: adding one makes javac
-     * stop here. The types pgwire advertises as PG_VARCHAR (IPv4, geohashes, LONG256, INTERVAL,
-     * CHAR, strings) write their text bytes under either format code, as do BINARY and a NULL-typed
-     * column, so both codes share the text arm for them. A type without a definition takes the arm
-     * of its tag below, or yields the raw (format code, tag) pair, which outRecord() reports
-     * through its default arm.
+     * Picks the {@link #outRecord} arm for one result set column from its {@link WireKind} and the
+     * format code the client asked for; computeOutColumnOpcodes() calls it once per send buffer,
+     * not per cell. The types pgwire advertises as PG_VARCHAR (IPv4, geohashes, LONG256, INTERVAL,
+     * strings) and CHAR, advertised as PG_CHAR, write their text bytes under either format code;
+     * BINARY writes its raw bytes and a NULL-typed column a bare NULL length under either code, so
+     * both codes share one arm for each of them. Of the types without a wire kind, ARRAY_STRING
+     * takes the STRING arm and NULL its own; the others yield the raw (format code, tag) pair,
+     * which outRecord() reports through its default arm.
      */
     private static int outColumnOpcode(int columnType, short columnBinaryFlag) {
         final boolean isBinary = columnBinaryFlag == 1;
@@ -3527,8 +3528,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean txtAndBinSizesCanBeDifferent(int columnType) {
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
-            // ARRAY_STRING and VARCHAR_SLICE write their text bytes under both format codes; no
-            // pgwire size arithmetic applies to the other pseudo tags, which answered true
+            // ARRAY_STRING writes its text bytes under both format codes, so it reports false, as
+            // does VARCHAR_SLICE, which outRecord() has no arm for; the other pseudo tags, NULL
+            // included, report true, so a text-format row holding one is not sized exactly
             final short tag = ColumnType.tagOf(columnType);
             return tag != ColumnType.ARRAY_STRING && tag != ColumnType.VARCHAR_SLICE;
         }
@@ -3545,10 +3547,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // var-size types, and the types pgwire advertises as PG_VARCHAR, write the same bytes
             // under both format codes; BOOLEAN's binary form is its one text byte
             case STRING, BINARY, VARCHAR, BOOLEAN, CHAR, IPV4, LONG256, SYMBOL -> false;
-            // isGeoHash() reads the encoded type's flag, which every geohash column type carries;
-            // a bare geo tag without it answered true before and still does
+            // isGeoHash() reads the encoded type's flag, which every geohash column type carries; a
+            // bare geo tag without the flag reports true
             case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> !ColumnType.isGeoHash(columnType);
-            // no pgwire size arithmetic applies; these answered true (not var-size, not excluded)
+            // calculateColumnBinSize() cannot size these exactly, so they report true
             case LONG128, INTERVAL -> true;
         };
     }

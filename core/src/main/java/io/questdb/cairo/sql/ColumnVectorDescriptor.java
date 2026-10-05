@@ -30,32 +30,22 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 /**
- * The column vectors of one page frame, as every consumer of the frame's column data reads
- * them. Page frame memory hands column data out only through this descriptor.
+ * The column vectors of one page frame. Page frame memory hands out column data only through this
+ * descriptor. Per column it returns: the data vector's address and size (address 0 means the whole
+ * frame is NULL for the column, e.g. a column top or a missing column); for a var-size column, the
+ * aux vector's address and size; the column's NULL policy; the validity address (0 when the frame
+ * has no validity bitmap for the column), the bit offset of the frame's first row in the first
+ * validity word, and the NULL count (-1 when unknown). No column has a validity bitmap, so every
+ * column returns validity address 0, bit offset 0 and NULL count -1, and no consumer reads these
+ * three values.
  * <p>
- * Per column it answers:
- * <ul>
- *     <li>the data vector's address and size; a data address of 0 means the whole frame is
- *     NULL for the column (a column top, a missing column);</li>
- *     <li>the aux vector's address and size, for var-size columns;</li>
- *     <li>the column's NULL policy;</li>
- *     <li>the validity address, 0 when the frame has no validity bitmap for the column;</li>
- *     <li>the bit offset of the frame's first row within the first validity word;</li>
- *     <li>the NULL count, -1 when unknown.</li>
- * </ul>
- * No column has a validity bitmap yet: every column answers validity address 0, bit offset 0
- * and NULL count -1, and no consumer reads those three answers. A validity bitmap fills them in
- * later without changing a consumer's signature.
+ * The descriptor is a view over flat per-column lists that its builder owns: the address cache for
+ * native frames, the pool's decode buffers for Parquet and covered frames. The builder points it at
+ * a frame with {@link #of}, once per frame, without allocating.
  * <p>
- * The descriptor is a view over flat per-column lists that its builder owns: the address cache
- * for native frames, the pool's decode buffers for Parquet and covered frames. The builder
- * points it at a frame with {@link #of}, once per frame; nothing is allocated per frame or per
- * row.
- * <p>
- * A record owns its own descriptor and takes a frame's with {@link #copyFrom}, which copies
- * every field, so a record copy cannot leave a field behind. The record also keeps the lists
- * themselves, taken from its descriptor in one place, so that a per-row read costs no more than
- * it did before the descriptor existed.
+ * A record owns its own descriptor and takes a frame's with {@link #copyFrom}, which copies every
+ * field. The record also keeps the lists themselves, so a per-row read does not go through the
+ * descriptor.
  */
 public final class ColumnVectorDescriptor implements Mutable {
     private DirectLongList auxAddresses;
@@ -130,7 +120,7 @@ public final class ColumnVectorDescriptor implements Mutable {
     }
 
     /**
-     * The column's NULL policy, from the query metadata's per-column answer.
+     * The column's NULL policy, as {@link RecordMetadata#getColumnNullPolicy(int)} returns it.
      */
     public NullPolicy getNullPolicy(int columnIndex) {
         return nullPolicies.getQuick(columnIndex);

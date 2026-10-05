@@ -1318,7 +1318,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             for (int q = 0; q < queryColCount; q++) {
                 int colType = metadata.getColumnType(q);
                 this.columnTypes[q] = colType;
-                // the decoder's arm for the column: its tag, or COVERED_NONE for a type without one
+                // the decoder's arm (an accessor-family opcode or COVERED_NONE), not the column's
+                // tag; see CoveredColumnDecoder.coveredOpcode()
                 this.columnTypeTags[q] = CoveredColumnDecoder.coveredOpcode(colType);
                 this.columnLayouts[q] = CoveredColumnDecoder.coveredLayout(colType);
                 if (queryColToIncludeIdx[q] >= 0) {

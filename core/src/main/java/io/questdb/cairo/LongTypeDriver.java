@@ -31,9 +31,6 @@ import io.questdb.griffin.engine.functions.constants.LongTypeConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for LONG.
- */
 public final class LongTypeDriver extends FixedSizeTypeDriver {
     public static final LongTypeDriver INSTANCE = new LongTypeDriver();
 

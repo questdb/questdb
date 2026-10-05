@@ -30,9 +30,6 @@ import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.CharTypeConstant;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for CHAR.
- */
 public final class CharTypeDriver extends FixedSizeTypeDriver {
     public static final CharTypeDriver INSTANCE = new CharTypeDriver();
 

@@ -39,10 +39,10 @@ import io.questdb.std.ObjList;
 
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
     /**
-     * Whether {@code left} orders before {@code right}, for values that are not equal by
-     * {@link EqDoubleFunctionFactory#value}: NaN orders after every other value. The
-     * function keeps today's comparison, which answers a NaN operand without this ordering: the
-     * body's NaN test would cost every row.
+     * Whether {@code left} orders before {@code right}, for values that are not equal by {@link
+     * EqDoubleFunctionFactory#value}: NaN orders after every other value. The function does not
+     * call this method: it compares with {@link Numbers#equals(double, double)} and a plain {@code
+     * <}, which give NaN no order, and the NaN test here would cost every row.
      */
     public static boolean value(double left, double right) {
         return left < right || (!Double.isNaN(left) && Double.isNaN(right));

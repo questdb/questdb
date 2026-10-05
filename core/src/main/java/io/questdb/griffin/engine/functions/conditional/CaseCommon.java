@@ -136,7 +136,7 @@ public class CaseCommon {
     }
 
     private static void addRows(int fromType) {
-        // rule E (RelationRules.caseEscalation): the other branch's type and the type both take
+        // pairs of (next branch type, common type) from RelationRules.caseEscalation()
         final int[] escalation = RelationRules.caseEscalation(fromType);
         for (int i = 0, n = escalation.length; i < n; i += 2) {
             typeEscalationMap.put(Numbers.encodeLowHighInts(fromType, escalation[i]), escalation[i + 1]);
@@ -151,12 +151,12 @@ public class CaseCommon {
     }
 
     /**
-     * The cast factories that wrap a branch of {@code fromType} so that it reads as the common
-     * type; a target missing from the row means the branch is handed back unchanged, its own
-     * getter for the common type does the conversion (or the pair never escalates, see
-     * {@link RelationRules#caseEscalation}). Keyed by encoded type: only TIMESTAMP_MICRO has casts, TIMESTAMP_NANO
-     * is neither a source nor a target. Decimal targets and array types do not go through the
-     * table. {@code TypeRelationGoldenTest.testCaseCastFactory} pins the rows.
+     * The cast factories that make a branch of {@code fromType} read as the common type. A target
+     * missing from the row needs no cast: the branch's own getter converts, or the pair never
+     * escalates (see {@link RelationRules#caseEscalation}). Rows are keyed by encoded type: of the
+     * two TIMESTAMP encodings only TIMESTAMP_MICRO has casts, and TIMESTAMP_NANO is neither a
+     * source nor a target. Decimal and array types bypass the table.
+     * {@code TypeRelationGoldenTest.testCaseCastFactory} pins the rows.
      */
     private static Cast[] castRow(int fromType) {
         return switch (ColumnTypeTag.of(fromType)) {

@@ -216,9 +216,9 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     /**
-     * The single-column key types this map stores in its 8-byte key slot. Only the plain
-     * TIMESTAMP type qualifies: a TIMESTAMP with the nanosecond or designated flag set stays on
-     * the ordered map (PB3, preserved).
+     * The single-column key types this map stores in its 8-byte key slot: LONG, DATE and the plain
+     * microsecond TIMESTAMP. Known inconsistency: a nanosecond TIMESTAMP, or one with the
+     * designated flag set, falls back to the ordered map.
      */
     public static boolean isSupportedKeyType(int columnType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);

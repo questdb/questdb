@@ -31,8 +31,8 @@
 #include "jni.h"
 
 /**
- * ColumnType enum, matching the Java definitions in io.questdb.cairo.ColumnType.
- * ColumnTypeTest parses this file and fails when a number here differs from Java.
+ * ColumnType enum, matching the tag constants of io.questdb.cairo.ColumnType. ColumnTypeTest parses
+ * this file and fails when a number here differs from Java.
  */
 enum class ColumnType : int {
   UNDEFINED = 0,
@@ -82,10 +82,10 @@ enum class ColumnType : int {
 };
 
 /**
- * The var-size layout of a column type's values, for native code that picks a var-size reader.
- * The dedup switches key on this closed set instead of on ColumnType, so a new
- * fixed-size tag lists no site there, while a new layout lists every one of them: dedup.cpp
- * builds with -Wswitch-enum as an error.
+ * The var-size layout of a column type's values, for native code that picks a var-size reader. The
+ * dedup switches key on this enum instead of on ColumnType, so a new fixed-size tag needs no change
+ * there, while a new layout fails the build at each of them (dedup.cpp turns -Wswitch-enum into an
+ * error).
  */
 enum class VarLayout : int {
     // fixed-size values, or a type no var-size reader serves
@@ -102,9 +102,10 @@ enum class VarLayout : int {
 #pragma GCC diagnostic error "-Wswitch"
 
 /**
- * The layout of the exact type value column_type. Every tag has an arm, so a new tag
- * stops the build here; an encoded value (array dimensions, geohash bits) is no enumerator and
- * has no layout, as the switches this replaces treated it.
+ * The layout of the exact type value column_type. The switch names every enumerator and -Wswitch is
+ * an error here, so a new tag fails the build until it gets a layout. An encoded value (array
+ * dimensions, geohash bits) matches no enumerator and gets NONE: a geohash is fixed-size, and
+ * callers pass an array column's bare tag.
  */
 inline VarLayout var_layout(int32_t column_type) {
     switch (static_cast<ColumnType>(column_type)) {

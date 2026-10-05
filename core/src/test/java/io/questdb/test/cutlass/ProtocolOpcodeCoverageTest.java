@@ -46,14 +46,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * FR-016 for the protocols (T106): the opcode functions that choose a protocol's per-row writer
- * for a column, whose consumers javac cannot check. Every type of the conformance kit takes part,
- * the types registered later included ({@link TypeConformanceTypes}), so a later type fails here
- * unless every protocol's opcode function handles it.
+ * Coverage of the protocols' per-row writers: the opcode functions that choose a protocol's per-row
+ * writer for a column, whose consumers javac cannot check. Every type of the conformance kit takes
+ * part, the types registered later included ({@link TypeConformanceTypes}), so a type registered
+ * later fails here unless every protocol's opcode function handles it.
  * <p>
  * The functions are called by reflection, as {@code TypeRelationGoldenTest} does; one that throws
  * or returns its "unhandled" value fails the test, unless the type is on that function's list
- * below. The lists name today's types a protocol does not write, each for a reason; a type
+ * below. The lists name the existing types a protocol does not write, each for a reason; a type
  * registered later is on none of them, and a listed type that becomes handled fails too, so the
  * lists cannot drift.
  */

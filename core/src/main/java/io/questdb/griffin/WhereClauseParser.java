@@ -471,9 +471,11 @@ public final class WhereClauseParser implements Mutable {
         return equalsTo ? 0 : isLo ? (short) 1 : (short) -1;
     }
 
-    // a bound the timestamp intrinsics read: a timestamp, a type the TIMESTAMP getter reads (rule W), or
-    // SYMBOL, whose constant parses as text; rule C's narrow integers and CHAR are not bounds, nor are
-    // the pseudo types and VARCHAR_SLICE, which rule W admits
+    // a bound the timestamp intrinsics read: a timestamp, a type the TIMESTAMP getter reads by
+    // built-in widening (RelationRules.builtInWidening), or SYMBOL, whose constant parses as text.
+    // The narrow integers and CHAR, which reach TIMESTAMP only through a cast, are not bounds; nor
+    // are the pseudo types and VARCHAR_SLICE, of which the widening check alone would admit NULL
+    // and VARCHAR_SLICE
     private static boolean canCastToTimestamp(int type) {
         if (PhysicalDescriptor.storedTypeDriverOf(type) == null) {
             return false;
@@ -522,8 +524,8 @@ public final class WhereClauseParser implements Mutable {
         return n != null && (isFunc(n) || n.type == ExpressionNode.QUERY);
     }
 
-    // the column types an equality can key a scan on, by the accessor family their values are read
-    // through, as isLatestOnKeyType; another type is not a key, which loses the optimisation only
+    // the column types an equality can key a scan on, by their PhysicalDescriptor.Accessor family;
+    // any other type is not a key, which only loses the optimisation
     private static boolean isKeyColumnType(int columnType) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
         // pseudo types and VARCHAR_SLICE never name a key column; a type unlike its family's

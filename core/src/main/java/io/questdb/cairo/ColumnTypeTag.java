@@ -25,17 +25,17 @@
 package io.questdb.cairo;
 
 /**
- * The type tag as an enum: one constant per {@link ColumnType} tag constant, pseudo tags
- * included, plus {@link #UNKNOWN} for numbers that are no tag. Mirrors Rust
- * {@code qdb_core::ColumnTypeTag}.
+ * The type tag as an enum: one constant per {@link ColumnType} tag constant, pseudo tags included,
+ * plus {@link #UNKNOWN} for numbers that are no tag. Mirrors Rust {@code qdb_core::ColumnTypeTag},
+ * which carries only the stored tags and VARCHAR_SLICE.
  * <p>
- * Code that must decide something per type switches on this enum with a switch
- * <em>expression</em> and no {@code default} arm, so that javac rejects the switch when a tag
- * is added. Pseudo tags and {@code UNKNOWN} are listed explicitly in one arm that throws.
+ * Code that must decide something per type switches on this enum with a switch <em>expression</em>
+ * and no {@code default} arm, so that javac rejects the switch when a tag is added. Pseudo tags and
+ * {@code UNKNOWN} are listed explicitly too, usually together in one arm.
  * <p>
  * The codes are hand-numbered on purpose: this class must never touch {@link ColumnType} in its
- * static initialiser, so that either class can initialise first. {@code ColumnTypeTest} pins
- * that every constant here equals the {@code ColumnType} constant of the same name.
+ * static initialiser, so that either class can initialise first. {@code TypeDriverTest} pins that
+ * every constant here equals the {@code ColumnType} constant of the same name.
  */
 public enum ColumnTypeTag {
     UNDEFINED(0),

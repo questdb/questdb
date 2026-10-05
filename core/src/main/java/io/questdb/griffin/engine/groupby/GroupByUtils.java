@@ -394,7 +394,7 @@ public class GroupByUtils {
             int type,
             int index
     ) {
-        // SYMBOL's column function needs the symbol table, which its definition does not hold
+        // SYMBOL's column function needs the symbol table, which its type driver does not hold
         if (ColumnTypeTag.of(type) == ColumnTypeTag.SYMBOL) {
             return metadata != null
                     // must be a column key
@@ -403,8 +403,8 @@ public class GroupByUtils {
                     : new StrColumn(keyColumnIndex - 1);
         }
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
-        // no key function has a pseudo type or VARCHAR_SLICE; a BinColumn is what this site has always
-        // handed out for them
+        // no key function has a pseudo type or VARCHAR_SLICE, so the BinColumn fallback is not
+        // expected to run
         return driver != null
                 ? driver.newColumnFunction(keyColumnIndex - 1, type)
                 : BinColumn.newInstance(keyColumnIndex - 1);

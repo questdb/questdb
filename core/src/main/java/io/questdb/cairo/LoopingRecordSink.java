@@ -89,12 +89,12 @@ public class LoopingRecordSink implements RecordSink {
                 continue;
             }
 
-            // the relation rejects a type copyColumn() has no arm for
+            // sinkOpcode() throws for a type copyColumn() has no arm for
             final int opcode = RecordSinkFactory.sinkOpcode(type, "column");
             this.columnIndices.extendAndSet(i, actualIndex);
-            // Store full type (not just tag) to preserve ARRAY element type info; a type that reads
-            // through another type's accessor family stores that family's type, whose tag is the
-            // arm copyColumn() switches on
+            // Store the full type (not just the tag) to keep the ARRAY element type; a type that
+            // reads through another type's accessor family (PhysicalDescriptor.Accessor) stores
+            // that family's type, whose tag is the arm copyColumn() switches on
             this.columnTypes.extendAndSet(i, opcode == RecordSinkFactory.SINK_NONE || opcode == ColumnType.tagOf(type) ? type : opcode);
             this.skewedIndices.extendAndSet(i, getSkewedIndex(actualIndex, skewIndex));
             this.symAsString.extendAndSet(i, writeSymbolAsString != null && writeSymbolAsString.get(actualIndex));

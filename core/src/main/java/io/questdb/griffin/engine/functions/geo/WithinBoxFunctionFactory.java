@@ -59,14 +59,10 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
     private static final long INF_BITS = 0x7FF0000000000000L;
 
     /**
-     * Whether the point lies in the box, inclusive, by the total order of {@link Double#compare}:
-     * every NaN equals every NaN and orders after every other value, an infinity is a
-     * value, and -0.0 orders before 0.0, as the sign test of {@link #isWithinBox} has it. On finite
-     * values it agrees with {@link #isWithinBox}. The functions keep that branchless test and do not
-     * call the body: it answers NaN and infinite operands as outside the box within the same sign
-     * test, where the body would need a NULL test on every operand of every row first.
-     * <p>
-     * Not called: {@code within_box(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE)} keeps its own comparison.
+     * Whether the point lies in the box, inclusive, in the order of {@link Double#compare}: NaN
+     * orders after every other value, an infinity is a value, and -0.0 orders before 0.0. On finite
+     * values it agrees with {@link #isWithinBox}, which the functions call instead because it is
+     * branchless; that test answers any NaN operand as outside.
      */
     public static boolean value(double x, double y, double minX, double minY, double maxX, double maxY) {
         return Double.compare(x, minX) >= 0

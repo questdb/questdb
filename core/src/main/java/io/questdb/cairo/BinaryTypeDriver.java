@@ -38,7 +38,7 @@ import io.questdb.std.Vect;
 
 public final class BinaryTypeDriver extends NPlusOneAuxTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
-    // the one declared implicit-cast list: the overload row, best match first
+    // implicit-cast targets, best match first; see TypeDriver.getImplicitCasts()
     private static final short[] IMPLICIT_CASTS = {ColumnType.BINARY};
 
     @Override
@@ -81,16 +81,14 @@ public final class BinaryTypeDriver extends NPlusOneAuxTypeDriver {
         return columnType == ColumnType.BINARY ? "BINARY" : ColumnType.UNKNOWN_NAME;
     }
 
-    /**
-     * Overrides the inherited STRING constant.
-     */
     @Override
     public ConstantFunction getNullConstant(int columnType) {
         return NullBinConstant.INSTANCE;
     }
 
     /**
-     * Overrides the inherited STRING value: a NULL binary's aux entry is one NULL_LEN long.
+     * The 8-byte length prefix of a NULL binary in the data vector: NULL_LEN. The aux entry holds
+     * the data offset, as for any binary.
      */
     @Override
     public long getNullLong(int longIndex) {
@@ -151,9 +149,6 @@ public final class BinaryTypeDriver extends NPlusOneAuxTypeDriver {
         return isFromNull;
     }
 
-    /**
-     * Overrides the inherited STRING column function.
-     */
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return BinColumn.newInstance(columnIndex);

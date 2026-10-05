@@ -64,7 +64,7 @@ public final class Long128TypeDriver extends FixedSizeTypeDriver {
                     throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
                 },
                 columnType -> Long128Constant.NULL,
-                // LONG128 has no SQL type name to CAST to
+                // LONG128 is never a CAST target (CastTarget.NEVER), so it has no type constant
                 columnType -> null,
                 (columnIndex, columnType) -> Long128Column.newInstance(columnIndex),
                 (dataMem, auxMem) -> () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL),

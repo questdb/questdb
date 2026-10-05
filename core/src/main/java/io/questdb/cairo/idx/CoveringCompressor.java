@@ -1062,12 +1062,13 @@ public class CoveringCompressor {
     }
 
     /**
-     * The sidecar codec a fixed-width covered column of this type takes: the same relation
-     * sizes the block ({@link #maxCompressedSize}), compresses it
-     * ({@code PostingIndexWriter.compressSidecarBlock}) and decodes it
-     * ({@code AbstractPostingIndexReader.ensureColumnDecoded}), so the three cannot drift. The
-     * var-size types take no fixed-stride sidecar (every caller gates on it) and the rest are
-     * not columns: both throw.
+     * The sidecar codec for a fixed-width covered column of this type. {@link #maxCompressedSize},
+     * {@code PostingIndexWriter.compressSidecarBlock} and {@code
+     * AbstractPostingIndexReader.ensureColumnDecoded} all pick the codec here, so they cannot drift
+     * apart; the writer compresses a designated TIMESTAMP with the linear-prediction form of
+     * {@link #CODEC_LONG}, which the long decoder also reads. Throws for a var-size type, which
+     * has no fixed-stride sidecar (every caller checks this first), and for a type that is not a
+     * column.
      */
     public static int codecKind(int columnType) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);

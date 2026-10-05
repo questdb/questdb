@@ -30,9 +30,6 @@ import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.ShortTypeConstant;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for SHORT.
- */
 public final class ShortTypeDriver extends FixedSizeTypeDriver {
     public static final ShortTypeDriver INSTANCE = new ShortTypeDriver();
 

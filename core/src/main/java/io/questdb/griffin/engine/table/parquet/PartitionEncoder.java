@@ -260,9 +260,8 @@ public class PartitionEncoder {
                             parquetEncodingConfig
                     );
                 } else {
-                    // The secondary slot carries a fixed-size column's validity bitmap. NULLs that
-                    // live in the values need none, so it stays empty; a policy that keeps them in
-                    // a bitmap will pass the bitmap here.
+                    // A fixed-size column has no secondary data: a SENTINEL column keeps NULL in
+                    // its values and a NONE column has no NULL.
                     final long validityAddr = switch (metadata.getColumnNullPolicy(i)) {
                         case SENTINEL, NONE -> 0;
                     };

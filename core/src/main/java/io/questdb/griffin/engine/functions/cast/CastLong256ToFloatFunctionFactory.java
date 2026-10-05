@@ -28,11 +28,9 @@ import io.questdb.std.Long256;
 
 public class CastLong256ToFloatFunctionFactory extends CastLongToFloatFunctionFactory {
     /**
-     * Converts the operand's low 64 bits, as the LONG256 casts to the other numeric types do. The
-     * class this factory inherits reads the operand's getFloat(), which {@code Long256Function} does
-     * not support; that path stays as it is.
-     * <p>
-     * Not called yet: the NULL wrappers of {@code cast(LONG256 AS FLOAT)} will call it.
+     * Converts the operand's low 64 bits, as the other LONG256 numeric casts do. The inherited
+     * function does not call this method: it reads the operand's getFloat(), which {@code
+     * Long256Function} does not support.
      */
     public static float value(Long256 operand) {
         return operand.getLong0();

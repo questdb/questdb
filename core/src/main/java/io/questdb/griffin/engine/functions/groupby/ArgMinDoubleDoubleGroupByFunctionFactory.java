@@ -33,9 +33,9 @@ import io.questdb.std.ObjList;
 
 public class ArgMinDoubleDoubleGroupByFunctionFactory implements FunctionFactory {
     /**
-     * Whether {@code nextKey} orders before {@code minKey}: NaN orders after every other value,
-     * and -0.0 and 0.0 are equal, so the first seen stays. The function keeps today's
-     * comparison, which skips NULL keys first: the body's NaN test would cost every row.
+     * Whether {@code nextKey} orders before {@code minKey}: NaN orders after every other value, and
+     * -0.0 equals 0.0, so the first key seen stays. {@code ArgMinDoubleDoubleGroupByFunction} does
+     * not call this method: it skips NULL keys first, and the NaN test here would cost every row.
      */
     public static boolean value(double minKey, double nextKey) {
         return nextKey < minKey || (Double.isNaN(minKey) && !Double.isNaN(nextKey));

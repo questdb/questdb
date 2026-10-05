@@ -88,13 +88,12 @@ public class SortKeyEncoder implements QuietCloseable {
     private static final int KIND_WIDE = 4;
     private final int[] columnByteWidths;
     private final int[] columnIndices;
-    // per column: the keyKind() of the column type
     private final int[] columnKeyKinds;
     private final int[] columnTypes;
     private final Decimal128 decimal128Sink;
     private final Decimal256 decimal256Sink;
-    // per column: the arm the per-row encoders take, the opcode of the type's accessor family
-    // (keyKind() encodes only a type that orders like its family), -1 for a column it does not encode
+    // per column: the accessor-family opcode the per-row encoders switch on, or -1 for a column
+    // keyKind() does not encode
     private final short[] encodeOpcodes;
     private final boolean hasBorrowedRankMaps;
     private final boolean[] isDesc;
@@ -845,7 +844,8 @@ public class SortKeyEncoder implements QuietCloseable {
      */
     private static int keyKind(int columnType) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
-        // a type that reads through a family but orders otherwise has no per-row arm here yet
+        // KIND_NONE for a type whose arithmetic tier differs from its accessor family's: the
+        // per-row encoders read it through the family's getter and would order it wrongly
         if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return KIND_NONE;
         }
@@ -878,7 +878,8 @@ public class SortKeyEncoder implements QuietCloseable {
             case STRING -> KeyShape.STRING;
             case SYMBOL -> KeyShape.SYMBOL;
             case UUID, LONG128, LONG256 -> KeyShape.FIXED_WIDE;
-            // the wide-fixed decimals have no batch path; the rest cannot reach here (isSupported)
+            // DECIMAL128 and DECIMAL256 have no batch path; the other families are at most 8 bytes
+            // wide (FIXED8) or not encodable (isSupported())
             case DECIMAL128, DECIMAL256, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, GEOBYTE,
                  GEOSHORT, GEOINT, GEOLONG, BINARY, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, INTERVAL ->
                     KeyShape.GENERIC;

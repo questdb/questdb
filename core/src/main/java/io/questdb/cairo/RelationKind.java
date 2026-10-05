@@ -26,10 +26,9 @@
 package io.questdb.cairo;
 
 /**
- * The relation kind a type definition declares ({@link TypeDriver#getRelationKind()}): the class
- * of values the relation rules in {@link RelationRules} group a type by, so that no rule lists a
- * type by tag. UNDEF, PSEUDO and NULL are the rules' own kinds for the pseudo tags,
- * which have no definition.
+ * The class of values a type belongs to, as {@link TypeDriver#getRelationKind()} returns it. {@link
+ * RelationRules} groups types by kind, so its rules need not list a type by tag. UNDEF, PSEUDO and
+ * NULL are the kinds RelationRules assigns to the pseudo tags, which have no type driver.
  */
 public enum RelationKind {
     UNDEF,

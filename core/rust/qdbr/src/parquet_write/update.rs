@@ -1646,8 +1646,10 @@ impl ParquetUpdater {
             if field.get_field_info().repetition != Repetition::Required {
                 return false;
             }
-            // the types without NULL (BOOLEAN, BYTE, SHORT, CHAR) and a SYMBOL without the not-null
-            // hint were once written Required; they are Optional now
+            // Files written by older versions mark the types without NULL (BOOLEAN, BYTE, SHORT,
+            // CHAR) Required, and a SYMBOL Required when it held no nulls; the current writer marks
+            // them Optional. A Required SYMBOL needs migration only when the column being written
+            // lacks the not-null hint, since only then may its pages hold nulls.
             match col.data_type.tag().null_policy() {
                 ColumnNullPolicy::None => true,
                 ColumnNullPolicy::Sentinel => {
@@ -2219,8 +2221,8 @@ fn generate_required_zero_page(
             // Stored as Int32 in Parquet.
             4
         }
-        // only the types without NULL are written Required; every tag is named, so a new tag
-        // stops the build here
+        // no type in this arm reaches here: the target schema marks only the designated timestamp
+        // Required, and a null chunk fills only a column the file lacks, never that timestamp
         ColumnTypeTag::Int
         | ColumnTypeTag::Long
         | ColumnTypeTag::Date

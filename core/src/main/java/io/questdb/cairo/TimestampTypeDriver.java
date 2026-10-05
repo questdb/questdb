@@ -31,11 +31,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
 /**
- * Type driver for TIMESTAMP.
- * <p>
- * Serves both TIMESTAMP_MICRO and TIMESTAMP_NANO; the precision-specific
- * {@link TimestampDriver} is a separate facet, fetched with
- * {@link ColumnType#getTimestampDriver(int)} where a method needs it.
+ * Type driver for TIMESTAMP, both TIMESTAMP_MICRO and TIMESTAMP_NANO. Precision-specific logic
+ * lives in {@link TimestampDriver}; methods that need it fetch it with {@link
+ * ColumnType#getTimestampDriver(int)}.
  */
 public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     public static final TimestampTypeDriver INSTANCE = new TimestampTypeDriver();
@@ -76,7 +74,7 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     }
 
     /**
-     * Named by precision: the designated flag has no name of its own.
+     * Named by precision; a TIMESTAMP with the designated flag set has no name.
      */
     @Override
     public String getName(int columnType) {

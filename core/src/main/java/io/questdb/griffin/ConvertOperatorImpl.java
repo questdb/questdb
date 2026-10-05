@@ -136,8 +136,8 @@ public class ConvertOperatorImpl implements Closeable {
         clear();
         partitionUpdated = 0;
         srcNullPolicy = tableWriter.getMetadata().getColumnNullPolicy(existingColIndex);
-        // the target column joins the metadata after the conversion; until ALTER carries a NULL
-        // marker its policy is its type's
+        // the target column joins the metadata only after the conversion, so its NULL policy comes
+        // from its type driver
         dstNullPolicy = ColumnType.getTypeDriver(newType).getNullPolicy();
         convertColumn0(columnName, existingColIndex, existingType, existingIndexType, columnIndex, newType);
     }

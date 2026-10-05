@@ -44,9 +44,9 @@ public class BarFunctionFactory implements FunctionFactory {
     private static final char[] BAR_CHARS = {'▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
 
     /**
-     * Undefined for a non-positive width and an empty range ({@code min >= max}), where the
-     * function gives NULL, and for a width above the buffer limit, which the function rejects; the
-     * function tests all three before it calls the body.
+     * Undefined for a non-positive width or an empty range ({@code min >= max}), where the function
+     * gives NULL, and for a width above the buffer limit, which the function rejects; the function
+     * checks all three before it calls this method.
      */
     public static void value(Utf8StringSink sink, double amount, double min, double max, int width) {
         final double clamped = Math.max(min, Math.min(max, amount));

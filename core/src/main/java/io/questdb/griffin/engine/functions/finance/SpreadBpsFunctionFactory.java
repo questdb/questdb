@@ -65,7 +65,6 @@ public class SpreadBpsFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             final double b = bid.getDouble(rec);
             final double a = ask.getDouble(rec);
-            // a NULL operand gives NULL, as the quotient of FinanceUtils.spread and mid does
             if (Numbers.isNull(b) || Numbers.isNull(a)) {
                 return Double.NaN;
             }

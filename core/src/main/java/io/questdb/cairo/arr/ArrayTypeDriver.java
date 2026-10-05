@@ -145,11 +145,12 @@ import org.jetbrains.annotations.Nullable;
 public final class ArrayTypeDriver implements ColumnTypeDriver {
     // ensure that writeArrayEntry appends correct amount of bytes, for the width
     public static final int ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES;
-    // the one declared implicit-cast list: the overload row, best match first
+    // implicit-cast targets, best match first; see TypeDriver.getImplicitCasts()
     private static final short[] IMPLICIT_CASTS = {ColumnType.ARRAY};
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
-    // the names of the array types that have one, by encoded type: the element types below, 1 to
-    // ARRAY_NDIMS_LIMIT dimensions, strong dimensions only (as ColumnType named them before)
+    // names of the array types that have one, by encoded type: the bare ARRAY tag, and the
+    // element types in the static block below with 1 to ARRAY_NDIMS_LIMIT dimensions, strong
+    // dimensions only
     private static final IntObjHashMap<String> NAMES = new IntObjHashMap<>();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;

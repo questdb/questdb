@@ -31,9 +31,6 @@ import io.questdb.griffin.engine.functions.constants.FloatTypeConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
-/**
- * Type driver for FLOAT.
- */
 public final class FloatTypeDriver extends FixedSizeTypeDriver {
     public static final FloatTypeDriver INSTANCE = new FloatTypeDriver();
 

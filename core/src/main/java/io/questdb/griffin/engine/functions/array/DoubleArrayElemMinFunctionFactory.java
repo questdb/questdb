@@ -37,10 +37,9 @@ import io.questdb.std.Transient;
 public class DoubleArrayElemMinFunctionFactory implements FunctionFactory {
 
     /**
-     * {@link Math#min(double, double)} for values other than NaN, which it would return; the body
-     * also answers the values a type without a reserved NULL carries: NaN orders after every other
-     * value, so the other operand wins over a NaN. The function passes finite values only
-     * and keeps its own {@code Math.min}: calling the body would add the NaN tests to every element.
+     * The smaller of two values, as {@link Math#min(double, double)}, except that NaN orders after
+     * every other value, so the other operand wins over a NaN. The array_elem_min function does not
+     * call this method: it passes only finite values to its own {@code Math.min}.
      */
     public static double value(double min, double element) {
         return Double.isNaN(element) ? min : Double.isNaN(min) ? element : Math.min(min, element);

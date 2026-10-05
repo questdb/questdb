@@ -144,16 +144,15 @@ public final class ColumnType {
     // The tag field is 8 bits wide and array element tags are stored in a 6-bit field, so
     // ColumnTypeTest pins MAX_TAG < 128 and every array element tag < 64.
     public static final short MAX_TAG = NULL;
-    // Pseudo tags resolve overloads or mark parser state and have no type definition,
-    // so their size and name facts live here, indexed by tag; every real tag's facts come from
-    // its definition. A census-listed identity site.
+    // Pseudo tags resolve overloads or mark parser state and have no type driver, so their size and
+    // name facts live here, indexed by tag; every real tag's facts come from its type driver.
     private static final boolean[] PSEUDO_TAG = new boolean[MAX_TAG + 1];
     private static final String[] PSEUDO_TAG_NAME = new String[MAX_TAG + 1];
     private static final byte[] PSEUDO_TAG_POW2_SIZE = new byte[MAX_TAG + 1];
     private static final byte[] PSEUDO_TAG_SIZE = new byte[MAX_TAG + 1];
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(MAX_TAG) + 1.0);
-    // pairwise relations keyed (fromTag, toTag), each filled at init from a per-tag row switch
+    // row stride of the boolean (fromTag, toTag) relation tables in Relations
     private static final int RELATION_N = MAX_TAG + 1;
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
@@ -356,15 +355,15 @@ public final class ColumnType {
     }
 
     /**
-     * The var-size storage API of a column type: the definition of its tag when that definition
-     * is on the var-size tier ({@link PhysicalDescriptor.Movement#VAR}), for every encoding of
-     * the tag. Throws {@link CairoException} for any other type.
+     * The var-size storage driver of a column type: its tag's type driver when that driver's
+     * movement is {@link PhysicalDescriptor.Movement#VAR}, for every encoding of the tag. Throws
+     * {@link CairoException} for any other type.
      */
     public static ColumnTypeDriver getDriver(int columnType) {
         final short tag = tagOf(columnType);
         if (tag >= 0 && tag <= MAX_TAG && Widths.VAR_SIZE[tag]) {
-            // every definition on the var-size tier implements the var-size storage API
-            // (TypeDriverTest)
+            // every type driver with VAR movement implements ColumnTypeDriver; TypeDriverTest
+            // checks it
             return (ColumnTypeDriver) TypeDrivers.get(tag);
         }
         throw CairoException.critical(0).put("no driver for type: ").put(columnType);
@@ -388,9 +387,9 @@ public final class ColumnType {
     }
 
     /**
-     * The type definition of a real type, or null for a pseudo type (and for an encoding that is
-     * no tag). VARCHAR_SLICE answers VARCHAR's definition. Code that must refuse a pseudo type
-     * with an error calls {@link #getTypeDriver(int)} instead.
+     * The type driver of a real type, or null for a pseudo type and for a number that is no tag.
+     * VARCHAR_SLICE returns VARCHAR's driver. Code that must refuse a pseudo type with an error
+     * calls {@link #getTypeDriver(int)} instead.
      */
     public static @Nullable TypeDriver findTypeDriver(int columnType) {
         return TypeDrivers.find(columnType);
@@ -564,10 +563,9 @@ public final class ColumnType {
 
     public static boolean isFixedSize(int columnType) {
         final short tag = tagOf(columnType);
-        // Quirk is-fixed-size-exact-value: the answer goes by exact value, as the switch this
-        // replaces did, so an encoded type (geohash bits, decimal precision and scale, the
-        // designated flag) reads false, and so do SYMBOL and INTERVAL, whose values have a fixed
-        // width; TIMESTAMP_NS, the one encoded type the switch listed, reads true
+        // Goes by exact value, not by tag: an encoded type (geohash bits, decimal precision and
+        // scale, the designated flag) reads false, except TIMESTAMP_NANO; SYMBOL and INTERVAL read
+        // false although their values have a fixed width.
         if (tag < 0 || tag > MAX_TAG
                 || (columnType != tag && columnType != TIMESTAMP_NANO)
                 || tag == SYMBOL || tag == INTERVAL) {
@@ -595,10 +593,10 @@ public final class ColumnType {
     }
 
     /**
-     * Whether values of this type are integers: its definition declares the INT relation kind
+     * Whether values of this type are integers: its type driver returns the INT relation kind
      * (BYTE, SHORT, INT and LONG). The relation kind is the logical value class, so DATE,
-     * TIMESTAMP, the geohashes and the narrow decimals, which share the integer arithmetic
-     * tiers, are not integers here. False for a pseudo type.
+     * TIMESTAMP, the geohashes and the narrow decimals, which share the integer arithmetic tiers,
+     * are not integers here. False for a pseudo type.
      */
     public static boolean isIntegral(int columnType) {
         return RelationRules.kind(tagOf(columnType)) == RelationKind.INT;
@@ -756,7 +754,8 @@ public final class ColumnType {
     }
 
     public static int pow2SizeOf(int columnType) {
-        // a deleted column's type reads past the table, as it always did
+        // no bounds check: the negative type of a deleted column indexes outside the table and
+        // throws ArrayIndexOutOfBoundsException
         return Widths.POW2_SIZE[tagOf(columnType)];
     }
 
@@ -868,13 +867,13 @@ public final class ColumnType {
 
     /**
      * The pairwise relation tables, filled from {@link RelationRules} on first use. The rules read
-     * the type definitions, which {@link ColumnType}'s static initializer must not reach, so the
-     * tables live in their own holder class.
+     * the type drivers, which {@link ColumnType}'s static initializer must not reach, so the tables
+     * live in their own holder class.
      */
     private static final class Relations {
         private static final boolean[] BUILT_IN_WIDENING = new boolean[RELATION_N * RELATION_N];
         private static final boolean[] NARROWING = new boolean[RELATION_N * RELATION_N];
-        private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+        private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N];
         private static final boolean[] WIDENING_CAST = new boolean[RELATION_N * RELATION_N];
 
         private static void fillRelation(boolean[] relation, short fromTag, short[] toTags) {
@@ -1050,10 +1049,11 @@ public final class ColumnType {
     }
 
     /**
-     * The width and var-size facts per tag, derived on first use from each real type's definition
-     * ({@link TypeDriver#getMovement()}) and from the pseudo-tag facts, so that sizeOf,
-     * pow2SizeOf, isFixedSize, isVarSize and getDriver stay table reads. Never touched by ColumnType's static initialiser: the
-     * definitions and ColumnType initialise in any order (TypeDriverTest).
+     * The width and var-size facts per tag, filled on first use from each type driver's {@link
+     * TypeDriver#getMovement()} and from the pseudo-tag facts, so that sizeOf, pow2SizeOf,
+     * isFixedSize, isVarSize and getDriver are table reads. ColumnType's static initialiser never
+     * touches this class, so ColumnType and the type drivers can initialise in either order
+     * (TypeDriverTest).
      */
     private static final class Widths {
         static final boolean[] FIXED_SIZE = new boolean[MAX_TAG + 1];
@@ -1074,8 +1074,8 @@ public final class ColumnType {
                 FIXED_SIZE[tag] = movement != PhysicalDescriptor.Movement.VAR;
                 VAR_SIZE[tag] = movement == PhysicalDescriptor.Movement.VAR;
             }
-            // Quirk varchar-slice-pow2-size: VARCHAR_SLICE shares VARCHAR's definition, a var-size
-            // layout, yet has always answered log2 of its 16-byte aux entry
+            // VARCHAR_SLICE shares VARCHAR's var-size type driver, but its pow2 size is log2 of its
+            // 16-byte aux entry
             POW2_SIZE[VARCHAR_SLICE] = VARCHAR_AUX_SHL;
         }
     }

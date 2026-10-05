@@ -43,9 +43,10 @@ import io.questdb.griffin.engine.functions.lt.AbstractDoubleCursorFunctionFactor
 public class EqDoubleCursorFunctionFactory extends AbstractDoubleCursorFunctionFactory {
 
     /**
-     * The comparison of {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an
-     * infinity equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's
-     * extra clauses would cost every row that compares unequal.
+     * Same as {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an infinity
+     * equals itself. {@code EqDoubleCursorFunction} does not call this method: it compares with
+     * {@link io.questdb.std.Numbers#equals(double, double)}, because the extra clauses here would
+     * cost every row that compares unequal.
      */
     public static boolean value(double left, double right) {
         return EqDoubleFunctionFactory.value(left, right);

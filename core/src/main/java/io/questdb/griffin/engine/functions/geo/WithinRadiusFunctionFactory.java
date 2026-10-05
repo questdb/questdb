@@ -58,11 +58,11 @@ public class WithinRadiusFunctionFactory implements FunctionFactory {
     private static final long INF_BITS = 0x7FF0000000000000L;
 
     /**
-     * A negative radius holds no point; otherwise {@link #isWithinRadius} subtracts the squared
-     * distance from the squared radius, and a NaN difference (from a NaN operand, or from
-     * infinities that cancel) is outside, as today. The general function answers a negative radius
-     * before it reads the other arguments, so its results do not change. The specialisation for a
-     * constant center and radius keeps its setup-time squared radius and does not call the body.
+     * Whether the point lies within {@code radius} of the center, inclusive; a negative radius
+     * holds no point. {@link #isWithinRadius} subtracts the squared distance from the squared
+     * radius, and a NaN difference (from a NaN operand, or from infinities that cancel) counts as
+     * outside. {@code ConstRadiusGeoWithinRadiusFunction} squares the constant radius once at setup
+     * and calls {@link #isWithinRadius} directly.
      */
     public static boolean value(double x, double y, double centerX, double centerY, double radius) {
         if (radius < 0) {

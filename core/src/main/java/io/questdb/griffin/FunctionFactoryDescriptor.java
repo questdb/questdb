@@ -41,7 +41,8 @@ public class FunctionFactoryDescriptor {
     public static final char NO_SIGNATURE_CHAR = 0;
     private static final int ARRAY_MASK = 1 << 31;
     private static final int CONST_MASK = 1 << 30;
-    // the signature characters and type names of the pseudo tags, which have no definition, by tag code
+    // the signature characters and type names of the pseudo tags, which have no type driver, by tag
+    // code
     private static final char[] PSEUDO_SIGNATURE_CHARS = new char[ColumnType.MAX_TAG + 1];
     private static final String[] PSEUDO_SIGNATURE_TYPE_NAMES = new String[ColumnType.MAX_TAG + 1];
     // signatureTypeName() by tag code, filled at init; null for a tag no signature names
@@ -131,16 +132,16 @@ public class FunctionFactoryDescriptor {
     }
 
     /**
-     * The lower-case signature character that names {@code tag} in a
-     * {@link FunctionFactory#getSignature() factory signature}; the upper-case form of the same
-     * character is the constant-argument variant, so every character here must differ from its
-     * upper-case form in bit 5 only. A real type's definition answers
-     * ({@link TypeDriver#getSignatureChar()}); a pseudo tag's character is in the table below.
-     * {@link #NO_SIGNATURE_CHAR} for a tag no signature can name: the geohash and decimal families
-     * are named by their pseudo tag, an array by its element character followed by {@code []}, and
-     * the rest never appear in a signature.
+     * The lower-case signature character that names {@code tag} in a {@link
+     * FunctionFactory#getSignature() factory signature}; the upper-case form of the same character
+     * is the constant-argument variant, so every character here must differ from its upper-case
+     * form in bit 5 only. A stored type's character comes from its type driver ({@link
+     * TypeDriver#getSignatureChar()}); a pseudo tag's is in the table below. {@link
+     * #NO_SIGNATURE_CHAR} for a tag no signature can name: the geohash and decimal families are
+     * named by their pseudo tag, an array by its element character followed by {@code []}, and the
+     * rest never appear in a signature.
      * <p>
-     * The tests in {@code FunctionFactoryDescriptorTest} pin the table and the bit-5 rule.
+     * {@code FunctionFactoryDescriptorTest} pins the table and the bit-5 rule.
      */
     public static char signatureChar(ColumnTypeTag tag) {
         final short code = tag.code();
@@ -167,9 +168,9 @@ public class FunctionFactoryDescriptor {
 
     /**
      * The type name {@link #translateSignature(CharSequence, String, StringSink)} prints for a
-     * signature character; the {@code functions()} catalogue shows it. A real type's name is its
-     * definition's name in lower case; a pseudo tag's is in the table below. Defined only for tags
-     * that have a {@link #signatureChar(ColumnTypeTag) signature character}.
+     * signature character; the {@code functions()} catalogue shows it. A stored type's name is its
+     * tag name in lower case; a pseudo tag's is in the table below. Defined only for tags that have
+     * a {@link #signatureChar(ColumnTypeTag) signature character}.
      */
     public static String signatureTypeName(ColumnTypeTag tag) {
         final short code = tag.code();

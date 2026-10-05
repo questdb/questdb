@@ -53,10 +53,11 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 public interface TypeDriver {
 
     /**
-     * Defines bind variable {@code index} of {@code service} as {@code columnType}, holding NULL, and
-     * answers the type the variable holds (a SYMBOL variable holds a STRING). A type no bind variable
-     * can hold refuses with an error at {@code position}. The service pools its variables, so a
-     * definition allocates nothing; PostgreSQL defines every parameter once per execution.
+     * Defines bind variable {@code index} of {@code service} as {@code columnType}, holding NULL,
+     * and returns the type the variable holds (a SYMBOL variable holds a STRING). A type no bind
+     * variable can hold throws {@link SqlException} at {@code position}. The service pools its
+     * variables, so defining one allocates nothing; PostgreSQL wire defines every parameter once
+     * per execution.
      */
     int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException;
 
@@ -78,50 +79,47 @@ public interface TypeDriver {
     ConstantFunction getNullConstant(int columnType);
 
     /**
-     * The value of the n-th long of this type's NULL, for a value up to 32 bytes wide; the
-     * n-th long of the aux entry for a var-size type. Callers that fill a fixed-width NULL
-     * pattern read longs 0..3.
+     * Long {@code longIndex} (0 to 3) of this type's NULL, for a fixed-size value up to 32 bytes
+     * wide. Callers that fill a fixed-width NULL pattern read longs 0 to 3. Var-size types return
+     * NULL_LEN (-1), which is not their stored aux entry.
      */
     long getNullLong(int longIndex);
 
     /**
      * How this type represents NULL: {@link NullPolicy#NONE} only for the types where every bit
-     * pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as leading
-     * default values rather than NULLs; {@link NullPolicy#SENTINEL} for every other type.
+     * pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as default values
+     * rather than NULLs; {@link NullPolicy#SENTINEL} for every other type.
      * <p>
-     * Code never reads this to decide NULL for a column: it reads the column's policy through a
-     * per-column accessor such as {@link io.questdb.cairo.sql.RecordMetadata#getColumnNullPolicy(int)},
-     * whose body derives from this answer.
+     * Code that holds a column reads the column's policy instead, through a per-column accessor
+     * such as {@link io.questdb.cairo.sql.RecordMetadata#getColumnNullPolicy(int)}, which derives
+     * from this value.
      */
     NullPolicy getNullPolicy();
 
     /**
-     * The accessor family: the record getter and the row, sink and map-key putters a
-     * value of this type is read and written with. Per-row code that dispatches on the getter keys
-     * on it at setup; see {@link PhysicalDescriptor.Accessor}.
+     * The accessor family: the record getter and the row, sink and map-key putters a value of this
+     * type is read and written with. Per-row code that dispatches on the getter switches on it at
+     * setup; see {@link PhysicalDescriptor.Accessor}.
      */
     PhysicalDescriptor.Accessor getAccessor();
 
     /**
-     * The arithmetic tier: the width, representation and signedness that arithmetic,
-     * comparison, sorting and minimum or maximum key on; see
-     * {@link PhysicalDescriptor.Arithmetic}.
+     * The arithmetic tier: the width, representation and signedness that arithmetic, comparison,
+     * sorting and minimum or maximum switch on; see {@link PhysicalDescriptor.Arithmetic}.
      */
     PhysicalDescriptor.Arithmetic getArithmetic();
 
     /**
-     * The data-movement tier: how storage moves a value of this type. A fixed-size type
-     * answers its width class, a var-size type {@link PhysicalDescriptor.Movement#VAR}. The width
-     * and the fixed-size-ness of a type are this answer, declared once; storage code that
-     * only moves values keys on it, never on the tag.
+     * How storage moves a value of this type: a fixed-size type returns its width class, a var-size
+     * type {@link PhysicalDescriptor.Movement#VAR}. This is the only place a type declares its
+     * storage width; storage code that only moves values switches on it instead of the tag.
      */
     PhysicalDescriptor.Movement getMovement();
 
     /**
-     * The one implicit-cast list this type declares: the types a value of it is passed as
-     * to a function, best match first, where the position is the overload distance. It is the
-     * overload row, and the relation rules ({@link RelationRules}) derive built-in widening, widening
-     * cast and narrowing from it; the type itself comes first.
+     * The types a value of this type can be passed as to a function, best match first, starting
+     * with the type itself; the position is the overload distance. {@link RelationRules} also
+     * derives widening, narrowing and the CASE result type from this list.
      */
     short[] getImplicitCasts();
 
@@ -135,21 +133,21 @@ public interface TypeDriver {
     /**
      * The PostgreSQL type OID of an array whose elements are this type ({@link PgTypeOids}), or 0
      * when PostgreSQL wire describes no such array: pgwire sends only DOUBLE and VARCHAR arrays.
-     * Protocol data, asked once per column.
+     * Asked once per column.
      */
     int getPgArrayOid();
 
     /**
      * The PostgreSQL type OID the wire describes a column of this type with ({@link PgTypeOids}),
      * or 0 when PostgreSQL wire has none: LONG128, which pgwire cannot send, and the bare ARRAY
-     * tag, whose arrays take {@link #getPgArrayOid()} of their element type. Protocol data,
-     * asked once per column.
+     * tag, whose arrays take {@link #getPgArrayOid()} of their element type. Asked once per column.
      */
     int getPgOid();
 
     /**
-     * The value width in bits the relation rules read: whether a small integer converts into a
-     * temporal type, and which geohashes are narrower. 0 for a type without a fixed value width.
+     * The value width in bits that {@link RelationRules} reads to decide whether a small integer
+     * converts into a temporal type, which geohashes are narrower, and whether a type widens into a
+     * type of its own kind that is no narrower. 0 for a type without a fixed value width.
      */
     int getRelationBits();
 
@@ -188,8 +186,8 @@ public interface TypeDriver {
 
     /**
      * How this type's values travel on the result protocols: the byte form and NULL test the
-     * protocol writers key on. Types that write the same bytes share a kind; see {@link WireKind}.
-     * Per-row callers read {@link WireKind#of(int)}, which asks this once per tag.
+     * protocol writers switch on. Types that write the same bytes share a kind; see {@link
+     * WireKind}. Per-row callers read {@link WireKind#of(int)}, which calls this once per tag.
      */
     WireKind getWireKind();
 
@@ -215,8 +213,8 @@ public interface TypeDriver {
     Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem);
 
     /**
-     * Fills {@code count} values of this type at {@code addr} with NULL in one native call.
-     * A no-op for var-size types, whose NULLs live in the aux vector.
+     * Fills {@code count} values of this type at {@code addr} with NULL in one native call. A no-op
+     * for var-size types, which have no fixed-width NULL pattern.
      */
     void setNull(long addr, long count);
 

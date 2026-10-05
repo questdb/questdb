@@ -71,7 +71,6 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
-    // the preTouchColumns arm per column, from preTouchOpcode at construction
     private final IntList preTouchOpcodes;
     private final double preTouchThreshold;
     private IntHashSet lateMatSkipColumnIndexes;
@@ -236,7 +235,6 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
             long r = rows.get(p);
             record.setRowIndex(r);
             for (int i = 0; i < preTouchOpcodes.size(); i++) {
-                // PRE_TOUCH_NONE matches no arm: the column stays untouched
                 switch (preTouchOpcodes.getQuick(i)) {
                     case ColumnType.BOOLEAN:
                         sum += record.getBool(i) ? 1 : 0;
