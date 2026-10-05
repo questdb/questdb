@@ -1052,13 +1052,17 @@ def parse_surefire(xml_text):
 
 def find_refusals(text):
     """Every refusal of the three leads in a text: (lead, type, site, decision text). A test that
-    prints the exception with its first frame on the same line leaves the frame out."""
+    prints the exception with its first frame on the same line leaves the frame out, and a closing
+    bracket a server's message wraps the refusal in is not part of the decision text."""
     out = []
     for line in text.splitlines():
         m = REFUSAL.search(line)
         if m:
             lead, _type, site, decision = (g.strip() for g in m.groups())
-            out.append((lead, _type, site, STACK_FRAME.sub('', decision)))
+            decision = STACK_FRAME.sub('', decision)
+            while decision and decision[-1] in ')]' and decision.count(decision[-1]) > decision.count('(' if decision[-1] == ')' else '['):
+                decision = decision[:-1].rstrip()
+            out.append((lead, _type, site, decision))
     return out
 
 

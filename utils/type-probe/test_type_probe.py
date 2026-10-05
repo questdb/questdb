@@ -86,12 +86,15 @@ class ParserTest(unittest.TestCase):
             'cairo error: no family arm for UINT32 at SAMPLE BY FILL(value): add the arm or declare the type like its namesake',
             'BINARY with NN_INT: CairoException [0] no UNION cast for NN_INT to STRING at UNION: implement the cast or refuse the pair in the UNION matrix',
             'rejected [status=INTERNAL_ERROR, error=no compare arm for UINT32 at ORDER BY: add a compare arm or declare the type ordered like its family]',
+            'write failed (no family arm for UINT32 at QWP WAL append: add the arm or declare the type like its namesake)',
             'no family arm here',
         ])
+        # a closing bracket the server's wrapper adds after the text is not part of it
         self.assertEqual([
             ('no family arm', 'UINT32', 'SAMPLE BY FILL(value)', 'add the arm or declare the type like its namesake'),
             ('no UNION cast', 'NN_INT to STRING', 'UNION', 'implement the cast or refuse the pair in the UNION matrix'),
-            ('no compare arm', 'UINT32', 'ORDER BY', 'add a compare arm or declare the type ordered like its family]'),
+            ('no compare arm', 'UINT32', 'ORDER BY', 'add a compare arm or declare the type ordered like its family'),
+            ('no family arm', 'UINT32', 'QWP WAL append', 'add the arm or declare the type like its namesake'),
         ], tp.find_refusals(text))
         # a site label never holds ": ", so the first ": " after "at" ends it
         self.assertEqual('= NULL', tp.find_refusals('no family arm for X at = NULL: add the arm')[0][2])
