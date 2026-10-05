@@ -296,6 +296,16 @@ class RegistrationTest(unittest.TestCase):
         self.assertNotIn('Numbers.encodeLowHighInts', text)
         self.assertIn('(addr, count) -> Vect.setMemoryInt(addr, 0, count)', text)
 
+    def test_another_later_types_driver_answer_is_a_driver_item(self):
+        # two types added together: the second type's run builds the first type's driver too, whose
+        # answers its author has not written yet
+        tp.write_generated(self.tree, self.facts, [])
+        first = f'{tp.CAIRO_DIR}/ProbeIntTypeDriver.java'
+        line = next(i for i, l in enumerate(self.tree.read(first).split('\n'), 1) if l.strip() == 'nullConstant,')
+        diag = tp.Diag(first, line, 0, 'cannot find symbol: variable nullConstant')
+        item = tp.build_item('build-java', diag, tp.SiteMap.load(REPO / tp.SITES_FILE), self.tree, f'{tp.CAIRO_DIR}/ProbeUintTypeDriver.java')
+        self.assertEqual(('fill-driver-answer', ''), (item.decision, item.site))
+
     def test_existing_wire_kind_adds_none(self):
         self.facts['physical']['wire_kind'] = 'INT'
         tp.register(self.tree, self.facts, [])

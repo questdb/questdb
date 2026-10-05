@@ -786,6 +786,15 @@ def later_types_line(facts):
     return f'{t["name"]} | {t["sql_names"][0]} | {ph["null_policy"]} | {paths} | {ph["arithmetic"]} |' + (f' {refused}' if refused else '')
 
 
+def later_driver_files(tree):
+    """The type driver files of the types later-types.txt declares, relative to the tree."""
+    path = tree.path(LATER_TYPES_FILE)
+    if not path.exists():
+        return set()
+    names = (line.split('|')[0].strip() for line in path.read_text(encoding='utf-8').splitlines() if '|' in line)
+    return {f'{CAIRO_DIR}/{camel(name)}TypeDriver.java' for name in names if name}
+
+
 def write_generated(tree, facts, log):
     """Writes the type driver (once: the author edits it) and the type's later-types.txt line."""
     name = facts['type']['name']
@@ -1123,9 +1132,11 @@ def site_location(tree, row):
 
 
 def build_item(group, diag, sites, tree, driver_file):
-    """A compiler diagnostic as a worklist item: its site row's decision, or a driver answer."""
+    """A compiler diagnostic as a worklist item: its site row's decision, or a driver answer, in
+    the type driver of the run's type or of another type later-types.txt declares (two types added
+    together build each other's drivers)."""
     location = f'`{diag.file}:{diag.line}' + (f':{diag.col}' if diag.col else '') + '`'
-    if diag.file == driver_file:
+    if diag.file == driver_file or diag.file in later_driver_files(tree):
         return Item(group, 'fill-driver-answer', location, diag.message)
     method = enclosing_method(tree.path(diag.file), diag.line)
     rows = sites.by_location(diag.file, method)
