@@ -1520,12 +1520,12 @@ public class SqlOptimiser implements Mutable {
         final IQueryModel contextModel = parent.getJoinModels().getQuick(contextSlaveIndex);
         final int joinType = contextModel.getJoinType();
         final int maxMasterIndex = Math.max(ai, bi);
-        // A RIGHT JOIN drops unmatched master rows, so an implied equality between two master
-        // tables filters like an INNER join key, provided the keyed model joins by INNER join and
-        // no master-nulling join runs between it and the RIGHT JOIN. A same-table equality keeps
-        // the outer join filter: on model 0 its WHERE would run above the RIGHT JOIN.
+        // A RIGHT JOIN drops unmatched master rows, so an implied equality between master columns
+        // gates them like an INNER join key, provided the keyed model comes first or joins by INNER
+        // or CROSS join, and no master-nulling join runs between it and the RIGHT JOIN. Between two
+        // master tables the equality becomes an INNER join key, and within one master table it
+        // filters that table.
         final boolean isRightJoinMasterKey = joinType == IQueryModel.JOIN_RIGHT_OUTER
-                && ai != bi
                 && maxMasterIndex < contextSlaveIndex
                 && joinBarriers.excludes(parent.getJoinModels().getQuick(maxMasterIndex).getJoinType())
                 && !hasMasterNullingJoinBetween(parent, maxMasterIndex, contextSlaveIndex);
@@ -1596,6 +1596,15 @@ public class SqlOptimiser implements Mutable {
                 node.innerPredicate = true;
                 parent.addParsedWhereNode(node, true);
                 addModelOnPredicateBehindNullingJoin(parent, node, ai, contextSlaveIndex);
+            } else if (isRightJoinMasterKey && !isEmittedClause) {
+                // The equality comes from two keys of the RIGHT JOIN's own ON clause, because
+                // addFilterOrEmitJoin never emits a clause onto a barrier join. A master row that fails
+                // the equality matches no slave row, so the RIGHT JOIN drops it anyway. As an inner
+                // predicate the equality filters the table before the RIGHT JOIN, and
+                // moveWhereInsideSubQueries keeps it below the RIGHT JOIN on model 0 too, where it holds
+                // a WHERE conjunct above the RIGHT JOIN.
+                node.innerPredicate = true;
+                parent.addParsedWhereNode(node, true);
             } else {
                 addWhereNode(parent, ai, node);
             }

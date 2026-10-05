@@ -10350,7 +10350,8 @@ public class JoinTest extends AbstractCairoTest {
         // t3.x = t2.b AND t3.x = t1.a implies t2.b = t1.a, which names the tables in reverse.
         // A RIGHT JOIN drops unmatched master rows, so there t1.a = t2.b keys the INNER join
         // instead, unless a LEFT JOIN joins t2 or a RIGHT JOIN runs between the INNER join and
-        // the RIGHT JOIN. A same-table equality stays a RIGHT JOIN filter.
+        // the RIGHT JOIN. A same-table equality filters the scan of its table below the RIGHT JOIN,
+        // also when the table comes first.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinOnImpliedKey();
 
@@ -10515,8 +10516,9 @@ public class JoinTest extends AbstractCairoTest {
                             2\t20\t2\t99\tnull
                             """);
 
-            // as a WHERE on p1, p1.a = p1.id would run above the RIGHT JOIN and drop the
-            // null-extended p3 row
+            // p1.a = p1.id filters the scan of p1 below the RIGHT JOIN. As a WHERE on p1 it would run
+            // above the RIGHT JOIN, after p3 matched p1 on p3.x = p1.id, and drop the p3 row that
+            // the RIGHT JOIN must keep with a null p1 side.
             execute("CREATE TABLE p1 (id INT, a INT)");
             execute("INSERT INTO p1 VALUES (5, 7)");
             execute("CREATE TABLE p2 (id INT)");
@@ -10526,7 +10528,26 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("SELECT p1.id, p1.a, p2.id, p3.x FROM p1 JOIN p2 ON p1.id = p2.id RIGHT JOIN p3 ON p3.x = p1.a AND p3.x = p1.id")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Hash Right Outer Join Light", "filter: p1.a=p1.id")
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: p3.x=p1.id
+                                    Hash Join Light
+                                      condition: p2.id=p1.id
+                                        Async JIT Filter workers: 1
+                                          filter: a=id
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: p1
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: p2
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: p3
+                            """)
                     .returns("""
                             id\ta\tid1\tx
                             null\tnull\tnull\t5
@@ -11325,6 +11346,173 @@ public class JoinTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\t1\t1\t3\t3\tnull\tnull
                             null\tnull\tnull\tnull\tnull\tnull\t2\t9\t1\t1\tnull\tnull
                             null\tnull\tnull\tnull\tnull\tnull\t2\t9\t3\t3\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinOnKeysSharingColumnFiltersMasterTable() throws Exception {
+        // ON pa.x = pb.k AND pa.y = pb.k implies pa.x = pa.y. A pa row that fails it matches no pb row,
+        // and the RIGHT JOIN drops such rows, so the equality filters the scan of pa when pa joins by
+        // INNER or CROSS join, and when pa is the first table. As an outer join filter it ran once per
+        // hash chain entry, so the join cost grew with the pa rows times the chain length.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE z (id INT)");
+            execute("INSERT INTO z VALUES (1), (2), (3), (4)");
+            execute("CREATE TABLE pa (id INT, x INT, y INT)");
+            execute("INSERT INTO pa VALUES (1, 1, 1), (2, 2, 1), (3, null, null), (4, 2, 2)");
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (1, 11), (2, 20), (null, 30), (5, 50)");
+            execute("CREATE TABLE q (id INT)");
+            execute("INSERT INTO q VALUES (2), (6)");
+
+            final String expected = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    4\t20
+                    3\t30
+                    null\t50
+                    """;
+            assertQuery("SELECT pa.id, pb.v FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y
+                                        Hash Join Light
+                                          condition: pa.id=z.id
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: z
+                                            Hash
+                                                Async JIT Filter workers: 1
+                                                  filter: x=y
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT z.id, pa.id, pb.v FROM z CROSS JOIN pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v, z.id")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: x=y")
+                    .returns("""
+                            id\tid1\tv
+                            1\t1\t10
+                            2\t1\t10
+                            3\t1\t10
+                            4\t1\t10
+                            1\t1\t11
+                            2\t1\t11
+                            3\t1\t11
+                            4\t1\t11
+                            1\t4\t20
+                            2\t4\t20
+                            3\t4\t20
+                            4\t4\t20
+                            1\t3\t30
+                            2\t3\t30
+                            3\t3\t30
+                            4\t3\t30
+                            null\tnull\t50
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y
+                                        Async JIT Filter workers: 1
+                                          filter: x=y
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns(expected);
+
+            // The LEFT JOIN keeps z row 2 with pa row 2, which fails the equality. A filter on the scan
+            // of pa would NULL-extend z row 2, and its null pa.x and pa.y would match pb.k = null.
+            assertQuery("SELECT z.id, pa.id, pb.v FROM z LEFT JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v, z.id")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v, id]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y
+                                      filter: pa.x=pa.y
+                                        Hash Left Outer Join Light
+                                          condition: pa.id=z.id
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: z
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id\tid1\tv
+                            1\t1\t10
+                            1\t1\t11
+                            4\t4\t20
+                            3\t3\t30
+                            null\tnull\t50
+                            """);
+            // The RIGHT JOIN q keeps q row 2 with pa row 2, which fails the equality. A filter on the scan
+            // of pa would NULL-extend q row 2, which would then match pb.k = null like q row 6.
+            assertQuery("SELECT pa.id, q.id, pb.v FROM z JOIN pa ON z.id = pa.id RIGHT JOIN q ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v, q.id")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v, id1]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y
+                                      filter: pa.x=pa.y
+                                        Hash Right Outer Join Light
+                                          condition: q.id=pa.id
+                                            Hash Join Light
+                                              condition: pa.id=z.id
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: z
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: pa
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: q
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id\tid1\tv
+                            null\tnull\t10
+                            null\tnull\t11
+                            null\tnull\t20
+                            null\t6\t30
+                            null\tnull\t50
                             """);
         });
     }
