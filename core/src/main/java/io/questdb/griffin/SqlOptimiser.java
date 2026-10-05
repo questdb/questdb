@@ -226,10 +226,15 @@ public class SqlOptimiser implements Mutable {
     // the models that the ON clause reads, or -1, and the first link of the list of the models whose
     // ON clause reads the model, or -1.
     private final IntList joinModelMaxRefs = new IntList();
+    // Join model index -> priority: doReorderTables runs the model with the lowest priority among the models
+    // it can run next. Empty while the priority is the written order, see prioritiseTimeSeriesJoinsAhead.
+    private final IntList joinModelPriorities = new IntList();
     private final IntList joinModelReaderHeads = new IntList();
     // (reader model index, next link) pairs of the lists that joinModelReaderHeads starts; -1 ends a list
     private final IntList joinModelReaderLinks = new IntList();
     private final JoinModelReferenceCollector joinModelReferenceCollector = new JoinModelReferenceCollector();
+    // priority -> join model index, the inverse of joinModelPriorities
+    private final IntList joinModelsByPriority = new IntList();
     // Scratch state of isJoinedAfter: the tables still to visit and the tables already queued.
     private final IntList keyMoveStack = new IntList();
     private final IntHashSet keyMoveVisited = new IntHashSet();
@@ -3386,7 +3391,10 @@ public class SqlOptimiser implements Mutable {
         // doReorderTables appends the context-free CROSS_RIGHT/CROSS_FULL after every model it can
         // order, so without this edge the later join runs first and the outer join NULL-extends its
         // rows instead of letting the later join drop or multiply them. LEFT OUTER, ASOF and LT joins
-        // keep every master row either way and stay unconstrained, as does SPLICE.
+        // keep every master row either way and stay unconstrained, as does SPLICE. A LEFT join does read
+        // the NULL-extended rows, but gets no edge: doReorderTables runs it after an outer join that waits
+        // for its prefix, as long as every model the outer join waits for has a lower priority, see
+        // prioritiseTimeSeriesJoinsAhead.
         for (int boundaryIndex = 1, n = joinModels.size(); boundaryIndex < n; boundaryIndex++) {
             final int joinType = joinModels.getQuick(boundaryIndex).getJoinType();
             if (joinType != IQueryModel.JOIN_CROSS_RIGHT && joinType != IQueryModel.JOIN_CROSS_FULL) {
@@ -3599,6 +3607,9 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, m = timeSeriesJoinsAhead.size(); i < m; i++) {
                 tempIntList.add(timeSeriesJoinsAhead.get(i));
                 tempIntList.add(boundaryIndex);
+            }
+            if (timeSeriesJoinsAhead.size() > 0 && joinModelsByPriority.size() == 0) {
+                prioritiseTimeSeriesJoinsAhead(n, boundaryIndex, timeSeriesJoinsAhead);
             }
         }
     }
@@ -4523,6 +4534,8 @@ public class SqlOptimiser implements Mutable {
         ordered.clear();
         this.orderingStack.clear();
         ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        // orderingStack holds the priorities of the models, see joinModelPriorities
+        final boolean isPrioritised = joinModelsByPriority.size() > 0;
 
         int cost = 0;
 
@@ -4530,7 +4543,7 @@ public class SqlOptimiser implements Mutable {
             IQueryModel q = joinModels.getQuick(i);
             if (q.getJoinContext() == null || q.getJoinContext().parents.size() == 0) {
                 if (q.getDependencies().size() > 0) {
-                    orderingStack.add(i);
+                    orderingStack.add(getJoinModelPriority(i));
                 } else {
                     tempCrossIndexes.add(i);
                 }
@@ -4540,8 +4553,9 @@ public class SqlOptimiser implements Mutable {
         }
 
         while (orderingStack.notEmpty()) {
-            // remove a node n from orderingStack
-            int index = orderingStack.poll();
+            // remove the node with the lowest priority from orderingStack
+            final int priority = orderingStack.poll();
+            final int index = isPrioritised ? joinModelsByPriority.getQuick(priority) : priority;
 
             ordered.add(index);
 
@@ -4560,7 +4574,7 @@ public class SqlOptimiser implements Mutable {
                 int depIndex = dependencies.get(i);
                 JoinContext jc = joinModels.getQuick(depIndex).getJoinContext();
                 if (jc != null && --jc.inCount == 0) {
-                    orderingStack.add(depIndex);
+                    orderingStack.add(getJoinModelPriority(depIndex));
                 }
             }
         }
@@ -5899,6 +5913,11 @@ public class SqlOptimiser implements Mutable {
                 node = null;
             }
         }
+    }
+
+    // Returns the priority of the join model with the given index on the current level, see joinModelPriorities.
+    private int getJoinModelPriority(int modelIndex) {
+        return joinModelPriorities.size() > 0 ? joinModelPriorities.getQuick(modelIndex) : modelIndex;
     }
 
     private Function getLoFunction(ExpressionNode limit, SqlExecutionContext executionContext) throws SqlException {
@@ -8198,6 +8217,8 @@ public class SqlOptimiser implements Mutable {
             emittedJoinClauses.clear();
             outerJoinExpressionParents.clear();
             deferredInnerKeyEdges.clear();
+            joinModelPriorities.clear();
+            joinModelsByPriority.clear();
             hasLinkedLoneEmittedClause = false;
             loneEmittedClauseEdges.clear();
             loneDeferredEmittedKeySlaves.clear();
@@ -8696,6 +8717,36 @@ public class SqlOptimiser implements Mutable {
             return forValueCombinations;
         } finally {
             Misc.free(compiler);
+        }
+    }
+
+    // Moves the time-series joins that constrainRightAndFullJoinsAfterPrefix runs ahead of the non-equi
+    // RIGHT/FULL join at boundaryIndex right before that join in the priority order, which is otherwise the
+    // written order. doReorderTables runs the model with the lowest priority among the models it can run
+    // next. In the written order, a model written between the outer join and these joins that does not
+    // wait for the outer join, such as a LEFT join keyed on the prefix, ran while the outer join waited for
+    // these joins, so ahead of it, and missed the rows that the outer join NULL-extends. Now the outer join
+    // and every model it waits for come before the other models written after it, so the outer join runs
+    // before them. The first boundary with such joins collects every time-series join after it, so its
+    // priorities hold for every later boundary too.
+    private void prioritiseTimeSeriesJoinsAhead(int n, int boundaryIndex, IntHashSet timeSeriesJoinsAhead) {
+        joinModelsByPriority.clear();
+        for (int i = 0; i < boundaryIndex; i++) {
+            joinModelsByPriority.add(i);
+        }
+        for (int i = boundaryIndex + 1; i < n; i++) {
+            if (timeSeriesJoinsAhead.contains(i)) {
+                joinModelsByPriority.add(i);
+            }
+        }
+        for (int i = boundaryIndex; i < n; i++) {
+            if (timeSeriesJoinsAhead.excludes(i)) {
+                joinModelsByPriority.add(i);
+            }
+        }
+        joinModelPriorities.setAll(n, -1);
+        for (int priority = 0; priority < n; priority++) {
+            joinModelPriorities.setQuick(joinModelsByPriority.getQuick(priority), priority);
         }
     }
 
@@ -15533,7 +15584,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Fails a level that only a linked lone emitted clause, or a filter that replaced one, made
-    // orderable when a non-equi RIGHT/FULL join does not run right after the models written before it:
+    // orderable when a non-equi RIGHT/FULL join does not run right after the models with a lower
+    // priority, which are the models written before it and the time-series joins that run ahead of it:
     // that order returns wrong rows.
     private void validateNonEquiNullingJoinOrder(IQueryModel parent) throws SqlException {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
@@ -15545,9 +15597,10 @@ public class SqlOptimiser implements Mutable {
             if (joinType != IQueryModel.JOIN_CROSS_RIGHT && joinType != IQueryModel.JOIN_CROSS_FULL) {
                 continue;
             }
-            boolean isInPlace = p == modelIndex;
+            final int priority = getJoinModelPriority(modelIndex);
+            boolean isInPlace = p == priority;
             for (int q = 0; isInPlace && q < p; q++) {
-                isInPlace = ordered.getQuick(q) < modelIndex;
+                isInPlace = getJoinModelPriority(ordered.getQuick(q)) < priority;
             }
             if (!isInPlace) {
                 final ExpressionNode name = m.getTableNameExpr() != null ? m.getTableNameExpr() : m.getAlias();

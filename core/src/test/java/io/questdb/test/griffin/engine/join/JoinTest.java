@@ -3683,6 +3683,45 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinOnLeftJoinStaysAfterNonEquiOuterJoinWhenTimeSeriesJoinMovesAhead() throws Exception {
+        // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp.
+        // JOIN d keys on c, so the optimiser could run LEFT JOIN c as soon as ta had joined, while the outer
+        // join still waited for the time-series join. c then ran ahead of the outer join, the unmatched b
+        // row lost its c match, and JOIN d dropped the row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (200)");
+            execute("CREATE TABLE d (k INT, w INT)");
+            execute("INSERT INTO d VALUES (1, 11), (200, 22)");
+            final String expected = """
+                    x\ty\tk\tw\tv
+                    10\t5\t1\t11\ta1
+                    null\t100\t1\t11\t
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String timeSeriesJoinType : new String[]{"ASOF", "LT"}) {
+                    final String timeSeriesJoin = timeSeriesJoinType + " JOIN td1 ON td1.k = ta.k";
+                    // the sub-query form, with the tables before JOIN d in a sub-query
+                    assertQuery("SELECT p.x, p.y, p.k, d.w, p.v FROM (SELECT ta.x, b.y, c.k, td1.v FROM ta " + joinType
+                            + " JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 " + timeSeriesJoin + ") p JOIN d ON d.k = p.k ORDER BY p.y")
+                            .noLeakCheck()
+                            .returns(expected);
+                    assertQuery("SELECT ta.x, b.y, c.k, d.w, td1.v FROM ta " + joinType
+                            + " JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 JOIN d ON d.k = c.k " + timeSeriesJoin + " ORDER BY b.y")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInnerKeyDerivedFilterKeepsRightJoinRows() throws Exception {
         // q's keys imply b0 = a0 on p. The filter ran after RIGHT JOIN r, dropped its null-extended row, and
         // the query returned no rows.
@@ -8539,6 +8578,44 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinOnPrefixKeyStaysAfterNonEquiOuterJoinWhenTimeSeriesJoinMovesAhead() throws Exception {
+        // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp.
+        // LEFT JOIN c, written between them, must run after the outer join: INT NULL = NULL matches c's NULL
+        // key for the unmatched b row, whose ta.k is NULL. The key on ta let the optimiser run c as soon as
+        // ta had joined, while the outer join still waited for the time-series join, so c ran ahead of the
+        // outer join and the unmatched b row came back with w = null.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT, w INT)");
+            execute("INSERT INTO c VALUES (1, 11), (200, 22), (null, 33)");
+            final String expected = """
+                    x\ty\tk\tw\tv
+                    10\t5\t1\t11\ta1
+                    null\t100\tnull\t33\t
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String timeSeriesJoinType : new String[]{"ASOF", "LT"}) {
+                    final String timeSeriesJoin = timeSeriesJoinType + " JOIN td1 ON td1.k = ta.k";
+                    // the time-series join in a sub-query that the outer join reads
+                    assertQuery("SELECT p.x, b.y, c.k, c.w, p.v FROM (SELECT ta.x, ta.k, td1.v FROM ta " + timeSeriesJoin + ") p "
+                            + joinType + " JOIN b ON p.x > b.y LEFT JOIN c ON c.k = p.k ORDER BY b.y")
+                            .noLeakCheck()
+                            .returns(expected);
+                    assertQuery("SELECT ta.x, b.y, c.k, c.w, td1.v FROM ta " + joinType
+                            + " JOIN b ON ta.x > b.y LEFT JOIN c ON c.k = ta.k " + timeSeriesJoin + " ORDER BY b.y")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLeftJoinStaysAfterNonEquiOuterJoinWhenTimeSeriesJoinMovesAhead() throws Exception {
         // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp,
         // while LEFT JOIN c, written between them, must still run after the outer join: it matches the
@@ -10860,6 +10937,47 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("SELECT a.id, b.id FROM a2 a FULL JOIN (SELECT * FROM b WHERE id > 0) b ON b.k2 = a.k AND b.k = a.k WHERE a.k = 1 ORDER BY a.id")
                     .noLeakCheck()
                     .returns(expectedSameName);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnWhenTimeSeriesJoinMovesAhead() throws Exception {
+        // The keys of RIGHT JOIN e imply c.k = b.y, which the optimiser attaches to CROSS JOIN c. A level
+        // that only such a clause makes orderable fails unless each non-equi RIGHT/FULL join runs right
+        // after the models it waits for. That check expected only the models written before the outer
+        // join, not the ASOF/LT join that runs ahead of it, so these queries failed with "could not
+        // determine join order for this table". Each must return the rows of its form with the tables
+        // before the last join in a sub-query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT, w INT)");
+            execute("INSERT INTO c VALUES (5, 11), (100, 22), (7, 33)");
+            execute("CREATE TABLE e (y INT, z INT)");
+            execute("INSERT INTO e VALUES (5, 50), (100, 1000), (7, 70)");
+            final String expected = """
+                    x\ty\tv\tw\tz
+                    10\t5\ta1\t11\t50
+                    null\tnull\t\tnull\t70
+                    null\t100\t\t22\t1000
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String timeSeriesJoinType : new String[]{"ASOF", "LT"}) {
+                    final String prefix = "ta " + joinType + " JOIN b ON ta.x > b.y " + timeSeriesJoinType + " JOIN td1 ON td1.k = ta.k CROSS JOIN c";
+                    // the sub-query form
+                    assertQuery("SELECT p.x, p.y, p.v, p.w, e.z FROM (SELECT ta.x, b.y, td1.v, c.k, c.w FROM " + prefix
+                            + ") p RIGHT JOIN e ON e.y = p.k AND e.y = p.y ORDER BY e.z")
+                            .noLeakCheck()
+                            .returns(expected);
+                    assertQuery("SELECT ta.x, b.y, td1.v, c.w, e.z FROM " + prefix + " RIGHT JOIN e ON e.y = c.k AND e.y = b.y ORDER BY e.z")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
         });
     }
 
