@@ -383,9 +383,12 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 case "float" -> bindVariableService.setFloat(i, isNull ? Float.NaN : isLow ? 5 : 15);
                 case "double" -> bindVariableService.setDouble(i, isNull ? Double.NaN : isLow ? 5 : 15);
                 // 2023-01-01 and 2025-01-01
-                case "date" -> bindVariableService.setDate(i, isNull ? Numbers.LONG_NULL : isLow ? 1_672_531_200_000L : 1_735_689_600_000L);
-                case "timestamp" -> bindVariableService.setTimestamp(i, isNull ? Numbers.LONG_NULL : isLow ? 1_672_531_200_000_000L : 1_735_689_600_000_000L);
-                case "timestamp_ns" -> bindVariableService.setTimestampNano(i, isNull ? Numbers.LONG_NULL : isLow ? 1_672_531_200_000_000_000L : 1_735_689_600_000_000_000L);
+                case "date" ->
+                        bindVariableService.setDate(i, isNull ? Numbers.LONG_NULL : isLow ? 1_672_531_200_000L : 1_735_689_600_000L);
+                case "timestamp" ->
+                        bindVariableService.setTimestamp(i, isNull ? Numbers.LONG_NULL : isLow ? 1_672_531_200_000_000L : 1_735_689_600_000_000L);
+                case "timestamp_ns" ->
+                        bindVariableService.setTimestampNano(i, isNull ? Numbers.LONG_NULL : isLow ? 1_672_531_200_000_000_000L : 1_735_689_600_000_000_000L);
                 default -> bindVariableService.setStr(i, isNull ? null : isLow ? "abb" : "abd");
             }
         }
@@ -579,7 +582,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         }
     }
 
-    private record Column(String name, String type, String value, String fill, String[] filters, String bindType, String[] bindFilters) {
+    private record Column(String name, String type, String value, String fill, String[] filters, String bindType,
+                          String[] bindFilters) {
         // BOOLEAN, BYTE and SHORT have no NULL: a RIGHT join puts false or 0 in them
         boolean hasNull() {
             return !type.equals("BOOLEAN") && !type.equals("BYTE") && !type.equals("SHORT");

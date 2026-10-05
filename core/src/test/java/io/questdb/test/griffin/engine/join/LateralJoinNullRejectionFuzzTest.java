@@ -331,7 +331,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         Object value;
     }
 
-    private record FuzzColumn(String name, String type, String[] values, String[] constants, String bindType, Object[] bindValues) {
+    private record FuzzColumn(String name, String type, String[] values, String[] constants, String bindType,
+                              Object[] bindValues) {
     }
 
     private record Shape(String body, boolean hasWhereKey, boolean isAnyErrorAllowed) {
