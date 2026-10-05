@@ -155,6 +155,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
+    private LateralNullRejection lateralNullRejection;
     private int latestByType = LATEST_BY_NONE;
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
@@ -421,6 +422,7 @@ public class QueryModel implements IQueryModel {
         alias = null;
         latestByType = LATEST_BY_NONE;
         lateralNullChecks.clear();
+        lateralNullRejection = null;
         latestBy.clear();
         joinCriteria = null;
         joinType = JOIN_NONE;
@@ -857,6 +859,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> getLateralNullChecks() {
         return lateralNullChecks;
+    }
+
+    @Override
+    public LateralNullRejection getLateralNullRejection() {
+        return lateralNullRejection;
     }
 
     @Override
@@ -1802,6 +1809,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
         this.isLateralCountCoalesceRequired = isLateralCountCoalesceRequired;
+    }
+
+    @Override
+    public void setLateralNullRejection(LateralNullRejection lateralNullRejection) {
+        this.lateralNullRejection = lateralNullRejection;
     }
 
     @Override

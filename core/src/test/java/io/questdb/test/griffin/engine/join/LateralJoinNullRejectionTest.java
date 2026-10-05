@@ -39,7 +39,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -53,8 +52,10 @@ import java.util.regex.Pattern;
  * as a literal, and combines the results with UNION ALL. A query must return the reference rows, or
  * fail with the rewriter's error at the RIGHT or FULL keyword, or, for a bind variable that is NULL
  * when the query runs, with the error that the plan raises at that variable. On top of that, the tests pin the
- * design: a filter that keeps NULL-extended rows fails, and so does one that the rewriter cannot
- * prove safe, while a provably safe filter returns rows.
+ * design: a filter that keeps NULL-extended rows fails, and so does one that is not provably safe, while
+ * a provably safe filter returns rows. That holds for every sub-query form: the rewriter decides on the
+ * type of a table column and of a sub-query column that passes one through, and the code generator on
+ * the type of any other sub-query column, such as a computed one, which only it knows.
  * <p>
  * The data gives every outer row NULL-extended rows. Trade 10 holds a value in each typed column,
  * and trade 11 holds what the RIGHT join puts in NULL-extended rows: NULL, or 0 or false for BYTE,
@@ -90,9 +91,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     private static final String[] GEO_2 = {"{C} = #u3", "{C} != #u3", "{C} IN (#u3)", "{C} = 'u3'"};
     private static final String[] GEO_4 = {"{C} = #u33d", "{C} != #u33d", "{C} IN (#u33d)", "{C} = 'u33d'"};
     private static final String[] GEO_8 = {"{C} = #u33dc0cp", "{C} != #u33dc0cp", "{C} IN (#u33dc0cp)", "{C} = 'u33dc0cp'"};
-    private static final Pattern INTEGER_COMPARISON = Pattern.compile("^\\{C} (=|<|<=|>|>=) (-?[0-9][0-9_]*L?)$");
-    private static final Pattern INTEGER_COMPARISON_FLIPPED = Pattern.compile("^(-?[0-9][0-9_]*L?) (=|<|<=|>|>=) \\{C}$");
-    private static final Pattern INTEGER_IN = Pattern.compile("^\\{C} IN \\((-?[0-9][0-9_]*L?(, -?[0-9][0-9_]*L?)*)\\)$");
     private static final String[] IPV4 = {
             "{C} = '1.1.1.1'", "{C} = '0.0.0.0'", "{C} != '0.0.0.0'", "{C} <= '0.0.0.0'", "{C} >= '0.0.0.0'",
             "{C} > '0.0.0.1'", "{C} < '2.2.2.2'", "{C} IN ('0.0.0.0', '1.1.1.1')", "{C} IN ('1.1.1.1')",
@@ -267,16 +265,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         return r;
     }
 
-    private static boolean compare(String op, long l, long r) {
-        return switch (op) {
-            case "=" -> l == r;
-            case "<" -> l < r;
-            case "<=" -> l <= r;
-            case ">" -> l > r;
-            default -> l >= r;
-        };
-    }
-
     private static void createTables() throws SqlException {
         execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
         execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
@@ -306,10 +294,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         if (keepsNullExtendedRows || isUnsupported(template)) {
             return Expected.ERROR;
         }
-        if (!form.isTypeKnown) {
-            // a column of unknown type may hold NULL, or 0 for a BYTE or SHORT
-            return isBetween(template) || isNullAndZeroRejectingInteger(template) ? Expected.ROWS : Expected.ERROR;
-        }
         if (!template.contains("$") && !template.contains("now()")) {
             return Expected.ROWS;
         }
@@ -328,47 +312,9 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         return template.contains(" BETWEEN ") && !template.contains(" NOT BETWEEN ");
     }
 
-    // Mirrors the rule for a column of unknown type: integer constants, other than Integer.MIN_VALUE,
-    // that the comparison or IN rejects for 0 as well as for NULL
-    private static boolean isNullAndZeroRejectingInteger(String template) {
-        Matcher m = INTEGER_COMPARISON.matcher(template);
-        if (m.matches()) {
-            return isNullAndZeroRejecting(m.group(1), m.group(2));
-        }
-        m = INTEGER_COMPARISON_FLIPPED.matcher(template);
-        if (m.matches()) {
-            final String op = m.group(2);
-            final String flipped = switch (op) {
-                case "<" -> ">";
-                case "<=" -> ">=";
-                case ">" -> "<";
-                case ">=" -> "<=";
-                default -> op;
-            };
-            return isNullAndZeroRejecting(flipped, m.group(1));
-        }
-        m = INTEGER_IN.matcher(template);
-        if (m.matches()) {
-            for (String value : m.group(1).split(", ")) {
-                final long v = parseLong(value);
-                if (v == 0 || v == Integer.MIN_VALUE) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
-    private static boolean isNullAndZeroRejecting(String op, String value) {
-        final long v = parseLong(value);
-        return v != Integer.MIN_VALUE && !compare(op, 0, v);
-    }
-
     // the error of a plan that checks, when the query runs, that a bind variable is not NULL
-    private static boolean isNullValueError(Throwable error, String sql, String template, Form form, Column column) {
+    private static boolean isNullValueError(Throwable error, String sql, String template, Column column) {
         return error instanceof SqlException e
-                && form.isTypeKnown
                 && column.hasNull()
                 && template.contains("$1")
                 && RUNTIME_CHECKED.matcher(template).matches()
@@ -401,14 +347,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     private static String lateralSql(Shape shape, Form form, String filter) {
         final String body = shape.body.replace("{T}", form.table).replace("{K}", "o.k").replace("{P}", filter);
         return "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + body + ") l";
-    }
-
-    private static long parseLong(String value) {
-        try {
-            return Numbers.parseLong(value);
-        } catch (Exception e) {
-            throw new AssertionError(value, e);
-        }
     }
 
     // the body once per outer row, with the outer key as a literal, over the table itself
@@ -509,7 +447,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             case ERROR -> {
                 if (actual.error == null) {
                     failures.add(header + ": returned " + summary(actual) + ", expected the rewriter to reject the filter\n    " + sql);
-                } else if (!isRewriterError(actual.error, position) && !isNullValueError(actual.error, sql, template, form, column)) {
+                } else if (!isRewriterError(actual.error, position) && !isNullValueError(actual.error, sql, template, column)) {
                     failures.add(header + ": failed with " + summary(actual) + ", expected [" + position + "] ... " + ERROR_SUFFIX + "\n    " + sql);
                 }
             }
@@ -585,31 +523,31 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     }
 
     // how the sub-query passes the column through; the rewriter knows the type of a column that a
-    // sub-query renames, but not of one that it computes or that a set operation may widen
+    // sub-query renames, while only the code generator knows the type of one that it computes, that
+    // a set operation may widen or that a join may take from any of its tables
     private enum Form {
-        TABLE("", "trades", "t.{c}", true),
-        WILDCARD("", "(SELECT * FROM trades)", "t.{c}", true),
-        PROJECTION("", "(SELECT id, x, {c} FROM trades)", "t.{c}", true),
-        RENAME("", "(SELECT id, x, {c} AS renamed FROM trades)", "t.renamed", true),
-        QUALIFIED("", "(SELECT tr.id, tr.x, tr.{c} FROM trades tr)", "t.{c}", true),
-        NESTED("", "(SELECT * FROM (SELECT id, x, {c} FROM trades))", "t.{c}", true),
-        CTE("WITH tt AS (SELECT id, x, {c} FROM trades) ", "tt", "t.{c}", true),
-        GROUP_BY("", "(SELECT id, x, {c} FROM trades GROUP BY id, x, {c})", "t.{c}", true),
-        DISTINCT("", "(SELECT DISTINCT id, x, {c} FROM trades)", "t.{c}", true),
+        TABLE("", "trades", "t.{c}"),
+        WILDCARD("", "(SELECT * FROM trades)", "t.{c}"),
+        PROJECTION("", "(SELECT id, x, {c} FROM trades)", "t.{c}"),
+        RENAME("", "(SELECT id, x, {c} AS renamed FROM trades)", "t.renamed"),
+        QUALIFIED("", "(SELECT tr.id, tr.x, tr.{c} FROM trades tr)", "t.{c}"),
+        NESTED("", "(SELECT * FROM (SELECT id, x, {c} FROM trades))", "t.{c}"),
+        CTE("WITH tt AS (SELECT id, x, {c} FROM trades) ", "tt", "t.{c}"),
+        GROUP_BY("", "(SELECT id, x, {c} FROM trades GROUP BY id, x, {c})", "t.{c}"),
+        DISTINCT("", "(SELECT DISTINCT id, x, {c} FROM trades)", "t.{c}"),
         // the parser drops the alias of a column cast with ::GEOHASH(1c), so the form spells the cast out
-        CAST("", "(SELECT id, x, CAST({c} AS {t}) {c} FROM trades)", "t.{c}", false),
-        UNION("", "(SELECT id, x, {c} FROM trades UNION ALL SELECT id, x, {c} FROM trades WHERE id < 0)", "t.{c}", false);
+        CAST("", "(SELECT id, x, CAST({c} AS {t}) {c} FROM trades)", "t.{c}"),
+        UNION("", "(SELECT id, x, {c} FROM trades UNION ALL SELECT id, x, {c} FROM trades WHERE id < 0)", "t.{c}"),
+        JOIN("", "(SELECT tr.id, tr.x, tr.{c} FROM trades tr CROSS JOIN long_sequence(1) u)", "t.{c}");
 
         final String columnRef;
-        final boolean isTypeKnown;
         final String prefix;
         final String table;
 
-        Form(String prefix, String table, String columnRef, boolean isTypeKnown) {
+        Form(String prefix, String table, String columnRef) {
             this.prefix = prefix;
             this.table = table;
             this.columnRef = columnRef;
-            this.isTypeKnown = isTypeKnown;
         }
     }
 

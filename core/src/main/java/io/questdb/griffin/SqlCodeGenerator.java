@@ -362,6 +362,7 @@ import io.questdb.griffin.model.HorizonJoinContext;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.LateralNullRejection;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelGenerationState;
@@ -1708,6 +1709,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    // Returns the index of the master-side column of a join that the token names. The master side is
+    // the factory of the model named masterAlias, whose metadata does not qualify its columns, or a
+    // join of several models when masterAlias is null.
+    private static int getMasterColumnIndexQuiet(RecordMetadata masterMetadata, @Nullable CharSequence masterAlias, CharSequence token) {
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (masterAlias == null || dot < 0) {
+            return masterMetadata.getColumnIndexQuiet(token);
+        }
+        return Chars.equalsIgnoreCase(masterAlias, token, 0, dot)
+                ? masterMetadata.getColumnIndexQuiet(token, dot + 1, token.length())
+                : -1;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -2379,24 +2393,67 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return castIsRequired;
     }
 
-    @Nullable
+    // LateralJoinRewriter leaves this check to the code generator when the filter after a RIGHT or
+    // FULL join in a LATERAL body reads a master-side column whose type is known only here, such as
+    // a computed sub-query column; see LateralNullRejection. As the rewriter requires when it knows
+    // the type, a conjunct of the filter must drop the rows that the join NULL-extends on its master
+    // side, where the column holds what NullRecordFactory gives its type. A conjunct that drops them
+    // only while a value is not NULL counts when no other one does, and the value is then checked
+    // once per execution. Fails the query otherwise.
+    private void checkLateralNullRejection(
+            IQueryModel slaveModel,
+            LateralNullRejection check,
+            @Nullable RecordCursorFactory master,
+            @Nullable CharSequence masterAlias,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        ExpressionNode nullCheck = null;
+        if (master != null) {
+            final RecordMetadata masterMetadata = master.getMetadata();
+            for (int i = 0, n = check.size(); i < n; i++) {
+                final int columnIndex = getMasterColumnIndexQuiet(masterMetadata, masterAlias, check.getColumn(i));
+                if (columnIndex < 0) {
+                    continue;
+                }
+                final int columnType = masterMetadata.getColumnType(columnIndex);
+                final ExpressionNode probe = check.getProbe(i);
+                if (probe != null) {
+                    if (SqlOptimiser.isFalseOnNullRecord(functionParser, deepClone(expressionNodePool, probe), columnType, executionContext)) {
+                        return;
+                    }
+                } else if (!LateralJoinRewriter.isTypeWithoutNull(columnType)) {
+                    if (check.getNullCheck(i) == null) {
+                        return;
+                    }
+                    if (nullCheck == null) {
+                        nullCheck = check.getNullCheck(i);
+                    }
+                }
+            }
+        }
+        if (nullCheck == null) {
+            throw SqlException.position(slaveModel.getJoinKeywordPosition()).put(check.getError());
+        }
+        collectLateralNullCheck(nullCheck);
+    }
+
+    private void collectLateralNullCheck(ExpressionNode check) {
+        for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
+            if (lateralNullChecks.getQuick(i) == check) {
+                return;
+            }
+        }
+        lateralNullChecks.add(check);
+    }
+
     private void collectLateralNullChecks(IQueryModel model) {
         final ObjList<ExpressionNode> checks = model.getLateralNullChecks();
         for (int i = 0, n = checks.size(); i < n; i++) {
-            final ExpressionNode check = checks.getQuick(i);
-            boolean isCollected = false;
-            for (int j = 0, m = lateralNullChecks.size(); j < m; j++) {
-                if (lateralNullChecks.getQuick(j) == check) {
-                    isCollected = true;
-                    break;
-                }
-            }
-            if (!isCollected) {
-                lateralNullChecks.add(check);
-            }
+            collectLateralNullCheck(checks.getQuick(i));
         }
     }
 
+    @Nullable
     private Function compileFilter(
             IntrinsicModel intrinsicModel,
             RecordMetadata readerMeta,
@@ -6526,6 +6583,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
                         continue;
+                    }
+
+                    // the type of the master-side column that decides these checks is known only now
+                    for (LateralNullRejection check = slaveModel.getLateralNullRejection(); check != null; check = check.getNext()) {
+                        checkLateralNullRejection(slaveModel, check, master, masterAlias, executionContext);
                     }
 
                     // compile

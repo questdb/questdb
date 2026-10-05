@@ -324,6 +324,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     // when one is true; see LateralJoinRewriter.runtimeNullCheckOperand()
     ObjList<ExpressionNode> getLateralNullChecks();
 
+    // The filter conjuncts of a RIGHT or FULL join model whose null rejection the code generator
+    // decides, or null; see LateralJoinRewriter.deferNullRejection()
+    LateralNullRejection getLateralNullRejection();
+
     ObjList<ExpressionNode> getLatestBy();
 
     int getLatestByType();
@@ -618,6 +622,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setLateralCountCoalesceGuard(ExpressionNode guard);
 
     void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired);
+
+    void setLateralNullRejection(LateralNullRejection lateralNullRejection);
 
     void setLatestByType(int latestByType);
 
