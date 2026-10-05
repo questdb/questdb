@@ -142,6 +142,17 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         isMapBuildPending = true;
     }
 
+    private void aggregateBaseRecord() {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+        } else {
+            groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
+        }
+    }
+
     private void buildMap() {
         if (isMapBuildPending) {
             map.clear();
@@ -156,14 +167,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
-                final MapKey key = map.withKey();
-                keyMapSink.copy(baseRecord, key);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
-                } else {
-                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
-                }
+                aggregateBaseRecord();
             } else {
                 // map value is conditional and only required when clock goes back
                 // we override base method for when this happens
@@ -189,8 +193,8 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     @Override
     protected void updateValueWhenClockMovesBack(MapValue value) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue());
+        // The row joins the bucket in progress. The map starts every bucket empty, so the key may have
+        // no entry yet, and an entry it creates must go through updateNew().
+        aggregateBaseRecord();
     }
 }

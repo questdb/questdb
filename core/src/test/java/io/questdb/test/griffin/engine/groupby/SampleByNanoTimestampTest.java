@@ -4413,6 +4413,96 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByDstFallBackFirstRowAfterClockMovesBack() throws Exception {
+        // The Europe/Berlin clock moves back at 2021-10-31T01:00Z, where 03:00 CEST becomes 02:00 CET. On
+        // the SAMPLE BY cursors the first row after that, S3 at 01:14Z (02:14 CET), joins the bucket in
+        // progress at 00:00Z, and so does S4 at 01:51Z. Key A has S1 at 00:00Z before S3; key B has S2 at
+        // 00:37Z before S4, and S0 at 02:28Z in the next bucket. See SampleByTest.DST_FALL_BACK_ROWS.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE trades AS (
+                        SELECT ('S' || (x % 5))::SYMBOL sym,
+                               (100 + (x % 7))::DOUBLE price,
+                               timestamp_sequence('2021-10-29T20:15:00', 37 * 60_000_000L)::TIMESTAMP_NS ts
+                        FROM long_sequence(240)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String rows = """
+                    (
+                        SELECT ts, CASE WHEN sym IN ('S1', 'S3') THEN 'A' ELSE 'B' END k, price
+                        FROM trades
+                        WHERE ts >= '2021-10-30T22:00' AND ts < '2021-10-31T03:30'
+                    )""";
+            final String select = "SELECT ts, k, count() c, first(price) f, last(price) l FROM " + rows + " SAMPLE BY 1h";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertQuery(select + timeZone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
+                            """);
+            assertQuery(select + " FILL(PREV)" + timeZone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: prev\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
+                            2021-10-31T03:00:00.000000000Z\tB\t1\t101.0\t101.0
+                            """);
+            assertQuery(select + " FILL(NULL)" + timeZone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000000Z\tA\tnull\tnull\tnull
+                            2021-10-30T23:00:00.000000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\tA\tnull\tnull\tnull
+                            2021-10-31T02:00:00.000000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000000Z\tA\t1\t102.0\t102.0
+                            2021-10-31T03:00:00.000000000Z\tB\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT ts, count() c, first(price) f, last(price) l FROM " + rows + " SAMPLE BY 1h" + timeZone)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: none\n", "values: [count(*),first(price),last(price)]")
+                    .returns("""
+                            ts\tc\tf\tl
+                            2021-10-30T22:00:00.000000000Z\t2\t101.0\t102.0
+                            2021-10-30T23:00:00.000000000Z\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000000Z\t4\t104.0\t100.0
+                            2021-10-31T02:00:00.000000000Z\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000000Z\t1\t102.0\t102.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByDstForwardShift() throws Exception {
         // Although '00:15' offset here pushes certain bucket timestamps to the gap hour
         // in 'Europe/Prague' time zone (2021-03-28T02:00 - 2021-03-28T03:00), timestamp_floor()

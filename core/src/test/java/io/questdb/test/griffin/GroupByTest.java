@@ -1385,6 +1385,163 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByOrderByExpressionOverNonSelectedColumn() throws Exception {
+        // ORDER BY an expression over a column that the select list does not output, such as
+        // price * 2, adds the expression to the GROUP BY model as a hidden key, so the groups split
+        // by it. When the select list also needs a projection above the GROUP BY model, as with
+        // avg(price) + 1, that projection used to reference the key as a regular column, so the
+        // query, and SELECT * over it, returned an extra column named "column".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                        ('2000-01-01T00:00:01.000000Z', 'B', 20.0),
+                        ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                        ('2000-01-01T00:00:03.000000Z', 'C', 40.0)
+                    """);
+
+            final String splitGroups = """
+                    sym\ta
+                    A\t11.0
+                    B\t21.0
+                    A\t31.0
+                    C\t41.0
+                    """;
+            final String[][] queries = {
+                    {"SELECT sym, avg(price) + 1 a FROM trades ORDER BY price * 2, sym", splitGroups},
+                    {"SELECT sym, avg(price) + 1 a FROM trades ORDER BY abs(price), sym", splitGroups},
+                    {"SELECT sym, avg(price) + 1 a FROM trades ORDER BY price::INT, sym", splitGroups},
+                    {"SELECT sym, avg(price) + 1 a FROM trades WHERE price > 0 ORDER BY price * 2, sym", splitGroups},
+                    // a duplicate aggregate puts a projection above the GROUP BY model
+                    {
+                            "SELECT sym, avg(price) a, avg(price) b FROM trades ORDER BY price * 2, sym",
+                            """
+                            sym\ta\tb
+                            A\t10.0\t10.0
+                            B\t20.0\t20.0
+                            A\t30.0\t30.0
+                            C\t40.0\t40.0
+                            """
+                    },
+                    // so does a constant
+                    {
+                            "SELECT sym, 1 one, avg(price) a FROM trades ORDER BY price * 2, sym",
+                            """
+                            sym\tone\ta
+                            A\t1\t10.0
+                            B\t1\t20.0
+                            A\t1\t30.0
+                            C\t1\t40.0
+                            """
+                    },
+                    {
+                            "SELECT ts, avg(price) + 1 a FROM trades SAMPLE BY 1s ORDER BY price * 2",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t11.0
+                            2000-01-01T00:00:01.000000Z\t21.0
+                            2000-01-01T00:00:02.000000Z\t31.0
+                            2000-01-01T00:00:03.000000Z\t41.0
+                            """
+                    },
+                    // with DISTINCT, the distinct model referenced the expression as a regular column
+                    {
+                            "SELECT DISTINCT sym, count() c FROM trades ORDER BY max(price) * 2, sym",
+                            """
+                            sym\tc
+                            B\t1
+                            A\t2
+                            C\t1
+                            """
+                    },
+                    {
+                            "SELECT DISTINCT sym, avg(price) a FROM trades GROUP BY sym ORDER BY sym || 'x'",
+                            """
+                            sym\ta
+                            A\t20.0
+                            B\t20.0
+                            C\t40.0
+                            """
+                    },
+            };
+            // SAMPLE BY with FILL, and ALIGN TO FIRST OBSERVATION, which keeps the SAMPLE BY model,
+            // with and without a projection above it; their sorted cursors do not report a size
+            final String[][] sampleByQueries = {
+                    {
+                            "SELECT ts, avg(price) + 1 a FROM trades WHERE sym = 'A' SAMPLE BY 1s FILL(NULL) ORDER BY price * 2, ts",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t11.0
+                            2000-01-01T00:00:01.000000Z\tnull
+                            2000-01-01T00:00:02.000000Z\tnull
+                            2000-01-01T00:00:00.000000Z\tnull
+                            2000-01-01T00:00:01.000000Z\tnull
+                            2000-01-01T00:00:02.000000Z\t31.0
+                            """
+                    },
+                    {
+                            "SELECT ts, avg(price) a FROM trades SAMPLE BY 1s ALIGN TO FIRST OBSERVATION ORDER BY price * 2, ts",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t10.0
+                            2000-01-01T00:00:01.000000Z\t20.0
+                            2000-01-01T00:00:02.000000Z\t30.0
+                            2000-01-01T00:00:03.000000Z\t40.0
+                            """
+                    },
+                    {
+                            "SELECT ts, avg(price) + 1 a FROM trades SAMPLE BY 1s ALIGN TO FIRST OBSERVATION ORDER BY price * 2, ts",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t11.0
+                            2000-01-01T00:00:01.000000Z\t21.0
+                            2000-01-01T00:00:02.000000Z\t31.0
+                            2000-01-01T00:00:03.000000Z\t41.0
+                            """
+                    },
+            };
+            for (String[] query : queries) {
+                assertOrderByHiddenKey(query[0], query[1], true);
+            }
+            for (String[] query : sampleByQueries) {
+                assertOrderByHiddenKey(query[0], query[1], false);
+            }
+
+            // a re-sort over the query drops its ORDER BY, and the groups still split by the hidden key
+            assertQuery("SELECT * FROM (" + queries[0][0] + ") ORDER BY sym, a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\ta
+                            A\t11.0
+                            A\t31.0
+                            B\t21.0
+                            C\t41.0
+                            """);
+
+            // the sort still reads the hidden key
+            assertQuery(queries[0][0])
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [column, sym]
+                                    VirtualRecord
+                                      functions: [sym,avg+1,column]
+                                        Async Group By workers: 1
+                                          keys: [sym,column]
+                                          keyFunctions: [price*2]
+                                          values: [avg(price)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupBySingleVarcharKeyFromSampleByWithFill() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -3846,5 +4003,28 @@ public class GroupByTest extends AbstractCairoTest {
         final int close = errorMessage.indexOf(']');
         final int position = Integer.parseInt(errorMessage.substring(1, close));
         assertQuery(query).fails(position, errorMessage.substring(close + 2));
+    }
+
+    private void assertOrderByHiddenKey(String sql, String expected, boolean isSizeKnown) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .returns(expected);
+        assertQuery("SELECT * FROM (" + sql + ")")
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .returns(expected);
+        // the groups still split by the hidden key under count(), also over UNION ALL
+        final long rowCount = expected.chars().filter(c -> c == '\n').count() - 1;
+        assertQuery("SELECT count() FROM (" + sql + ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + rowCount + "\n");
+        assertQuery("SELECT count() FROM ((" + sql + ") UNION ALL (" + sql + "))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + 2 * rowCount + "\n");
     }
 }

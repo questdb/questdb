@@ -42,6 +42,10 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     private final RecordSink keyMapSink;
     private final Map map;
     private final RecordCursor mapCursor;
+    // Index of the bucket that buildMap() emits. Map value 0 of a key holds the index of the last
+    // bucket with a row of that key. The local bucket start can't serve as that tag: a change of the
+    // time zone offset moves it in the middle of a bucket, and the clock moving back repeats it.
+    private long bucketIndex;
     private boolean isMapBuildPending;
     private boolean isMapInitialized;
     private boolean isOpen;
@@ -130,6 +134,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         map.clear();
         map.getCursor();
         rowId = 0;
+        bucketIndex = 0;
         isMapBuildPending = true;
         isMapInitialized = false;
     }
@@ -149,11 +154,28 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         // drop the rows left unread in the map cursor, as of() does
         map.getCursor();
         rowId = 0;
+        bucketIndex = 0;
         isMapBuildPending = true;
         isMapInitialized = false;
     }
 
+    private void aggregateBaseRecord() {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        final MapValue value = key.findValue();
+        assert value != null;
+
+        if (value.getLong(0) != bucketIndex) {
+            value.putLong(0, bucketIndex);
+            groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+        } else {
+            groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
+        }
+    }
+
     private void buildMap() {
+        // every call emits one bucket, either a gap or a bucket with rows
+        bucketIndex++;
         if (isMapBuildPending) {
             // the next sample epoch could be different from current sample epoch due to DST transition,
             // e.g. clock going backward
@@ -180,17 +202,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
-                final MapKey key = map.withKey();
-                keyMapSink.copy(baseRecord, key);
-                final MapValue value = key.findValue();
-                assert value != null;
-
-                if (value.getLong(0) != localEpoch) {
-                    value.putLong(0, localEpoch);
-                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
-                } else {
-                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
-                }
+                aggregateBaseRecord();
             } else {
                 // Timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp column uses this variable.
@@ -199,9 +211,11 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 timestamp = adjustDst(timestamp, null, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
+                    isMapBuildPending = true;
+                    return;
                 }
-                isMapBuildPending = true;
-                return;
+                // the clock moved back, and updateValueWhenClockMovesBack() added the row to this
+                // bucket; the rows up to the end of the bucket in the new offset join it as well
             }
         } while (baseCursor.hasNext());
 
@@ -228,7 +242,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
             keyMapSink.copy(baseRecord, key);
             MapValue value = key.createValue();
             if (value.isNew()) {
-                // timestamp is always stored in value field 0
+                // value field 0 holds the bucket index, see bucketIndex
                 value.putLong(0, Numbers.LONG_NULL);
                 // have functions reset their columns to "zero" state
                 // this would set values for when keys are not found right away
@@ -246,8 +260,8 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
     @Override
     protected void updateValueWhenClockMovesBack(MapValue value) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue());
+        // The row joins the bucket in progress. The key may have no row in this bucket yet, and its
+        // value then holds the aggregate of an earlier bucket, which the row must restart.
+        aggregateBaseRecord();
     }
 }

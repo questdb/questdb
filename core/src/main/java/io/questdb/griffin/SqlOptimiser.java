@@ -1292,9 +1292,11 @@ public class SqlOptimiser implements Mutable {
         // select a, b+c ...
         // it should translate to:
         // select a, x from (select a, b+c x from (select a,b,c ...))
-        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias());
+        // Both references keep the wildcard visibility of qc: an ORDER BY expression
+        // that the select list does not output must stay out of SELECT * above them.
+        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias(), qc.isIncludeIntoWildcard());
         // outer column's should use innerColumn alias
-        final QueryColumn outerColumn = nextColumn(qc.getAlias(), innerColumn.getAlias());
+        final QueryColumn outerColumn = nextColumn(qc.getAlias(), innerColumn.getAlias(), qc.isIncludeIntoWildcard());
 
         // pull literals only into a translating model
         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
@@ -9473,12 +9475,23 @@ public class SqlOptimiser implements Mutable {
     // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
     // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
     // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
+    // A HORIZON JOIN model groups by its non-aggregate columns as well. For it, the method retains its
+    // hidden non-generated keys, such as those that moveOrderByFunctionsIntoOuterSelect() adds for an
+    // ORDER BY expression over a column that the select list does not output. The projection above the
+    // model does not output such a key, so once a parent query drops the ORDER BY, nothing references
+    // the key, and pruning it would merge the groups that it splits. The same check also matches other
+    // hidden non-generated keys, such as the LATERAL correlation keys that
+    // LateralJoinRewriter.ensureColumnInSelectAtFront() adds. The method leaves generated hidden
+    // columns, such as the SUBSAMPLE ordering helpers, to the regular pruning.
     private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+        final int selectModelType = model.getSelectModelType();
+        final boolean isHorizonJoin = selectModelType == IQueryModel.SELECT_MODEL_HORIZON_JOIN;
+        if ((selectModelType == IQueryModel.SELECT_MODEL_GROUP_BY || isHorizonJoin) && model.getTopDownColumns().size() > 0) {
             final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
                 QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                if ((!isHorizonJoin || (!qc.isIncludeIntoWildcard() && !qc.isGenerated()))
+                        && (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token))) {
                     model.addTopDownColumn(qc, qc.getAlias());
                 }
             }
@@ -12360,7 +12373,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
 
             // group-by column could have spit out a function call, e.g.
             // select sum(f(x)) from t -> select sum(col) from (select f(x) col) from t)
@@ -12398,7 +12411,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
             return rewriteStatus;
@@ -12429,7 +12442,7 @@ public class SqlOptimiser implements Mutable {
 
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             if (!isWindowJoin && !isHorizonJoin) {
                 for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                     emitLiterals(
@@ -12474,7 +12487,9 @@ public class SqlOptimiser implements Mutable {
                 // group-by column references might be needed when we have
                 // outer model supporting arithmetic such as:
                 // select sum(a)+sum(b) ...
-                QueryColumn ref = nextColumn(qc.getAlias());
+                // The reference keeps the wildcard visibility of qc: an ORDER BY expression
+                // that the select list does not output is a hidden group-by key.
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 outerVirtualModel.addBottomUpColumn(ref);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(
@@ -12496,7 +12511,7 @@ public class SqlOptimiser implements Mutable {
             } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_JOIN_MODE) != 0) {
                 qc = ensureAliasUniqueness(outerVirtualModel, qc);
                 outerVirtualModel.addBottomUpColumn(qc);
-                QueryColumn ref = nextColumn(qc.getAlias());
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(
                         qc.getAst(),
@@ -12517,7 +12532,8 @@ public class SqlOptimiser implements Mutable {
                 // these qualified names in the AST by using preserveQualifiedNames=true.
                 qc = ensureAliasUniqueness(horizonJoinModel, qc);
                 horizonJoinModel.addBottomUpColumn(qc);
-                QueryColumn ref = nextColumn(qc.getAlias());
+                // the reference keeps the wildcard visibility of qc, as in the GROUP BY branch above
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 outerVirtualModel.addBottomUpColumn(ref);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(

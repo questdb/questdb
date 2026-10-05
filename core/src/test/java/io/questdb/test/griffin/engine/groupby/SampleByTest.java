@@ -103,6 +103,18 @@ public class SampleByTest extends AbstractCairoTest {
               FROM long_sequence(480)
             ) timestamp(ts)
             """;
+    // The rows of SUB_DAY_TIME_ZONE_DDL around the Europe/Berlin fall-back at 2021-10-31T01:00Z, where
+    // 03:00 CEST becomes 02:00 CET. Before it: S3 101.0 at 22:09Z, S4 102.0 at 22:46Z, S0 103.0 at
+    // 23:23Z, S1 104.0 at 00:00Z and S2 105.0 at 00:37Z. After it: S3 106.0 at 01:14Z (02:14 CET),
+    // S4 100.0 at 01:51Z (02:51 CET), S0 101.0 at 02:28Z and S1 102.0 at 03:05Z. Key k groups S1 and S3
+    // as A and the other symbols as B. The sub-query keeps SAMPLE BY on its cursors, which merge the
+    // repeated hour 02:00 CET into the bucket of 02:00 CEST, at 00:00Z.
+    private static final String DST_FALL_BACK_ROWS = """
+            (
+                SELECT ts, sym, CASE WHEN sym IN ('S1', 'S3') THEN 'A' ELSE 'B' END k, price, price::VARCHAR v
+                FROM trades
+                WHERE ts >= '2021-10-30T22:00' AND ts < '2021-10-31T03:30'
+            )""";
     // keyedSampleByReuseSql() over createKeyedSampleByReuseTable(), per fill mode
     private static final String KEYED_SAMPLE_BY_REUSE_FILL_NONE = """
             sym\tsum
@@ -228,6 +240,26 @@ public class SampleByTest extends AbstractCairoTest {
         assertQuery("SELECT count(), ts FROM x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'")
                 .ddl("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(67, "invalid timezone: Invalid/TZ");
+    }
+
+    @Test
+    public void testBadTimezoneSubDayNoFromSubQuery() throws Exception {
+        // Sub-day stride + timezone without FROM or TO over a sub-query, which keeps the statement on
+        // the SAMPLE BY cursor. Code generation reads the timezone only to convert FROM and TO, so the
+        // statement compiles, and the cursor rejects the timezone when it opens, even with no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (RecordCursorFactory factory = select(
+                    "SELECT count(), ts FROM (SELECT i, ts FROM x WHERE i > 0) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'"
+            )) {
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(99, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Invalid/TZ");
+                }
+            }
+        });
     }
 
     @Test
@@ -3922,6 +3954,95 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedSampleByFillNoneDstFallBack() throws Exception {
+        // S3 at 01:14Z is the first row after the clock moves back, and it joins the bucket at 00:00Z,
+        // see DST_FALL_BACK_ROWS. FILL(NONE) starts every bucket with an empty map, so the row creates
+        // the map entry of S3, and the cursor used to add the row to that uninitialised entry: the count
+        // was a random number. The cursor also passed a row id of zero for that row, so first() and
+        // last() of key A, which already had S1 at 00:00Z in the bucket, returned 106.0 and 104.0.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T23:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                            2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T02:00:00.000000Z\tS0\t1\t101.0
+                            2021-10-31T03:00:00.000000Z\tS1\t1\t102.0
+                            """);
+            assertQuery("SELECT ts, k, count() c, first(price) f, last(price) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tA\t1\t102.0\t102.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedSampleByFillNoneDstFallBackVarchar() throws Exception {
+        // first() and last() over VARCHAR keep a pointer to the value in the map entry, so the
+        // uninitialised entry of testKeyedSampleByFillNoneDstFallBack() handed them a garbage pointer
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            assertQuery("SELECT ts, sym, first(v) f, last(v) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tf\tl
+                            2021-10-30T22:00:00.000000Z\tS3\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tS0\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tS1\t104.0\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t105.0\t105.0
+                            2021-10-31T00:00:00.000000Z\tS3\t106.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t100.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tS0\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tS1\t102.0\t102.0
+                            """);
+            assertQuery("SELECT ts, k, first(v) f, last(v) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tf\tl
+                            2021-10-30T22:00:00.000000Z\tA\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tB\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tB\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tA\t104.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tB\t105.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tB\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tA\t102.0\t102.0
+                            """);
+        });
+    }
+
+    @Test
     public void testKeyedSampleByFillNoneLimit() throws Exception {
         assertKeyedSampleByLimit("", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
     }
@@ -3939,6 +4060,224 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testKeyedSampleByFillNoneVarcharKeyPartialRead() throws Exception {
         assertKeyedSampleByPartialRead("VARCHAR", "TIMESTAMP", "", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullDstFallBack() throws Exception {
+        // S3 at 01:14Z is the first row after the clock moves back, and it joins the bucket at 00:00Z,
+        // see DST_FALL_BACK_ROWS. The cursor used to add that row to the aggregate of the last bucket
+        // that had S3, then end the bucket and read the row again into the next bucket, together with
+        // S4 at 01:51Z. It also compared the bucket of each key with a bucket start that the change of
+        // the time zone offset had moved, so the bucket at 00:00Z showed NULL for the keys that had rows
+        // in it, and the aggregate of S0 from the bucket at 23:00Z.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T22:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS3\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS4\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-30T23:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T00:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                            2021-10-31T02:00:00.000000Z\tS3\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tS4\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tS0\t1\t101.0
+                            2021-10-31T02:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-31T03:00:00.000000Z\tS3\tnull\tnull
+                            2021-10-31T03:00:00.000000Z\tS4\tnull\tnull
+                            2021-10-31T03:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T03:00:00.000000Z\tS1\t1\t102.0
+                            2021-10-31T03:00:00.000000Z\tS2\tnull\tnull
+                            """);
+            // Key B gets S4 at 01:51Z after the clock moves back, and S0 at 02:28Z in the next bucket,
+            // which must not add to the bucket at 00:00Z. Key A has S1 at 00:00Z before S3 at 01:14Z.
+            assertQuery("SELECT ts, k, count() c, first(price) f, last(price) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tA\tnull\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tA\tnull\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tA\t1\t102.0\t102.0
+                            2021-10-31T03:00:00.000000Z\tB\tnull\tnull\tnull
+                            """);
+            // With a stride of 2h, the offset changes inside the bucket of 02:00 CEST, at 00:00Z, without
+            // the clock moving back into an earlier bucket. The bucket start that the cursor compared
+            // with moved by an hour as well, so the bucket showed NULL for every key.
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                    + " WHERE ts < '2021-10-31T02:00' SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T22:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-30T22:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T00:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullDstFallBackNoRowsInRepeatedHour() throws Exception {
+        // Europe/Berlin moves the clock back from 03:00 CEST to 02:00 CET at 2021-10-31T01:00Z, and no
+        // row falls in the repeated hour, 01:00Z to 02:00Z. B at 02:10Z (03:10 CET) ends the bucket at
+        // 00:00Z without joining it, and the change of the offset moves the local start of that bucket
+        // back by an hour, onto the start of the bucket at 23:00Z, before the cursor emits it. The cursor
+        // used to compare the bucket of each key with that moved start, so the bucket at 00:00Z showed
+        // NULL for A and the aggregate of B from the bucket at 23:00Z, and the gap at 01:00Z showed the
+        // aggregate of A from the bucket at 00:00Z.
+        assertQuery("SELECT ts, sym, count() c, sum(price) s FROM (SELECT ts, sym, price FROM trades WHERE price > 0)"
+                + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                .ddl(
+                        "CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO trades VALUES
+                                    ('2021-10-30T23:10:00.000000Z', 'A', 1.0),
+                                    ('2021-10-30T23:40:00.000000Z', 'B', 2.0),
+                                    ('2021-10-31T00:20:00.000000Z', 'A', 3.0),
+                                    ('2021-10-31T02:10:00.000000Z', 'B', 4.0),
+                                    ('2021-10-31T02:40:00.000000Z', 'A', 5.0),
+                                    ('2021-10-31T04:15:00.000000Z', 'A', 6.0)
+                                """
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                .returns("""
+                        ts\tsym\tc\ts
+                        2021-10-30T23:00:00.000000Z\tA\t1\t1.0
+                        2021-10-30T23:00:00.000000Z\tB\t1\t2.0
+                        2021-10-31T00:00:00.000000Z\tA\t1\t3.0
+                        2021-10-31T00:00:00.000000Z\tB\tnull\tnull
+                        2021-10-31T01:00:00.000000Z\tA\tnull\tnull
+                        2021-10-31T01:00:00.000000Z\tB\tnull\tnull
+                        2021-10-31T02:00:00.000000Z\tA\t1\t5.0
+                        2021-10-31T02:00:00.000000Z\tB\t1\t4.0
+                        2021-10-31T03:00:00.000000Z\tA\tnull\tnull
+                        2021-10-31T03:00:00.000000Z\tB\tnull\tnull
+                        2021-10-31T04:00:00.000000Z\tA\t1\t6.0
+                        2021-10-31T04:00:00.000000Z\tB\tnull\tnull
+                        """);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullDstSpringForward() throws Exception {
+        // Europe/Berlin moves the clock forward from 02:00 CET to 03:00 CEST at 2021-03-28T01:00Z. B at
+        // 01:10Z (03:10 CEST) is the first row after the change. It ends the bucket at 00:00Z (01:00 CET),
+        // and the change of the offset moves the local start of that bucket forward by an hour before the
+        // cursor emits it. The cursor used to compare the bucket of each key with that moved start, so the
+        // bucket at 00:00Z showed every key as a fill, A and C included.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2021-03-27T23:10:00.000000Z', 'A', 1.0),
+                        ('2021-03-27T23:40:00.000000Z', 'B', 2.0),
+                        ('2021-03-28T00:20:00.000000Z', 'A', 3.0),
+                        ('2021-03-28T00:50:00.000000Z', 'C', 4.0),
+                        ('2021-03-28T01:10:00.000000Z', 'B', 5.0),
+                        ('2021-03-28T01:30:00.000000Z', 'A', 6.0),
+                        ('2021-03-28T03:15:00.000000Z', 'A', 7.0)
+                    """);
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM (SELECT ts, sym, price FROM trades WHERE price > 0)"
+                    + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-03-27T23:00:00.000000Z\tA\t1\t1.0
+                            2021-03-27T23:00:00.000000Z\tB\t1\t2.0
+                            2021-03-27T23:00:00.000000Z\tC\tnull\tnull
+                            2021-03-28T00:00:00.000000Z\tA\t1\t3.0
+                            2021-03-28T00:00:00.000000Z\tB\tnull\tnull
+                            2021-03-28T00:00:00.000000Z\tC\t1\t4.0
+                            2021-03-28T01:00:00.000000Z\tA\t1\t6.0
+                            2021-03-28T01:00:00.000000Z\tB\t1\t5.0
+                            2021-03-28T01:00:00.000000Z\tC\tnull\tnull
+                            2021-03-28T02:00:00.000000Z\tA\tnull\tnull
+                            2021-03-28T02:00:00.000000Z\tB\tnull\tnull
+                            2021-03-28T02:00:00.000000Z\tC\tnull\tnull
+                            2021-03-28T03:00:00.000000Z\tA\t1\t7.0
+                            2021-03-28T03:00:00.000000Z\tB\tnull\tnull
+                            2021-03-28T03:00:00.000000Z\tC\tnull\tnull
+                            """);
+            // FILL(value) runs on the cursor of FILL(NULL)
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM (SELECT ts, sym, price FROM trades WHERE price > 0)"
+                    + " SAMPLE BY 1h FILL(0, 0) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: value\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-03-27T23:00:00.000000Z\tA\t1\t1.0
+                            2021-03-27T23:00:00.000000Z\tB\t1\t2.0
+                            2021-03-27T23:00:00.000000Z\tC\t0\t0.0
+                            2021-03-28T00:00:00.000000Z\tA\t1\t3.0
+                            2021-03-28T00:00:00.000000Z\tB\t0\t0.0
+                            2021-03-28T00:00:00.000000Z\tC\t1\t4.0
+                            2021-03-28T01:00:00.000000Z\tA\t1\t6.0
+                            2021-03-28T01:00:00.000000Z\tB\t1\t5.0
+                            2021-03-28T01:00:00.000000Z\tC\t0\t0.0
+                            2021-03-28T02:00:00.000000Z\tA\t0\t0.0
+                            2021-03-28T02:00:00.000000Z\tB\t0\t0.0
+                            2021-03-28T02:00:00.000000Z\tC\t0\t0.0
+                            2021-03-28T03:00:00.000000Z\tA\t1\t7.0
+                            2021-03-28T03:00:00.000000Z\tB\t0\t0.0
+                            2021-03-28T03:00:00.000000Z\tC\t0\t0.0
+                            """);
+            // With a stride of 1d, the offset changes inside the bucket of 2021-03-28, and the cursor
+            // used to show every key of that day as a fill
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM (SELECT ts, sym, price FROM trades WHERE price > 0)"
+                    + " SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-03-27T23:00:00.000000Z\tA\t4\t17.0
+                            2021-03-27T23:00:00.000000Z\tB\t2\t7.0
+                            2021-03-27T23:00:00.000000Z\tC\t1\t4.0
+                            """);
+        });
     }
 
     @Test
@@ -3962,6 +4301,72 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedSampleByFillPrevDstFallBack() throws Exception {
+        // S3 at 01:14Z is the first row after the clock moves back, and it joins the bucket at 00:00Z,
+        // see DST_FALL_BACK_ROWS. The cursor used to add that row to the aggregate of S3 from the
+        // bucket at 22:00Z, which returned a count of 2, then end the bucket and read the row again
+        // into the next bucket, together with S4 at 01:51Z.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: prev\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T22:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T23:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T23:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-30T23:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T00:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                            2021-10-31T02:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T02:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T02:00:00.000000Z\tS0\t1\t101.0
+                            2021-10-31T02:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T02:00:00.000000Z\tS2\t1\t105.0
+                            2021-10-31T03:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T03:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T03:00:00.000000Z\tS0\t1\t101.0
+                            2021-10-31T03:00:00.000000Z\tS1\t1\t102.0
+                            2021-10-31T03:00:00.000000Z\tS2\t1\t105.0
+                            """);
+            // Key B gets S4 at 01:51Z after the clock moves back, and S0 at 02:28Z in the next bucket,
+            // which must not add to the bucket at 00:00Z. Key A has S1 at 00:00Z before S3 at 01:14Z.
+            assertQuery("SELECT ts, k, count() c, first(price) f, last(price) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: prev\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T23:00:00.000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T02:00:00.000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tA\t1\t102.0\t102.0
+                            2021-10-31T03:00:00.000000Z\tB\t1\t101.0\t101.0
+                            """);
+        });
+    }
+
+    @Test
     public void testKeyedSampleByFillPrevLimit() throws Exception {
         assertKeyedSampleByLimit(" FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
     }
@@ -3979,6 +4384,45 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testKeyedSampleByFillPrevStringKeyPartialRead() throws Exception {
         assertKeyedSampleByPartialRead("STRING", "TIMESTAMP", " FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueDstFallBack() throws Exception {
+        // FILL(value) runs on the cursor of FILL(NULL), see testKeyedSampleByFillNullDstFallBack()
+        assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                + " SAMPLE BY 1h FILL(0, 0) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: value\n  keys: [ts,sym]\n")
+                .returns("""
+                        ts\tsym\tc\ts
+                        2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                        2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                        2021-10-30T22:00:00.000000Z\tS0\t0\t0.0
+                        2021-10-30T22:00:00.000000Z\tS1\t0\t0.0
+                        2021-10-30T22:00:00.000000Z\tS2\t0\t0.0
+                        2021-10-30T23:00:00.000000Z\tS3\t0\t0.0
+                        2021-10-30T23:00:00.000000Z\tS4\t0\t0.0
+                        2021-10-30T23:00:00.000000Z\tS0\t1\t103.0
+                        2021-10-30T23:00:00.000000Z\tS1\t0\t0.0
+                        2021-10-30T23:00:00.000000Z\tS2\t0\t0.0
+                        2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                        2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                        2021-10-31T00:00:00.000000Z\tS0\t0\t0.0
+                        2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                        2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                        2021-10-31T02:00:00.000000Z\tS3\t0\t0.0
+                        2021-10-31T02:00:00.000000Z\tS4\t0\t0.0
+                        2021-10-31T02:00:00.000000Z\tS0\t1\t101.0
+                        2021-10-31T02:00:00.000000Z\tS1\t0\t0.0
+                        2021-10-31T02:00:00.000000Z\tS2\t0\t0.0
+                        2021-10-31T03:00:00.000000Z\tS3\t0\t0.0
+                        2021-10-31T03:00:00.000000Z\tS4\t0\t0.0
+                        2021-10-31T03:00:00.000000Z\tS0\t0\t0.0
+                        2021-10-31T03:00:00.000000Z\tS1\t1\t102.0
+                        2021-10-31T03:00:00.000000Z\tS2\t0\t0.0
+                        """);
     }
 
     @Test
@@ -5295,6 +5739,319 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarSubDayTimeZoneBindVariable() throws Exception {
+        // A stride shorter than a day with TIME ZONE as a bind variable, and neither FROM nor TO. For
+        // such a stride code generation converts FROM and TO from the time zone to UTC, see
+        // testSampleByFromToSubDayTimeZoneLimit(). It read the zone for that even without FROM and TO,
+        // before the bind variable had a value, and failed the compilation with an internal error. Each
+        // execution of one compiled factory returns the rows of the same statement with the zone as a
+        // literal: the not-keyed and keyed SAMPLE BY cursors and the FILL(NULL), FILL(PREV) and
+        // FILL(value) cursors.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            // the sub-queries keep the statements on the SAMPLE BY cursor
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, count() c FROM (SELECT ts, price FROM trades)
+                            SAMPLE BY 5h ALIGN TO CALENDAR TIME ZONE $1 LIMIT 3
+                            """,
+                    """
+                            ts\tc
+                            2021-10-29T17:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t8
+                            2021-10-30T03:00:00.000000Z\t9
+                            """,
+                    """
+                            ts\tc
+                            2021-10-29T18:30:00.000000Z\t6
+                            2021-10-29T23:30:00.000000Z\t8
+                            2021-10-30T04:30:00.000000Z\t8
+                            """
+            );
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, sym, count() c FROM (SELECT ts, sym, price FROM trades)
+                            SAMPLE BY 5h ALIGN TO CALENDAR TIME ZONE $1 LIMIT 4
+                            """,
+                    """
+                            ts\tsym\tc
+                            2021-10-29T17:00:00.000000Z\tS1\t1
+                            2021-10-29T17:00:00.000000Z\tS2\t1
+                            2021-10-29T17:00:00.000000Z\tS3\t1
+                            2021-10-29T22:00:00.000000Z\tS4\t2
+                            """,
+                    """
+                            ts\tsym\tc
+                            2021-10-29T18:30:00.000000Z\tS1\t2
+                            2021-10-29T18:30:00.000000Z\tS2\t1
+                            2021-10-29T18:30:00.000000Z\tS3\t1
+                            2021-10-29T18:30:00.000000Z\tS4\t1
+                            """
+            );
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, count() c FROM (SELECT ts, price FROM trades)
+                            SAMPLE BY 5h FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1 LIMIT 3
+                            """,
+                    """
+                            ts\tc
+                            2021-10-29T17:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t8
+                            2021-10-30T03:00:00.000000Z\t9
+                            """,
+                    """
+                            ts\tc
+                            2021-10-29T18:30:00.000000Z\t6
+                            2021-10-29T23:30:00.000000Z\t8
+                            2021-10-30T04:30:00.000000Z\t8
+                            """
+            );
+            // rows come 37 minutes apart, so some 20-minute buckets are empty and take the fill
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, sum(price) s FROM (SELECT ts, price FROM trades)
+                            SAMPLE BY 20m FILL(PREV) ALIGN TO CALENDAR TIME ZONE $1 LIMIT 6
+                            """,
+                    """
+                            ts\ts
+                            2021-10-29T20:00:00.000000Z\t101.0
+                            2021-10-29T20:20:00.000000Z\t101.0
+                            2021-10-29T20:40:00.000000Z\t102.0
+                            2021-10-29T21:00:00.000000Z\t102.0
+                            2021-10-29T21:20:00.000000Z\t103.0
+                            2021-10-29T21:40:00.000000Z\t103.0
+                            """,
+                    """
+                            ts\ts
+                            2021-10-29T20:10:00.000000Z\t101.0
+                            2021-10-29T20:30:00.000000Z\t101.0
+                            2021-10-29T20:50:00.000000Z\t102.0
+                            2021-10-29T21:10:00.000000Z\t103.0
+                            2021-10-29T21:30:00.000000Z\t103.0
+                            2021-10-29T21:50:00.000000Z\t104.0
+                            """
+            );
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, sum(price) s FROM (SELECT ts, price FROM trades)
+                            SAMPLE BY 20m FILL(42) ALIGN TO CALENDAR TIME ZONE $1 LIMIT 6
+                            """,
+                    """
+                            ts\ts
+                            2021-10-29T20:00:00.000000Z\t101.0
+                            2021-10-29T20:20:00.000000Z\t42.0
+                            2021-10-29T20:40:00.000000Z\t102.0
+                            2021-10-29T21:00:00.000000Z\t42.0
+                            2021-10-29T21:20:00.000000Z\t103.0
+                            2021-10-29T21:40:00.000000Z\t42.0
+                            """,
+                    """
+                            ts\ts
+                            2021-10-29T20:10:00.000000Z\t101.0
+                            2021-10-29T20:30:00.000000Z\t42.0
+                            2021-10-29T20:50:00.000000Z\t102.0
+                            2021-10-29T21:10:00.000000Z\t103.0
+                            2021-10-29T21:30:00.000000Z\t42.0
+                            2021-10-29T21:50:00.000000Z\t104.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarSubDayTimeZoneBindVariableWithFromToRejected() throws Exception {
+        // TIME ZONE as a bind variable with FROM or TO and a stride shorter than a day. Code generation
+        // converts FROM and TO from the time zone to UTC before execution, see
+        // testSampleByFromToSubDayTimeZoneLimit(), when the bind variable has no value yet. It rejects
+        // the statement at the bind variable instead of failing with an internal error. A stride of a
+        // day doesn't need the conversion and takes the bind variable. A zone without a bind variable
+        // keeps compiling, see SampleByTemporalFunctionOwnershipTest.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String message = "timezone must not contain a bind variable when SAMPLE BY has FROM or TO and a stride shorter than a day";
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "+02:00");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE $1
+                    LIMIT 3
+                    """)
+                    .noLeakCheck()
+                    .fails(148, message);
+            // FROM alone
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE $1
+                    """)
+                    .noLeakCheck()
+                    .fails(132, message);
+            // TO alone, with FILL(NULL)
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 30m TO '2021-10-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1
+                    """)
+                    .noLeakCheck()
+                    .fails(142, message);
+            // an expression over the bind variable, positioned at the bind variable
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE '+0' || $1
+                    """)
+                    .noLeakCheck()
+                    .fails(140, message);
+            // a named bind variable
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "+02:00");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE :tz
+                    """)
+                    .noLeakCheck()
+                    .fails(132, message);
+            // no value bound yet, as when a client prepares the statement before it binds the values
+            bindVariableService.clear();
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE $1
+                    """)
+                    .noLeakCheck()
+                    .fails(132, message);
+
+            // a stride of a day takes the bind variable
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "+02:00");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 1d FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE $1 LIMIT 3
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-28T22:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t39
+                            2021-10-30T22:00:00.000000Z\t39
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarSubDayTimeZoneBoundBindVariableRejected() throws Exception {
+        // FROM or TO as a bind variable with a time zone and a stride shorter than a day. Code generation
+        // converts the bound from the time zone to UTC before execution, see
+        // testSampleByFromToSubDayTimeZoneLimit(), when the bind variable has no value yet. It rejects
+        // the statement at the bind variable instead of failing with an internal error. Without a time
+        // zone, or with a stride of a day, nothing converts the bound and the bind variable works. A
+        // bound without a bind variable keeps compiling, such as FROM dateadd('d', -1, now()).
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String fromMessage = "from lower bound must not contain a bind variable when SAMPLE BY has a time zone and a stride shorter than a day";
+            final String toMessage = "to upper bound must not contain a bind variable when SAMPLE BY has a time zone and a stride shorter than a day";
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2021-10-29");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM $1 TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(91, fromMessage);
+            // the bind variable inside an expression
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM $1::TIMESTAMP TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(91, fromMessage);
+            // over the table, a bind variable FROM keeps the statement on the SAMPLE BY cursor
+            assertQuery("""
+                    SELECT ts, count() c FROM trades
+                    SAMPLE BY 5h FROM $1 TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(51, fromMessage);
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, MicrosTimestampDriver.floor("2021-10-29"));
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM dateadd('h', 0, $1) TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(107, fromMessage);
+            // TO, with FILL(NONE) and with FILL(NULL)
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2021-10-31");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' TO $1 ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(107, toMessage);
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 30m TO $1 FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                    """)
+                    .noLeakCheck()
+                    .fails(90, toMessage);
+
+            // without a time zone the bind variable works
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2021-10-29");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM $1 TO '2021-10-31' ALIGN TO CALENDAR LIMIT 3
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-29T20:00:00.000000Z\t8
+                            2021-10-30T01:00:00.000000Z\t8
+                            2021-10-30T06:00:00.000000Z\t8
+                            """);
+            // so does a stride of a day
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 1d FROM $1 ALIGN TO CALENDAR TIME ZONE '+02:00' LIMIT 3
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-28T22:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t39
+                            2021-10-30T22:00:00.000000Z\t39
+                            """);
+            // FROM over now() has no bind variable and returns the rows of FROM '2021-10-29'
+            setCurrentMicros(MicrosTimestampDriver.floor("2021-10-30"));
+            try {
+                assertQuery("""
+                        SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                        SAMPLE BY 1h FROM dateadd('d', -1, now()) TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                        LIMIT 3
+                        """)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .withPlanContaining("Sample By\n")
+                        .returns("""
+                                ts\tc
+                                2021-10-29T20:00:00.000000Z\t2
+                                2021-10-29T21:00:00.000000Z\t1
+                                2021-10-29T22:00:00.000000Z\t2
+                                """);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -6076,6 +6833,32 @@ public class SampleByTest extends AbstractCairoTest {
                             ts\tfirst
                             2022-12-01T01:40:00.000000Z\t4
                             """);
+        });
+    }
+
+    @Test
+    public void testSampleByDstFallBackNotKeyedFirstLast() throws Exception {
+        // S3 at 01:14Z is the first row after the clock moves back, and it joins the bucket at 00:00Z,
+        // see DST_FALL_BACK_ROWS. The cursor gave that row the row id of the next row, S4 100.0 at
+        // 01:51Z, so last() skipped S4 and returned 106.0.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            for (String fill : new String[]{"", " FILL(PREV)", " FILL(NULL)", " FILL(42, 42, 42)"}) {
+                assertQuery("SELECT ts, count() c, first(price) f, last(price) l FROM " + DST_FALL_BACK_ROWS
+                        + " SAMPLE BY 1h" + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .withPlanContaining("Sample By\n", "values: [count(*),first(price),last(price)]")
+                        .returns("""
+                                ts\tc\tf\tl
+                                2021-10-30T22:00:00.000000Z\t2\t101.0\t102.0
+                                2021-10-30T23:00:00.000000Z\t1\t103.0\t103.0
+                                2021-10-31T00:00:00.000000Z\t4\t104.0\t100.0
+                                2021-10-31T02:00:00.000000Z\t1\t101.0\t101.0
+                                2021-10-31T03:00:00.000000Z\t1\t102.0\t102.0
+                                """);
+            }
         });
     }
 
@@ -18706,6 +19489,37 @@ public class SampleByTest extends AbstractCairoTest {
                     .expectSize(expectSize)
                     .returns(expected);
         });
+    }
+
+    private void assertSubDayTimeZoneBindVariable(String sql, String rowsAt0200, String rowsAt0530) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "+02:00");
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlanContaining("Sample By\n");
+
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "+02:00",
+                rowsAt0200,
+                bindVariableService -> bindVariableService.setStr(0, "+02:00")
+        ));
+        cases.add(BindVarTuple.ok(
+                "+05:30 on the same factory",
+                rowsAt0530,
+                bindVariableService -> bindVariableService.setStr(0, "+05:30")
+        ));
+        cases.add(BindVarTuple.ok(
+                "back to +02:00",
+                rowsAt0200,
+                bindVariableService -> bindVariableService.setStr(0, "+02:00")
+        ));
+        // compiles the statement once and executes it for each case in turn
+        assertQuery(sql)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
     }
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {

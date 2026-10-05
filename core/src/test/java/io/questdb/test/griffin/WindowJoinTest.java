@@ -4300,6 +4300,106 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByExpressionOverNonSelectedColumn() throws Exception {
+        // ORDER BY an expression over a column that the select list does not output, such as
+        // t.price * 2, adds the expression to the select list as a hidden column. With DISTINCT, the
+        // distinct model above the window join model used to reference it as a regular column, so the
+        // query, and SELECT * over it, returned an extra column named "column".
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                                ('2000-01-01T00:00:01.000000Z', 'B', 20.0),
+                                ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                                ('2000-01-01T00:00:03.000000Z', 'C', 40.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO quotes VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                                ('2000-01-01T00:00:00.000000Z', 'B', 20.0),
+                                ('2000-01-01T00:00:00.000000Z', 'C', 40.0),
+                                ('2000-01-01T00:00:01.000000Z', 'A', 50.0),
+                                ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                                ('2000-01-01T00:00:02.000000Z', 'B', 60.0)
+                            """
+            );
+
+            final String windowJoin = " FROM trades t WINDOW JOIN quotes q ON (t.sym = q.sym) " +
+                    "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING INCLUDE PREVAILING ORDER BY t.price * 2, t.sym";
+            final String expected = """
+                    sym\ta
+                    A\t30.0
+                    B\t40.0
+                    A\t40.0
+                    C\t40.0
+                    """;
+            final String expectedPlusOne = """
+                    sym\ta
+                    A\t31.0
+                    B\t41.0
+                    A\t41.0
+                    C\t41.0
+                    """;
+            final String[][] queries = {
+                    {"SELECT t.sym, avg(q.bid) a" + windowJoin, expected},
+                    {"SELECT t.sym, avg(q.bid) + 1 a" + windowJoin, expectedPlusOne},
+                    {"SELECT DISTINCT t.sym, avg(q.bid) a" + windowJoin, expected},
+            };
+            // only the sort over the distinct factory reports its size
+            final boolean[] isSizeKnown = {false, false, true};
+            for (int i = 0, n = queries.length; i < n; i++) {
+                final String sql = queries[i][0];
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .expectSize(isSizeKnown[i])
+                        .returns(queries[i][1]);
+                assertQuery("SELECT * FROM (" + sql + ")")
+                        .noLeakCheck()
+                        .expectSize(isSizeKnown[i])
+                        .returns(queries[i][1]);
+                assertQuery("SELECT count() FROM (" + sql + ")")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                4
+                                """);
+                assertQuery("SELECT count() FROM ((" + sql + ") UNION ALL (" + sql + "))")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                8
+                                """);
+            }
+
+            // a re-sort over the query drops its ORDER BY
+            assertQuery("SELECT * FROM (" + queries[0][0] + ") ORDER BY sym, a")
+                    .noLeakCheck()
+                    .returns("""
+                            sym\ta
+                            A\t30.0
+                            A\t40.0
+                            B\t40.0
+                            C\t40.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPrevailingWithFilterCrossPartition() throws Exception {
         // Regression test: WindowJoinWithPrevailingAndJoinFilterRecordCursor
         // failed to find prevailing rows from a previous partition when the

@@ -1680,6 +1680,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
     }
 
+    private static ExpressionNode findBindVariable(ExpressionNode node) {
+        if (node == null || node.type == BIND_VARIABLE) {
+            return node;
+        }
+        ExpressionNode bindVariable = findBindVariable(node.lhs);
+        if (bindVariable == null) {
+            bindVariable = findBindVariable(node.rhs);
+        }
+        for (int i = 0, n = node.args.size(); bindVariable == null && i < n; i++) {
+            bindVariable = findBindVariable(node.args.getQuick(i));
+        }
+        return bindVariable;
+    }
+
     /**
      * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
      * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
@@ -9104,18 +9118,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 sampleToFuncPos = 0;
             }
 
+            final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
             boolean isSampleFromUtc = false;
             boolean isSampleToUtc = false;
             // For sub-day strides with a timezone, the old SAMPLE BY cursor receives
             // FROM/TO as local time but uses them as UTC for bucket anchoring. Convert
-            // FROM/TO to UTC so the cursor anchors correctly.
-            if (timezoneName != null) {
+            // FROM/TO to UTC so the cursor anchors correctly. The conversion reads the
+            // zone and the bounds here, before execution binds the variables, so it
+            // rejects a bind variable in the zone, in FROM or in TO. Without FROM and TO
+            // there is nothing to convert, and the zone may be a bind variable.
+            if (timezoneName != null && isFromTo) {
                 ExpressionNode unitNode = model.getSampleByUnit();
                 ExpressionNode strideNode = model.getSampleBy();
                 char unitChar = unitNode != null
                         ? unitNode.token.charAt(0)
                         : strideNode.token.charAt(strideNode.token.length() - 1);
                 if (CommonUtils.isSubDayUnit(unitChar)) {
+                    final ExpressionNode timezoneBindVariable = findBindVariable(timezoneName);
+                    if (timezoneBindVariable != null) {
+                        throw SqlException.$(timezoneBindVariable.position, "timezone must not contain a bind variable when SAMPLE BY has FROM or TO and a stride shorter than a day");
+                    }
                     CharSequence tz = timezoneNameFunc.getStrA(null);
                     if (tz != null) {
                         try {
@@ -9129,6 +9151,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // the still-owned functions if the construction or the later TO
                             // conversion throws.
                             if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+                                final ExpressionNode fromBindVariable = findBindVariable(model.getSampleByFrom());
+                                if (fromBindVariable != null) {
+                                    throw SqlException.$(fromBindVariable.position, "from lower bound must not contain a bind variable when SAMPLE BY has a time zone and a stride shorter than a day");
+                                }
                                 int fromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
                                 long fromTs = timestampDriver.from(sampleFromFunc.getTimestamp(null), fromFuncType);
                                 if (fromTs != Numbers.LONG_NULL) {
@@ -9142,6 +9168,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
                             if (sampleToFunc != timestampDriver.getTimestampConstantNull()) {
+                                final ExpressionNode toBindVariable = findBindVariable(model.getSampleByTo());
+                                if (toBindVariable != null) {
+                                    throw SqlException.$(toBindVariable.position, "to upper bound must not contain a bind variable when SAMPLE BY has a time zone and a stride shorter than a day");
+                                }
                                 int toFuncType = ColumnType.getTimestampType(sampleToFunc.getType());
                                 long toTs = timestampDriver.from(sampleToFunc.getTimestamp(null), toFuncType);
                                 if (toTs != Numbers.LONG_NULL) {
@@ -9161,7 +9191,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
             final TimestampSampler timestampSampler;
             int fillCount = sampleByFill.size();
 

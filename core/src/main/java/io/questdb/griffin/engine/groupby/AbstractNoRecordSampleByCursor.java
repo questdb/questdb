@@ -324,7 +324,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value) {
-        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId);
+        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {
