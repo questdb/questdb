@@ -205,7 +205,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // with it, Constants.getArrayTypeConstant throws): createConstant looks the constant up by
         // the whole array type, which a DOUBLE array has. A cast to an array of another element
         // type fails there with an UnsupportedOperationException, a known inconsistency. The
-        // geohash tags answer true as well; every geohash cast gives the same result either way
+        // geohash tags answer true as well, as CastTargetTagTest pins
         if (tag == ColumnTypeTag.GEOBYTE || tag == ColumnTypeTag.GEOSHORT || tag == ColumnTypeTag.GEOINT
                 || tag == ColumnTypeTag.GEOLONG || tag == ColumnTypeTag.ARRAY) {
             return true;
