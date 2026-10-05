@@ -2073,6 +2073,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                     throw SqlException.$(pos, "Cannot convert non-partitioned table");
                 }
+                if (reader != null && reader.getTxFile().hasDeltaState()) {
+                    throw SqlException.$(pos, "cannot change table type, table has a delta-active partition or delta data");
+                }
                 // Converting a WAL table to non-WAL is intentionally allowed even when the
                 // table is FORMAT PARQUET or has parquet partitions. This is a very useful
                 // operational workaround for a "poison pill" WAL transaction (one that keeps

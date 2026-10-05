@@ -4582,6 +4582,13 @@ public class CairoEngine implements Closeable, WriterSource {
             // client REBASE WAL on a demoting primary is refused (the demote write-fence).
             oldWriter = replicaVariant ? getWriterUnsafe(oldToken, "rebase") : getWriter(oldToken, "rebase");
 
+            // Delta catalogs retain transaction numbers that a WAL rebase resets to zero.
+            if (oldWriter.getTxWriter().hasDeltaState()) {
+                throw CairoException.nonCritical()
+                        .put("cannot rebase WAL, table has a delta-active partition or delta data [table=")
+                        .put(tableName).put(']');
+            }
+
             try (Path src = new Path(); Path dst = new Path()) {
                 // Build the clone in a hidden ".rebase/" staging dir (mirrors ".download"/".checkpoint").
                 // Startup table-dir scans only consider immediate db-root children that are complete tables
