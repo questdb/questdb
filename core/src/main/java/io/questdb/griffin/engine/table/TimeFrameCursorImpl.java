@@ -94,6 +94,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
+    private int baseRowFrameIndex = -1;
+    private long baseRowLo;
     private int frameCount = 0;
     private TablePageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
@@ -242,6 +244,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         populatePartitionTimestamps(frameCursor, partitionTimestamps, partitionCeilings);
+        baseRowFrameIndex = -1;
         isFrameCacheBuilt = false;
         toTop();
         return this;
@@ -341,29 +344,6 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameMemoryRecord.init(frameMemory);
         frameMemoryRecord.setRowIndex(rowIndex);
         return true;
-    }
-
-    private int resolveBaseRow(int frameIndex, long baseRow) {
-        final long partitionState = frameAddressCache.getPartitionFrameState(frameIndex);
-        if (partitionState == 0) {
-            return -1;
-        }
-        long baseLo = 0;
-        long logicalLo = 0;
-        for (int window = 0, n = PartitionFrameState.getWindowCount(partitionState); window < n; window++) {
-            final long baseRows = PartitionFrameState.getBaseRowCount(partitionState, window);
-            if (baseRow >= baseLo && baseRow < baseLo + baseRows) {
-                if (PartitionFrameState.requiresMaterialization(partitionState, window)) {
-                    return -1;
-                }
-                final long frameLo = Rows.toLocalRowID(frameAddressCache.getRowIdOffset(frameIndex));
-                final long row = logicalLo + baseRow - baseLo - frameLo;
-                return row >= 0 && row < frameRowCounts.get(frameIndex) ? (int) row : -1;
-            }
-            baseLo += baseRows;
-            logicalLo += PartitionFrameState.getLogicalRowCount(partitionState, window);
-        }
-        return -1;
     }
 
     @Override
@@ -654,6 +634,32 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         int expectedEnd = (partitionIndex + 1 < partitionCount) ? partitionFirstFrame.getQuick(partitionIndex + 1) : frameCount;
         assert globalFrame == expectedEnd : "frame count mismatch for partition " + partitionIndex + ": expected " + expectedEnd + " but got " + globalFrame;
         partitionOpened.set(partitionIndex);
+    }
+
+    private int resolveBaseRow(int frameIndex, long baseRow) {
+        if (baseRowFrameIndex != frameIndex) {
+            final int partitionIndex = framePartitionIndexes.get(frameIndex);
+            // Unmodified windows omit the frame's state pointer but still share the reader's Delta snapshot.
+            final long partitionState = tableReader.getOrOpenPartitionFrameState(partitionIndex);
+            long frameBaseLo = -1;
+            if (partitionState != 0) {
+                final int window = frameAddressCache.getParquetRowGroup(frameIndex);
+                if (!PartitionFrameState.requiresMaterialization(partitionState, window)) {
+                    // Within an unmodified window, logical and physical offsets agree, including split frames.
+                    frameBaseLo = frameAddressCache.getParquetRowGroupLo(frameIndex);
+                    for (int i = 0; i < window; i++) {
+                        frameBaseLo += PartitionFrameState.getBaseRowCount(partitionState, i);
+                    }
+                }
+            }
+            baseRowLo = frameBaseLo;
+            baseRowFrameIndex = frameIndex;
+        }
+        if (baseRowLo < 0) {
+            return -1;
+        }
+        final long row = baseRow - baseRowLo;
+        return row >= 0 && row < frameRowCounts.get(frameIndex) ? (int) row : -1;
     }
 
     // maxTimestampHi is used to handle split partitions correctly as ceil method
