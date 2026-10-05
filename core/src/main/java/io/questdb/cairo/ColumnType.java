@@ -563,9 +563,10 @@ public final class ColumnType {
 
     public static boolean isFixedSize(int columnType) {
         final short tag = tagOf(columnType);
-        // Goes by exact value, not by tag: an encoded type (geohash bits, decimal precision and
-        // scale, the designated flag) reads false, except TIMESTAMP_NANO; SYMBOL and INTERVAL read
-        // false although their values have a fixed width.
+        // Goes by exact value, not by tag as the other size answers do, a known inconsistency: an
+        // encoded type (geohash bits, decimal precision and scale, the designated flag) reads
+        // false, except TIMESTAMP_NANO; SYMBOL and INTERVAL read false although their values have
+        // a fixed width.
         if (tag < 0 || tag > MAX_TAG
                 || (columnType != tag && columnType != TIMESTAMP_NANO)
                 || tag == SYMBOL || tag == INTERVAL) {
@@ -1074,8 +1075,9 @@ public final class ColumnType {
                 FIXED_SIZE[tag] = movement != PhysicalDescriptor.Movement.VAR;
                 VAR_SIZE[tag] = movement == PhysicalDescriptor.Movement.VAR;
             }
-            // VARCHAR_SLICE shares VARCHAR's var-size type driver, but its pow2 size is log2 of its
-            // 16-byte aux entry
+            // VARCHAR_SLICE shares VARCHAR's var-size type driver, but pow2SizeOf answers
+            // VARCHAR_AUX_SHL for it: the shift of the 16-byte (pointer, length) entry a slice
+            // column holds per row
             POW2_SIZE[VARCHAR_SLICE] = VARCHAR_AUX_SHL;
         }
     }

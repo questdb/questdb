@@ -4497,8 +4497,9 @@ public class PostingIndexWriter implements IndexWriter {
 
     /**
      * Prepares the NULL {@link #putSidecarNull} writes for a covered column of this type, once per
-     * column: the type driver's storage NULL, except LONG128, which this path has always written as
-     * zeros (the sealing paths write LONG_NULL twice through the type driver).
+     * column: the type driver's storage NULL, except LONG128, which this path writes as zeros while
+     * the sealing paths write LONG_NULL in both longs through the type driver. A known
+     * inconsistency; changing it would change the bytes this path writes.
      */
     private void prepareSidecarNull(int colType) {
         if (ColumnType.tagOf(colType) == ColumnType.LONG128) {

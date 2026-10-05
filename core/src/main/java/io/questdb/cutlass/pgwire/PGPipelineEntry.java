@@ -3544,8 +3544,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // numbers, dates, UUID and decimals have a binary encoding of their own
             case BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, UUID,
                  DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> true;
-            // var-size types, and the types pgwire advertises as PG_VARCHAR, write the same bytes
-            // under both format codes; BOOLEAN's binary form is its one text byte
+            // var-size types, CHAR and the types pgwire advertises as PG_VARCHAR write the same
+            // bytes under both format codes; BOOLEAN's binary form is its one text byte
             case STRING, BINARY, VARCHAR, BOOLEAN, CHAR, IPV4, LONG256, SYMBOL -> false;
             // isGeoHash() reads the encoded type's flag, which every geohash column type carries; a
             // bare geo tag without the flag reports true

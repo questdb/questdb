@@ -236,9 +236,9 @@ public class PushdownFilterExtractor implements Mutable {
             return true;
         }
         return switch (nullPolicy) {
-            // no NULL: the row-group null counts say nothing about these types. CHAR is the
-            // exception: a column-top row reads back as CHAR_NULL, which SQL treats as NULL, so IS
-            // NOT NULL prunes CHAR exactly
+            // no NULL: the row-group null counts say nothing about these types. CHAR is a known
+            // inconsistency: it has no NULL, yet a column-top row reads back as CHAR_NULL, which SQL
+            // treats as NULL, so IS NOT NULL prunes CHAR exactly
             case NONE -> driver.getAccessor() == PhysicalDescriptor.Accessor.CHAR && opType == OP_IS_NOT_NULL;
             case SENTINEL -> switch (driver.getAccessor()) {
                 // IS NOT NULL only: the parquet writer marks fewer rows null than SQL does (see

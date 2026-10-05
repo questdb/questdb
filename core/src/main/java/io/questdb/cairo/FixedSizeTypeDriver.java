@@ -45,7 +45,7 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
  * the width and log2 width derive from it. {@link ColumnType#isFixedSize(int)} is not the same
  * fact: SYMBOL and INTERVAL have a fixed width and a type driver here, yet it reports them as not
  * fixed-size, and it reports an encoded geohash or decimal type as not fixed-size while their
- * tags are (a quirk that method keeps).
+ * tags are, a known inconsistency of that method.
  */
 public abstract class FixedSizeTypeDriver implements TypeDriver {
     private final BindVariableDefiner bindVariableDefiner;

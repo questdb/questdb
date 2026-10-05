@@ -175,7 +175,7 @@ public class TypeDriverTest {
     public void testColumnNullPolicyFollowsDefinition() {
         // a column's NULL policy is its type driver's, for every real type and encoded variant, and
         // NONE exactly for BOOLEAN, BYTE, SHORT and CHAR
-        final IntObjHashMap<String> names = s10TypeNames();
+        final IntObjHashMap<String> names = referenceTypeNames();
         final int noKey = names.getNoEntryKey();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final IntList types = new IntList();
@@ -349,27 +349,27 @@ public class TypeDriverTest {
     }
 
     @Test
-    public void testNamesAsAtS10() {
+    public void testNamesMatchReferenceTable() {
         // ColumnType.nameOf (the type drivers, and ColumnType's own names for the pseudo tags)
         // names exactly the types of the reference name table, and nothing else: every registered
         // type, every tag with every value of bits 8 to 23 (geohash bits and flag, decimal
         // precision, array element and dimensions, timestamp and interval flags), and random
         // encodings
-        final IntObjHashMap<String> s10Names = s10TypeNames();
-        final int noKey = s10Names.getNoEntryKey();
-        for (int type : s10Names.getKeys()) {
+        final IntObjHashMap<String> referenceNames = referenceTypeNames();
+        final int noKey = referenceNames.getNoEntryKey();
+        for (int type : referenceNames.getKeys()) {
             if (type != noKey) {
-                Assert.assertEquals("type " + type, s10Names.get(type), ColumnType.nameOf(type));
+                Assert.assertEquals("type " + type, referenceNames.get(type), ColumnType.nameOf(type));
             }
         }
         for (int tag = 0; tag < 256; tag++) {
             for (int bits = 0; bits < 1 << 16; bits++) {
-                assertS10Name(s10Names, tag | bits << 8);
+                assertReferenceName(referenceNames, tag | bits << 8);
             }
         }
         final Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < 2_000_000; i++) {
-            assertS10Name(s10Names, rnd.nextInt());
+            assertReferenceName(referenceNames, rnd.nextInt());
         }
     }
 
@@ -871,17 +871,17 @@ public class TypeDriverTest {
     }
 
     @Test
-    public void testSizesAsAtS10() {
+    public void testSizesMatchReferenceTables() {
         // sizeOf, pow2SizeOf and isFixedSize match reference tables written out independently of
         // the type drivers, for every tag with every value of bits 8 to 23 and for random encodings
         for (int tag = 0; tag < 256; tag++) {
             for (int bits = 0; bits < 1 << 16; bits++) {
-                assertS10Sizes(tag | bits << 8);
+                assertReferenceSizes(tag | bits << 8);
             }
         }
         final Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < 2_000_000; i++) {
-            assertS10Sizes(rnd.nextInt());
+            assertReferenceSizes(rnd.nextInt());
         }
     }
 
@@ -977,7 +977,7 @@ public class TypeDriverTest {
     }
 
     @Test
-    public void testTypeFactsAsAtS10() {
+    public void testTypeFactsPerTag() {
         // sizeOf, pow2SizeOf, isFixedSize and nameOf for every tag number (pseudo tags included,
         // they keep their own facts), the encoded variants, and a deleted column's type (-INT);
         // isFixedSize answers by exact value, so an encoded geohash, decimal or designated
@@ -1074,8 +1074,8 @@ public class TypeDriverTest {
     public void testTypesSharingAWireKindShareNullPolicyAndTiers() {
         // types that write the same bytes under the same NULL test share a wire kind (WireKind's
         // javadoc), so a type that shares a kind with another must agree with it on the NULL policy,
-        // the accessor, the arithmetic tier and the movement. Every stored type has its own kind
-        // today; the look-alikes show the check catches a type that would share one wrongly
+        // the accessor, the arithmetic tier and the movement. Every existing stored type has a kind
+        // of its own; the look-alikes show the check catches a type that would share one wrongly
         final ArrayList<TypeDriver> drivers = new ArrayList<>();
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
             final TypeDriver driver = ColumnType.findTypeDriver(tag);
@@ -1097,9 +1097,10 @@ public class TypeDriverTest {
     }
 
     @Test
-    public void testVarSizeAsAtS10() {
+    public void testVarSizeAndDriverByTag() {
         // isVarSize and getDriver answer by tag, for every tag with every value of bits 8 to 23
-        // and for random encodings; getDriver as s10-done's switch did; every type driver on the
+        // and for random encodings; getDriver returns the storage driver of STRING, BINARY, VARCHAR,
+        // VARCHAR_SLICE and ARRAY and throws for every other type; every type driver on the
         // var-size tier implements the var-size storage API
         for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
             if (!PSEUDO_TAGS.contains(ColumnTypeTag.of(tag))) {
@@ -1110,14 +1111,14 @@ public class TypeDriverTest {
         // getDriver reads the tag alone, so a few values of bits 8 to 23 per tag cover it
         for (int tag = 0; tag < 256; tag++) {
             for (int bits = 0; bits < 1 << 16; bits++) {
-                assertS10VarSize(tag | bits << 8, bits < 4 || bits == 0xFFFF);
+                assertVarSizeByTag(tag | bits << 8, bits < 4 || bits == 0xFFFF);
             }
         }
         final Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < 2_000_000; i++) {
-            assertS10VarSize(rnd.nextInt(), i < 20_000);
+            assertVarSizeByTag(rnd.nextInt(), i < 20_000);
         }
-        assertS10VarSize(-1, true);
+        assertVarSizeByTag(-1, true);
     }
 
     private static void assertNoFamilyArm(TypeDriver lookAlike, String expectedMessage) {
@@ -1144,7 +1145,7 @@ public class TypeDriverTest {
         sink.put('\t').put(ColumnType.isFixedSize(type)).put('\t').put(ColumnType.nameOf(type)).put('\n');
     }
 
-    private static void assertS10VarSize(int type, boolean isDriverChecked) {
+    private static void assertVarSizeByTag(int type, boolean isDriverChecked) {
         final short tag = ColumnType.tagOf(type);
         final boolean isVarSizeTag = tag == ColumnType.STRING || tag == ColumnType.BINARY || tag == ColumnType.VARCHAR
                 || tag == ColumnType.VARCHAR_SLICE || tag == ColumnType.ARRAY;
@@ -1152,15 +1153,15 @@ public class TypeDriverTest {
         if (!isDriverChecked) {
             return;
         }
-        final ColumnTypeDriver s10Driver = switch (tag) {
+        final ColumnTypeDriver referenceDriver = switch (tag) {
             case ColumnType.STRING -> StringTypeDriver.INSTANCE;
             case ColumnType.BINARY -> BinaryTypeDriver.INSTANCE;
             case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> VarcharTypeDriver.INSTANCE;
             case ColumnType.ARRAY -> ArrayTypeDriver.INSTANCE;
             default -> null;
         };
-        if (s10Driver != null) {
-            Assert.assertSame("getDriver " + type, s10Driver, ColumnType.getDriver(type));
+        if (referenceDriver != null) {
+            Assert.assertSame("getDriver " + type, referenceDriver, ColumnType.getDriver(type));
         } else {
             try {
                 ColumnType.getDriver(type);
@@ -1171,17 +1172,17 @@ public class TypeDriverTest {
         }
     }
 
-    private static void assertS10Sizes(int type) {
+    private static void assertReferenceSizes(int type) {
         // the reference sizeOf and pow2SizeOf by tag, and the exact values isFixedSize accepts
-        final int[] s10Size = {
+        final int[] referenceSize = {
                 -1, 1, 1, 2, 2, 4, 8, 8, 8, 4, 8, 0, 4, 32, 1, 2, 4, 8, 0, 16, -1, -1, -1, 0, 16, 4, 0, 0, 1, 2, 4, 8, 16,
                 32, 0, 0, 0, 0, -1, 16, 0, 0
         };
-        final int[] s10Pow2Size = {
+        final int[] referencePow2Size = {
                 -1, 0, 0, 1, 1, 2, 3, 3, 3, 2, 3, -1, 2, 5, 0, 1, 2, 3, -1, 4, -1, -1, -1, 0, 4, 2, -1, -1, 0, 1, 2, 3, 4,
                 5, 0, 0, 0, 0, -1, 4, 4, -1
         };
-        final boolean s10FixedSize = switch (type) {
+        final boolean isReferenceFixedSize = switch (type) {
             case ColumnType.INT, ColumnType.LONG, ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.TIMESTAMP_MICRO,
                  ColumnType.TIMESTAMP_NANO, ColumnType.DATE, ColumnType.DOUBLE, ColumnType.CHAR, ColumnType.SHORT,
                  ColumnType.FLOAT, ColumnType.LONG128, ColumnType.LONG256, ColumnType.GEOBYTE, ColumnType.GEOSHORT,
@@ -1194,29 +1195,29 @@ public class TypeDriverTest {
         if (tag >= 0 && ExistingTags.IS_LATER[tag]) {
             return;
         }
-        Assert.assertEquals("isFixedSize " + type, s10FixedSize, ColumnType.isFixedSize(type));
+        Assert.assertEquals("isFixedSize " + type, isReferenceFixedSize, ColumnType.isFixedSize(type));
         if (tag < 0) {
             return; // -1, "no type": sizeOf and pow2SizeOf both throw, so neither is checked
         }
         // the tables hold the existing tags by number
         final int number = ExistingTags.NUMBER[tag];
-        Assert.assertEquals("sizeOf " + type, number < s10Size.length ? s10Size[number] : -1, ColumnType.sizeOf(type));
-        if (number < s10Pow2Size.length) {
-            Assert.assertEquals("pow2SizeOf " + type, s10Pow2Size[number], ColumnType.pow2SizeOf(type));
+        Assert.assertEquals("sizeOf " + type, number < referenceSize.length ? referenceSize[number] : -1, ColumnType.sizeOf(type));
+        if (number < referencePow2Size.length) {
+            Assert.assertEquals("pow2SizeOf " + type, referencePow2Size[number], ColumnType.pow2SizeOf(type));
         } else {
             try {
                 ColumnType.pow2SizeOf(type);
-                Assert.fail("pow2SizeOf " + type + " read past the table at s10-done");
+                Assert.fail("pow2SizeOf " + type + " must throw past the end of its table");
             } catch (ArrayIndexOutOfBoundsException ignore) {
             }
         }
     }
 
-    private static void assertS10Name(IntObjHashMap<String> s10Names, int type) {
+    private static void assertReferenceName(IntObjHashMap<String> referenceNames, int type) {
         if (ExistingTags.IS_LATER[type & 0xFF]) {
             return;
         }
-        final String expected = s10Names.get(type);
+        final String expected = referenceNames.get(type);
         final String actual = ColumnType.nameOf(type);
         if (!(expected != null ? expected : ColumnType.UNKNOWN_NAME).equals(actual)) {
             Assert.fail("type " + type + " (tag " + (type & 0xFF) + "): expected " + expected + ", got " + actual);
@@ -1226,7 +1227,7 @@ public class TypeDriverTest {
     /**
      * Reference names of every encoded type, written out independently of the type drivers.
      */
-    private static IntObjHashMap<String> s10TypeNames() {
+    private static IntObjHashMap<String> referenceTypeNames() {
         final IntObjHashMap<String> names = new IntObjHashMap<>();
         final String[] tagNames = new String[ColumnType.MAX_TAG + 1];
         tagNames[ColumnType.BOOLEAN] = "BOOLEAN";

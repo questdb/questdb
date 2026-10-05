@@ -711,7 +711,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 return;
             }
             default -> throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
-                    + ": no invariant for this query before the stage that converts it");
+                    + ": no invariant for this query");
         }
         final Map<String, long[]> bits = new HashMap<>();
         final Map<String, String> texts = new HashMap<>();

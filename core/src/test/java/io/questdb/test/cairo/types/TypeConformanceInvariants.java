@@ -359,7 +359,7 @@ public final class TypeConformanceInvariants {
             return true;
         }
         if (type.laterPaths == null) {
-            Assert.fail("type=" + type.label + " path=" + path + " mode=" + mode + ": registered after the S12 recording, but "
+            Assert.fail("type=" + type.label + " path=" + path + " mode=" + mode + ": registered later, with no recording, but "
                     + TypeConformanceTypes.LATER_TYPES_RESOURCE + " declares neither its NULL policy nor its paths");
         }
         for (String pattern : type.laterPaths.split("\\s+")) {
@@ -418,7 +418,7 @@ public final class TypeConformanceInvariants {
             return type.laterPolicy;
         }
         if (type.isLater()) {
-            Assert.fail("type=" + type.label + ": registered after the S12 recording, but "
+            Assert.fail("type=" + type.label + ": registered later, with no recording, but "
                     + TypeConformanceTypes.LATER_TYPES_RESOURCE + " declares no NULL policy for it");
         }
         return switch (ColumnType.getTypeDriver(type.columnType).getNullPolicy()) {

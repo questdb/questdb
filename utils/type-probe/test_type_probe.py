@@ -453,8 +453,8 @@ class WorklistTest(unittest.TestCase):
                          item('RelationCoverageTest', 'testCaseEscalationHasAnImplementation', 'expected:<> but was:<NN_INT -> LONG: no cast'))
         self.assertEqual(('fill-driver-answer', '`FunctionReachTest#testLaterTypesReachNoOtherTypesFunction`', 'TypeDrivers.find tag enum switch'),
                          item('FunctionReachTest', 'testLaterTypesReachNoOtherTypesFunction', 'expected:<> but was:<nn_int -> !=(BYTE, nn_int)'))
-        self.assertEqual(('fill-driver-answer', '`TypeDriverTest#testSizesAsAtS10`', 'TypeDrivers.find tag enum switch'),
-                         item('TypeDriverTest', 'testSizesAsAtS10', 'isFixedSize 41 expected:<false> but was:<true>'))
+        self.assertEqual(('fill-driver-answer', '`TypeDriverTest#testSizesMatchReferenceTables`', 'TypeDrivers.find tag enum switch'),
+                         item('TypeDriverTest', 'testSizesMatchReferenceTables', 'isFixedSize 41 expected:<false> but was:<true>'))
         # a test with no entry of its own takes the first row its instrument names
         self.assertEqual('SortKeyEncoder.keyKind family switch',
                          item('GeneratedAccessorCoverageTest', 'testEveryAccessorHasAKey', 'NN_INT has no key kind')[2])

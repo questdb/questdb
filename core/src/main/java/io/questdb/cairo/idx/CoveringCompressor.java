@@ -1049,8 +1049,9 @@ public class CoveringCompressor {
                     FLOAT_ALP_HEADER_SIZE + packedDataSizeLong(count, 32)
                             + (long) count * (4 + 4); // worst case: all exceptions (4B pos + 4B value)
             case CODEC_LONG ->
-                // a designated TIMESTAMP takes the linear-prediction codec, whose header is larger
-                // than delta's (29 vs 21 bytes); size every TIMESTAMP for it
+                // a designated TIMESTAMP takes the linear-prediction codec, whose header
+                // (LONG_LINEAR_PRED_HEADER_SIZE, 29 bytes) is larger than the plain one
+                // (LONG_HEADER_SIZE, 13 bytes); size every TIMESTAMP for it
                     (ColumnType.tagOf(columnType) == ColumnType.TIMESTAMP ? LONG_LINEAR_PRED_HEADER_SIZE : LONG_HEADER_SIZE)
                             + packedDataSizeLong(count, 64);
             case CODEC_INT -> INT_HEADER_SIZE + packedDataSizeLong(count, 32);

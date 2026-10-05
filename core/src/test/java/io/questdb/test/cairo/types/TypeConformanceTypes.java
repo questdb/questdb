@@ -178,7 +178,7 @@ public final class TypeConformanceTypes {
         final PhysicalDescriptor.Arithmetic arithmetic = ColumnType.getTypeDriver(tag.code()).getArithmetic();
         if (declaredTier != null && !declaredTier.isEmpty() && !declaredTier.equals(arithmetic.name())) {
             throw new IllegalStateException("arithmetic tier of " + tag.name() + " in " + LATER_TYPES_RESOURCE + " is "
-                    + declaredTier + ", its definition answers " + arithmetic.name());
+                    + declaredTier + ", its type driver answers " + arithmetic.name());
         }
         return switch (arithmetic) {
             case I8, I16, I32, I64, U8, U16, U32, F32, F64 -> arithmetic.name();
@@ -246,8 +246,8 @@ public final class TypeConformanceTypes {
          */
         public final ObjList<String> laterRefusedSites;
         /**
-         * For a type registered later: its arithmetic tier (I8, I16, I32, I64, U8, U16, U32, F32,
-         * F64) as its type driver returns it; null for WIDE and NONE, and for an existing type.
+         * For a type registered later: its arithmetic tier, a {@link PhysicalDescriptor.Arithmetic}
+         * name, as its type driver returns it; null for WIDE and NONE, and for an existing type.
          */
         @Nullable
         public final String laterTier;

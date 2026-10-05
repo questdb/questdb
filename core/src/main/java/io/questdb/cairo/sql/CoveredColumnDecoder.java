@@ -190,7 +190,7 @@ public final class CoveredColumnDecoder {
     /**
      * Writes one FIXED-WIDTH covered value to {@code addr} at slot {@code count}. Returns
      * {@code true} if {@code columnTypeTag} is a fixed-width type written here, or {@code false}
-     * for a var-size type (VARCHAR / STRING / BINARY / ARRAY) — or {@link #COVERED_NONE} — which
+     * for a var-size type (VARCHAR / STRING / BINARY / ARRAY), or {@link #COVERED_NONE}, which
      * the caller must handle via its own var-data sink. This is the single source of truth for the
      * fixed-width covered layout, shared by the worker decode (above) and the eager
      * multi-key merge in {@code CoveringIndexRecordCursorFactory}, so the two cannot drift.

@@ -824,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fixed_size_as_before_movement() {
+    fn test_fixed_size_matches_listed_widths() {
         // each tag's width, listed independently of movement()
         let expected = |tag: ColumnTypeTag| -> Option<usize> {
             match tag {

@@ -69,11 +69,11 @@ import io.questdb.cairo.vm.api.MemoryR;
  * No length prefix on the entry itself - callers know the slot shape from the
  * function's stored {@link ColumnTypes}.
  * <p>
- * {@link #byteSizeOfType} is the one relation behind the type gates
- * ({@link #isAllTypesSupported}, {@link #isAllTypesFixedWidth},
- * {@link LiveViewFunctionSnapshot}'s key validation): a column reaches the
- * per-row switches below only after a gate admitted its type, so their
- * {@code default} arms are tripwires for an ungated caller.
+ * {@link #isAllTypesSupported}, {@link #isAllTypesFixedWidth} and
+ * {@link LiveViewFunctionSnapshot}'s key validation all decide support through
+ * {@link #byteSizeOfType}. A column reaches the per-row switches below only
+ * after one of these checks accepted its type, so their {@code default} arms
+ * throw only for a caller that skipped the check.
  */
 public final class LiveViewSnapshotKeyCodec {
 

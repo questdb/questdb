@@ -4667,9 +4667,8 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testUpdateVarcharIntoFiveDimensionArrayRefused() throws Exception {
-        // the implicit cast of a VARCHAR into a 5-dimension array target took the geohash cast,
-        // as bit 16 marks the target a geohash; a 5-dimension array is now refused as a
-        // 1-dimension array is
+        // a 5-dimension array type sets bit 16, the geohash flag's bit, so the implicit cast of a
+        // VARCHAR into it must not take the geohash cast; it is refused as for a 1-dimension array
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (a DOUBLE[])");
             execute("CREATE TABLE t5 (a DOUBLE[][][][][])");

@@ -201,9 +201,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // constants
             return tag == ColumnTypeTag.REGCLASS || tag == ColumnTypeTag.REGPROCEDURE || tag == ColumnTypeTag.ARRAY_STRING;
         }
-        // the geohash tags and ARRAY count as type-constant tags for compatibility, although a
-        // geohash type name carries bits and resolves to no constant here, and only DOUBLE arrays
-        // have one (Constants.getArrayTypeConstant throws for the others)
+        // ARRAY answers true although ArrayTypeDriver has no type constant for the bare tag (asked
+        // with it, Constants.getArrayTypeConstant throws): createConstant looks the constant up by
+        // the whole array type, which a DOUBLE array has. A cast to an array of another element
+        // type fails there with an UnsupportedOperationException, a known inconsistency. The
+        // geohash tags answer true as well; every geohash cast gives the same result either way
         if (tag == ColumnTypeTag.GEOBYTE || tag == ColumnTypeTag.GEOSHORT || tag == ColumnTypeTag.GEOINT
                 || tag == ColumnTypeTag.GEOLONG || tag == ColumnTypeTag.ARRAY) {
             return true;

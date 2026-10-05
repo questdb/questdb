@@ -64,9 +64,9 @@ public class RelationRulesTest {
 
     @Test
     public void testLookAlikesRelateAlike() {
-        // every two stored types of one relation kind and width, today DATE with TIMESTAMP and
-        // STRING with VARCHAR, relate alike to every third type; kind and width as the type
-        // drivers answer them
+        // every two stored types of one relation kind and width relate alike to every third type
+        // (among the existing types, DATE with TIMESTAMP and STRING with VARCHAR); kind and width as
+        // the type drivers answer them
         int pairs = 0;
         for (short a = 0; a <= ColumnType.MAX_TAG; a++) {
             final TypeDriver driverA = PhysicalDescriptor.storedTypeDriverOf(a);

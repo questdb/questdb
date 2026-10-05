@@ -39,14 +39,13 @@ import static io.questdb.cairo.ColumnType.*;
  * exception cells below, which name tags, except that W into a type of a width-ordered kind
  * (INT, FLOAT, TEMPORAL) also derives from its facts, so a newcomer of such a kind needs no
  * existing list to name it unless it differs in signedness; a new kind of value needs a rule
- * clause. W, C, N and
- * CASE's number rule are answered for one pair at a time, over the two types' tags and type
- * drivers, so a type no tag resolves to yet can be asked too; the tag-keyed rows below call them.
+ * clause. W, C, N and CASE's number rule are answered for one pair at a time, over the two types'
+ * tags and type drivers, so a type no tag resolves to yet can be asked too; the tag-keyed rows
+ * below call them.
  * <p>
- * Each family is today's table exactly: the cells where today's rows depart from the rules are
- * listed as exceptions, and {@code TypeRelationGoldenTest} pins every table. The rules read type
- * definitions, so {@link ColumnType} fills its tables from here on first use, never in its static
- * initializer.
+ * The exception cells hold the pairs where the existing types' relations depart from the rules,
+ * and {@code TypeRelationGoldenTest} pins every table. The rules read the type drivers, so
+ * {@link ColumnType} fills its tables from here on first use, never in its static initializer.
  * <ul>
  * <li>W, built-in widening: the implicit list minus the type itself, where the target converts
  * through its own getter (integer, CHAR, float, temporal targets).</li>

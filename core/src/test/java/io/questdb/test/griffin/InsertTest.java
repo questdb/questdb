@@ -1609,10 +1609,9 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertValuesPairWithoutCopierArm() throws Exception {
-        // INSERT ... VALUES admitted the same pairs by the same relation, and the copier stored
-        // nothing for them. A value of such a pair now goes through the implicit cast: a SYMBOL
-        // parses into either timestamp, and a number has no implicit cast into CHAR, so it is
-        // refused, as an INT already was
+        // INSERT ... VALUES admits a value of such a pair only through the implicit cast, since no
+        // copier has its arm: a SYMBOL parses into either timestamp, and a number has no implicit
+        // cast into CHAR, so it is refused, as an INT is
         assertMemoryLeak(() -> {
             for (int copierType : COPIER_TYPES) {
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
@@ -2261,8 +2260,8 @@ public class InsertTest extends AbstractCairoTest {
         });
     }
 
-    // the source holds one value of each type INSERT used to admit into CHAR, TIMESTAMP or
-    // TIMESTAMP_NS without a copier arm; the target has the three columns
+    // the source holds one value of each type that has no copier arm into CHAR, TIMESTAMP or
+    // TIMESTAMP_NS; the target has the three columns
     private static void createCopierGapTables(String wal) throws SqlException {
         execute("""
                 CREATE TABLE src AS (SELECT 65::BYTE b, 65::SHORT s, 65L l, 65::DATE d, 65::TIMESTAMP t, 65::TIMESTAMP_NS tn,
