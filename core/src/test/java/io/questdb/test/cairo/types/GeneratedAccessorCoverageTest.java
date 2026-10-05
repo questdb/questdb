@@ -207,7 +207,7 @@ public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
                 return false;
             });
             check(failures, unhandled, "byteSizeOfType", entry, () -> (int) slot.invoke(null, type) < 0);
-            // the group-by column sink appends nothing for a type without an arm (PB5): its tag
+            // the group-by column sink appends nothing for a type without an arm: its tag
             // must be the type's accessor family, whose arm the sink has or lacks alike
             if (!NOT_STORED.equals(entry.label) && GroupByColumnSink.argTag(type) != PhysicalDescriptor.accessorOpcodeOf(type)) {
                 failures.append("argTag: ").append(entry.label).append(" is not its accessor family's\n");

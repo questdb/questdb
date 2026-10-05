@@ -45,7 +45,7 @@ public class GtLongCursorFunctionFactory extends AbstractLongCursorFunctionFacto
 
     /**
      * The ordering of {@link LtDoubleVVFunctionFactory#value} with the operands swapped: NaN orders
-     * after every other value (PA-13). The function keeps today's comparison and does not call it:
+     * after every other value. The function keeps today's comparison and does not call it:
      * that comparison skips the tolerance test on the rows the primitive ordering settles, where
      * the body would need a NaN test on every row first.
      */

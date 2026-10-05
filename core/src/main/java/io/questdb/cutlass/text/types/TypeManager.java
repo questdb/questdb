@@ -135,7 +135,7 @@ public class TypeManager implements Mutable {
     }
 
     /**
-     * The adapter that parses a CSV field into a column, by the column's wire kind (F41): the kind
+     * The adapter that parses a CSV field into a column, by the column's wire kind: the kind
      * names the text form the export writes, so the adapter that reads it back parses that form, and
      * an empty field is NULL, left for the writer to store. Every kind is named, so adding one makes
      * javac stop here, also for a type whose text form is not its accessor family's.

@@ -31,7 +31,7 @@ pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
 
 /// How storage moves a column's values: a width class, or a var-size layout whose values live
 /// in a data vector addressed through an aux vector. The mirror of the Java definitions'
-/// `PhysicalDescriptor.Movement` (F39); it says nothing about NULL.
+/// `PhysicalDescriptor.Movement`; it says nothing about NULL.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ColumnMovement {
     W1,
@@ -189,7 +189,7 @@ impl ColumnTypeTag {
     }
 
     /// How storage moves this tag's values. Every tag has an arm, so a new tag stops the build
-    /// here and takes its width from this one answer (F39).
+    /// here and takes its width from this one answer.
     pub const fn movement(self) -> ColumnMovement {
         match self {
             ColumnTypeTag::Boolean

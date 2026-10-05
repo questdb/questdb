@@ -28,11 +28,11 @@ package io.questdb.cairo;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * How a type's values travel on the result protocols (F41): one kind per distinct byte form, so
+ * How a type's values travel on the result protocols: one kind per distinct byte form, so
  * types that write the same bytes under the same NULL test share a kind, and a protocol keeps one
  * writer per kind. A type definition answers its kind ({@link TypeDriver#getWireKind()}); the
  * PostgreSQL wire opcodes, its size arithmetic and the JSON and CSV writers switch exhaustively on
- * it, so a new kind is listed by the build at every protocol that must write it (FR-022).
+ * it, so a new kind is listed by the build at every protocol that must write it.
  * <p>
  * A kind names the byte form and the NULL test together: a type whose bytes equal another's but
  * whose NULL is not a reserved value (a full-range type) needs a kind of its own. Today each
@@ -76,7 +76,7 @@ public enum WireKind {
     /**
      * The wire kind of a stored column type, or null for a pseudo type and for VARCHAR_SLICE,
      * which no protocol writes as a type of its own. It reads a table filled from the type
-     * definitions on first use, so a per-row caller asks no definition (FR-024).
+     * definitions on first use, so a per-row caller asks no definition.
      */
     public static @Nullable WireKind of(int columnType) {
         final short tag = ColumnType.tagOf(columnType);

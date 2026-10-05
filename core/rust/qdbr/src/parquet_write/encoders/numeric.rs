@@ -27,7 +27,7 @@ use qdb_core::col_type::nulls;
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 pub fn int_slice_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
     slice: &[T],
@@ -170,7 +170,7 @@ where
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 pub fn int_slice_to_page_notnull<T, P>(
     slice: &[T],
@@ -398,7 +398,7 @@ pub trait SimdEncodable: NativeType {
     /// Encode data values, dispatching to Plain or Delta based on encoding.
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
     )]
     fn encode_data(
         slice: &[Self],

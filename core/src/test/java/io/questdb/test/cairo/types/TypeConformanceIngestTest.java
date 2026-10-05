@@ -106,8 +106,8 @@ import java.util.stream.Stream;
  * CSV that {@code /exp} writes for the same rows, the round trip users run. Parquet import
  * reads the file of a partition converted with {@code CONVERT PARTITION TO PARQUET}.
  * <p>
- * A type registered later runs where its resource line enables a path, with no recording
- * (F123). It sends the form of its definition's accessor family: a type in INT's family sends
+ * A type registered later runs where its resource line enables a path, with no recording.
+ * It sends the form of its definition's accessor family: a type in INT's family sends
  * INT's form, one in VARCHAR's family VARCHAR's, and a family the kit has no form for fails,
  * naming it. Its NULL row is the omitted column, as for every type. {@link #checkLater} judges
  * what the table stores, or what QWP egress sends, by invariants 1 and 2
@@ -673,7 +673,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Invariants 1 and 2 for a type registered later (F123), on what the path stored in the
+     * Invariants 1 and 2 for a type registered later, on what the path stored in the
      * mode's target table or, for QWP egress, on what the server sent. A failure message ends
      * with the path's section, which holds each row's form and answer.
      */
@@ -829,7 +829,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
 
     /**
      * The tag whose protocol form the kit sends: the type's own for an existing type, as the
-     * recordings hold it; for a type registered later, its definition's accessor family (F123).
+     * recordings hold it; for a type registered later, its definition's accessor family.
      * A family the kit has no form for fails, naming it.
      */
     private int formTag() {

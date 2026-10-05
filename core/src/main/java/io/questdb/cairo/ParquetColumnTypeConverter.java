@@ -52,10 +52,10 @@ final class ParquetColumnTypeConverter {
 
     /**
      * Picks the {@link #writeFixedParsedValue} / {@link #writeFixedNull} arm for a var-to-fixed
-     * conversion target, once per column, by the target's accessor family (F39): an arm parses the
+     * conversion target, once per column, by the target's accessor family: an arm parses the
      * text and writes the value with its family's width. Every family is named: the families with
      * a parse arm yield their opcode, the rest yield UNDEFINED, which reaches no arm. A target that
-     * reads through an existing family takes that family's arm, NULL included (F74), only when it is
+     * reads through an existing family takes that family's arm, NULL included, only when it is
      * like the family's namesake; any other target is refused here, before the caller's row loop
      * writes any target memory: an UNDEFINED opcode would write nothing and leave the memory as it
      * was, and the family's arm would parse and NULL-fill it as the namesake's value. Each caller
@@ -445,8 +445,8 @@ final class ParquetColumnTypeConverter {
         }
     }
 
-    // Upper bound on the UTF-16 chars a fixed-size value renders to, by the source's wire kind
-    // (F41): the text form decides the length. Every kind is named; the 40-char allowance is what
+    // Upper bound on the UTF-16 chars a fixed-size value renders to, by the source's wire kind:
+    // the text form decides the length. Every kind is named; the 40-char allowance is what
     // the unlisted tags always received.
     static long estimateStringDataSize(int sourceType, int rowCount) {
         final WireKind kind = WireKind.of(sourceType);

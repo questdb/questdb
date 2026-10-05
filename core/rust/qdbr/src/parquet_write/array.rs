@@ -215,7 +215,7 @@ impl Iterator for DefLevelsIterator<'_> {
 // encodes array as nested lists
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 pub fn array_to_page(
     // inner-most type of the array group field
@@ -419,7 +419,7 @@ fn build_array_page(
 // encodes in native QDB format
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 pub fn array_to_raw_page(
     aux: &[[u8; 16]],

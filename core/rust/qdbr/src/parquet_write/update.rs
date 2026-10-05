@@ -2259,7 +2259,7 @@ fn generate_required_zero_page(
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 PhysicalType"
+    reason = "not a tag match: parquet2 PhysicalType"
 )]
 fn build_column_infos_from_qdb_meta<'a>(
     qdb_meta: &'a QdbMeta,
@@ -2560,7 +2560,7 @@ mod tests {
 
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 page Index"
+        reason = "not a tag match: parquet2 page Index"
     )]
     fn exercise_hybrid_rewrite(
         unchanged_count: usize,
@@ -3393,7 +3393,7 @@ mod tests {
     /// ASCENDING order. Loads with the page index Required (a mixed file rejects).
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 page Index"
+        reason = "not a tag match: parquet2 page Index"
     )]
     fn assert_fully_indexed(bytes: &[u8], ts_bounds: &[(i64, i64)]) {
         use parquet::arrow::arrow_reader::ArrowReaderOptions;
@@ -3587,7 +3587,7 @@ mod tests {
     #[test]
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 page Index"
+        reason = "not a tag match: parquet2 page Index"
     )]
     fn rewrite_preserves_descending_boundary_order_in_copied_group() -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;

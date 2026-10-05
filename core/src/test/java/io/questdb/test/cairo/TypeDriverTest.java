@@ -644,7 +644,7 @@ public class TypeDriverTest {
 
     @Test
     public void testProtocolAnswers() {
-        // every definition's PostgreSQL OIDs and wire kind (F41), next to what the protocols read:
+        // every definition's PostgreSQL OIDs and wire kind, next to what the protocols read:
         // WireKind.of(), which gives VARCHAR_SLICE and the pseudo tags none, and PGOids' OID table,
         // which holds the OIDs pgwire advertised before S16 for every tag
         final StringSink sink = new StringSink();
@@ -723,7 +723,7 @@ public class TypeDriverTest {
 
     @Test
     public void testRelationFactsAreConsistent() {
-        // the facts the relation rules read (F34): a type's implicit-cast list starts with the type
+        // the facts the relation rules read: a type's implicit-cast list starts with the type
         // itself (VARCHAR_SLICE reads through VARCHAR's list), and the width in bits the rules read for
         // integers, CHAR and geohashes is the storage width
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {

@@ -1201,7 +1201,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     /**
-     * Picks the {@link #outRecord} arm for one result set column from its wire kind (F41) and the
+     * Picks the {@link #outRecord} arm for one result set column from its wire kind and the
      * format code the client asked for, once per query. Every kind is named: adding one makes javac
      * stop here. The types pgwire advertises as PG_VARCHAR (IPv4, geohashes, LONG256, INTERVAL,
      * CHAR, strings) write their text bytes under either format code, as do BINARY and a NULL-typed

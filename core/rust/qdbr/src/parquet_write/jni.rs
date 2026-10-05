@@ -755,7 +755,7 @@ fn take_partition_updater_fds(
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 PhysicalType"
+    reason = "not a tag match: parquet2 PhysicalType"
 )]
 fn build_column_infos_from_partition<'a>(
     partition: &'a crate::parquet_write::schema::Partition,

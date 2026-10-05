@@ -39,7 +39,7 @@ import io.questdb.std.Vect;
 
 public final class StringTypeDriver extends NPlusOneAuxTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    // the one declared implicit-cast list: the overload row, best match first
     private static final short[] IMPLICIT_CASTS = {ColumnType.STRING, ColumnType.VARCHAR, ColumnType.CHAR, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.FLOAT, ColumnType.SHORT, ColumnType.BYTE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.SYMBOL, ColumnType.IPv4};
 
     public static void appendValue(MemoryA auxMem, MemoryA dataMem, CharSequence value) {

@@ -208,7 +208,7 @@ public final class DecimalUtil {
             return 0;
         }
         // an integer's precision is the digits of its largest value, from its arithmetic tier; DATE and TIMESTAMP
-        // count their unit in 64 bits. The kinds and tiers are closed sets, so a new one decides here (F112)
+        // count their unit in 64 bits. The kinds and tiers are closed sets, so a new one decides here
         return switch (driver.getRelationKind()) {
             case INT -> integerPrecisionScale(driver.getArithmetic());
             case TEMPORAL -> Numbers.encodeLowHighShorts((short) 19, (short) 0);

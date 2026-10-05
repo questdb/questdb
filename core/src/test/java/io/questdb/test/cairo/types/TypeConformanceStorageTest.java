@@ -704,7 +704,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     }
 
     /**
-     * ALTER COLUMN TYPE of a type registered later, from its declared relations (F89). For every
+     * ALTER COLUMN TYPE of a type registered later, from its declared relations. For every
      * persisted kit type as the target: a conversion rule A does not admit is refused; one it
      * admits succeeds, reads the column top and the NULL row as the target's NULL literal reads
      * (where the type stores NULL), and for a widening (rule W) gives each row's value by the
@@ -781,7 +781,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     }
 
     /**
-     * Dedup on a type registered later (F89). SQL refuses only arrays as dedup keys, so a
+     * Dedup on a type registered later. SQL refuses only arrays as dedup keys, so a
      * persisted type that is no array is one. Writing the rows again replaces k; rows at the same
      * timestamps with the next row's value replace k where the two values are one key, and add a
      * row where they are not. Two values are one key when their bits are equal; the NULL row is

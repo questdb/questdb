@@ -18,7 +18,7 @@ pub fn rows_per_page(options: &WriteOptions, bytes_per_row: usize) -> usize {
 #[inline]
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 PhysicalType"
+    reason = "not a tag match: parquet2 PhysicalType"
 )]
 fn bytes_per_primitive_type(physical_type: PhysicalType) -> usize {
     match physical_type {

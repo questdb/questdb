@@ -67,7 +67,7 @@ public final class VarcharTypeDriver implements ColumnTypeDriver {
     // and the full value in data memory.
     public static final int VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
     public static final long VARCHAR_MAX_COLUMN_SIZE = 1L << 48;
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    // the one declared implicit-cast list: the overload row, best match first
     private static final short[] IMPLICIT_CASTS = {ColumnType.VARCHAR, ColumnType.STRING, ColumnType.CHAR, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.FLOAT, ColumnType.SHORT, ColumnType.BYTE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.SYMBOL, ColumnType.IPv4};
     private static final int FULLY_INLINED_STRING_OFFSET = 1;
     private static final int HEADER_FLAGS_WIDTH = 4;

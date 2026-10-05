@@ -520,7 +520,7 @@ public class QwpWalAppender implements QuietCloseable {
                 }
 
                 // Regular columns
-                // the column's accessor family (F39): QWP parses and copies a value with its
+                // the column's accessor family: QWP parses and copies a value with its
                 // family's width and putter, and NULL is a set bit in the null bitmap
                 switch (PhysicalDescriptor.familyArmOpcodeOf(columnType)) {
                     case ColumnType.IPv4 -> {

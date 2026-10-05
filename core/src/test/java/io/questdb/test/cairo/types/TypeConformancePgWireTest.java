@@ -64,7 +64,7 @@ import java.util.Map;
  * the storage part covers. Types registered later run where their resource line lists
  * {@code pg.text} or {@code pg.binary}; {@link TypeConformanceInvariants} checks them: on
  * {@code pg.binary} every value must travel as its stored bits (big-endian, the type's width)
- * or, for a var-size type, as its accessor family's bytes (F123), and the NULL row and the
+ * or, for a var-size type, as its accessor family's bytes, and the NULL row and the
  * sentinel-pattern row must behave as the NULL policy says; on {@code pg.text} only the
  * SENTINEL and BITMAP comparisons of those two rows are checked, because the kit does not
  * derive a later type's text form.

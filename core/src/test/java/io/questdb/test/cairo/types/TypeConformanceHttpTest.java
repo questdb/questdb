@@ -100,7 +100,7 @@ import java.util.Map;
  * checked without a recording: invariant 2 by the printed values of its NULL, sentinel-pattern
  * and zero rows on every path, and invariant 1 on {@code http.parquet} by the bits read back from
  * the exported file. Invariant 1 on JSON and CSV needs the value's expected text, which the
- * arithmetic tier (S14b) will let the kit derive; until then it is not checked there.
+ * arithmetic tier will let the kit derive; until then it is not checked there.
  */
 @RunWith(Parameterized.class)
 public class TypeConformanceHttpTest extends AbstractTest {

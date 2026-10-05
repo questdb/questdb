@@ -87,7 +87,7 @@ public final class LineUtils {
     }
 
     /**
-     * By the column's accessor family (F39): ILP parses and writes a value with its family's
+     * By the column's accessor family: ILP parses and writes a value with its family's
      * parser and putter, and NULL is a field the line leaves out, which the writer stores as the
      * column's NULL. So a type that reads through an existing family takes that family's arms
      * (E3 "S16 extension" finding 4). Every family is named, so adding one makes javac stop here.

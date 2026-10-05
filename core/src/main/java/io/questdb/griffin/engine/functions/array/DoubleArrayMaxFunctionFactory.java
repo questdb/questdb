@@ -45,7 +45,7 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
      * The larger of two values; a tie keeps {@code max} (of -0.0 and 0.0 the first stays), as the
      * {@code v > max} test of the vanilla kernel {@code FlatArrayView.maxDouble} does. It also
      * answers the values a type without a reserved NULL carries: NaN orders after every other
-     * value (PA-13), so a NaN operand wins. The function keeps today's comparison, which skips NULL
+     * value, so a NaN operand wins. The function keeps today's comparison, which skips NULL
      * elements first: the body's NaN test would cost every element that beats {@code max}.
      */
     public static double value(double max, double element) {

@@ -63,9 +63,9 @@ import java.util.TreeSet;
  * {@code target/null-policy-rule-lister.txt}.
  */
 public class NullPolicyRuleListerTest extends AbstractCairoTest {
-    // every factory in scope has a body or a reason (S15b)
+    // every factory in scope has a body or a reason
     private static final int EXPECTED_TO_CHANGE = 0;
-    // of those, factories with a LONG or DOUBLE argument, the first full-range counterparts (F17)
+    // of those, factories with a LONG or DOUBLE argument, the first full-range counterparts
     private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 0;
     // class + signature -> why step 2 is empty
     private static final Map<String, String> NO_VALUE_BODY = new TreeMap<>();

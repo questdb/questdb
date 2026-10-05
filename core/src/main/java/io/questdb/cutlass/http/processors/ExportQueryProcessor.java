@@ -1328,7 +1328,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.NULL:
             case ColumnType.BINARY:
             case ColumnType.RECORD:
-                // an empty cell; csvOpcode() sends the pseudo tags here too (PB8)
+                // an empty cell; csvOpcode() sends the pseudo tags here too
                 break;
             case ColumnType.STRING:
                 putStringOrNull(response, rec.getStrA(columnIndex));

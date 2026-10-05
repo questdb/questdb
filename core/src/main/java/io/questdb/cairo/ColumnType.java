@@ -144,7 +144,7 @@ public final class ColumnType {
     // The tag field is 8 bits wide and array element tags are stored in a 6-bit field, so
     // ColumnTypeTest pins MAX_TAG < 128 and every array element tag < 64.
     public static final short MAX_TAG = NULL;
-    // Pseudo tags resolve overloads or mark parser state and have no type definition (FR-007),
+    // Pseudo tags resolve overloads or mark parser state and have no type definition,
     // so their size and name facts live here, indexed by tag; every real tag's facts come from
     // its definition. A census-listed identity site.
     private static final boolean[] PSEUDO_TAG = new boolean[MAX_TAG + 1];

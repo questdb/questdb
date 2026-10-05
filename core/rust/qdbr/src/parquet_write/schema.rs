@@ -32,7 +32,7 @@ pub const COLUMN_TYPE_ID_MASK: i32 = 0x3FFF_FFFF;
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only (F43): the decimal widths, inside the decimal arm"
+    reason = "family-only: the decimal widths, inside the decimal arm"
 )]
 pub fn column_type_to_parquet_type(
     column_id: i32,
@@ -630,7 +630,7 @@ pub fn is_encoding_valid_for_column_tag(encoding_id: i32, col_type_tag: i32) -> 
 /// Falls back to the default encoding if the combination is unsupported.
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 fn validate_encoding(data_type: ColumnType, encoding: Encoding) -> Encoding {
     let valid = match encoding {

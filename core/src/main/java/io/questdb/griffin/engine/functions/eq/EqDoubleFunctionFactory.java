@@ -43,7 +43,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
     /**
      * The value comparison of {@link Numbers#equals(double, double)} without its NULL test: the
      * tolerance compare answers every pair of finite values, and the body also answers the values
-     * a type without a reserved NULL carries (PA-13): every NaN equals every NaN, and an infinity
+     * a type without a reserved NULL carries: every NaN equals every NaN, and an infinity
      * equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's extra
      * clauses would cost every row that compares unequal.
      */

@@ -91,34 +91,34 @@ public interface TypeDriver {
      * <p>
      * Code never reads this to decide NULL for a column: it reads the column's policy through a
      * per-column accessor such as {@link io.questdb.cairo.sql.RecordMetadata#getColumnNullPolicy(int)},
-     * whose body derives from this answer (FR-010).
+     * whose body derives from this answer.
      */
     NullPolicy getNullPolicy();
 
     /**
-     * The accessor family (F27, F39): the record getter and the row, sink and map-key putters a
+     * The accessor family: the record getter and the row, sink and map-key putters a
      * value of this type is read and written with. Per-row code that dispatches on the getter keys
      * on it at setup; see {@link PhysicalDescriptor.Accessor}.
      */
     PhysicalDescriptor.Accessor getAccessor();
 
     /**
-     * The arithmetic tier (F27, F39): the width, representation and signedness that arithmetic,
-     * comparison, sorting and minimum or maximum key on (FR-011); see
+     * The arithmetic tier: the width, representation and signedness that arithmetic,
+     * comparison, sorting and minimum or maximum key on; see
      * {@link PhysicalDescriptor.Arithmetic}.
      */
     PhysicalDescriptor.Arithmetic getArithmetic();
 
     /**
-     * The data-movement tier (F39): how storage moves a value of this type. A fixed-size type
+     * The data-movement tier: how storage moves a value of this type. A fixed-size type
      * answers its width class, a var-size type {@link PhysicalDescriptor.Movement#VAR}. The width
-     * and the fixed-size-ness of a type are this answer, declared once (FR-009); storage code that
-     * only moves values keys on it, never on the tag (FR-011).
+     * and the fixed-size-ness of a type are this answer, declared once; storage code that
+     * only moves values keys on it, never on the tag.
      */
     PhysicalDescriptor.Movement getMovement();
 
     /**
-     * The one implicit-cast list this type declares (F34, PA-7): the types a value of it is passed as
+     * The one implicit-cast list this type declares: the types a value of it is passed as
      * to a function, best match first, where the position is the overload distance. It is the
      * overload row, and the relation rules ({@link RelationRules}) derive built-in widening, widening
      * cast and narrowing from it; the type itself comes first.
@@ -134,21 +134,21 @@ public interface TypeDriver {
 
     /**
      * The PostgreSQL type OID of an array whose elements are this type ({@link PgTypeOids}), or 0
-     * when PostgreSQL wire describes no such array: pgwire sends only DOUBLE and VARCHAR arrays
-     * (F41). Protocol data, asked once per column.
+     * when PostgreSQL wire describes no such array: pgwire sends only DOUBLE and VARCHAR arrays.
+     * Protocol data, asked once per column.
      */
     int getPgArrayOid();
 
     /**
      * The PostgreSQL type OID the wire describes a column of this type with ({@link PgTypeOids}),
      * or 0 when PostgreSQL wire has none: LONG128, which pgwire cannot send, and the bare ARRAY
-     * tag, whose arrays take {@link #getPgArrayOid()} of their element type (F41). Protocol data,
+     * tag, whose arrays take {@link #getPgArrayOid()} of their element type. Protocol data,
      * asked once per column.
      */
     int getPgOid();
 
     /**
-     * The value width in bits the relation rules read (F34): whether a small integer converts into a
+     * The value width in bits the relation rules read: whether a small integer converts into a
      * temporal type, and which geohashes are narrower. 0 for a type without a fixed value width.
      */
     int getRelationBits();
@@ -187,7 +187,7 @@ public interface TypeDriver {
     TypeConstant getTypeConstant(int columnType);
 
     /**
-     * How this type's values travel on the result protocols (F41): the byte form and NULL test the
+     * How this type's values travel on the result protocols: the byte form and NULL test the
      * protocol writers key on. Types that write the same bytes share a kind; see {@link WireKind}.
      * Per-row callers read {@link WireKind#of(int)}, which asks this once per tag.
      */

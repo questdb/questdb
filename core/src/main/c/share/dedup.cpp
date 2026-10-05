@@ -35,7 +35,7 @@
 #include "ooo.h"
 
 // Every switch over VarLayout in this file lists each layout, so a new layout stops the build at
-// every var-size comparer choice here (F43). -Wswitch covers the switches without a default,
+// every var-size comparer choice here. -Wswitch covers the switches without a default,
 // -Wswitch-enum the ones with a default.
 #pragma GCC diagnostic error "-Wswitch"
 #pragma GCC diagnostic error "-Wswitch-enum"

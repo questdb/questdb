@@ -74,7 +74,7 @@ import java.util.regex.Pattern;
  * answers it;</li>
  * <li>design-proof mixing cases give the results the R9 note states: the resource's
  * {@code mix|<name>|<sql>|<expected>} lines ({@link #mixingCases()}), which the SQL class runs;</li>
- * <li>the relation paths follow the type's declared relations (F89): a cast, CASE branch,
+ * <li>the relation paths follow the type's declared relations: a cast, CASE branch,
  * ALTER COLUMN TYPE target or dedup key the rules admit runs, and gives what the rules and the
  * declared tier imply ({@link #castRule}, {@link #widened}); the SQL and storage classes state
  * each path's checks;</li>
@@ -175,7 +175,7 @@ public final class TypeConformanceInvariants {
      */
     public static void assertReadsBackAsWritten(TypeConformanceTypes.Entry type, String row, String path, String mode, long[] written, long[] read) {
         if (type.isFloat() && isNaN(type, written) && isNaN(type, read)) {
-            // every NaN is the same float value (PA-13); a path may carry any NaN pattern
+            // every NaN is the same float value; a path may carry any NaN pattern
             return;
         }
         if (!Arrays.equals(written, read)) {
@@ -236,7 +236,7 @@ public final class TypeConformanceInvariants {
     /**
      * Invariant 3: rows other than the NULL row come in the order the declared arithmetic tier
      * implies: signed or unsigned integers, or floats where every NaN is one value above
-     * +Infinity and -0.0 equals 0.0 (PA-13). Without a declared tier the order is not checked;
+     * +Infinity and -0.0 equals 0.0. Without a declared tier the order is not checked;
      * the definition answers the tier from S14b.
      */
     public static void assertOrdered(TypeConformanceTypes.Entry type, String path, String mode, ObjList<String> labels, ObjList<long[]> bits, boolean ascending) {
@@ -327,7 +327,7 @@ public final class TypeConformanceInvariants {
 
     /**
      * Whether two values of a target type are the same value: equal bits, or for a float kind
-     * both NaN (PA-13).
+     * both NaN.
      */
     public static boolean isSameValue(RelationKind kind, int width, long[] a, long[] b) {
         if (Arrays.equals(a, b)) {

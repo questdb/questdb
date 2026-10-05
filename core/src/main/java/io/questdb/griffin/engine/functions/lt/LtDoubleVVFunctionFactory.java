@@ -40,7 +40,7 @@ import io.questdb.std.ObjList;
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
     /**
      * Whether {@code left} orders before {@code right}, for values that are not equal by
-     * {@link EqDoubleFunctionFactory#value}: NaN orders after every other value (PA-13). The
+     * {@link EqDoubleFunctionFactory#value}: NaN orders after every other value. The
      * function keeps today's comparison, which answers a NaN operand without this ordering: the
      * body's NaN test would cost every row.
      */

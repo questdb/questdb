@@ -101,7 +101,7 @@ public final class PGUtils {
             long maxBlobSize,
             int resumePoint
     ) throws PGMessageProcessingException {
-        // the wire kind (F41) reads a table filled from the definitions, so this per-row path asks none
+        // the wire kind reads a table filled from the definitions, so this per-row path asks none
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
             final short tag = ColumnType.tagOf(columnType);

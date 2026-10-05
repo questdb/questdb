@@ -383,7 +383,7 @@ pub fn decode_page(
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 PhysicalType"
+    reason = "not a tag match: parquet2 PhysicalType"
 )]
 fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
@@ -1416,7 +1416,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
@@ -5472,7 +5472,7 @@ mod tests {
     // reference for what the header-less empty-buffer page must decode to.
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
     )]
     fn compliant_zero_value_delta_values(encoding: Encoding) -> Vec<u8> {
         let mut values = Vec::new();
@@ -5653,7 +5653,7 @@ mod tests {
     // stream, not the blocks take(row_hi) entered.
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
     )]
     fn decode_delta_varlen_page_partial(
         column_type: ColumnType,

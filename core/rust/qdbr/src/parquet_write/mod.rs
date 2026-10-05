@@ -1,4 +1,4 @@
-// F43 (E10): a match on `ColumnTypeTag` names every tag or states why it does not, so a new tag
+// F43: a match on `ColumnTypeTag` names every tag or states why it does not, so a new tag
 // stops the build at each site that must decide for it. The lint cannot tell a tag match from any
 // other enum match, so the matches on parquet2's enums carry an `allow` with the reason too.
 #![deny(clippy::wildcard_enum_match_arm)]

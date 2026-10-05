@@ -59,7 +59,7 @@ import org.junit.Test;
 import java.lang.management.ManagementFactory;
 
 /**
- * The column-vector descriptor (S14a, F38): every field for every existing type on frames with
+ * The column-vector descriptor: every field for every existing type on frames with
  * and without a column top, native and Parquet; release on the success, error and reuse paths;
  * no allocation per frame; and concurrent use of one address cache by several workers.
  */
@@ -204,7 +204,7 @@ public class ColumnVectorDescriptorTest extends AbstractCairoTest {
                     bytes = mx.getCurrentThreadAllocatedBytes() - before;
                 }
                 Assert.assertTrue(checksum != 0);
-                // a warmed-up pass over 32 frames allocates nothing (FR-025)
+                // a warmed-up pass over 32 frames allocates nothing
                 Assert.assertEquals(0, bytes);
             }
         });

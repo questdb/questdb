@@ -780,7 +780,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     /**
-     * {@code sql.case_else} for a type registered later, from its declared relations (F89): for
+     * {@code sql.case_else} for a type registered later, from its declared relations: for
      * every kit type rule E pairs it with, {@code CASE WHEN ... THEN v ELSE <NULL of that type>}
      * compiles, takes the common type the rule names, and gives the selected row as {@code v}
      * converted to that type (as written when the common type is the type itself). With the type
@@ -867,7 +867,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
      * {@code sql.case_no_else} for a type registered later: {@code CASE WHEN ... THEN v END} has
      * the type itself, gives the selected row as written, and every other row as the NULL row
      * reads. A type without NULL (NOT_NULL) is excepted from the NULL rows: CASE without ELSE
-     * introduces NULL (F31).
+     * introduces NULL.
      */
     private void checkLaterCaseNoElse(CairoEngine eng, SqlExecutionContext ctx, String mode) throws Exception {
         final String path = "sql.case_no_else";
@@ -903,7 +903,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
     }
 
     /**
-     * Casts of a type registered later, from its declared relations (F89):
+     * Casts of a type registered later, from its declared relations:
      * <ol>
      * <li>a cast to the type itself reads every row back as written;</li>
      * <li>a cast rule W, C or N admits resolves and runs, so a pair the rules admit without a

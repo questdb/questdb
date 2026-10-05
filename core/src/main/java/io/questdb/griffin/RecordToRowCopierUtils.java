@@ -3019,7 +3019,7 @@ public class RecordToRowCopierUtils {
     }
 
     /**
-     * The same-type arm of a column type, keyed on its definition (F34): the accessor family's
+     * The same-type arm of a column type, keyed on its definition: the accessor family's
      * getter and putter, so a type that reads and writes like an existing one takes that type's
      * arm without a row of its own in rule K ({@link RelationRules#copier}). The column's value carries its NULL in
      * its own bits (SENTINEL) or has none (NONE), so the family's pair copies it as is. INTERVAL

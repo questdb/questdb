@@ -145,7 +145,7 @@ import org.jetbrains.annotations.Nullable;
 public final class ArrayTypeDriver implements ColumnTypeDriver {
     // ensure that writeArrayEntry appends correct amount of bytes, for the width
     public static final int ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES;
-    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    // the one declared implicit-cast list: the overload row, best match first
     private static final short[] IMPLICIT_CASTS = {ColumnType.ARRAY};
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     // the names of the array types that have one, by encoded type: the element types below, 1 to

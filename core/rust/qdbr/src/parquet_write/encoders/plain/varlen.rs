@@ -325,7 +325,7 @@ pub fn binary_to_page(
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 pub fn binary_slices_to_page(
     byte_slices: &[Option<&[u8]>],
@@ -526,7 +526,7 @@ pub fn string_to_page(
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 pub fn string_slices_to_page(
     utf16_slices: &[Option<&[u16]>],
@@ -771,7 +771,7 @@ pub fn varchar_to_page(
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 pub fn varchar_slices_to_page(
     utf8_slices: &[Option<&[u8]>],

@@ -29,10 +29,10 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * What storage and record access need to know about a type's physical form, as closed sets its
- * type definition answers (F27, F39). Code that only moves values keys on these sets, never on
- * the tag, so a type that stores like an existing one adds no arm there (FR-011); a new value of
+ * type definition answers. Code that only moves values keys on these sets, never on
+ * the tag, so a type that stores like an existing one adds no arm there; a new value of
  * a set makes javac list every switch over it. None of them says anything about NULL: code that
- * decides NULL reads the column's NULL policy (FR-010, FR-031).
+ * decides NULL reads the column's NULL policy.
  * <p>
  * Three sets: {@link Movement}, how a value moves; {@link Arithmetic}, how it computes, compares
  * and sorts; {@link Accessor}, the getter and putter family records read and write it with. The
@@ -59,7 +59,7 @@ public final class PhysicalDescriptor {
      * The opcode of a column type's accessor family ({@link Accessor#opcode()}), or -1 for a
      * pseudo type and for VARCHAR_SLICE. For the per-row switches that dispatch on the getter: it
      * reads a table filled from the type definitions on first use, so a per-row call asks no
-     * definition (FR-024), as {@link ColumnType#sizeOf(int)} reads the movement tier.
+     * definition, as {@link ColumnType#sizeOf(int)} reads the movement tier.
      */
     public static short accessorOpcodeOf(int columnType) {
         final short tag = ColumnType.tagOf(columnType);
@@ -202,7 +202,7 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * The getter and putter family a type's values are read and written with (F27): the
+     * The getter and putter family a type's values are read and written with: the
      * record getters, the row and sink putters and the map-key putters. Each existing type is its
      * own family; a later type may answer an existing family and then takes that family's arm at
      * every per-row switch that dispatches on the getter. {@link #opcode()} is the tag the family
@@ -255,9 +255,9 @@ public final class PhysicalDescriptor {
     }
 
     /**
-     * The arithmetic tier (PA-8): width, integer or floating-point representation, and
+     * The arithmetic tier: width, integer or floating-point representation, and
      * signedness. Code that computes, compares, sorts or takes a minimum or maximum keys on it,
-     * never on the tag (FR-011). {@link #WIDE} is a 16- or 32-byte value with comparators of its
+     * never on the tag. {@link #WIDE} is a 16- or 32-byte value with comparators of its
      * own; {@link #NONE} has no arithmetic order here (symbol keys, intervals, var-size values).
      */
     public enum Arithmetic {

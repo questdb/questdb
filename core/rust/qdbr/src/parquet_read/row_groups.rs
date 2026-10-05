@@ -155,7 +155,7 @@ impl RowGroupBuffers {
 /// aux entries point directly into the page buffer, so it must persist.
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): parquet2 Encoding; the encodings not named are unsupported here"
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
 )]
 pub(crate) fn decompress_varchar_slice_data<'a>(
     page: &'a SlicedDataPage<'a>,
@@ -613,7 +613,7 @@ pub(super) fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool
 /// to the other. Only DATE and TIMESTAMP column types reach this helper.
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only (F43): only DATE and TIMESTAMP reach this match"
+    reason = "family-only: only DATE and TIMESTAMP reach this match"
 )]
 fn time_unit_pow10(col_type: ColumnType) -> u32 {
     match col_type.tag() {
@@ -709,7 +709,7 @@ fn is_decimal_tag(tag: ColumnTypeTag) -> bool {
 /// out-of-range values to NULL rather than reading a value that does not fit the target precision.
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only (F43): only decimal tags reach this match"
+    reason = "family-only: only decimal tags reach this match"
 )]
 fn convert_decimal_in_place(
     data: &mut AcVec<u8>,
@@ -954,7 +954,7 @@ fn i256_low_i128(words: (i64, u64, u64, u64)) -> i128 {
 #[inline]
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only (F43): only decimal tags reach this match"
+    reason = "family-only: only decimal tags reach this match"
 )]
 fn decimal_null_i128(tag: ColumnTypeTag) -> i128 {
     match tag {
@@ -992,7 +992,7 @@ unsafe fn write_decimal_le(ptr: *mut u8, idx: usize, dst_size: usize, value: i12
 /// DecimalColumnTypeConverter (widen -> rescale -> range-check -> narrow), keeping narrowing lazy.
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only (F43): only decimal tags reach this match"
+    reason = "family-only: only decimal tags reach this match"
 )]
 fn convert_decimal_narrowing(
     data: &mut AcVec<u8>,
@@ -1275,7 +1275,7 @@ fn round_div_i256_pow10(
 /// by 10^scale. Iterates backwards when the target is wider to avoid overwriting unread data.
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only (F43): only decimal tags reach this match"
+    reason = "family-only: only decimal tags reach this match"
 )]
 fn convert_fixed_to_decimal(
     data: &mut AcVec<u8>,
@@ -1499,7 +1499,7 @@ fn is_int_null(val: i64, src_tag: ColumnTypeTag) -> bool {
 #[inline]
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only (F43): only decimal tags reach this match"
+    reason = "family-only: only decimal tags reach this match"
 )]
 fn null_i64_for_decimal(tag: ColumnTypeTag) -> i64 {
     match tag {
@@ -1537,7 +1537,7 @@ fn fixed_tag_size(tag: ColumnTypeTag) -> ParquetResult<usize> {
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only (F43): only decimal tags reach this match"
+    reason = "family-only: only decimal tags reach this match"
 )]
 fn decimal_tag_size(tag: ColumnTypeTag) -> usize {
     match tag {
@@ -2826,7 +2826,7 @@ impl ParquetDecoder {
     #[allow(clippy::too_many_arguments)]
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 PhysicalType"
+        reason = "not a tag match: parquet2 PhysicalType"
     )]
     pub(crate) fn all_values_absent_from_bloom(
         bitset: &[u8],
@@ -3034,7 +3034,7 @@ impl ParquetDecoder {
     #[allow(clippy::too_many_arguments)]
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 PhysicalType"
+        reason = "not a tag match: parquet2 PhysicalType"
     )]
     pub(crate) fn all_values_outside_min_max_with_stats(
         physical_type: &PhysicalType,
@@ -3479,7 +3479,7 @@ impl ParquetDecoder {
     #[allow(clippy::too_many_arguments)]
     #[allow(
         clippy::wildcard_enum_match_arm,
-        reason = "not a tag match (F43): parquet2 PhysicalType"
+        reason = "not a tag match: parquet2 PhysicalType"
     )]
     pub(crate) fn value_outside_range(
         physical_type: &PhysicalType,
@@ -4194,7 +4194,7 @@ fn is_fixed_len_null_be(bytes: &[u8]) -> bool {
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "not a tag match (F43): cmp::Ordering"
+    reason = "not a tag match: cmp::Ordering"
 )]
 fn compare_signed_be(a: &[u8], b: &[u8]) -> cmp::Ordering {
     debug_assert_eq!(a.len(), b.len());

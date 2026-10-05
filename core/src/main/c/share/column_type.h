@@ -82,8 +82,8 @@ enum class ColumnType : int {
 };
 
 /**
- * The var-size layout of a column type's values, for native code that picks a var-size reader
- * (F43, E10). The dedup switches key on this closed set instead of on ColumnType, so a new
+ * The var-size layout of a column type's values, for native code that picks a var-size reader.
+ * The dedup switches key on this closed set instead of on ColumnType, so a new
  * fixed-size tag lists no site there, while a new layout lists every one of them: dedup.cpp
  * builds with -Wswitch-enum as an error.
  */

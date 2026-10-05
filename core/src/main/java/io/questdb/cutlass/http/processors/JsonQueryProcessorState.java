@@ -100,7 +100,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     private final StringSink columnNameSink = new StringSink();
     private final ObjList<String> columnNames = new ObjList<>();
-    // the per-cell writer of each column, chosen at setup from the column's wire kind (F41)
+    // the per-cell writer of each column, chosen at setup from the column's wire kind
     private final IntList columnOpcodes = new IntList();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
@@ -530,7 +530,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * The {@link #doQueryRecord} arm of a column: the column's wire kind (F41) picks it, and the
+     * The {@link #doQueryRecord} arm of a column: the column's wire kind picks it, and the
      * pseudo tags that name a result set column (RECORD, NULL) take their own. UNDEFINED means JSON
      * does not render the column: LONG128 has no JSON rendering, and no other pseudo tag, nor
      * VARCHAR_SLICE, names a result set column.

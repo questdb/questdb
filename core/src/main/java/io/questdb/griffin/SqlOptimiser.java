@@ -775,7 +775,7 @@ public class SqlOptimiser implements Mutable {
     private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
         final int columnType = metadata.getColumnType(0);
         sink.clear();
-        // the value as a SQL literal, by the column's wire kind (F41): its text form and its NULL test
+        // the value as a SQL literal, by the column's wire kind: its text form and its NULL test
         final WireKind kind = WireKind.of(columnType);
         if (kind == null) {
             final short tag = ColumnType.tagOf(columnType);
@@ -7810,7 +7810,7 @@ public class SqlOptimiser implements Mutable {
                                     .put(columnCount);
                         }
                         final int columnType = inListMetadata.getColumnMetadata(0).getColumnType();
-                        // whether the SQL literal of a value is quoted, by the column's wire kind (F41)
+                        // whether the SQL literal of a value is quoted, by the column's wire kind
                         final WireKind kind = WireKind.of(columnType);
                         final boolean quote = kind != null && switch (kind) {
                             case SYMBOL, STRING, VARCHAR, TIMESTAMP, DATE, CHAR, UUID, IPV4, ARRAY, LONG128,

@@ -106,7 +106,7 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
 
     /**
      * How column {@code columnIndex} represents NULL. Code that decides NULL for a column reads
-     * this, never the type's own answer, and switches on it exhaustively at setup (FR-010). The
+     * this, never the type's own answer, and switches on it exhaustively at setup. The
      * answer derives from the column type's definition; a per-column NULL marker, when one
      * exists, changes only this method. Not defined for a deleted column (negative type).
      *

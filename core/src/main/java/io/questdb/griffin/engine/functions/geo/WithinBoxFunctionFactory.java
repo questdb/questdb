@@ -60,7 +60,7 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
 
     /**
      * Whether the point lies in the box, inclusive, by the total order of {@link Double#compare}:
-     * every NaN equals every NaN and orders after every other value (PA-13), an infinity is a
+     * every NaN equals every NaN and orders after every other value, an infinity is a
      * value, and -0.0 orders before 0.0, as the sign test of {@link #isWithinBox} has it. On finite
      * values it agrees with {@link #isWithinBox}. The functions keep that branchless test and do not
      * call the body: it answers NaN and infinite operands as outside the box within the same sign

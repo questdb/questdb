@@ -104,7 +104,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      */
     /**
      * The {@link #writeColumnValue} / {@link #writeComputedValue} arm of a column, by its accessor
-     * family (F39): an arm copies a value into the buffer the Parquet encoder reads for the family's
+     * family: an arm copies a value into the buffer the Parquet encoder reads for the family's
      * layout. Every family is named, so adding one makes javac stop here.
      */
     private static int exportOpcode(int columnType) {

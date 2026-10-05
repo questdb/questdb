@@ -943,7 +943,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         private static int getRequiredAlignmentForSimd(int columnType) {
-            // by the accessor family (F39): the Rust encoder picks its SIMD path by the value layout
+            // by the accessor family: the Rust encoder picks its SIMD path by the value layout
             final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
             if (accessor == null) {
                 // the pseudo tags and VARCHAR_SLICE take no SIMD path

@@ -171,7 +171,7 @@ public interface ParquetDecoder {
     /**
      * Returns how the parquet column at the given index represents NULL, for code that
      * decides NULL for a stored column whose type may differ from the table's (a lazy
-     * ALTER COLUMN TYPE). Derived from the stored type's definition (FR-010).
+     * ALTER COLUMN TYPE). Derived from the stored type's definition.
      *
      * @param columnIndex zero-based column index within the parquet file
      */

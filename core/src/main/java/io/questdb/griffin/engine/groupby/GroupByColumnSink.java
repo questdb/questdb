@@ -187,7 +187,7 @@ public class GroupByColumnSink implements Mutable {
                  ColumnType.ARRAY, ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
                  ColumnType.ARRAY_STRING, ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE,
                  ColumnType.NULL:
-                // no arm: nothing is appended (PB5)
+                // no arm: nothing is appended
                 break;
             default:
                 throw noArm(argType);
@@ -269,7 +269,7 @@ public class GroupByColumnSink implements Mutable {
                  ColumnType.ARRAY, ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
                  ColumnType.ARRAY_STRING, ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE,
                  ColumnType.NULL:
-                // no arm: nothing is written (PB5)
+                // no arm: nothing is written
                 break;
             default:
                 throw noArm(argType);

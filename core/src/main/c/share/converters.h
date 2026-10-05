@@ -57,7 +57,7 @@ enum class ConversionError {
 /**
  * Whether the fixed-to-fixed conversion table converts values of type t: exactly the types
  * with an EnumTypeMap specialisation below. Every tag has an arm, so a new tag stops the build
- * here and has to be classified (F43, E10).
+ * here and has to be classified.
  */
 constexpr bool is_fixed_convertible(ColumnType t) {
     switch (t) {
