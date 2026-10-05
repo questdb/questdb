@@ -182,6 +182,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             configure(sqlExecutionContext, mode);
             final BindVariableService service = sqlExecutionContext.getBindVariableService();
             final StringSink section = new StringSink();
+            // the type the variable holds, as the type driver defines it (a SYMBOL variable holds a STRING)
+            int heldType = type.columnType;
             try (DirectArray array = new DirectArray(configuration)) {
                 array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
                 array.setDimLen(0, 1);
@@ -191,7 +193,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                     service.clear();
                     section.put(setter).put('\t');
                     try {
-                        ColumnType.getTypeDriver(type.columnType).defineBindVariable(service, 0, type.columnType, 0);
+                        heldType = ColumnType.getTypeDriver(type.columnType).defineBindVariable(service, 0, type.columnType, 0);
                     } catch (Throwable e) {
                         section.put("define error: ").put(oneLineOf(e)).put('\n');
                         continue;
@@ -218,11 +220,14 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 assertSection("bind_value", mode, section);
                 return;
             }
-            // a later type: each setter is refused with an error naming the type, or the value reads back
+            // a later type: each setter is refused with an error naming the type, or the type its
+            // variable holds, or the value reads back; a refused definition names the type
             final String name = ColumnType.nameOf(type.columnType);
+            final Pattern heldName = Pattern.compile("\\b" + Pattern.quote(ColumnType.nameOf(heldType)) + "\\b");
             for (String line : section.toString().split("\n")) {
                 final String outcome = line.substring(line.indexOf('\t') + 1);
-                if ((outcome.startsWith("error: ") || outcome.startsWith("define error: ")) && !outcome.contains(name)) {
+                final boolean isNamed = outcome.contains(name) || (outcome.startsWith("error: ") && heldName.matcher(outcome).find());
+                if ((outcome.startsWith("error: ") || outcome.startsWith("define error: ")) && !isNamed) {
                     throw new AssertionError(TypeConformanceInvariants.context(type, line.substring(0, line.indexOf('\t')), path, mode)
                             + ": a refused bind value must name the type, but: " + outcome);
                 }
