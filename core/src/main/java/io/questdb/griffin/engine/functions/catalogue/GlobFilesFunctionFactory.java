@@ -573,10 +573,10 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         if (pattern.length() <= rootLen) {
             return true;
         }
-        final boolean startsWithRoot = Chars.startsWith(pattern, copyInputRoot)
+        final boolean hasRootPrefix = Chars.startsWith(pattern, copyInputRoot)
                 // Path is not case-sensitive on Windows and OSX
                 || ((Os.isWindows() || Os.isOSX()) && Chars.startsWithIgnoreCase(pattern, copyInputRoot));
-        if (!startsWithRoot) {
+        if (!hasRootPrefix) {
             return true;
         }
         final char separatorAfterRoot = pattern.charAt(rootLen);
