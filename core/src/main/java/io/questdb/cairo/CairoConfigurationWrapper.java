@@ -1225,6 +1225,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJoinSymbolTranslationCacheCapacity() {
+        return getDelegate().getSqlJoinSymbolTranslationCacheCapacity();
+    }
+
+    @Override
     public long getSqlLatestByRowCount() {
         return getDelegate().getSqlLatestByRowCount();
     }
@@ -1672,6 +1677,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return getDelegate().getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public boolean isAllPartitionOperationsAllowed() {
+        return getDelegate().isAllPartitionOperationsAllowed();
     }
 
     @Override
