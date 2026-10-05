@@ -32,9 +32,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolInBitSet;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.std.MemoryTag;
@@ -1572,6 +1574,73 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         options = serialize("anint IN (1, 5_000_000_000)", false, false, true);
         assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i64 1L)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.WIDE_LANE);
+    }
+
+    @Test
+    public void testInSymbolBitSet() throws Exception {
+        // Eleven elements, past the default IN list threshold: the list becomes ONE membership
+        // test against a bitset in a VAR slot, the key pushed last as an EQ pairing pushes it, and
+        // the I4 / I4 pairing keeps the filter on the eight-lane loop.
+        final String list = "('ABC', 'DEF', 'XYZ', NULL, 'a', 'b', 'c', 'd', 'e', 'f', 'g')";
+        int options = serialize("asymbol IN " + list, false, false, true);
+        assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(ret)");
+        assertOptionsHint("asymbol IN <11>", options, OptionsHint.SINGLE_SIZE);
+        Assert.assertEquals(1, bindVarFunctions.size());
+        Assert.assertTrue(bindVarFunctions.get(0) instanceof CompiledFilterSymbolInBitSet);
+
+        options = serialize("asymbol NOT IN " + list, false, false, true);
+        assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(!)(ret)");
+        assertOptionsHint("asymbol NOT IN <11>", options, OptionsHint.SINGLE_SIZE);
+
+        // A co-conjunct of the same width keeps the eight-lane loop and a plain AND.
+        options = serialize("asymbol IN " + list + " AND anint > 5", false, false, true);
+        assertIR("(i32 5L)(i32 anint)(>)(i32 :0)(i32 asymbol)(sym_in 0)(&&)(ret)");
+        assertOptionsHint("asymbol IN <11> AND anint > 5", options, OptionsHint.SINGLE_SIZE);
+
+        // A mixed-width chain goes scalar with the short circuit; the set is an ordinary predicate
+        // the chain closes with its own AND_SC, unlike the equality chain, which emits one itself.
+        options = serialize("asymbol IN " + list + " AND along > 5", false, false, true);
+        assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(&&_sc)(i64 5L)(i64 along)(>)(ret)");
+        assertOptionsHint("asymbol IN <11> AND along > 5", options, OptionsHint.MIXED_SIZES);
+
+        // Bind variables join the set rather than taking slots of their own.
+        bindVariableService.clear();
+        bindVariableService.setStr("s0", "ABC");
+        bindVariableService.setStr(0, "DEF");
+        serialize("asymbol IN (:s0, $1, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i')", false, false, true);
+        assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(ret)");
+        Assert.assertEquals(1, bindVarFunctions.size());
+
+        // The equality chain keeps every list it accepts: nine elements, as its threshold check
+        // counts the key; ten take the set.
+        serialize("asymbol IN ('ABC', 'DEF', 'a', 'b', 'c', 'd', 'e', 'f', 'g')", false, false, true);
+        Assert.assertEquals(0, countOpcodes(SYM_IN_SET));
+        Assert.assertEquals(9, countOpcodes(EQ));
+        serialize("asymbol IN ('ABC', 'DEF', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h')", false, false, true);
+        assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(ret)");
+    }
+
+    @Test
+    public void testInSymbolBitSetDeclines() throws Exception {
+        final String list = "('ABC', 'DEF', 'XYZ', 'a', 'b', 'c', 'd', 'e', 'f', 'g', ";
+        // An element the bitset path does not reproduce leaves the list to the equality chain,
+        // which declines the filter at the threshold as it always has.
+        assertInThresholdDeclined("asymbol IN " + list + "1)");
+        assertInThresholdDeclined("asymbol IN " + list + "anothersymbol)");
+        assertInThresholdDeclined("asymbol IN " + list + "'h' || 'i')");
+        // Neither does a non-SYMBOL key.
+        assertInThresholdDeclined("astring IN " + list + "'h')");
+
+        setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, "false");
+        assertInThresholdDeclined("asymbol IN " + list + "'h')");
+        setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, "true");
+
+        // A symbol table larger than the bitset cap. asymbol holds two symbols.
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 1);
+        assertInThresholdDeclined("asymbol IN " + list + "'h')");
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 2);
+        serialize("asymbol IN " + list + "'h')");
+        assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(ret)");
     }
 
     @Test
@@ -4505,6 +4574,25 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
     }
 
+    private void assertInThresholdDeclined(CharSequence seq) {
+        try {
+            serialize(seq);
+            Assert.fail("expected the IN list threshold to decline: " + seq);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "exceeded JIT IN list threshold");
+        }
+    }
+
+    private int countOpcodes(int opcode) {
+        int count = 0;
+        for (long offset = 0, n = irMemory.getAppendOffset(); offset < n; offset += IR_INSTRUCTION_SIZE) {
+            if (irMemory.getInt(offset) == opcode) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private void serialize(CharSequence seq) throws SqlException {
         serialize(seq, false, false, true);
     }
@@ -4636,7 +4724,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             // - OR_SC default label is 1 (store_row)
             // - BEGIN_SC/END_SC always show label
             boolean showLabel = switch (operator) {
-                case BEGIN_SC, END_SC -> true;
+                case BEGIN_SC, END_SC, SYM_IN_SET -> true;
                 case AND_SC -> payload != 0;
                 case OR_SC -> payload != 1;
                 default -> false;
@@ -4670,6 +4758,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 case OR_SC -> "||_sc";
                 case END_SC -> "end_sc";
                 case SX_I64 -> "sx_i64";
+                case SYM_IN_SET -> "sym_in";
                 default -> "unknown";
             };
         }

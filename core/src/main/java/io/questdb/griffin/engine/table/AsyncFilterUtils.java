@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolInBitSet;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.ObjList;
@@ -157,6 +158,13 @@ public class AsyncFilterUtils {
         // the JIT-compiled filter expects (see read_vars_mem in jit/*.h).
         // Smaller types occupy the first 8 bytes; the second 8 bytes are
         // padding.
+        if (function instanceof CompiledFilterSymbolInBitSet bitSet) {
+            // A symbol IN list's membership bitset: its address, then the index of its last bit
+            // (see read_sym_in_set in jit/x86.h). Function.init() resolved it for this execution.
+            bindVarMemory.putLong(bitSet.getAddress());
+            bindVarMemory.putLong(bitSet.getMaxBitIndex());
+            return;
+        }
         final int columnType = function.getType();
         final int columnTypeTag = ColumnType.tagOf(columnType);
         switch (columnTypeTag) {

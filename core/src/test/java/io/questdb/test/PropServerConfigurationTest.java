@@ -355,6 +355,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitSymbolInBitsetEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlSymbolInBitsetEnabled());
+        Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSymbolInBitsetMaxKeys());
 
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getRndFunctionMemoryPageSize());
         Assert.assertEquals(128, configuration.getCairoConfiguration().getRndFunctionMemoryMaxPages());
@@ -3426,6 +3429,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(1, configuration.getSqlJitBindVarsMemoryMaxPages());
         Assert.assertTrue(configuration.isSqlJitDebugEnabled());
+        Assert.assertFalse(configuration.isSqlJitSymbolInBitsetEnabled());
+        Assert.assertFalse(configuration.isSqlSymbolInBitsetEnabled());
+        Assert.assertEquals(4096, configuration.getSqlSymbolInBitsetMaxKeys());
 
         Assert.assertEquals(16384, configuration.getRndFunctionMemoryPageSize());
         Assert.assertEquals(32, configuration.getRndFunctionMemoryMaxPages());

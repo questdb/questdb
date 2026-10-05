@@ -1128,6 +1128,45 @@ namespace questdb::x86 {
         }
     }
 
+    // Symbol IN-list membership for one row, see opcodes::Sym_In_Set. Leaves 0 / 1 in a fresh
+    // register and never writes `key`, which may be a cached column read.
+    inline jit_value_t sym_in_set(Compiler &c, const Gp &key, const Gp &vars_ptr, int32_t var_idx) {
+        Gp idx = c.new_gp32("sym_bit_idx");
+        Gp sign = c.new_gp32("sym_sign");
+        c.mov(idx, key);
+        c.add(idx, 1);
+        c.mov(sign, key);
+        c.sar(sign, 31);
+        c.not_(sign);
+        c.and_(idx, sign); // idx = (key + 1) & ~(key >> 31)
+
+        // Zero both registers ahead of the comparison: XOR writes the flags cmova and setbe read.
+        Gp in_range = c.new_gp32("sym_in_range");
+        Gp zero = c.new_gp32("sym_zero");
+        c.xor_(in_range, in_range);
+        c.xor_(zero, zero);
+        c.cmp(idx, dword_ptr(vars_ptr, 16 * var_idx + 8));
+        c.setbe(in_range.r8_lo()); // idx <= last bit index, unsigned
+        // An out-of-range index reads word 0 instead - the bitset always has one - and the
+        // in_range AND below discards whatever that bit holds.
+        c.cmova(idx, zero);
+
+        Gp words = c.new_gp64("sym_words");
+        c.mov(words, qword_ptr(vars_ptr, 16 * var_idx));
+        Gp word_idx = c.new_gp64("sym_word_idx");
+        c.mov(word_idx.r32(), idx); // zero-extends into the 64-bit register
+        c.shr(word_idx, 5);
+        Gp word = c.new_gp32("sym_word");
+        c.mov(word, dword_ptr(words, word_idx, 2));
+
+        Gp member = c.new_gp32("sym_member");
+        c.xor_(member, member);
+        c.bt(word, idx); // the register form takes the bit offset modulo 32
+        c.setc(member.r8_lo());
+        c.and_(member, in_range);
+        return {member, data_type_t::i32, data_kind_t::kMemory};
+    }
+
     void
     emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values,
               bool null_check,
@@ -1264,6 +1303,20 @@ namespace questdb::x86 {
                         c.bind(labels.get(label_idx));
                     }
                     value_cache.truncate(sc_value_cache_snapshot);
+                    break;
+                }
+                case opcodes::Sym_In_Set: {
+                    auto key = values.pop();
+                    // The Var placeholder: the bitset is addressed through this instruction's payload.
+                    values.pop();
+                    auto var_idx = static_cast<int32_t>(instr.ipayload.lo);
+                    if (key.dtype() != data_type_t::i32) {
+                        decline_filter(c, "symbol IN set over a non-i32 key in the scalar path");
+                        values.append(arena, {c.new_gp32("declined_mask"), data_type_t::i32, data_kind_t::kConst});
+                        break;
+                    }
+                    auto loaded = load_register(c, key);
+                    values.append(arena, sym_in_set(c, loaded.gp().r32(), vars_ptr, var_idx));
                     break;
                 }
                 default: {

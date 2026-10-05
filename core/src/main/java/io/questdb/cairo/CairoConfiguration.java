@@ -965,6 +965,15 @@ public interface CairoConfiguration {
 
     int getSqlJitMaxInListSizeThreshold();
 
+    /**
+     * The largest symbol key range a {@code symbol IN (...)} membership bitset may cover. A bitset
+     * holds one bit per symbol key, plus one for NULL, so this bounds its memory at
+     * {@code maxKeys / 8} bytes. The JIT filter checks it against the column's symbol count when
+     * the filter is compiled and keeps the equality chain above it; the Java filter checks it
+     * against the largest key the list resolves to and keeps the hash set above it.
+     */
+    int getSqlSymbolInBitsetMaxKeys();
+
     int getSqlJitMode();
 
     int getSqlJoinContextPoolCapacity();
@@ -1432,6 +1441,19 @@ public interface CairoConfiguration {
     boolean isSqlDistinctGroupByRewriteEnabled();
 
     boolean isSqlJitDebugEnabled();
+
+    /**
+     * Whether the JIT filter compiler evaluates a {@code symbol IN (...)} list longer than
+     * {@link #getSqlJitMaxInListSizeThreshold()} as a bitset over the symbol keys rather than
+     * declining the whole filter to the Java one.
+     */
+    boolean isSqlJitSymbolInBitsetEnabled();
+
+    /**
+     * Whether the Java {@code symbol IN (...)} function tests membership with a bitset over the
+     * symbol keys rather than with a hash set probe.
+     */
+    boolean isSqlSymbolInBitsetEnabled();
 
     boolean isSqlOrderBySortEnabled();
 

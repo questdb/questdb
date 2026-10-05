@@ -1230,6 +1230,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSymbolInBitsetMaxKeys() {
+        return 16 * 1024 * 1024;
+    }
+
+    @Override
     public int getSqlJitMode() {
         return SqlJitMode.JIT_MODE_ENABLED;
     }
@@ -1877,6 +1882,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
+    }
+
+    @Override
+    public boolean isSqlJitSymbolInBitsetEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlSymbolInBitsetEnabled() {
+        return true;
     }
 
     @Override
