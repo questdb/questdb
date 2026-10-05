@@ -26,11 +26,7 @@ package io.questdb.log;
 
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.Clock;
-import org.jetbrains.annotations.NotNull;
-
-import static io.questdb.ParanoiaState.*;
 
 abstract class AbstractLogRecord implements Log {
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
@@ -43,11 +39,7 @@ abstract class AbstractLogRecord implements Log {
     protected final Sequence errorSeq;
     protected final RingQueue<LogRecordUtf8Sink> infoRing;
     protected final Sequence infoSeq;
-    // One AsyncLogRecord per carrier per Logger. A LOG chain pays exactly one
-    // CarrierLocal.get() (one FFI downcall via CarrierIdentity.current()) at the
-    // top of the chain via prepareLogRecord; subsequent $(...) and $() calls
-    // are direct field reads on the returned AsyncLogRecord.
-    protected final CarrierLocal<AsyncLogRecord> tl;
+    private final Clock clock;
     private final CharSequence name;
 
     AbstractLogRecord(
@@ -64,6 +56,7 @@ abstract class AbstractLogRecord implements Log {
             RingQueue<LogRecordUtf8Sink> advisoryRing,
             Sequence advisorySeq
     ) {
+        this.clock = clock;
         this.name = name;
         this.debugRing = debugRing;
         this.debugSeq = debugSeq;
@@ -75,10 +68,6 @@ abstract class AbstractLogRecord implements Log {
         this.criticalSeq = criticalSeq;
         this.advisoryRing = advisoryRing;
         this.advisorySeq = advisorySeq;
-        // The supplier captures clock and name so the per-carrier AsyncLogRecord
-        // can format timestamps and emit the logger name without a back-reference
-        // to this AbstractLogRecord.
-        this.tl = CarrierLocal.withInitial(() -> new AsyncLogRecord(clock, name));
     }
 
     public LogRecord advisory() {
@@ -146,60 +135,22 @@ abstract class AbstractLogRecord implements Log {
         return rec.ts().$(level).$(name);
     }
 
-    protected LogRecord nextWaiting(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level) {
+    /**
+     * Starts a chain on the carrier's shared {@link AsyncLogRecord}. A chain pays
+     * exactly one CarrierLocal lookup (one FFI downcall via CarrierIdentity.current());
+     * subsequent $(...) and $() calls are direct field reads on the returned record.
+     * The chain claims its ring slot only in $(): a waiting chain blocks there until
+     * a slot frees up, a non-waiting chain drops its message when the ring is full.
+     */
+    protected LogRecord begin(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, boolean isWaiting) {
         if (seq == null) {
             return NullLogRecord.INSTANCE;
         }
-        return prepareLogRecord(seq, ring, level, seq.nextBully());
+        return AsyncLogRecord.forCarrier(ring).begin(clock, seq, ring, level, isWaiting);
     }
 
-    @NotNull
-    protected LogRecord prepareLogRecord(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level, long cursor) {
-        AsyncLogRecord rec = tl.get();
-        // It's important to detect abandoned-record state BEFORE assigning the
-        // new cursor/seq/ring/sink: the recovery path needs the previous chain's
-        // sink and cursor to write the ABANDONED marker and release the stuck slot.
-        final LogError logError;
-        try {
-            logError = rec.detectAbandonedLogRecord();
-        } catch (Throwable th) {
-            rec.isLogRecordInProgress = false;
-            // next()/nextBully() reserved this cursor before recovery. Publish an
-            // empty record so consumers can advance past the abandoned attempt.
-            final LogRecordUtf8Sink sink = ring.get(cursor);
-            sink.setLevel(level);
-            sink.clear();
-            seq.done(cursor);
-            throw th;
-        }
-        rec.cursor = cursor;
-        rec.seq = seq;
-        rec.ring = ring;
-        LogRecordUtf8Sink sink = ring.get(cursor);
-        rec.sink = sink;
-        sink.setLevel(level);
-        sink.clear();
-        if (logError == null) {
-            return rec;
-        }
-        try {
-            logError.printStackTrace(System.out);
-        } catch (Throwable th) {
-            // The producer reserved this cursor before reporting the abandoned
-            // record. Publish the empty slot so consumers can keep advancing.
-            rec.isLogRecordInProgress = false;
-            seq.done(cursor);
-            throw th;
-        }
-        if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
-            seq.done(cursor);
-            throw logError;
-        }
-        // detectAbandonedLogRecord() released the previous slot and cleared this
-        // flag. Production continues with the newly reserved record, so track it
-        // just like the clean-record branch does.
-        rec.isLogRecordInProgress = true;
-        return rec;
+    protected LogRecord nextWaiting(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level) {
+        return begin(seq, ring, level, true);
     }
 
     protected LogRecord xAdvisoryW() {
