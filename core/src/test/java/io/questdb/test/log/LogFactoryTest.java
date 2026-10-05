@@ -86,6 +86,8 @@ import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -399,6 +401,14 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testFailingLogWriterDoesNotWedgeLoggingWorker() throws Exception {
+        // The logging worker reports the failures of its own writers on stderr. Through a logger it
+        // would wait for a free slot in a queue that only it drains, and stop running its writers.
+        final String output = runFirstLogFactoryUse("failing-writer");
+        TestUtils.assertContains(output, "simulated log writer failure");
+    }
+
+    @Test
     public void testFileWriterExpandsPidToken() throws Exception {
         final File dir = temp.newFolder();
         final String template = new File(dir, "pid-token-%p.log").getAbsolutePath();
@@ -424,6 +434,15 @@ public class LogFactoryTest {
             Assert.assertFalse(new File(dir, "pid-token-%p.log").exists());
             Assert.assertTrue(java.nio.file.Files.readString(expanded.toPath()).contains("pid token line"));
         }
+    }
+
+    @Test
+    public void testFirstLogFactoryUseBuildsOneFactory() throws Exception {
+        // The first getLog() of a process constructs the factory, which runs the static initializer
+        // of WorkerPool, which calls getLog() again. A second factory would read the configuration
+        // again and open every log file a second time, which Windows refuses for an appended file.
+        final String output = runFirstLogFactoryUse("rolling-writer");
+        Assert.assertEquals(output, 1, countOccurrences(output, "Reading log configuration from"));
     }
 
     @Test
@@ -1220,6 +1239,21 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testRollingFileWriterBindsToLocationHeldByAnotherWriter() throws Exception {
+        // POSIX lets both writers append to one file. Windows refuses the second append handle, so
+        // the second writer rolls the file aside. Either way both records reach the disk.
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        writeThroughTwoRollingFileWriters(TestFilesFacadeImpl.INSTANCE, base + "mylog-${date:yyyy-MM-dd}.log");
+
+        final File activeLogFile = new File(base + "mylog-2015-05-03.log");
+        final File rolledLogFile = new File(activeLogFile + ".1");
+        final String content = TestUtils.readStringFromFile(activeLogFile)
+                + (rolledLogFile.exists() ? TestUtils.readStringFromFile(rolledLogFile) : "");
+        TestUtils.assertContains(content, "first");
+        TestUtils.assertContains(content, "second");
+    }
+
+    @Test
     public void testRollingFileWriterByDay() {
         testRollOnDate("mylog-${date:yyyy-MM-dd}.log", 24 * 60000, "day", "mylog-2015-05");
     }
@@ -1531,6 +1565,28 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testRollingFileWriterReportsOpenFailureWhenRollAsideFails() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+        ff.isOpenAppendFailing = true;
+
+        final LogError error = Assert.assertThrows(
+                LogError.class,
+                () -> withRollingFileWriter(
+                        ff,
+                        ticks::get,
+                        base + "mylog-${date:yyyy-MM-dd}.log",
+                        writer -> {
+                        },
+                        (writer, queue, pubSeq) -> Assert.fail("the writer bound without an open file")
+                )
+        );
+        TestUtils.assertContains(error.getMessage(), "Cannot open file for append: " + base + "mylog-2015-05-03.log");
+        Assert.assertFalse(new File(base + "mylog-2015-05-03.log.1").exists());
+    }
+
+    @Test
     public void testRollingFileWriterRetriesRollAfterExpiredLogRemovalFails() throws Exception {
         final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
         final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
@@ -1695,6 +1751,17 @@ public class LogFactoryTest {
         Assert.assertEquals("secondthird", TestUtils.readStringFromFile(new File(base + "mylog-2015050312.log")));
         Assert.assertFalse(new File(base + "mylog-2015050310.log.1").exists());
         Assert.assertFalse(new File(base + "mylog-2015050312.log.1").exists());
+    }
+
+    @Test
+    public void testRollingFileWriterRollsAsideFileHeldByAnotherWriter() throws Exception {
+        // ShareModeFilesFacade refuses a second append handle the way Windows does, on every OS
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        writeThroughTwoRollingFileWriters(new ShareModeFilesFacade(), base + "mylog-${date:yyyy-MM-dd}.log");
+
+        // the handle of the first writer followed its file to the rolled name
+        Assert.assertEquals("first", TestUtils.readStringFromFile(new File(base + "mylog-2015-05-03.log.1")));
+        Assert.assertEquals("second", TestUtils.readStringFromFile(new File(base + "mylog-2015-05-03.log")));
     }
 
     @Test
@@ -2203,6 +2270,14 @@ public class LogFactoryTest {
         }
     }
 
+    private static int countOccurrences(String text, String token) {
+        int count = 0;
+        for (int i = text.indexOf(token); i > -1; i = text.indexOf(token, i + token.length())) {
+            count++;
+        }
+        return count;
+    }
+
     private static Log getLogger() {
         try {
             final Field field = QueryProgress.class.getDeclaredField("LOG");
@@ -2286,6 +2361,50 @@ public class LogFactoryTest {
         sink.setLevel(LogLevel.INFO);
         sink.put(message);
         pubSeq.done(cursor);
+    }
+
+    // Runs a FirstLogFactoryUseMain scenario in a fresh JVM, asserts that it exits with 0 and
+    // returns its combined stdout and stderr.
+    private String runFirstLogFactoryUse(String scenario) throws Exception {
+        File javaExecutable = new File(new File(System.getProperty("java.home"), "bin"), "java");
+        if (!javaExecutable.exists()) {
+            javaExecutable = new File(javaExecutable.getPath() + ".exe");
+        }
+        final String classPath = Paths.get(
+                FirstLogFactoryUseMain.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+        ) + File.pathSeparator + Paths.get(
+                LogFactory.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+        );
+        final File root = temp.newFolder(scenario);
+        final File outputFile = temp.newFile(scenario + ".out");
+        final Process process = new ProcessBuilder(
+                javaExecutable.getAbsolutePath(),
+                "--enable-native-access=ALL-UNNAMED",
+                "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED",
+                "-cp",
+                classPath,
+                FirstLogFactoryUseMain.class.getName(),
+                scenario,
+                root.getAbsolutePath()
+        ).redirectErrorStream(true).redirectOutput(outputFile).start();
+        try {
+            process.getOutputStream().close();
+            if (!process.waitFor(60, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                process.waitFor();
+                Assert.fail(
+                        scenario + " process timed out:\n"
+                                + java.nio.file.Files.readString(outputFile.toPath(), StandardCharsets.UTF_8)
+                );
+            }
+            final String output = java.nio.file.Files.readString(outputFile.toPath(), StandardCharsets.UTF_8);
+            Assert.assertEquals(output, 0, process.exitValue());
+            return output;
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly().onExit().join();
+            }
+        }
     }
 
     private void testAutoDelete(String sizeLimit, String lifeDuration, String rollSize) throws Exception {
@@ -2552,6 +2671,42 @@ public class LogFactoryTest {
         });
     }
 
+    // Binds two writers to one location, the first one first, writes one record through each and
+    // closes both, which flushes their buffers.
+    private void writeThroughTwoRollingFileWriters(FilesFacade ff, String location) throws Exception {
+        final long ticks = MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z");
+        // resolve the global factory first, so its lazy initialization does not count as a leak
+        final LogFactory factory = LogFactory.getInstance();
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    RingQueue<LogRecordUtf8Sink> firstQueue = new RingQueue<>(LogRecordUtf8Sink::new, 1024, 2, MemoryTag.NATIVE_DEFAULT);
+                    RingQueue<LogRecordUtf8Sink> secondQueue = new RingQueue<>(LogRecordUtf8Sink::new, 1024, 2, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                final SPSequence firstPubSeq = new SPSequence(firstQueue.getCycle());
+                final SCSequence firstSubSeq = new SCSequence();
+                firstPubSeq.then(firstSubSeq).then(firstPubSeq);
+                final SPSequence secondPubSeq = new SPSequence(secondQueue.getCycle());
+                final SCSequence secondSubSeq = new SCSequence();
+                secondPubSeq.then(secondSubSeq).then(secondPubSeq);
+
+                try (
+                        LogRollingFileWriter first = new LogRollingFileWriter(ff, () -> ticks, firstQueue, firstSubSeq, LogLevel.INFO);
+                        LogRollingFileWriter second = new LogRollingFileWriter(ff, () -> ticks, secondQueue, secondSubSeq, LogLevel.INFO)
+                ) {
+                    first.setLocation(location);
+                    first.bindProperties(factory);
+                    second.setLocation(location);
+                    second.bindProperties(factory);
+
+                    publishInfoRecord(firstQueue, firstPubSeq, "first");
+                    Assert.assertTrue(first.runSerially());
+                    publishInfoRecord(secondQueue, secondPubSeq, "second");
+                    Assert.assertTrue(second.runSerially());
+                }
+            }
+        });
+    }
+
     @FunctionalInterface
     private interface LogOperation {
         void run(LogRecord record);
@@ -2608,6 +2763,52 @@ public class LogFactoryTest {
         @Override
         public int rename(LPSZ from, LPSZ to) {
             return isRenameFailing ? Files.FILES_RENAME_ERR_OTHER : super.rename(from, to);
+        }
+    }
+
+    // Emulates on every OS the share mode that Files.openAppend() requests on Windows: append access,
+    // shared for read and delete only. Another append open of a file that such a handle holds fails
+    // with ERROR_SHARING_VIOLATION, and renaming the file takes the open handle along.
+    private static class ShareModeFilesFacade extends TestFilesFacadeImpl {
+        private static final int ERROR_SHARING_VIOLATION = 32;
+        private final Map<Long, String> appendHandlePaths = new HashMap<>();
+        private int errno;
+
+        @Override
+        public boolean close(long fd) {
+            appendHandlePaths.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public int errno() {
+            return errno != 0 ? errno : super.errno();
+        }
+
+        @Override
+        public long openAppend(LPSZ name) {
+            final String path = Utf8s.stringFromUtf8Bytes(name);
+            if (appendHandlePaths.containsValue(path)) {
+                errno = ERROR_SHARING_VIOLATION;
+                return -1;
+            }
+            errno = 0;
+            final long fd = super.openAppend(name);
+            if (fd != -1) {
+                appendHandlePaths.put(fd, path);
+            }
+            return fd;
+        }
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            final int result = super.rename(from, to);
+            if (result == Files.FILES_RENAME_OK) {
+                final String fromPath = Utf8s.stringFromUtf8Bytes(from);
+                final String toPath = Utf8s.stringFromUtf8Bytes(to);
+                appendHandlePaths.replaceAll((fd, path) -> path.equals(fromPath) ? toPath : path);
+            }
+            return result;
         }
     }
 

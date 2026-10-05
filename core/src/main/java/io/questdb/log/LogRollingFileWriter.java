@@ -364,7 +364,16 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     private void openFile() {
         buildFilePath(path);
-        openFilePath();
+        fd = ff.openAppend(path.$());
+        if (fd != -1) {
+            currentSize = ff.length(fd);
+            return;
+        }
+        // Windows refuses to append to a file that another handle appends to, for example a writer
+        // of a process that is still exiting, and POSIX refuses a file without write permission.
+        // Roll such a file aside and start a new one, as every startup did before this writer
+        // appended to the existing file.
+        openUniqueFile();
     }
 
     private void openFilePath() {
