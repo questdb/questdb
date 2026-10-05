@@ -214,6 +214,29 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCtasCastToCharWithoutCopierArmFails() throws Exception {
+        // the copiers have no arm from these types into CHAR (bug y), so the cast clause refuses
+        // them at its position, before the table exists
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src AS (
+                        SELECT 1::BYTE b, 2::SHORT s, 3 i, 4L l, 5::DATE d, 6::TIMESTAMP t, 7::TIMESTAMP_NS n, 8.0f f, 9.0 x
+                        FROM long_sequence(1)
+                    )
+                    """);
+            final String[][] pairs = {
+                    {"b", "BYTE"}, {"s", "SHORT"}, {"i", "INT"}, {"l", "LONG"}, {"d", "DATE"},
+                    {"t", "TIMESTAMP"}, {"n", "TIMESTAMP_NS"}, {"f", "FLOAT"}, {"x", "DOUBLE"}
+            };
+            for (String[] pair : pairs) {
+                final String sql = "CREATE TABLE dst AS (SELECT " + pair[0] + " FROM src), CAST(" + pair[0] + " AS CHAR)";
+                assertExceptionNoLeakCheck(sql, sql.indexOf(pair[0] + " AS CHAR"), "unsupported cast [column=" + pair[0] + ", from=" + pair[1] + ", to=CHAR]");
+                Assert.assertNull(sql, engine.getTableTokenIfExists("dst"));
+            }
+        });
+    }
+
+    @Test
     public void testCtasCastUuidToStringAndVarchar() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src (s UUID, v UUID)");

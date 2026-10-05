@@ -274,9 +274,9 @@ public final class RelationRules {
 
     /**
      * G: the cast group of {@code tag} for CREATE TABLE ... AS (SELECT ...) with a column CAST, which
-     * admits a cast between two types of one group; -1 for a type no group covers, whose casts the
-     * caller admits by the conversion relations. {@code TypeRelationGoldenTest.testIsCompatibleCast}
-     * pins the relation.
+     * admits a cast between two types of one group when the record copier has an arm for the pair;
+     * -1 for a type no group covers, whose casts the caller admits by the conversion relations.
+     * {@code TypeRelationGoldenTest.testIsCompatibleCast} pins the relation.
      */
     public static int ctasCastGroup(short tag) {
         return switch (kind(tag)) {

@@ -30,6 +30,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -498,6 +499,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             // isConvertibleFrom, as INSERT ... SELECT into the very same record copier does.
             return ColumnType.isConvertibleFrom(from, to);
         }
-        return fromGroup == toGroup;
+        // the record copier performs the cast, so a pair of one group it has no arm for (a number
+        // into CHAR) would fail only once the table exists; INSERT ... SELECT refuses it the same way
+        return fromGroup == toGroup && RecordToRowCopierUtils.hasCopierArm(from, to);
     }
 }
