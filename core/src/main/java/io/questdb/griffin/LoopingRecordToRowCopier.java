@@ -81,6 +81,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             if (opcode == RecordToRowCopierUtils.COPY_NONE && toColumnIndex != timestampIndex) {
                 throw RecordToRowCopierUtils.noCopierArmForColumn(fromColumnType, toColumnType, this.toMetadata.getColumnName(toColumnIndex));
             }
+            if (opcode == RecordToRowCopierUtils.COPY_UNLIKE) {
+                throw RecordToRowCopierUtils.noFamilyArmForColumn(fromColumnType, toColumnType);
+            }
             if (opcode == RecordToRowCopierUtils.COPY_SKIP) {
                 // the writer's null setter puts the type's own NULL
                 opcode = RecordToRowCopierUtils.COPY_NONE;

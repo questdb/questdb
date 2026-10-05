@@ -76,6 +76,15 @@ public class RecordToRowCopierUtils {
      * namesake and keeps its same-type arm.
      */
     static final int COPY_SKIP = -1;
+    /**
+     * The {@link #copyOpcode} of a conversion with a side that does not represent its values as
+     * its accessor family's namesake does, such as an unsigned type on INT's accessor: the family's
+     * arm would read or write the value as the namesake's (an unsigned INT sign-extended into
+     * LONG), so the pair has no arm until the type adds its own, and INSERT refuses it
+     * ({@link #hasCopierArm}); a copier built for it anyway raises the family-arm guard's refusal.
+     * Every existing type is its own namesake.
+     */
+    static final int COPY_UNLIKE = -2;
     // [source tag][target tag] -> the pair has a copier arm; filled from rule K (RelationRules.copier) at class init
     private static final boolean[][] COPIER_ARMS = new boolean[ColumnType.MAX_TAG + 1][ColumnType.MAX_TAG + 1];
 
@@ -135,11 +144,16 @@ public class RecordToRowCopierUtils {
         if (fromTag == toTag) {
             return sameTypeOpcode(toColumnType);
         }
+        if (!COPIER_ARMS[fromTag][toTag]) {
+            return COPY_NONE;
+        }
         // the arm reads the source through its accessor family's getter and puts the target through
-        // its family's putter, so a type in another type's family takes that family's arm
-        return COPIER_ARMS[fromTag][toTag]
-                ? (PhysicalDescriptor.accessorOpcodeOf(fromTag) << 8) | PhysicalDescriptor.accessorOpcodeOf(toTag)
-                : COPY_NONE;
+        // its family's putter, so a type in another type's family takes that family's arm, when it
+        // represents its values as the family's namesake does
+        if (isUnlikeFamilyNamesake(fromTag) || isUnlikeFamilyNamesake(toTag)) {
+            return COPY_UNLIKE;
+        }
+        return (PhysicalDescriptor.accessorOpcodeOf(fromTag) << 8) | PhysicalDescriptor.accessorOpcodeOf(toTag);
     }
 
     /**
@@ -148,7 +162,8 @@ public class RecordToRowCopierUtils {
      * since a copier writes nothing for a pair without an arm.
      */
     public static boolean hasCopierArm(int fromType, int toType) {
-        return copyOpcode(fromType, toType) != COPY_NONE;
+        final int opcode = copyOpcode(fromType, toType);
+        return opcode != COPY_NONE && opcode != COPY_UNLIKE;
     }
 
     /**
@@ -806,6 +821,9 @@ public class RecordToRowCopierUtils {
                 if (opcode == COPY_SKIP) {
                     // the writer's null setter puts the type's own NULL
                     continue;
+                }
+                if (opcode == COPY_UNLIKE) {
+                    throw noFamilyArmForColumn(fromColumnType, toColumnType);
                 }
                 if (opcode == COPY_NONE) {
                     throw noCopierArmForColumn(fromColumnType, toColumnType, toMetadata.getColumnName(toColumnIndex));
@@ -1972,6 +1990,9 @@ public class RecordToRowCopierUtils {
                 // the writer's null setter puts the type's own NULL
                 continue;
             }
+            if (opcode == COPY_UNLIKE) {
+                throw noFamilyArmForColumn(fromColumnType, toColumnType);
+            }
             if (opcode == COPY_NONE) {
                 throw noCopierArmForColumn(fromColumnType, toColumnType, toMetadata.getColumnName(toColumnIndex));
             }
@@ -3021,6 +3042,12 @@ public class RecordToRowCopierUtils {
         return false;
     }
 
+    // whether the type of a tag reads through an accessor family but does not represent its values
+    // as the family's namesake does; the two opcode tables differ only for such a type
+    private static boolean isUnlikeFamilyNamesake(int tag) {
+        return PhysicalDescriptor.familyArmOpcodeOf(tag) != PhysicalDescriptor.accessorOpcodeOf(tag);
+    }
+
     /**
      * A pair rule K ({@link RelationRules#copier}) admits but the generator has no arm for: the rule and its arms went
      * out of step, which {@code RecordToRowCopierUtilsTest} catches at generation time.
@@ -3038,6 +3065,15 @@ public class RecordToRowCopierUtils {
     static CairoException noCopierArmForColumn(int fromColumnType, int toColumnType, CharSequence columnName) {
         return CairoException.nonCritical().put("inconvertible types: ").put(ColumnType.nameOf(fromColumnType))
                 .put(" -> ").put(ColumnType.nameOf(toColumnType)).put(" [column=").put(columnName).put(']');
+    }
+
+    /**
+     * The family-arm guard's refusal of a {@link #COPY_UNLIKE} conversion, naming the side that is
+     * unlike its family's namesake.
+     */
+    static CairoException noFamilyArmForColumn(int fromColumnType, int toColumnType) {
+        final int unlike = isUnlikeFamilyNamesake(ColumnType.tagOf(fromColumnType)) ? fromColumnType : toColumnType;
+        return PhysicalDescriptor.noFamilyArm(ColumnType.nameOf(unlike), "copier conversion");
     }
 
     /**

@@ -61,6 +61,8 @@ import java.util.TreeSet;
  * every admitted pair ({@code ColumnConversionSoundnessTest}).
  */
 public class RelationCoverageTest extends AbstractCairoTest {
+    // the family-arm guard's label at the copiers' conversion arms
+    private static final String COPIER_SITE = "copier conversion";
 
     @Test
     public void testCaseEscalationHasAnImplementation() throws Exception {
@@ -97,12 +99,9 @@ public class RelationCoverageTest extends AbstractCairoTest {
 
     @Test
     public void testCopierHasAnArmForEveryAdmittedPair() throws Exception {
-        // INSERT admits a pair by isConvertibleFrom; the copiers must have an arm for it (rule K)
-        final Method copyOpcode = RecordToRowCopierUtils.class.getDeclaredMethod("copyOpcode", int.class, int.class);
-        copyOpcode.setAccessible(true);
-        final Field none = RecordToRowCopierUtils.class.getDeclaredField("COPY_NONE");
-        none.setAccessible(true);
-        final int copyNone = none.getInt(null);
+        // INSERT admits a pair by isConvertibleFrom; the copiers must have an arm for it (rule K).
+        // A conversion with a side unlike its family's namesake has none until that type adds its
+        // own (the family-arm guard), unless the type declares the guard's refusal
         final TreeSet<String> gaps = new TreeSet<>();
         for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
             final TypeConformanceTypes.Entry from = TypeConformanceTypes.ALL.getQuick(i);
@@ -110,7 +109,9 @@ public class RelationCoverageTest extends AbstractCairoTest {
                 final TypeConformanceTypes.Entry to = TypeConformanceTypes.ALL.getQuick(j);
                 if (ColumnType.isPersisted(ColumnType.tagOf(to.columnType))
                         && ColumnType.isConvertibleFrom(from.columnType, to.columnType)
-                        && (int) copyOpcode.invoke(null, from.columnType, to.columnType) == copyNone) {
+                        && !RecordToRowCopierUtils.hasCopierArm(from.columnType, to.columnType)
+                        && !TypeConformanceInvariants.isDeclaredRefused(from, COPIER_SITE)
+                        && !TypeConformanceInvariants.isDeclaredRefused(to, COPIER_SITE)) {
                     gaps.add(from.label + " -> " + to.label);
                 }
             }
