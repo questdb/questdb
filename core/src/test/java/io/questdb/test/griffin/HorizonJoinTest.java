@@ -1992,6 +1992,103 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnBindVariableNotAllowed() throws Exception {
+        // a cached factory runs again with other bind values, so a bind variable is not a constant
+        bindVariableService.clear();
+        bindVariableService.setBoolean("b0", true);
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND :b0", 86, ":b0");
+    }
+
+    @Test
+    public void testHorizonJoinOnConstantFalseNotAllowed() throws Exception {
+        // unlike a constant TRUE, a constant FALSE conjunct changes the result: no right row matches
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND 1 = 0", 88, "1 = 0");
+    }
+
+    @Test
+    public void testHorizonJoinOnConstantTrueAllowed() throws Exception {
+        // a conjunct that folds to TRUE keeps every right row, so the join runs as if it were absent:
+        // the plan and the rows are those of ON (t.k = p.k)
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String onClause : new String[]{
+                    "t.k = p.k AND 1 = 1",
+                    "1 = 1 AND t.k = p.k",
+                    "t.k = p.k AND true",
+                    "t.k = p.k AND NOT false",
+                    "t.k = p.k AND 'a' = 'a' AND 1 < 2",
+                    "t.k = p.k AND 1 BETWEEN 0 AND 2"
+            }) {
+                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlan("Encode sort light\n" +
+                                "  keys: [id]\n" +
+                                "    " + getHorizonJoinPlanType() + " offsets: 1\n" +
+                                "      keys: [id]\n" +
+                                "      values: [avg(p.price)]\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: trades\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: prices\n")
+                        .returns("""
+                                id\tavg
+                                1\t1.0
+                                2\t2.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnConstantTrueAllowedMultiSlave() throws Exception {
+        // the code generator parks the slave of a non-last HORIZON JOIN before it reaches the last one
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String[] conjuncts : new String[][]{{" AND 1 = 1", ""}, {"", " AND true"}, {" AND true", " AND 1 = 1"}}) {
+                assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                        "FROM trades AS t " +
+                        "HORIZON JOIN prices AS p ON (t.k = p.k" + conjuncts[0] + ") " +
+                        "HORIZON JOIN prices AS p2 ON (t.k = p2.k" + conjuncts[1] + ") " +
+                        "LIST (0) AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tavg\tavg1
+                                1\t1.0\t1.0
+                                2\t2.0\t2.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnConstantTrueOnly() throws Exception {
+        // without a key, a constant TRUE ON clause gives the rows of a HORIZON JOIN without ON: both
+        // trades match the latest price, 2.0
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String on : new String[]{" ON (1 = 1)", " ON true", ""}) {
+                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p" + on + " " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tavg
+                                1\t2.0
+                                2\t2.0
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinOnExpressionKeyNotAllowed() throws Exception {
         assertHorizonJoinOnPredicateRejected("t.k = p.k + 0", 76, "t.k = p.k + 0");
     }

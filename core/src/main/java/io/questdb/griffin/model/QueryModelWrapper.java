@@ -123,6 +123,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addLateralNullCheck(ExpressionNode check) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         throw new UnsupportedOperationException();
     }
@@ -420,6 +425,16 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<QueryColumn> getLateralCountTemplates() {
         return delegate.getLateralCountTemplates();
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getLateralNullChecks() {
+        return delegate.getLateralNullChecks();
+    }
+
+    @Override
+    public LateralNullRejection getLateralNullRejection() {
+        return delegate.getLateralNullRejection();
     }
 
     @Override
@@ -1154,6 +1169,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setLateralNullRejection(LateralNullRejection lateralNullRejection) {
         throw new UnsupportedOperationException();
     }
 
