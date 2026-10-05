@@ -533,6 +533,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList tempAggIndex = new IntList();
     private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
     private final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
+    // execution position of each join model, see validateRightAndFullJoinPrefixOrder()
+    private final IntList tempJoinModelPositions = new IntList();
     private final IntList tempKeyIndex = new IntList();
     private final IntList tempKeyIndexesInBase = new IntList();
     private final IntList tempKeyKinds = new IntList();
@@ -1790,6 +1792,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getTableNameExpr() == null
                 && model.getNestedModel() == null
                 && model.getHorizonJoinContext().getAlias() != null;
+    }
+
+    private static boolean isRightOrFullJoin(int joinType) {
+        return joinType == IQueryModel.JOIN_RIGHT_OUTER
+                || joinType == IQueryModel.JOIN_FULL_OUTER
+                || joinType == IQueryModel.JOIN_CROSS_RIGHT
+                || joinType == IQueryModel.JOIN_CROSS_FULL;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -7542,6 +7551,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw th;
                 }
             }
+            validateRightAndFullJoinPrefixOrder(model);
             return master;
         } catch (Throwable e) {
             Misc.free(master, e);
@@ -14417,6 +14427,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.getOuterJoinExpressionClause() != null) {
             throw SqlException.$(model.getOuterJoinExpressionClause().position, "unsupported ").put(joinType).put(" join expression ")
                     .put("[expr='").put(model.getOuterJoinExpressionClause()).put("']");
+        }
+    }
+
+    // A RIGHT/FULL join returns each unmatched row of its table once, with NULL in every column of the
+    // tables written before it, so those tables must execute before the join. SqlOptimiser pins them,
+    // except where an ON clause reads a later table or a name that several tables in scope share. A
+    // table that then executes after the join repeats the unmatched rows or fills in their columns, so
+    // the query fails instead. generateJoins() calls this last: when the execution order leaves an ON
+    // clause with a column it cannot resolve, the query reports that column.
+    private void validateRightAndFullJoinPrefixOrder(IQueryModel model) throws SqlException {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        final IntList ordered = model.getOrderedJoinModels();
+        final int n = joinModels.size();
+        if (ordered.size() != n) {
+            return;
+        }
+        boolean hasRightOrFullJoin = false;
+        for (int i = 1; i < n && !hasRightOrFullJoin; i++) {
+            hasRightOrFullJoin = isRightOrFullJoin(joinModels.getQuick(i).getJoinType());
+        }
+        if (!hasRightOrFullJoin) {
+            return;
+        }
+        final IntList positions = tempJoinModelPositions;
+        positions.setAll(n, -1);
+        for (int i = 0; i < n; i++) {
+            positions.setQuick(ordered.getQuick(i), i);
+        }
+        // the latest execution position of the tables written before table i
+        int lastPrefixPosition = positions.getQuick(0);
+        for (int i = 1; i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            final int position = positions.getQuick(i);
+            if (isRightOrFullJoin(joinModel.getJoinType()) && lastPrefixPosition > position) {
+                final ExpressionNode name = joinModel.getTableNameExpr() != null ? joinModel.getTableNameExpr() : joinModel.getAlias();
+                throw SqlException.$(name != null ? name.position : joinModel.getModelPosition(), "could not determine join order for this table");
+            }
+            lastPrefixPosition = Math.max(lastPrefixPosition, position);
         }
     }
 
