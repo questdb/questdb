@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.types.TypeConformanceTypes;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -127,12 +128,13 @@ public class OverloadSoundnessTest extends BaseFunctionFactoryTest {
     public void testResolutionWithoutOwnSignature() throws Exception {
         // Each line: the column type, the signature it resolved to when its own was withheld and
         // the type of the argument the factory received, or the error. The property: a signature
-        // it resolved to is in the column type's overload row.
+        // it resolved to is in the column type's overload row. The table pins the existing types'
+        // lines, so a type registered later is left out
         assertMemoryLeak(() -> {
             final StringSink table = new StringSink();
             for (ColumnTypeTag tag : ColumnTypeTag.values()) {
                 final int columnType = columnTypeOf(tag);
-                if (columnType == -1) {
+                if (columnType == -1 || TypeConformanceTypes.isLaterTag(tag.code())) {
                     continue;
                 }
                 functions.clear();

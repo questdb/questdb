@@ -932,6 +932,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + steps.toString().trim().replace('\n', ' '));
         }
         TypeConformanceInvariants.nullRowWriteError(type, path, mode, steps);
+        // a type that stores no NULL keeps its NULL row as a value, which converts as a value
+        final String policy = TypeConformanceInvariants.policyOf(type);
+        final boolean isNullStored = TypeConformanceInvariants.POLICY_SENTINEL.equals(policy) || TypeConformanceInvariants.POLICY_BITMAP.equals(policy);
         final ObjList<String> gaps = new ObjList<>();
         try {
             final String identityPair = type.label + " -> " + type.label + " (identity)";
@@ -978,7 +981,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                     // value checks below need every row, so they do not run for this pair
                     continue;
                 }
-                if (texts.containsKey("null")) {
+                if (isNullStored && texts.containsKey("null")) {
                     final String nullLiteral = readTexts(engine, sqlExecutionContext, "SELECT 'null' k, CAST(NULL AS " + target.ddl + ") c FROM long_sequence(1)").get("null");
                     if (nullLiteral != null && !nullLiteral.equals(texts.get("null"))) {
                         gaps.add(pair + ": the NULL row converts to " + texts.get("null") + ", a NULL literal to " + nullLiteral);
