@@ -185,6 +185,37 @@ public class FilesTest {
     }
 
     @Test
+    public void testAllocateRange() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long fd = Files.openRW(path.$());
+                final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Assert.assertTrue(Files.allocate(fd, Files.PAGE_SIZE));
+                    Assert.assertEquals(Files.PAGE_SIZE, Files.length(path.$()));
+
+                    Assert.assertTrue(Files.allocateRange(fd, Files.PAGE_SIZE, 3 * Files.PAGE_SIZE));
+                    Assert.assertEquals(3 * Files.PAGE_SIZE, Files.length(path.$()));
+                    // a range that ends inside the file neither shrinks it nor fails
+                    Assert.assertTrue(Files.allocateRange(fd, Files.PAGE_SIZE, 2 * Files.PAGE_SIZE));
+                    Assert.assertEquals(3 * Files.PAGE_SIZE, Files.length(path.$()));
+
+                    // the bytes below the range stay intact
+                    Assert.assertEquals(5, Files.read(fd, buf, 5, 0));
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals('a' + i, Unsafe.getByte(buf + i));
+                    }
+                } finally {
+                    Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testConcurrentRemove() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();

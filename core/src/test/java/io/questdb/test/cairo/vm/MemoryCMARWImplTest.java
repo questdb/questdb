@@ -30,6 +30,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -222,6 +223,129 @@ public class MemoryCMARWImplTest {
      * A close in the middle of an open-append-close-reopen cycle must not leak the previous
      * mapping's bounds into the reopened instance.
      */
+    /**
+     * Reopening a file forgets what the previous instance reserved: the file may have holes this
+     * instance did not make, so its first extend reserves from offset 0 again.
+     */
+    @Test
+    public void testExtendAfterReopenReservesFromFileStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final RecordingFilesFacade ff = new RecordingFilesFacade();
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final MemoryCMARWImpl mem = new MemoryCMARWImpl();
+                try {
+                    mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    appendLongs(mem, 2 * pageSize);
+                    mem.close();
+                    Assert.assertEquals(2 * pageSize, ff.length(path.$()));
+
+                    mem.of(ff, path.$(), pageSize, ff.length(path.$()), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    ff.log.clear();
+                    appendLongs(mem, 2 * pageSize);
+                    TestUtils.assertEquals(
+                            "allocate " + 3 * pageSize + "\n"
+                                    + "range " + 3 * pageSize + " " + 4 * pageSize + "\n",
+                            ff.log
+                    );
+                } finally {
+                    mem.close();
+                }
+            }
+        });
+    }
+
+    /**
+     * When the file shrinks below what this instance reserved, e.g. through another fd, the next
+     * extend reserves from the file's current length, not from the instance's stale high-water mark.
+     */
+    @Test
+    public void testExtendAfterShrinkReservesFromFileLength() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final RecordingFilesFacade ff = new RecordingFilesFacade();
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final MemoryCMARWImpl mem = new MemoryCMARWImpl();
+                try {
+                    mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    appendLongs(mem, 3 * pageSize);
+                    Assert.assertTrue(ff.truncate(mem.getFd(), pageSize));
+
+                    // extend() without touching the mapping first: its pages past the new end of file are gone
+                    ff.log.clear();
+                    mem.extend(4 * pageSize);
+                    TestUtils.assertEquals("range " + pageSize + " " + 5 * pageSize + "\n", ff.log);
+                    Assert.assertEquals(5 * pageSize, ff.length(mem.getFd()));
+                    Assert.assertEquals(1, mem.getLong(Long.BYTES));
+                } finally {
+                    mem.close();
+                }
+            }
+        });
+    }
+
+    /**
+     * truncate() shrinks the file, so the next extend reserves from offset 0 again.
+     */
+    @Test
+    public void testExtendAfterTruncateReservesFromFileStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final RecordingFilesFacade ff = new RecordingFilesFacade();
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final MemoryCMARWImpl mem = new MemoryCMARWImpl();
+                try {
+                    mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    appendLongs(mem, 3 * pageSize);
+                    mem.truncate();
+                    Assert.assertEquals(pageSize, ff.length(mem.getFd()));
+
+                    ff.log.clear();
+                    appendLongs(mem, 3 * pageSize);
+                    TestUtils.assertEquals(
+                            "allocate " + 2 * pageSize + "\n"
+                                    + "range " + 2 * pageSize + " " + 3 * pageSize + "\n",
+                            ff.log
+                    );
+                } finally {
+                    mem.close();
+                }
+            }
+        });
+    }
+
+    /**
+     * Once this instance has reserved the file from offset 0, each extend reserves only the new tail.
+     * Reserving [0, size) every time made posix_fallocate() walk all the file's extents on each call.
+     */
+    @Test
+    public void testExtendReservesOnlyNewTail() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final RecordingFilesFacade ff = new RecordingFilesFacade();
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final MemoryCMARWImpl mem = new MemoryCMARWImpl();
+                try {
+                    mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    ff.log.clear();
+                    appendLongs(mem, 4 * pageSize);
+                    TestUtils.assertEquals(
+                            "allocate " + 2 * pageSize + "\n"
+                                    + "range " + 2 * pageSize + " " + 3 * pageSize + "\n"
+                                    + "range " + 3 * pageSize + " " + 4 * pageSize + "\n",
+                            ff.log
+                    );
+                    Assert.assertEquals(4 * pageSize, ff.length(mem.getFd()));
+                    for (long i = 0, n = 4 * pageSize / Long.BYTES; i < n; i++) {
+                        Assert.assertEquals(i, mem.getLong(i * Long.BYTES));
+                    }
+                } finally {
+                    mem.close();
+                }
+            }
+        });
+    }
+
     @Test
     public void testReopenAfterCloseRestoresAppendBounds() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -252,5 +376,27 @@ public class MemoryCMARWImplTest {
                 }
             }
         });
+    }
+
+    private static void appendLongs(MemoryCMARWImpl mem, long bytes) {
+        for (long i = 0, n = bytes / Long.BYTES; i < n; i++) {
+            mem.putLong(i);
+        }
+    }
+
+    private static class RecordingFilesFacade extends TestFilesFacadeImpl {
+        private final StringSink log = new StringSink();
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            log.put("allocate ").put(size).put('\n');
+            return super.allocate(fd, size);
+        }
+
+        @Override
+        public boolean allocateRange(long fd, long offset, long size) {
+            log.put("range ").put(offset).put(' ').put(size).put('\n');
+            return super.allocateRange(fd, offset, size);
+        }
     }
 }

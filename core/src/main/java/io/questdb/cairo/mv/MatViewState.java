@@ -30,6 +30,7 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -773,7 +774,53 @@ public class MatViewState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
+    /**
+     * Reason string marking an invalidation that a SURGICAL REPAIR can clear. A crash can leave a
+     * view holding aggregates for base txns the RPO window discarded; rather than forcing a FULL
+     * rebuild, the view is invalidated with THIS reason (so nothing stale is ever served -- the
+     * fail-safe direction) and a RANGE refresh recomputes only the affected window, then clears it.
+     * <p>
+     * Durable: it is persisted as the invalidation reason, so a crash DURING a repair is re-detected
+     * on the next load and the repair re-planned. In-memory {@link #repairPending} is what the
+     * refresh job consults, because {@link #markAsInvalid} does not retain the reason.
+     */
+    public static final String REPAIR_PENDING_REASON = "surgical repair pending";
+    private volatile boolean repairPending;
+    private volatile long repairRangeHi = Numbers.LONG_NULL;
+    private volatile long repairRangeLo = Numbers.LONG_NULL;
+
+    public void clearRepairPending() {
+        repairPending = false;
+        repairRangeLo = Numbers.LONG_NULL;
+        repairRangeHi = Numbers.LONG_NULL;
+    }
+
+    public long getRepairRangeHi() {
+        return repairRangeHi;
+    }
+
+    public long getRepairRangeLo() {
+        return repairRangeLo;
+    }
+
+    public boolean isRepairPending() {
+        return repairPending;
+    }
+
+    /**
+     * Arms a surgical repair over [lo, hi]; the view stays INVALID until the range refresh clears it.
+     */
+    public void markRepairPending(long lo, long hi) {
+        repairRangeLo = lo;
+        repairRangeHi = hi;
+        repairPending = true;
+    }
+
     public void markAsInvalid(CharSequence invalidationReason) {
+        if (repairPending && !Chars.equals(invalidationReason, REPAIR_PENDING_REASON)) {
+            clearRepairPending();
+            resetRefreshRetry();
+        }
         if (!invalid) {
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
@@ -886,6 +933,7 @@ public class MatViewState implements QuietCloseable {
 
     public void markAsValid() {
         this.invalid = false;
+        clearRepairPending();
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
         this.refreshRetryCount = 0;
     }
@@ -925,9 +973,9 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Schedules a deferred incremental refresh retry after a transient failure (e.g. base table
-     * reader pool exhausted) instead of invalidating the view. The view stays valid in the meantime;
-     * {@link MatViewTimerJob} re-drives an incremental refresh once {@code retryAfterMicros} elapses.
+     * Schedules a deferred refresh after a transient failure or while a surgical repair waits for
+     * base WAL replay. {@link MatViewTimerJob} re-drives an incremental refresh, or the pending repair
+     * range, once {@code retryAfterMicros} elapses. A pending repair stays invalid while waiting.
      */
     public void scheduleRefreshRetry(long retryAfterMicros) {
         this.refreshRetryAfterMicros = retryAfterMicros;

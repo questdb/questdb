@@ -368,7 +368,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
                     final Object pendingMarker = state.getPendingInvalidationMarker();
                     if ((remainingFlags & MatViewState.PENDING_TASK_RETRY_INVALIDATION) != 0) {
                         final String reason = state.getPendingInvalidationReason(pendingMarker);
-                        if (reason != null && !state.isInvalid()) {
+                        if (reason != null && (!state.isInvalid() || state.isRepairPending())) {
                             enqueueInvalidate(
                                     matViewToken,
                                     reason,

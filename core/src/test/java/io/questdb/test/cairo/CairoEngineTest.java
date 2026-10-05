@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -84,6 +85,45 @@ public class CairoEngineTest extends AbstractCairoTest {
         otherPath = Misc.free(otherPath);
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
+    }
+
+    @Test
+    public void testDataSyncFailurePoisonsEngineAndFirstFailureWins() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicReference<CairoEngine.DurabilityFailure> observed = new AtomicReference<>();
+            try (CairoEngine testEngine = new CairoEngine(configuration)) {
+                testEngine.setDurabilityFailureHandler(observed::set);
+
+                CairoException first = CairoException.dataSyncFailure(5, "fdatasync").put("injected data sync failure");
+                try {
+                    testEngine.handleDataSyncFailure(first);
+                    Assert.fail();
+                } catch (CairoError expected) {
+                    Assert.assertSame(first, expected.getCause());
+                }
+
+                Assert.assertTrue(testEngine.isDurabilityFailed());
+                Assert.assertEquals("fdatasync", observed.get().getOperation());
+                Assert.assertEquals(5, observed.get().getErrno());
+                Assert.assertFalse(testEngine.getDurableAckRegistry().isEnabled());
+
+                try {
+                    testEngine.handleDataSyncFailure(CairoException.dataSyncFailure(28, "fsync"));
+                    Assert.fail();
+                } catch (CairoError expected) {
+                    // first failure remains authoritative and callback is not invoked again
+                }
+                Assert.assertEquals(5, testEngine.getDurabilityFailure().getErrno());
+                Assert.assertEquals("fdatasync", observed.get().getOperation());
+
+                try {
+                    testEngine.getWriterUnsafe(null, "poisoned-test");
+                    Assert.fail();
+                } catch (CairoError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "engine is poisoned");
+                }
+            }
+        });
     }
 
     @Test

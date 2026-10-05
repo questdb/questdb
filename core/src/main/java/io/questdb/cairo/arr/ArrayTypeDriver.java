@@ -585,7 +585,31 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
         final long offset = readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX;
         final int size = readInt(ff, auxFd, auxFileOffset + Long.BYTES);
+        // Torn-write guard: data offsets are monotonic. A null entry has size=0 and
+        // offset=current-data-end (same as the previous end), so null-prefix rows
+        // are never flagged. A torn/un-flushed aux entry leaves the offset field
+        // zeroed while the previous row's data end is non-zero → offset < prevEnd.
+        // Do NOT check offset==0: a real array whose offset is 0 is valid when all
+        // preceding entries are null (they write no data bytes, so data-end stays 0).
+        if (row > 0) {
+            final long prevDataEnd = arrayDataEndAtFromFd(ff, auxFd, row - 1);
+            if (offset < prevDataEnd) {
+                throw CairoException.critical(0)
+                        .put("Invalid data offset read from array aux file, possible torn write [auxFd=").put(auxFd)
+                        .put(", row=").put(row).put(", offset=").put(offset).put(", size=").put(size)
+                        .put(", prevDataEnd=").put(prevDataEnd)
+                        .put(", fileSize=").put(ff.length(auxFd)).put(']');
+            }
+        }
         return offset + size;
+    }
+
+    // Reads the data-vector END (offset+size) of one aux entry from the fd.
+    // Non-recursive; one entry only. A null entry (size=0) returns its offset,
+    // which equals the previous cumulative end — correct for monotonicity checks.
+    private static long arrayDataEndAtFromFd(FilesFacade ff, long auxFd, long row) {
+        final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
+        return (readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX) + readInt(ff, auxFd, auxFileOffset + Long.BYTES);
     }
 
     @Override
@@ -719,12 +743,39 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
+            // Crash-consistency guard (mirrors VarcharTypeDriver). Data offsets are monotonic; the last
+            // row's data start must be >= the previous row's data end. A lower value means the aux tail
+            // was torn/partially flushed - fail loudly instead of placing the cursor inside committed data.
+            //
+            // Read entry[pos-2]'s data end FIRST, while its own page is the one mapped: this aux memory
+            // is paged (MemoryPMARImpl maps ~one segment at a time and unmaps the rest), so reading
+            // getAppendAddress()-WIDTH off entry[pos-1] would dereference the prior, now-unmapped segment
+            // whenever (pos-1)*WIDTH lands on a page boundary - garbage / SIGSEGV, a false positive on
+            // large tables.
+            long prevDataVectorSize = -1;
+            if (pos > 1) {
+                auxMem.jumpTo(getAuxVectorOffset(pos - 2));
+                prevDataVectorSize = calcDataOffsetEnd(auxMem.getAppendAddress());
+            }
+
             // first we need to calculate already used space. both data and aux vectors.
             long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
             auxMem.jumpTo(auxVectorOffset);
             long auxEntryPtr = auxMem.getAppendAddress();
 
             long dataVectorSize = calcDataOffsetEnd(auxEntryPtr);
+
+            if (prevDataVectorSize != -1) {
+                long lastDataOffset = readDataOffset(auxEntryPtr);
+                if (lastDataOffset < prevDataVectorSize) {
+                    throw CairoException.critical(0)
+                            .put("array aux vector is damaged, possible torn write on the last entry [pos=").put(pos)
+                            .put(", lastDataOffset=").put(lastDataOffset)
+                            .put(", prevDataVectorSize=").put(prevDataVectorSize)
+                            .put(']');
+                }
+            }
+
             long auxVectorSize = getAuxVectorSize(pos);
             long totalDataSizeBytes = dataVectorSize + auxVectorSize;
 

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -74,6 +75,7 @@ public class WalListenerTest extends AbstractCairoTest {
 
     @Test
     public void testWalListener() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         final AtomicReference<TableToken> tableToken1 = new AtomicReference<>();
         final AtomicReference<TableToken> tableToken2 = new AtomicReference<>();
         assertMemoryLeak(() -> {

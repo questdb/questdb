@@ -218,6 +218,12 @@ public class EngineMigration {
                                         // Upgrades between (latestTableVersion, latestMigrationVersion]
                                         // are backwards compatible and are not set in table _meta
                                         TableUtils.writeIntOrFail(ff, fdMeta, META_OFFSET_VERSION, ver, mem, path);
+                                        // In-place _meta write, so refresh the body checksum. A no-op on
+                                        // every file this path actually touches (they predate the field,
+                                        // so the version gate is closed) -- added so the invariant holds
+                                        // BY CONSTRUCTION rather than by coincidence: the next migration
+                                        // that runs against a checksummed table would otherwise brick it.
+                                        TableUtils.refreshMetaBodyChecksumOnFd(ff, fdMeta, mem, path);
                                     }
                                     path.trimTo(tablePlen);
                                 }

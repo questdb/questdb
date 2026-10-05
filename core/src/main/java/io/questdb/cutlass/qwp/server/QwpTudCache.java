@@ -683,8 +683,9 @@ public class QwpTudCache implements QuietCloseable {
      * than gating on it, on three counts.
      * The ALTER is permanent work this connection produced, and a rollback of the
      * deferred group does not undo it. No DURABLE ack can outrun an upload:
-     * {@code QwpIngressProcessorState.collectDurableProgress} forwards only the
-     * registry's own uploadedSeqTxn, never the pending value, and on the normal path
+     * {@code QwpIngressProcessorState.collectDurableProgress} forwards the registry's
+     * own frontier, capped at the pending value, and reports the pending value itself
+     * only once that frontier reaches it or the table's directory is gone, and on the normal path
      * the group-closing {@link #commitAll(CommittedTxnConsumer)} supersedes the pending
      * entry with the data txn -- on a rollback or error exit, and on a normal exit that
      * commits no data txn for that table, the metadata-only entry instead stands until

@@ -139,14 +139,22 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(merged).concat(TableUtils.META_FILE_NAME);
         long metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
 
-        long addr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+        // 8 bytes, not 4: refreshMetaBodyChecksumOnFd below writes a long through this buffer.
+        long addr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         Unsafe.putInt(addr, PartitionBy.YEAR);
         ff.write(metaFd, addr, 4, TableUtils.META_OFFSET_PARTITION_BY);
 
         Unsafe.putInt(addr, merged.getTableId());
         ff.write(metaFd, addr, 4, TableUtils.META_OFFSET_TABLE_ID);
 
-        Unsafe.free(addr, 4, MemoryTag.NATIVE_DEFAULT);
+        // Both writes land inside the checksummed _meta body, so the stored checksum now describes the
+        // previous contents. Re-stamp before closing, as the engine migration's in-place _meta edit does
+        // (see EngineMigration), or the next reload rejects the file. Nothing reads this _meta
+        // concurrently here; a writer under live readers must not take this two-store path at all -- see
+        // DurableEpochManifest.recordEnrollment.
+        TableUtils.refreshMetaBodyChecksumOnFd(ff, metaFd, addr, path);
+
+        Unsafe.free(addr, 8, MemoryTag.NATIVE_DEFAULT);
         ff.close(metaFd);
 
         try (TableWriter writer = getWriter(merged)) {

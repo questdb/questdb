@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryW;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -39,12 +40,19 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
+    // Test-observable counter: incremented every time a load detects a stable-version body-checksum
+    // mismatch (or a torn txn guard) on the version-selected area and therefore attempts the A/B
+    // fallback. On a healthy table this must stay at 0 - in particular it must NOT advance under the
+    // in-place writeTransientSymbolCount / resetLag mutations, which is the whole point of restricting
+    // the checksum to commit-immutable bytes. Not used by production logic.
+    static volatile long bodyChecksumFallbackCount = 0;
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
     // Flag in the high byte of the offset-3 partition-version word: a remote copy of the
@@ -122,6 +130,9 @@ public class TxReader implements Closeable, Mutable {
     protected long truncateVersion;
     protected long txn;
     private int baseOffset;
+    // Verify once per open mapping. Ordinary reloads rely on the transaction publication protocol.
+    // A failed initial load (including A/B fallback) must not consume this check.
+    private boolean isInitialChecksumVerificationRequired = true;
     private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
     private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
@@ -140,6 +151,7 @@ public class TxReader implements Closeable, Mutable {
 
     @Override
     public void clear() {
+        requireInitialChecksumVerification();
         clearData();
         Misc.free(roTxMemBase);
     }
@@ -177,6 +189,13 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
         mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
+        // Write the absent (0) body-checksum sentinel and clear its stamp: a dumped record carries no body
+        // checksum, so a reader must skip the verify (back-compatible). Both are explicit because `mem` may
+        // be a reused buffer, and a stale stamp left beside the zeroed checksum would name this record and
+        // turn "no checksum" into "checksum missing" -- torn. The first commit after a restore from this dump
+        // writes a real pair.
+        mem.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, 0L);
+        mem.putInt(baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -522,6 +541,16 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
+    @TestOnly
+    public static long getBodyChecksumFallbackCount() {
+        return bodyChecksumFallbackCount;
+    }
+
+    @TestOnly
+    public static void resetBodyChecksumFallbackCount() {
+        bodyChecksumFallbackCount = 0;
+    }
+
     public boolean hasParquetPartitions() {
         for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
             if (isPartitionParquetByRawIndex(i)) {
@@ -545,6 +574,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public void initRO(MemoryMR txnFile) {
+        requireInitialChecksumVerification();
         this.roTxMemBase = txnFile;
     }
 
@@ -723,36 +753,60 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean unsafeLoadAll() {
-        if (unsafeLoadBaseOffset()) {
-            txn = version;
-            if (txn != getLong(TX_OFFSET_TXN_64)) {
-                return false;
+        if (unsafeReadLiveAreaGeometry()) {
+            // The version we selected this area with. The fallback path mutates `version`, so we keep our
+            // own copy to re-validate against (a stable selected version is what makes a mismatch "real").
+            final long selectedVersion = version;
+            // The fallback re-points baseOffset and size at the other area; keep the live geometry for the error.
+            final int liveBaseOffset = baseOffset;
+            final long liveSize = size;
+            if (isInitialChecksumVerificationRequired) {
+                // A prior row-count-only read or copied snapshot is not initial integrity validation.
+                partitionTableVersion = -1;
+                attachedPartitionsSize = -1;
             }
-
-            transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
-            fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
-            minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
-            maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
-            dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
-            structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
-            final long prevPartitionTableVersion = partitionTableVersion;
-            partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
-            final long prevColumnVersion = this.columnVersion;
-            columnVersion = unsafeReadColumnVersion();
-            truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
-            seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
-            symbolColumnCount = symbolsSize / Long.BYTES;
-            lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
-            lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
-            lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
-            int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
-            lagTxnCount = Math.abs(lagTxnCountRaw);
-            lagOrdered = lagTxnCountRaw > -1;
-            unsafeLoadSymbolCounts(symbolColumnCount);
-            unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
-            Unsafe.loadFence();
-            if (version == unsafeReadVersion()) {
-                return true;
+            // Check persisted integrity on first open, not on every live transaction refresh. A live area that
+            // runs past the end of the file is torn the same way as one whose checksum does not match: a crash
+            // made the header durable before the file grew to hold the area.
+            if (unsafeMapArea(baseOffset, size)
+                    && unsafeLoadAreaFields()
+                    && (!isInitialChecksumVerificationRequired || unsafeVerifyBodyChecksum())) {
+                Unsafe.loadFence();
+                if (selectedVersion == unsafeReadVersion()) {
+                    isInitialChecksumVerificationRequired = false;
+                    return true;
+                }
+                // Version moved under us: concurrent commit. Fall through to retry (return false).
+            } else {
+                // The area either failed its internal txn guard or its body checksum did not match.
+                // Re-read the version: if it is STILL the one we selected, the area is genuinely torn
+                // (a partial / reordered msync left a bumped version word over an incomplete body).
+                // Only then do we fall back to the other A/B area; otherwise it was a concurrent write
+                // and we simply retry.
+                Unsafe.loadFence();
+                if (selectedVersion == unsafeReadVersion()) {
+                    // Stable version, yet the selected area is torn: attempt the A/B fallback.
+                    //noinspection NonAtomicOperationOnVolatileField
+                    bodyChecksumFallbackCount++;
+                    boolean otherOk = unsafeLoadAndVerifyOtherArea(selectedVersion);
+                    Unsafe.loadFence();
+                    if (selectedVersion == unsafeReadVersion()) {
+                        // The whole header+areas were stable across the attempt.
+                        if (otherOk) {
+                            return true;
+                        }
+                        // Neither A nor B is internally consistent. Never return a silently-wrong record -
+                        // surface a hard error so the caller can fail the read.
+                        clearData();
+                        throw CairoException.critical(0)
+                                .put("_txn body checksum mismatch in both A and B areas [baseOffset=").put(liveBaseOffset)
+                                .put(", size=").put(liveSize)
+                                .put(", version=").put(selectedVersion)
+                                .put(']');
+                    }
+                    // Version changed during the fallback: concurrent write, retry.
+                }
+                // Version changed: concurrent write, retry.
             }
         }
 
@@ -760,26 +814,180 @@ public class TxReader implements Closeable, Mutable {
         return false;
     }
 
-    public boolean unsafeLoadBaseOffset() {
-        version = unsafeReadVersion();
-        Unsafe.loadFence();
-
-        boolean isA = (version & 1) == 0;
-        baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
-        symbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
-        partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
-
-        // Before extending file, check that values read are not dirty
-        Unsafe.loadFence();
-        if (unsafeReadVersion() != version) {
+    /**
+     * Loads all fields, symbol counts and partitions for the area currently described by
+     * {@link #baseOffset}/{@link #symbolsSize}/{@link #partitionSegmentSize}/{@link #size}/{@link #version}
+     * into {@code this}. Returns {@code false} if the area fails its internal txn guard
+     * (stored txn != version), which indicates a torn/garbage area.
+     */
+    private boolean unsafeLoadAreaFields() {
+        txn = version;
+        if (txn != getLong(TX_OFFSET_TXN_64)) {
             return false;
         }
 
-        size = calculateTxRecordSize(symbolsSize, partitionSegmentSize);
-        if (size + baseOffset > roTxMemBase.size()) {
-            roTxMemBase.extend(size + baseOffset);
-        }
+        transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
+        fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
+        minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
+        maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
+        dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
+        structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
+        final long prevPartitionTableVersion = partitionTableVersion;
+        partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
+        final long prevColumnVersion = this.columnVersion;
+        columnVersion = unsafeReadColumnVersion();
+        truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
+        seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
+        symbolColumnCount = symbolsSize / Long.BYTES;
+        lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
+        lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+        lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+        int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
+        lagTxnCount = Math.abs(lagTxnCountRaw);
+        lagOrdered = lagTxnCountRaw > -1;
+        unsafeLoadSymbolCounts(symbolColumnCount);
+        unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
         return true;
+    }
+
+    /**
+     * Re-points geometry to the OTHER A/B area (the previously committed record) and loads + verifies it.
+     * Used as the fallback when the version-selected area is torn under a stable version. Forces a full
+     * partition reload (the prior load may have left the partition list partially populated). Returns true
+     * only if the other area loads cleanly and its stored body checksum matches (or its stamp is absent
+     * or stale). MUST be called only after the version has been confirmed stable, so the other area is the
+     * settled prior commit and not an area the writer is mid-write into.
+     */
+    private boolean unsafeLoadAndVerifyOtherArea(long selectedVersion) {
+        // Recovering the previous area does not validate the live one. Keep checking until a stable,
+        // valid live record loads, even if the fallback itself succeeds.
+        requireInitialChecksumVerification();
+        // The selected area used slot (selectedVersion & 1); the prior commit lives in the opposite slot
+        // and carries selectedVersion - 1. Re-point geometry at it.
+        boolean otherIsA = (selectedVersion & 1) != 0;
+        long otherBaseOffset = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        int otherSymbolsSize = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        int otherPartitionSegmentSize = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        long otherSize = calculateTxRecordSize(otherSymbolsSize, otherPartitionSegmentSize);
+        // The load mapped the file only up to the end of the live area. Once a table has enough partitions,
+        // the previous area lies past it, so map it too: skipping it would call an intact record torn.
+        if (!unsafeMapArea(otherBaseOffset, otherSize)) {
+            return false;
+        }
+
+        baseOffset = (int) otherBaseOffset;
+        symbolsSize = otherSymbolsSize;
+        partitionSegmentSize = otherPartitionSegmentSize;
+        size = otherSize;
+        // The prior commit's txn equals its version (selectedVersion - 1); unsafeLoadAreaFields uses `version`
+        // for its stored-txn guard.
+        version = selectedVersion - 1;
+        // Force a full partition reload: the failed primary load may have left attachedPartitions partial.
+        partitionTableVersion = -1;
+        attachedPartitionsSize = -1;
+
+        return unsafeLoadAreaFields() && unsafeVerifyBodyChecksum();
+    }
+
+    /**
+     * Verifies the complete commit-immutable body on first open and A/B fallback. Live reader reloads
+     * use the transaction publication protocol without continuous corruption detection.
+     * {@link #unsafeIsLiveAreaTorn()} also performs full verification for explicit diagnosis.
+     * <p>
+     * A missing or stale stamp leaves the record unverified. A matching stamp names both this record and
+     * its checksum coverage; a zero or mismatched checksum then means tearing, not legacy data.
+     * <p>
+     * Race-free with concurrent writers: every covered byte and the stamp changes only ahead of a version
+     * bump, and the caller re-checks the version after this returns.
+     */
+    private boolean unsafeVerifyBodyChecksum() {
+        // The stamp decides first, and it decides both questions at once. If it does not name this record,
+        // no checksum was ever written FOR this record -- the slot is legacy, or it belongs to a record a
+        // binary without the checksum overwrote in place -- so it is not evidence about this one. If it DOES
+        // name this record then a checksum was written for it, and a slot that is now zero or wrong is a
+        // torn write. That second half is why the stamp replaces the capability watermark rather than merely
+        // working around it: it recovers the same detection without recording a promise a downgrade cannot
+        // withdraw.
+        if (!unsafeChecksumStampNamesThisRecord(baseOffset, roTxMemBase.getLong(baseOffset + TX_OFFSET_TXN_64))) {
+            return true;
+        }
+        return roTxMemBase.getLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64) == calculateTxnBodyChecksum(
+                roTxMemBase.addressOf(baseOffset),
+                size,
+                getPartitionTableSizeOffset(symbolColumnCount)
+        );
+    }
+
+    /**
+     * True when the checksum slot at {@code areaBaseOffset} was written for the record now occupying that
+     * area, rather than for an earlier one whose bytes a binary without the checksum overwrote in place.
+     * <p>
+     * The XOR tags the checksum coverage as well as the low 32 bits of the txn. A previous development
+     * checksum with a bare-txn stamp must not be checked using the new coverage. A stale stamp from the
+     * current format aliases only after 2^32 txns; an old-format stamp is at least 2^31 txns away.
+     * <p>
+     * 0 remains the "no stamp" sentinel for legacy and freshly reset records. One txn in 2^32 therefore
+     * goes unverified, when its encoded stamp is zero.
+     */
+    private boolean unsafeChecksumStampNamesThisRecord(long areaBaseOffset, long areaTxn) {
+        final int stamp = roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+        return stamp != 0 && stamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_STAMP_XOR);
+    }
+
+    /**
+     * Diagnosis for a reader that has already given up: is the version-selected (live) A/B area of {@code _txn}
+     * torn? True when that area fails its internal txn guard or its body checksum <i>under a version that does
+     * not move across the check</i> — the same standard {@link #unsafeLoadAll()} uses to tell genuine tearing
+     * from a concurrent commit. A moving version means contention, and this returns false.
+     * <p>
+     * A torn live area is not a dead end for {@code unsafeLoadAll()}: it falls back to the intact previous area
+     * and returns that. But the previous area carries the previous txn, which a live scoreboard refuses, so the
+     * caller's retry loop cannot make progress and times out looking like contention. Callers use this on their
+     * deadline path to name the corruption instead.
+     * <p>
+     * Touches none of the load state, so a caller may use it on an in-use reader. Like a load, it may grow the
+     * mapping to reach the live area. Costs nothing on the healthy path — it is never called from one.
+     */
+    public boolean unsafeIsLiveAreaTorn() {
+        final long selectedVersion = unsafeReadVersion();
+        Unsafe.loadFence();
+
+        final boolean isA = (selectedVersion & 1) == 0;
+        final long areaBaseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        final int areaSymbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        final int areaPartitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        final long areaSize = calculateTxRecordSize(areaSymbolsSize, areaPartitionSegmentSize);
+
+        final boolean intact;
+        if (!unsafeMapArea(areaBaseOffset, areaSize)) {
+            // The header's own geometry does not fit the file: torn, and not something to read further. The
+            // file length decides, not this reader's mapping: a commit since the last load can move the live
+            // area past the mapping, and that area is not torn.
+            intact = false;
+        } else if (roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_TXN_64) != selectedVersion) {
+            intact = false;
+        } else {
+            // Explicit diagnosis checks the full body even after initial verification has completed.
+            intact = !unsafeChecksumStampNamesThisRecord(areaBaseOffset, selectedVersion)
+                    || roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_64) == calculateTxnBodyChecksum(
+                    roTxMemBase.addressOf(areaBaseOffset),
+                    areaSize,
+                    getPartitionTableSizeOffset(areaSymbolsSize / Long.BYTES)
+            );
+        }
+
+        Unsafe.loadFence();
+        // Only a mismatch under a STABLE version is tearing; if the version moved, a writer was mid-commit
+        // and the caller was simply unlucky. Never report corruption on the strength of a raced sample.
+        return !intact && selectedVersion == unsafeReadVersion();
+    }
+
+    /**
+     * Selects the version-selected area and maps it. Returns false when the version moves while its geometry
+     * is read, and also when that geometry points past the end of the file, which only a crash leaves behind.
+     */
+    public boolean unsafeLoadBaseOffset() {
+        return unsafeReadLiveAreaGeometry() && unsafeMapArea(baseOffset, size);
     }
 
     public long unsafeLoadRowCount() {
@@ -933,6 +1141,51 @@ public class TxReader implements Closeable, Mutable {
         }
     }
 
+    /**
+     * Extends the mapping to cover the A/B area at {@code [areaOffset, areaOffset + areaSize)}. Returns false,
+     * mapping nothing, when the area overlaps the header or reaches a page that lies wholly past the end of
+     * the file. The geometry comes from the header page, which a crash can make durable before the file grows
+     * to hold the area, and a read-only mapping faults on the first touch of such a page. The tail of the last
+     * page reads as zeros, as it always has. Only a growing mapping asks the file system for the length.
+     */
+    private boolean unsafeMapArea(long areaOffset, long areaSize) {
+        if (areaOffset < TX_BASE_HEADER_SIZE || areaSize < TX_RECORD_HEADER_SIZE) {
+            return false;
+        }
+        final long areaEnd = areaOffset + areaSize;
+        if (areaEnd > roTxMemBase.size()) {
+            if (areaEnd > Files.ceilPageSize(ff.length(roTxMemBase.getFd()))) {
+                return false;
+            }
+            roTxMemBase.extend(areaEnd);
+        }
+        return true;
+    }
+
+    /**
+     * Reads the version word and the geometry of the area it selects into {@link #version}, {@link #baseOffset},
+     * {@link #symbolsSize}, {@link #partitionSegmentSize} and {@link #size}. Returns false when the version
+     * moved while the geometry was read. Maps nothing: see {@link #unsafeMapArea(long, long)}.
+     */
+    private boolean unsafeReadLiveAreaGeometry() {
+        version = unsafeReadVersion();
+        Unsafe.loadFence();
+
+        boolean isA = (version & 1) == 0;
+        baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        symbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+
+        // Before mapping the area, check that values read are not dirty
+        Unsafe.loadFence();
+        if (unsafeReadVersion() != version) {
+            return false;
+        }
+
+        size = calculateTxRecordSize(symbolsSize, partitionSegmentSize);
+        return true;
+    }
+
     static int findPartitionRawIndex(LongList attachedPartitions, long partitionTimestamp) {
         return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
     }
@@ -950,6 +1203,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     void clearData() {
+        // Clearing a raced snapshot does not reopen the mapping or require another integrity scan.
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;
@@ -1000,9 +1254,31 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.setQuick(index + PARTITION_VERSION_OFFSET, 0L);
     }
 
+    /**
+     * True when the loaded record carries a checksum stamp that names it, so the load verified its body
+     * checksum rather than skipping it. A record without one loads unverified, as legacy records do.
+     */
+    protected boolean isLoadedRecordChecksumVerified() {
+        return unsafeChecksumStampNamesThisRecord(baseOffset, txn);
+    }
+
+    protected void requireInitialChecksumVerification() {
+        isInitialChecksumVerificationRequired = true;
+    }
+
     protected void switchRecord(int readBaseOffset, long readRecordSize) {
         baseOffset = readBaseOffset;
         size = readRecordSize;
+    }
+
+    /**
+     * Loads the record in the other A/B area, the one published just before the live record, in place of the
+     * live record, which may be intact. Returns false when that record fails to load or its checksum does not
+     * match; a record without a checksum stamp loads unverified, see {@link #isLoadedRecordChecksumVerified()}.
+     * For an exclusive owner of the file only: it does not bracket the load with version checks.
+     */
+    protected boolean unsafeLoadPreviousArea() {
+        return unsafeReadLiveAreaGeometry() && unsafeLoadAndVerifyOtherArea(version);
     }
 
     protected long unsafeReadFixedRowCount() {

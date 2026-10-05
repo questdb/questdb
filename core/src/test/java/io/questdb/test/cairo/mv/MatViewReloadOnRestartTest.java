@@ -570,9 +570,17 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }
 
-                // apply WAL and remove WAL files
+                // apply WAL and remove WAL files. Under the default ADAPTIVE commit mode two things keep the
+                // WAL: the purge floor is held back to the last durable epoch, and the mat-view's WAL writer
+                // keeps its active segment locked. Reproduce what production does when a table goes idle --
+                // close the writers (a graceful-close epoch flush advances durableEpochSeqTxn to the committed
+                // frontier) and release the WAL / view-WAL writers (unlocking the segment). Do NOT
+                // engine.clear() here: it resets the in-memory tracker's durableEpochSeqTxn to 0 (only a real
+                // restart re-hydrates it from the _snapshot marker), which would re-pin the purge floor at 0.
                 drainWalQueue(main1.getEngine());
-                main1.getEngine().clear();
+                main1.getEngine().releaseAllWriters();
+                main1.getEngine().releaseAllWalWriters();
+                main1.getEngine().releaseAllViewWalWriters();
                 try (WalPurgeJob purgeJob = new WalPurgeJob(main1.getEngine())) {
                     purgeJob.drain(0);
                 }

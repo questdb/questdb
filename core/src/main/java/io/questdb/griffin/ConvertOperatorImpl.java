@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
@@ -236,10 +237,12 @@ public class ConvertOperatorImpl implements Closeable {
             // force a full-partition rewrite at ALTER time; the first O3 merge re-encodes them
             // with the new type anyway.
             //
-            // Each per-partition convert is performed without committing; a single batched
-            // commit at the end of the loop publishes them atomically. If any partition
-            // throws midway, the loop exits without commit and the writer becomes distressed,
-            // so the in-memory updates are discarded and the on-disk state stays unchanged.
+            // Each per-partition convert is performed without committing. The batch is published
+            // by the ALTER's final commit together with the new _meta: it must NOT get its own
+            // _txn write, because the writer already carries the ALTER's seqTxn and an
+            // intermediate _txn would bind it to the old column type. If any partition throws
+            // midway, the loop exits and the writer becomes distressed, so the in-memory updates
+            // are discarded and the on-disk state stays unchanged.
             boolean hasPriorConversion = tableWriter.getMetadata()
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
@@ -295,7 +298,7 @@ public class ConvertOperatorImpl implements Closeable {
                 }
             }
             if (hasAnyPartitionConverted) {
-                tableWriter.commitPendingParquetToNativeConversions();
+                tableWriter.applyPendingParquetToNativeConversions();
             }
 
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
@@ -460,6 +463,14 @@ public class ConvertOperatorImpl implements Closeable {
                             .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
+                } else if (tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC) {
+                    // fsync converted column files before closeFds (data before aux)
+                    if (dstVarFd != -1) {
+                        ff.fsync(dstVarFd);
+                    }
+                    if (dstFixFd != -1) {
+                        ff.fsync(dstFixFd);
+                    }
                 }
             }
         } catch (Throwable th) {

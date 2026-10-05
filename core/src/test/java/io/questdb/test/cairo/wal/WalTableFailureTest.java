@@ -85,6 +85,7 @@ import static io.questdb.std.Files.SEPARATOR;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class WalTableFailureTest extends AbstractCairoTest {
+    private boolean isWalApplyStarted;
 
     @Override
     @Before
@@ -844,6 +845,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testForceDropPartitionRangeNotOnDiskWithSplits() throws Exception {
+        // Force-drop removes the partition dir synchronously "at the end of the alter" under nosync; under
+        // adaptive the physical cleanup is deferred (like epoch-gated WAL purge), so the immediate
+        // assertFalse(dir exists) needs the deterministic nosync timing. This asserts drop mechanics, not durability.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
@@ -1385,6 +1390,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testSuspendWal() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         assertMemoryLeak(() -> {
             final TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
@@ -1398,16 +1404,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " suspend wal");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\t0\t0\t0\t-1\t\n");
 
             execute("update " + tableToken.getTableName() + " set x = 1111;");
             drainWalQueue();
@@ -1423,16 +1429,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\t0\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\t0\t0\t0\t-1\t\n");
 
             drainWalQueue();
             assertQuery(tableToken.getTableName())
@@ -1742,6 +1748,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableResumeContinuesAfterEject() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
@@ -1815,8 +1822,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\t0\t0\t-1\t\n");
         });
     }
 
@@ -1944,6 +1951,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", "table1", 999, NONE.text());
         if (Os.isWindows()) {
             testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, DISK_FULL.text());
@@ -1965,11 +1973,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
         overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
         spinLockTimeout = 1;
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
-            private int attempt = 0;
-
             @Override
             public long openRO(LPSZ name) {
-                if (Utf8s.containsAscii(name, "_meta") && attempt++ >= 2) {
+                // Fails _meta opens only once runCheckTableSuspended starts the WAL apply, so the
+                // UPDATE fails when the apply job compiles it. Counting earlier opens instead is
+                // brittle: table creation opens _meta more often under adaptive commit mode
+                // (epoch baseline copy and checksum) than under nosync, and compiling the UPDATE
+                // opens a reader to reject parquet partitions.
+                if (isWalApplyStarted && Utf8s.containsAscii(name, "_meta")) {
                     if (!engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName))) {
                         return -1;
                     }
@@ -2079,6 +2090,146 @@ public class WalTableFailureTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWalSegmentFixedColumnTruncatedSuspendsTable() throws Exception {
+        // Plan 1c audit #6: a torn/short segment .d file for a fixed-width column must be detected
+        // before mmap and cause table suspension, not silent-apply / SIGBUS.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
+
+            // Commit 5 rows; WAL writer flushes them to wal1/0/x.d (8 bytes each = 40 bytes)
+            execute("insert into " + tableName + " select x, timestamp_sequence('2022-02-24', 1000000L) from long_sequence(5)");
+
+            // Release WAL writer so we can safely truncate the segment file.
+            engine.releaseInactive();
+
+            // Locate and truncate wal1/0/x.d to 24 bytes (covers 3 rows, not 5).
+            TableToken tableToken = engine.verifyTableName(tableName);
+            Path segPath = Path.getThreadLocal(root)
+                    .concat(tableToken)
+                    .concat(WAL_NAME_BASE).put(1)
+                    .put(SEPARATOR).put(0)
+                    .put(SEPARATOR).put("x.d");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            long fd = ff.openRW(segPath.$(), io.questdb.cairo.CairoConfiguration.O_NONE);
+            Assert.assertTrue("Could not open segment file", fd > -1);
+            try {
+                long originalLen = ff.length(fd);
+                Assert.assertTrue("Expected segment file >= 40 bytes", originalLen >= 40);
+                Assert.assertTrue("Could not truncate segment file", ff.truncate(fd, 24));
+            } finally {
+                ff.close(fd);
+            }
+
+            // Draining the WAL queue should detect the short file and suspend the table.
+            drainWalQueue();
+            Assert.assertTrue(
+                    "Table should be suspended after short fixed-width segment",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            String fixedErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            Assert.assertTrue(
+                    "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "
+                            + fixedErrMsg,
+                    fixedErrMsg != null && fixedErrMsg.contains("WAL segment column too short")
+            );
+        });
+    }
+
+    @Test
+    public void testWalSegmentVarcharAuxTruncatedSuspendsTable() throws Exception {
+        // Plan 1c audit #6: a torn/short .i (aux) file for a VARCHAR column must cause suspension.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " (v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
+
+            // Commit 5 rows; each aux entry is 16 bytes, so aux file = 80 bytes minimum.
+            execute("insert into " + tableName + " select 'hello' || x, timestamp_sequence('2022-02-24', 1000000L) from long_sequence(5)");
+
+            engine.releaseInactive();
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            Path segPath = Path.getThreadLocal(root)
+                    .concat(tableToken)
+                    .concat(WAL_NAME_BASE).put(1)
+                    .put(SEPARATOR).put(0)
+                    .put(SEPARATOR).put("v.i");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            long fd = ff.openRW(segPath.$(), io.questdb.cairo.CairoConfiguration.O_NONE);
+            Assert.assertTrue("Could not open aux segment file", fd > -1);
+            try {
+                long originalLen = ff.length(fd);
+                Assert.assertTrue("Expected aux segment file >= 80 bytes", originalLen >= 80);
+                // Truncate to 32 bytes — covers only 2 entries (16*2), not 5.
+                Assert.assertTrue("Could not truncate aux segment file", ff.truncate(fd, 32));
+            } finally {
+                ff.close(fd);
+            }
+
+            drainWalQueue();
+            Assert.assertTrue(
+                    "Table should be suspended after short varchar aux segment",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            String auxErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            Assert.assertTrue(
+                    "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "
+                            + auxErrMsg,
+                    auxErrMsg != null && auxErrMsg.contains("WAL segment column too short")
+            );
+        });
+    }
+
+    @Test
+    public void testWalSegmentVarcharDataTruncatedSuspendsTable() throws Exception {
+        // Plan 1c audit #6: a torn/short .d (data) file for a VARCHAR column must cause suspension.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " (v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
+
+            // Use longer values (>9 bytes, so they are NOT fully inlined and DO appear in .d).
+            execute("insert into " + tableName +
+                    " select rpad('x', 20, 'x') || x, timestamp_sequence('2022-02-24', 1000000L) from long_sequence(5)");
+
+            engine.releaseInactive();
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            Path segPath = Path.getThreadLocal(root)
+                    .concat(tableToken)
+                    .concat(WAL_NAME_BASE).put(1)
+                    .put(SEPARATOR).put(0)
+                    .put(SEPARATOR).put("v.d");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            long fd = ff.openRW(segPath.$(), io.questdb.cairo.CairoConfiguration.O_NONE);
+            Assert.assertTrue("Could not open data segment file", fd > -1);
+            try {
+                long originalLen = ff.length(fd);
+                Assert.assertTrue("Expected data segment file > 0", originalLen > 0);
+                // Truncate to at most half the file — so the last row's data is definitely missing.
+                long truncTo = originalLen / 2;
+                Assert.assertTrue("Could not truncate data segment file", ff.truncate(fd, truncTo));
+            } finally {
+                ff.close(fd);
+            }
+
+            drainWalQueue();
+            Assert.assertTrue(
+                    "Table should be suspended after short varchar data segment",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            String dataErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            Assert.assertTrue(
+                    "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "
+                            + dataErrMsg,
+                    dataErrMsg != null && dataErrMsg.contains("WAL segment column too short")
+            );
+        });
+    }
+
     private void failToCopyDataToFile(String failToRollFile) throws Exception {
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
 
@@ -2184,6 +2335,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             // minimize time spent opening metadata that cannot be opened
             spinLockTimeout = 100;
+            isWalApplyStarted = true;
             drainWalQueue();
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
@@ -2296,9 +2448,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
                             tableToken.getTableName() + "\ttrue\t1\t0\t4\t" + expectedTag +
-                            "\t" + errorMessage + "\t0\n");
+                            "\t" + errorMessage + "\t0\t0\t0\t-1\t\n");
 
             execute("alter table " + tableToken.getTableName() + " resume wal");
             execute("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
@@ -2314,8 +2466,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\t0\t0\t-1\t\n");
 
             execute("drop table " + tableToken.getTableName());
         });
