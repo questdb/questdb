@@ -298,6 +298,11 @@ public class MutableModelsTest {
         model.setFillStride(newExpressionNode());
         model.setAllowPropagationOfOrderByAdvice(false);
         model.getAliasSequenceMap().put("foobar", 1);
+        model.setScalarExpiryRead(true);
+        model.setExpiryKeepFilter(true);
+        model.setExpiryWindowBarrier(true);
+        model.setExpiryViewNameExpr(newExpressionNode());
+        model.getExpiryWindowPartitionBy().add(newExpressionNode());
         // Setup HorizonJoinContext
         HorizonJoinContext hjc = model.getHorizonJoinContext();
         hjc.setMode(HorizonJoinContext.MODE_RANGE);
