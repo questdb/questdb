@@ -219,6 +219,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
     CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
     CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED("cairo.mat.view.row.expiry.cleanup.enabled"),
+    CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS("cairo.mat.view.row.expiry.cleanup.max.cached.partitions"),
     CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION("cairo.mat.view.row.expiry.cleanup.min.expired.fraction"),
     CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL("cairo.mat.view.min.refresh.interval"),
     CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),

@@ -3179,8 +3179,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
             final TableToken token = engine.verifyTableName("mv");
             final String predicate = expiryPredicate("mv");
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS, "2");
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.setMaxCachedPartitions(2);
                 Assert.assertFalse(job.cleanupTable(token, predicate));
                 Assert.assertEquals(3, job.getScalarPartitionScanCount());
 
@@ -3222,9 +3222,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             final TableToken kept = engine.verifyTableName("mv_kept");
             final String ttlPredicate = expiryPredicate("mv_ttl");
             final String keptPredicate = expiryPredicate("mv_kept");
+            // mv_ttl fills two slots; mv_kept can cache only one of its two non-active partitions.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS, "3");
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                // mv_ttl fills two slots; mv_kept can cache only one of its two non-active partitions.
-                job.setMaxCachedPartitions(3);
                 Assert.assertFalse(job.cleanupTable(ttl, ttlPredicate));
                 Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
                 Assert.assertEquals(4, job.getScalarPartitionScanCount());
@@ -3278,10 +3278,10 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             final TableToken ttl = engine.verifyTableName("mv_ttl");
             final String keptPredicate = expiryPredicate("mv_kept");
             final String ttlPredicate = expiryPredicate("mv_ttl");
+            // Two views share the cap. mv_kept fills two slots; mv_ttl can store one of its three
+            // non-active partitions, so the later two are counted on every sweep until a slot frees.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS, "3");
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                // Two views share the cap. mv_kept fills two slots; mv_ttl can store one of its three
-                // non-active partitions, so the later two are counted on every sweep until a slot frees.
-                job.setMaxCachedPartitions(3);
                 Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
                 Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
                 Assert.assertEquals(2, job.getScalarPartitionScanCount());

@@ -232,7 +232,11 @@ Cleanup drops or skips a whole partition by comparing its bounds to the
 threshold only for clock-shaped thresholds, which bind as timestamps. A fixed
 threshold, whether string (`ts < '2024-01-03'`) or numeric, binds as STRING or
 LONG and reclaims through the survivor scan. The generation cache limits that
-scan to once per partition per back-fill.
+scan to once per partition per back-fill, for as many partitions as
+`cairo.mat.view.row.expiry.cleanup.max.cached.partitions` allows across all
+views (16384 by default). Each sweep scans the partitions past that number
+again, and the first sweep after a restart scans every partition once, because
+the cache lives in memory only.
 `cairo.mat.view.row.expiry.cleanup.min.expired.fraction` applies to clock-based
 predicates only.
 

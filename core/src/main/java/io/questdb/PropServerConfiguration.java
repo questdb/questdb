@@ -400,6 +400,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final boolean matViewRowExpiryCleanupEnabled;
+    private final int matViewRowExpiryCleanupMaxCachedPartitions;
     private final double matViewRowExpiryCleanupMinExpiredFraction;
     private final long matViewRowsPerQueryEstimate;
     private final int maxFileNameLength;
@@ -1594,6 +1595,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewRowExpiryCleanupEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED, true);
+            this.matViewRowExpiryCleanupMaxCachedPartitions = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS, 16_384);
+            if (matViewRowExpiryCleanupMaxCachedPartitions < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath() + " must not be negative");
+            }
             this.matViewRowExpiryCleanupMinExpiredFraction = getDouble(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "0.5");
             if (!(matViewRowExpiryCleanupMinExpiredFraction >= 0 && matViewRowExpiryCleanupMinExpiredFraction <= 1)) {
                 throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath() + " must be between 0 and 1");
@@ -4646,6 +4651,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMatViewRefreshMemoryLimitBytes() {
             return matViewRefreshMemoryLimitBytes;
+        }
+
+        @Override
+        public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+            return matViewRowExpiryCleanupMaxCachedPartitions;
         }
 
         @Override

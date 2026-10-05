@@ -24,12 +24,13 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LongLongHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -57,7 +58,7 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
             final TableToken kept = token("kept", 3);
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 createCache(job, dropped, 3);
-                final CharSequenceLongHashMap keptGenerations = createCache(job, kept, 2);
+                final LongLongHashMap keptGenerations = createCache(job, kept, 2);
                 final Object keptCache = cache(job, kept);
                 discover(job, recreated, PREDICATE);
                 // A rename keeps the directory identity, unlike dropping and recreating the view.
@@ -112,8 +113,8 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
                 final CacheOperationCountingMap original = new CacheOperationCountingMap();
                 field(RowExpiryCleanupJob.class, "scalarPartitionCaches").set(job, original);
                 createCache(job, dropped, 4);
-                final CharSequenceLongHashMap changedGenerations = createCache(job, changed, 3);
-                final CharSequenceLongHashMap keptGenerations = createCache(job, kept, 2);
+                final LongLongHashMap changedGenerations = createCache(job, changed, 3);
+                final LongLongHashMap keptGenerations = createCache(job, kept, 2);
                 discover(job, changed, "v > 100");
                 discover(job, kept, PREDICATE);
                 discover(job, token("uncached", 4), PREDICATE);
@@ -167,9 +168,9 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
             final TableToken empty = token("empty", 3);
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 final CharSequenceObjHashMap<?> original = cacheMap(job);
-                final CharSequenceLongHashMap changedGenerations = createCache(job, changed, 3);
-                final CharSequenceLongHashMap keptGenerations = createCache(job, kept, 2);
-                final CharSequenceLongHashMap emptyGenerations = createCache(job, empty, 0);
+                final LongLongHashMap changedGenerations = createCache(job, changed, 3);
+                final LongLongHashMap keptGenerations = createCache(job, kept, 2);
+                final LongLongHashMap emptyGenerations = createCache(job, empty, 0);
                 discover(job, changed, "v > 100");
                 discover(job, kept, new String(PREDICATE));
                 discover(job, empty, PREDICATE);
@@ -258,18 +259,18 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
                 Assert.assertEquals(8, cachedPartitionCount(job));
                 assertEntries(original, 8, 0, 0);
                 Assert.assertEquals("release must not invent a verdict for an uncached floor",
-                        Long.MIN_VALUE, original.get(Long.toString(floor(8))));
+                        Long.MIN_VALUE, original.get(floor(8)));
             }
         });
     }
 
-    private static void assertEntries(CharSequenceLongHashMap generations, int size, int removeFrom, int removeTo) {
+    private static void assertEntries(LongLongHashMap generations, int size, int removeFrom, int removeTo) {
         Assert.assertEquals(size - (removeTo - removeFrom), generations.size());
         for (int i = 0; i < size; i++) {
             Assert.assertEquals(
                     "generation at floor " + i,
                     i >= removeFrom && i < removeTo ? Long.MIN_VALUE : generation(i),
-                    generations.get(Long.toString(floor(i)))
+                    generations.get(floor(i))
             );
         }
     }
@@ -283,7 +284,7 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
                 field(RowExpiryCleanupJob.class, "discoveredTokens").set(job, discovered);
                 final ObjList<TableToken> tokens = new ObjList<>();
                 final ObjList<Object> caches = new ObjList<>();
-                final ObjList<CharSequenceLongHashMap> generations = new ObjList<>();
+                final ObjList<LongLongHashMap> generations = new ObjList<>();
                 for (int i = 0; i < size; i++) {
                     final TableToken token = token("view" + i, i + 1);
                     tokens.add(token);
@@ -357,10 +358,10 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
                 release(job, token);
 
                 Assert.assertEquals("bulk release must not remove keys individually", 0, original.removalCount);
-                final CharSequenceLongHashMap retained = generations(job, token);
+                final LongLongHashMap retained = generations(job, token);
                 Assert.assertNotSame(original, retained);
                 assertEntries(retained, size, removeFrom, removeTo);
-                Assert.assertEquals(Long.MIN_VALUE, retained.get(Long.toString(floor(size))));
+                Assert.assertEquals(Long.MIN_VALUE, retained.get(floor(size)));
                 Assert.assertEquals(size - (removeTo - removeFrom) + OTHER_CACHE_SIZE, cachedPartitionCount(job));
                 Assert.assertSame(other, generations(job, otherToken));
                 Assert.assertEquals(0, other.removalCount);
@@ -393,7 +394,7 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
         final Object cache = method.invoke(job, token, PREDICATE);
         final RemovalCountingMap generations = new RemovalCountingMap(size);
         for (int i = 0; i < size; i++) {
-            generations.put(Long.toString(floor(i)), generation(i));
+            generations.put(floor(i), generation(i));
         }
         field(cache.getClass(), "generations").set(cache, generations);
         field(RowExpiryCleanupJob.class, "cachedPartitionCount").setInt(job, cachedPartitionCount(job) + size);
@@ -427,9 +428,9 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
         return 31L * index + 7;
     }
 
-    private static CharSequenceLongHashMap generations(RowExpiryCleanupJob job, TableToken token) throws Exception {
+    private static LongLongHashMap generations(RowExpiryCleanupJob job, TableToken token) throws Exception {
         final Object cache = cache(job, token);
-        return (CharSequenceLongHashMap) field(cache.getClass(), "generations").get(cache);
+        return (LongLongHashMap) field(cache.getClass(), "generations").get(cache);
     }
 
     private static LongList partitionFloors(RowExpiryCleanupJob job) throws Exception {
@@ -471,13 +472,13 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
             final TableToken kept = engine.verifyTableName("mv_kept");
             final String removedPredicate = expiryPredicate(removed);
             final String keptPredicate = expiryPredicate(kept);
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS, "3");
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                job.setMaxCachedPartitions(3);
                 Assert.assertFalse(job.cleanupTable(removed, removedPredicate));
                 Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
                 Assert.assertEquals(4, job.getScalarPartitionScanCount());
                 final Object keptCache = cache(job, kept);
-                final CharSequenceLongHashMap keptGenerations = generations(job, kept);
+                final LongLongHashMap keptGenerations = generations(job, kept);
                 Assert.assertEquals(1, keptGenerations.size());
                 Assert.assertFalse(job.runNow());
                 Assert.assertEquals(5, job.getScalarPartitionScanCount());
@@ -534,12 +535,12 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
         }
     }
 
-    // Count the operation that scans the key list instead of asserting wall-clock timings.
-    private static final class RemovalCountingMap extends CharSequenceLongHashMap {
+    // Counts single-key removals. Bulk release rebuilds the map instead of removing keys one by one.
+    private static final class RemovalCountingMap extends LongLongHashMap {
         private int removalCount;
 
         private RemovalCountingMap(int capacity) {
-            super(capacity, 0.5, Long.MIN_VALUE);
+            super(capacity, 0.5, Long.MIN_VALUE, Long.MIN_VALUE);
         }
 
         @Override

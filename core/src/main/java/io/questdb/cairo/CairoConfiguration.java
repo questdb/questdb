@@ -540,6 +540,24 @@ public interface CairoConfiguration {
     long getMatViewRefreshMemoryLimitBytes();
 
     /**
+     * The number of materialized view partitions, across all views, for which the EXPIRE ROWS cleanup job
+     * remembers that the partition is unchanged and holds no expired row, so that its next run skips the
+     * partition instead of counting its rows again.
+     * <p>
+     * The job remembers partitions for a policy that decides each row from that row's own data. The
+     * exception is a policy that is a single comparison putting the designated timestamp below a
+     * TIMESTAMP-typed constant ({@code ts < T}, {@code ts <= T}, {@code T > ts}, {@code T >= ts}); the job
+     * decides those partitions from their bounds instead. A string or numeric threshold such as
+     * {@code ts < '2024-01-03'} binds as STRING or LONG, so it uses the cache.
+     * <p>
+     * Once the job remembers this many partitions, it keeps those and adds no more, so each run counts the
+     * rows of every other unchanged partition again. The job keeps this information in memory only, so its
+     * first run after a restart counts the rows of every partition once. Set 0 to make every run count every
+     * partition.
+     */
+    int getMatViewRowExpiryCleanupMaxCachedPartitions();
+
+    /**
      * The fraction of a materialized view partition's rows that must be expired before the EXPIRE ROWS
      * cleanup job compacts that partition. To compact a partition, the job rewrites all of the rows that
      * are not expired.

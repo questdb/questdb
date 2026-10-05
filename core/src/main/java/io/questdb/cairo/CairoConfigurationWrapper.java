@@ -645,6 +645,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+        return getDelegate().getMatViewRowExpiryCleanupMaxCachedPartitions();
+    }
+
+    @Override
     public double getMatViewRowExpiryCleanupMinExpiredFraction() {
         return getDelegate().getMatViewRowExpiryCleanupMinExpiredFraction();
     }

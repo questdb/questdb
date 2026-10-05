@@ -212,6 +212,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewRowExpiryCleanupEnabled());
+        Assert.assertEquals(16_384, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
         Assert.assertEquals(0.5, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMinExpiredFraction(), 0.000001);
         Assert.assertFalse(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
@@ -1744,6 +1745,21 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMatViewRowExpiryCleanupMaxCachedPartitionsAcceptsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath(), "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMaxCachedPartitionsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath(), "-1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS);
+    }
+
+    @Test
     public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsAboveOne() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "1.1");
@@ -2324,6 +2340,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewRowExpiryCleanupEnabled());
+            Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
             Assert.assertEquals(0.25, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMinExpiredFraction(), 0.000001);
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());

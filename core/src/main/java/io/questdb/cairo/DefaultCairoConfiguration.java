@@ -670,6 +670,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+        return 16_384;
+    }
+
+    @Override
     public double getMatViewRowExpiryCleanupMinExpiredFraction() {
         return 0.5;
     }
