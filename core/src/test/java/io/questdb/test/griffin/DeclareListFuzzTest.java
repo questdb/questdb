@@ -23,12 +23,14 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
     public void testSplicedListMatchesWrittenOutList() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SYMBOL, l LONG)");
-            execute("INSERT INTO t VALUES ('AAPL',1),('MSFT',2),('TSLA',3),('AMZN',4),('GOOG',5)");
+            // The NULL row is what a NULL member matches, see member().
+            execute("INSERT INTO t VALUES ('AAPL',1),('MSFT',2),('TSLA',3),('AMZN',4),('GOOG',5),(NULL,NULL)");
 
             final Rnd rnd = TestUtils.generateRandom(LOG);
             int oneMemberLists = 0;
             int mixedWithLiterals = 0;
             int notInForms = 0;
+            int listsWithNull = 0;
             for (int i = 0; i < ITERATIONS; i++) {
                 final boolean useLong = rnd.nextBoolean();
                 final boolean notIn = rnd.nextBoolean();
@@ -48,6 +50,9 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
                     // The only way to write a list of one; without it the brackets are grouping.
                     list.put(',');
                     oneMemberLists++;
+                }
+                if (list.toString().contains("NULL")) {
+                    listsWithNull++;
                 }
 
                 final String before = shape == 1 || shape == 3 ? member(rnd, useLong) + ", " : "";
@@ -108,6 +113,7 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
             assertTrue("no one-member lists generated", oneMemberLists > 0);
             assertTrue("lists were never mixed with literals", mixedWithLiterals > 0);
             assertTrue("NOT IN was never exercised", notInForms > 0);
+            assertTrue("no list had a NULL member", listsWithNull > 0);
         });
     }
 
@@ -115,7 +121,7 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
     public void testSplicedListInsideAViewMatchesWrittenOutList() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t2 (s SYMBOL, l LONG)");
-            execute("INSERT INTO t2 VALUES ('AAPL',1),('MSFT',2),('TSLA',3),('AMZN',4),('GOOG',5)");
+            execute("INSERT INTO t2 VALUES ('AAPL',1),('MSFT',2),('TSLA',3),('AMZN',4),('GOOG',5),(NULL,NULL)");
 
             // A view body is re-parsed as a subquery when the view is read, where a bare ')' ends
             // the subquery rather than the list - which is how a list in a view came to fail while
@@ -180,7 +186,12 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
         });
     }
 
+    // A NULL member is a member like any other: IN treats NULL as equal to NULL, so it matches the
+    // tables' NULL row, and the written-out list has to agree on that as on everything else.
     private static String member(Rnd rnd, boolean useLong) {
+        if (rnd.nextInt(6) == 0) {
+            return "NULL";
+        }
         return useLong ? Integer.toString(1 + rnd.nextInt(5)) : '\'' + SYMBOLS[rnd.nextInt(SYMBOLS.length)] + '\'';
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
@@ -31,10 +32,14 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewGraph;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -42,11 +47,13 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.ViewAuditModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -65,6 +72,27 @@ import static org.junit.Assert.fail;
  * is asserted here.
  */
 public class ViewAuditTest extends AbstractCairoTest {
+    // What each plan generated since a test armed this held on its model: the names of the views
+    // it audits, sorted. Null while no test is looking.
+    private static ObjList<String> generatedPlanAudits;
+    // Makes the compiler refuse every plan whose model holds an audit, once the plan generated.
+    private static boolean isAuditedPlanRefused;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // Enterprise reads a plan's audits off the model the plan is generated from, in its
+        // override of generateSelectOneShot(), and it installs that compiler through the engine.
+        // So every compiler the engine pools is one, the one PIVOT borrows to run its
+        // FOR ... IN (SELECT ...) sub-query included. This installs a compiler that looks at the
+        // same model in the same place.
+        AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            public SqlCompilerFactory getSqlCompilerFactory() {
+                return PlanAuditRecordingCompiler::new;
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testAuditRecordsOnlyAuditedParametersInNameOrder() throws Exception {
@@ -455,6 +483,414 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPivotSubQueryInAuditedViewBodyRecordsThatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            // The column names of this view are rows of trades, read when a statement over the
+            // view compiles. The principal asked for the view, so that read is a read of the view.
+            createAuditedView(
+                    "v_pivot",
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM trades))"
+            );
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_pivot", "v_pivot");
+            // A view that is not audited does not hide the audited one inside it.
+            execute("CREATE VIEW v_pivot_wrap AS (SELECT * FROM v_pivot)");
+            drainWalAndViewQueues();
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_pivot_wrap", "v_pivot");
+
+            // v_audited has no parameter a caller can set, so the record of the view around it
+            // covers it, in the sub-query's plan as in the statement's.
+            createAuditedView(
+                    "v_pivot_cover",
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM v_audited))"
+            );
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_pivot_cover", "v_pivot_cover");
+            assertRecordsAuditsOf("SELECT * FROM v_pivot_cover", "v_pivot_cover");
+
+            // v_param lets a caller choose the rows, and v_pivot_tag does not record the choice,
+            // so v_param keeps its own record, in the sub-query's plan as in the statement's.
+            createAuditedView(
+                    "v_param",
+                    "DECLARE OVERRIDABLE AUDITED @sym := 'AAPL' SELECT symbol, price FROM trades WHERE symbol = @sym"
+            );
+            createAuditedView(
+                    "v_pivot_tag",
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM v_param))"
+            );
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_pivot_tag", "v_param, v_pivot_tag");
+            assertRecordsAuditsOf("SELECT * FROM v_pivot_tag", "v_param", "v_pivot_tag");
+            assertCompileTimePlansRecordAuditsOf("DECLARE @sym := 'MSFT' SELECT * FROM v_pivot_tag", "v_param, v_pivot_tag");
+
+            // v_out reads v_param beside the PIVOT, after the sub-query, which does not read it.
+            // The statement records both views, and the sub-query's plan only the view around it.
+            createAuditedView(
+                    "v_out",
+                    """
+                            SELECT p.symbol
+                            FROM (SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM trades) GROUP BY symbol)) p
+                            JOIN v_param q ON p.symbol = q.symbol"""
+            );
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_out", "v_out");
+            assertRecordsAuditsOf("SELECT * FROM v_out", "v_out", "v_param");
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryInNestedAuditedViewsRecordsEachViewNotShadowed() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            // The sub-query sits in v_pivot_param, which lets a caller choose the rows it pivots.
+            createAuditedView(
+                    "v_pivot_param",
+                    """
+                            DECLARE OVERRIDABLE AUDITED @sym := 'AAPL'
+                            SELECT * FROM (SELECT symbol, price FROM pub WHERE symbol = @sym)
+                            PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM trades))"""
+            );
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_pivot_param", "v_pivot_param");
+
+            // v_tag does not record the caller's choice, so v_pivot_param keeps its own record
+            // beside v_tag's, in the sub-query's plan as in the statement's.
+            createAuditedView("v_tag", "SELECT * FROM v_pivot_param");
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_tag", "v_pivot_param, v_tag");
+            assertRecordsAuditsOf("SELECT * FROM v_tag", "v_pivot_param", "v_tag");
+
+            // v_cover records it, so its own record is the only one, in both plans.
+            createAuditedView("v_cover", "DECLARE OVERRIDABLE AUDITED @sym := 'AAPL' SELECT * FROM v_pivot_param");
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_cover", "v_cover");
+            assertRecordsAuditsOf("SELECT * FROM v_cover", "v_cover");
+
+            // Two reads of the view are two expansions of its body, and each sub-query takes the
+            // audits of the views around its own.
+            assertCompileTimePlansRecordAuditsOf(
+                    "SELECT * FROM v_tag UNION ALL SELECT * FROM v_cover",
+                    "v_pivot_param, v_tag",
+                    "v_cover"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryInNestedPivotRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            final String pivot = "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM v_audited) GROUP BY symbol)";
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM (" + pivot + ")", "v_audited");
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM pub WHERE symbol IN (SELECT symbol FROM (" + pivot + "))", "v_audited");
+            assertCompileTimePlansRecordAuditsOf("SELECT p.symbol FROM pub p JOIN (" + pivot + ") q ON p.symbol = q.symbol", "v_audited");
+            // One plan per sub-query, each with the reads of its own sub-query.
+            assertCompileTimePlansRecordAuditsOf(
+                    pivot + " UNION ALL SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM pub) GROUP BY symbol)",
+                    "v_audited",
+                    ""
+            );
+            // A PIVOT inside the sub-query of another runs its own sub-query first, while the
+            // outer sub-query compiles. The outer sub-query's plan returns the names of the
+            // columns the inner one produced, so it carries the audit as well.
+            assertCompileTimePlansRecordAuditsOf(
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT q.symbol FROM (" + pivot + ") q))",
+                    "v_audited",
+                    "v_audited"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryInPlainViewBodyRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            execute("CREATE VIEW v_pivot AS (SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM v_audited)))");
+            drainWalAndViewQueues();
+            assertCompileTimePlansRecordAuditsOf("SELECT * FROM v_pivot", "v_audited");
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryOfFailingStatementRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            generatedPlanAudits = new ObjList<>();
+            try {
+                // The sub-query runs, and a value it read comes back in the error. The statement's
+                // own plan never generates, so the sub-query's plan is the only one there is to
+                // record the read.
+                final String badValues = "SELECT * FROM pub PIVOT (sum(price) FOR price IN (SELECT concat(symbol, '@', price) FROM v_audited))";
+                assertExceptionNoLeakCheck(badValues, badValues.indexOf("SELECT concat"), "AAPL@100.5");
+                assertEquals("[v_audited]", Arrays.toString(planAudits()));
+
+                // A sub-query that finds no row has still read the view to find that out.
+                generatedPlanAudits.clear();
+                final String noValues = "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM v_audited WHERE price > 1_000))";
+                assertExceptionNoLeakCheck(noValues, noValues.indexOf("SELECT symbol"), "PIVOT IN subquery returned empty result set");
+                assertEquals("[v_audited]", Arrays.toString(planAudits()));
+            } finally {
+                generatedPlanAudits = null;
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryOfOtherStatementsRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            execute("CREATE TABLE dest (symbol SYMBOL, aapl DOUBLE, msft DOUBLE)");
+            final String pivot = "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM v_audited) GROUP BY symbol)";
+            assertCompileTimePlansRecordAuditsOf("INSERT INTO dest " + pivot, "v_audited");
+            assertCompileTimePlansRecordAuditsOf("EXPLAIN " + pivot, "v_audited");
+            assertCompileTimePlansRecordAuditsOf("UPDATE dest SET aapl = 1 FROM (" + pivot + ") p WHERE dest.symbol = p.symbol", "v_audited");
+            assertCompileTimePlansRecordAuditsOf("UPDATE dest SET aapl = 1 WHERE aapl < (SELECT count() FROM (" + pivot + "))", "v_audited");
+            // CREATE TABLE AS SELECT optimises its query when it runs: the sub-query's plan
+            // first, then the plan that feeds the new table.
+            assertExecutedPlansRecordAuditsOf("CREATE TABLE copy AS (" + pivot + ")", "v_audited", "v_audited");
+            // A view compiles its body when it is created, and the sub-query runs then.
+            assertExecutedPlansRecordAuditsOf("CREATE VIEW v_pivot AS (" + pivot + ")", "v_audited", "v_audited");
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryPlanRefusedByTheCompilerFailsTheStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            // Enterprise refuses a plan whose audit it cannot build, after the plan generated: it
+            // frees the plan and throws. For the sub-query's plan that happens inside the
+            // optimiser, which has to come out of it clean, with the borrowed compiler returned.
+            final String sql = "SELECT * FROM long_sequence(2) PIVOT (count() FOR x IN (SELECT DISTINCT price::LONG FROM v_audited))";
+            isAuditedPlanRefused = true;
+            try {
+                assertExceptionNoLeakCheck(sql, 0, "refused plan [audits=1]");
+            } finally {
+                isAuditedPlanRefused = false;
+            }
+            // The same statement compiles once nothing refuses its plans.
+            assertCompileTimePlansRecordAuditsOf(sql, "v_audited");
+            select(sql).close();
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryReadingAuditedViewRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            final String sql = "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT concat(symbol, '@', price) FROM v_audited))";
+            // PIVOT runs the sub-query while the statement compiles, for the names of the columns
+            // it produces, so a statement that is prepared and never executed has read the view.
+            // Enterprise records a read when the cursor of a plan opens, and the plan that reads
+            // here is the sub-query's own: it has to carry the audit, or nothing records the read.
+            assertCompileTimePlansRecordAuditsOf(sql, "v_audited");
+            // The statement keeps the audit too: the names of the columns its plan returns are
+            // rows of the view.
+            assertRecordsOneAuditOf("v_audited", sql);
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryReadingAuditedViewThroughCteRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            // The first reference to a CTE reads the model its definition parsed, before the
+            // sub-query began.
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            WITH c AS (SELECT DISTINCT symbol FROM v_audited)
+                            SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM c))""",
+                    "v_audited"
+            );
+            // So does a definition that reads another CTE.
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            WITH c AS (SELECT DISTINCT symbol FROM v_audited), d AS (SELECT symbol FROM c)
+                            SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM d))""",
+                    "v_audited"
+            );
+            // A later reference parses the definition again.
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            WITH c AS (SELECT DISTINCT symbol FROM v_audited)
+                            SELECT * FROM (SELECT * FROM pub WHERE symbol IN (SELECT symbol FROM c))
+                            PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM c))""",
+                    "v_audited"
+            );
+            // A CTE the sub-query defines and reads is read once.
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            SELECT * FROM pub PIVOT (
+                              sum(price)
+                              FOR symbol IN (SELECT symbol FROM (WITH c AS (SELECT DISTINCT symbol FROM v_audited) SELECT symbol FROM c)))""",
+                    "v_audited"
+            );
+            // A CTE the sub-query does not read is not one of its reads.
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            WITH c AS (SELECT DISTINCT symbol FROM v_audited)
+                            SELECT * FROM (SELECT * FROM pub WHERE symbol IN (SELECT symbol FROM c))
+                            PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM pub))""",
+                    ""
+            );
+            // Nor are the reads of a definition parsed before the one the sub-query reads.
+            createAuditedView("v_other", "SELECT symbol, price FROM pub");
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            WITH a AS (SELECT DISTINCT symbol FROM v_audited), b AS (SELECT DISTINCT symbol FROM v_other)
+                            SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM b))""",
+                    "v_other"
+            );
+            // Whichever reference takes the definition's model, the statement records the read
+            // once for each expansion of the view, as it did.
+            assertRecordsAuditsOf(
+                    """
+                            WITH c AS (SELECT DISTINCT symbol FROM v_audited)
+                            SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM c))""",
+                    "v_audited"
+            );
+            assertRecordsAuditsOf("WITH c AS (SELECT DISTINCT symbol FROM v_audited) SELECT * FROM c", "v_audited");
+            assertRecordsAuditsOf("WITH c AS (SELECT DISTINCT symbol FROM v_audited) SELECT * FROM pub", "v_audited");
+            // The reads an audited view shadows inside a definition stay shadowed for the
+            // statement, however the optimiser folds the definition's model into its plan.
+            createAuditedView("v_cover", "SELECT DISTINCT symbol FROM v_audited");
+            assertRecordsAuditsOf("WITH c AS (SELECT symbol FROM v_cover) SELECT * FROM c", "v_cover");
+            assertRecordsAuditsOf("WITH c AS (SELECT symbol FROM v_cover) SELECT symbol FROM c WHERE symbol = 'AAPL'", "v_cover");
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            WITH c AS (SELECT symbol FROM v_cover)
+                            SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM c))""",
+                    "v_cover"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryReadingAuditedViewThroughDeclaredVariableRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            // A variable declared inside the sub-query parses there, whichever read takes its model.
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            SELECT * FROM pub PIVOT (
+                              sum(price)
+                              FOR symbol IN (SELECT symbol FROM (DECLARE @q := (SELECT DISTINCT symbol FROM v_audited) SELECT * FROM @q)))""",
+                    "v_audited"
+            );
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            SELECT * FROM pub PIVOT (
+                              sum(price)
+                              FOR symbol IN (
+                                SELECT symbol FROM (
+                                  DECLARE @q := (SELECT DISTINCT symbol FROM v_audited)
+                                  SELECT DISTINCT symbol FROM pub WHERE symbol IN @q)))""",
+                    "v_audited"
+            );
+
+            // The variables of the statement around a PIVOT do not reach its clauses, so its
+            // sub-query cannot read one of them. If that ever changes, the first read of a
+            // declared sub-query takes the model the declaration parsed, before the PIVOT
+            // sub-query began, as the first reference to a CTE does, and its reads have to be
+            // counted the way parseWith() counts those. Until then, nothing compiles or runs.
+            generatedPlanAudits = new ObjList<>();
+            try {
+                assertExceptionNoLeakCheck(
+                        "DECLARE @q := (SELECT DISTINCT symbol FROM v_audited) SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM @q))",
+                        124,
+                        "table does not exist [table=@q]"
+                );
+                assertExceptionNoLeakCheck(
+                        "DECLARE @q := (SELECT DISTINCT symbol FROM v_audited) SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM pub WHERE symbol IN @q))",
+                        153,
+                        "Invalid column: @q"
+                );
+                // Not a sub-query to PIVOT, which takes the brackets for a list of constants.
+                assertExceptionNoLeakCheck(
+                        "DECLARE @q := (SELECT DISTINCT symbol FROM v_audited) SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (@q))",
+                        105,
+                        "Invalid column: @q"
+                );
+                assertExceptionNoLeakCheck(
+                        "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN ((SELECT DISTINCT symbol FROM v_audited)))",
+                        52,
+                        "constant expected"
+                );
+                assertEquals("[]", Arrays.toString(planAudits()));
+            } finally {
+                generatedPlanAudits = null;
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryReadingAuditedViewThroughNestedSubQueryRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            assertCompileTimePlansRecordAuditsOf(
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM (SELECT DISTINCT symbol FROM v_audited)))",
+                    "v_audited"
+            );
+            assertCompileTimePlansRecordAuditsOf(
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM pub WHERE symbol IN (SELECT symbol FROM v_audited)))",
+                    "v_audited"
+            );
+            assertCompileTimePlansRecordAuditsOf(
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT p.symbol FROM pub p JOIN v_audited a ON p.symbol = a.symbol))",
+                    "v_audited"
+            );
+            assertCompileTimePlansRecordAuditsOf(
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM pub UNION SELECT symbol FROM v_audited))",
+                    "v_audited"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryReadingAuditedViewThroughViewRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            // A view that is not audited records nothing, and hides nothing.
+            execute("CREATE VIEW v_wrap AS (SELECT DISTINCT symbol FROM v_audited)");
+            drainWalAndViewQueues();
+            assertCompileTimePlansRecordAuditsOf(
+                    "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM v_wrap))",
+                    "v_audited"
+            );
+
+            // An audited one shadows the reads its record covers, for the sub-query's plan as for
+            // the statement's: v_audited has no parameter a caller can set.
+            createAuditedView("v_cover", "SELECT DISTINCT symbol FROM v_audited");
+            final String sql = "SELECT * FROM pub PIVOT (sum(price) FOR symbol IN (SELECT symbol FROM v_cover))";
+            assertCompileTimePlansRecordAuditsOf(sql, "v_cover");
+            assertRecordsAuditsOf(sql, "v_cover");
+        });
+    }
+
+    @Test
+    public void testPivotSubQueryRecordsOnlyItsOwnReads() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotTablesAndAuditedView();
+            execute("CREATE VIEW v_plain AS (SELECT symbol, price FROM pub)");
+            drainWalAndViewQueues();
+
+            // The statement reads v_audited, and its own plan records that when it runs. The
+            // sub-query reads other things, so the plan that runs at compile time has nothing to
+            // record: a statement that is prepared and never executed read no row of v_audited.
+            final String sql = "SELECT * FROM v_audited PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM pub))";
+            assertCompileTimePlansRecordAuditsOf(sql, "");
+            assertRecordsOneAuditOf("v_audited", sql);
+            assertCompileTimePlansRecordAuditsOf(
+                    "SELECT * FROM v_audited PIVOT (sum(price) FOR symbol IN (SELECT DISTINCT symbol FROM v_plain))",
+                    ""
+            );
+            // One plan per sub-query, each with the reads of its own sub-query.
+            assertCompileTimePlansRecordAuditsOf(
+                    """
+                            SELECT * FROM pub PIVOT (
+                              sum(price)
+                              FOR symbol IN (SELECT DISTINCT symbol FROM pub)
+                                  price IN (SELECT DISTINCT price FROM v_audited))""",
+                    "",
+                    "v_audited"
+            );
+        });
+    }
+
+    @Test
     public void testQueryReadingNoAuditedViewRecordsNothing() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -773,6 +1209,37 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     /**
+     * Compiles the statement as far as its execution model, which is as far as it gets before its
+     * own plan is generated, and asserts the audits on the model of each plan generated on the
+     * way: one entry per plan, in generation order, each the names of the views the plan audits,
+     * sorted and separated by ", ". Only PIVOT generates a plan that early: it runs its
+     * {@code FOR ... IN (SELECT ...)} sub-queries for the names of the columns it produces.
+     */
+    private static void assertCompileTimePlansRecordAuditsOf(String sql, String... expectedPlanAudits) throws Exception {
+        generatedPlanAudits = new ObjList<>();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.generateExecutionModel(sql, sqlExecutionContext);
+            assertEquals("wrong plan audits for [" + sql + "]", Arrays.toString(expectedPlanAudits), Arrays.toString(planAudits()));
+        } finally {
+            generatedPlanAudits = null;
+        }
+    }
+
+    /**
+     * Runs the statement and asserts the audits on the model of each plan it generated, as
+     * {@link #assertCompileTimePlansRecordAuditsOf} does. The statement's own plan comes last.
+     */
+    private static void assertExecutedPlansRecordAuditsOf(String sql, String... expectedPlanAudits) throws Exception {
+        generatedPlanAudits = new ObjList<>();
+        try {
+            execute(sql);
+            assertEquals("wrong plan audits for [" + sql + "]", Arrays.toString(expectedPlanAudits), Arrays.toString(planAudits()));
+        } finally {
+            generatedPlanAudits = null;
+        }
+    }
+
+    /**
      * Asserts which views the statement records a read of: one name per recorded read, in any
      * order.
      */
@@ -898,12 +1365,29 @@ public class ViewAuditTest extends AbstractCairoTest {
         drainWalAndViewQueues();
     }
 
+    private static void createPivotTablesAndAuditedView() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE)");
+        execute("CREATE TABLE pub (symbol SYMBOL, price DOUBLE)");
+        execute("INSERT INTO trades VALUES ('AAPL', 100.5), ('MSFT', 300.75)");
+        execute("INSERT INTO pub VALUES ('AAPL', 1.0), ('MSFT', 2.0)");
+        drainWalQueue();
+        createAuditedView("v_audited", "SELECT symbol, price FROM trades");
+    }
+
     /**
      * OSS has no syntax that sets the flag - {@code WITH AUDIT} is an Enterprise clause - so a test
      * that needs an audited view swaps the graph's definition for one carrying the flag.
      */
     private static void markViewAudited(String viewName) {
         storeAuditedDefinition(viewName, engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists(viewName)).getViewSql());
+    }
+
+    private static String[] planAudits() {
+        final String[] planAudits = new String[generatedPlanAudits.size()];
+        for (int i = 0, n = generatedPlanAudits.size(); i < n; i++) {
+            planAudits[i] = generatedPlanAudits.getQuick(i);
+        }
+        return planAudits;
     }
 
     private static ViewDefinition readDefinitionFile(TableToken viewToken) {
@@ -964,6 +1448,40 @@ public class ViewAuditTest extends AbstractCairoTest {
             ViewDefinition.append(definition, block);
             block.commit(ViewDefinition.VIEW_DEFINITION_FORMAT_MSG_TYPE);
             writer.commit();
+        }
+    }
+
+    /**
+     * Notes the audits on the model of every plan it generates, where Enterprise's compiler reads
+     * them to decide whether the plan records a read when its cursor opens.
+     */
+    private static class PlanAuditRecordingCompiler extends SqlCompilerImpl {
+        private PlanAuditRecordingCompiler(CairoEngine engine) {
+            super(engine);
+        }
+
+        @Override
+        protected RecordCursorFactory generateSelectOneShot(
+                IQueryModel selectQueryModel,
+                SqlExecutionContext executionContext,
+                boolean generateProgressLogger
+        ) throws SqlException {
+            // Enterprise generates the plan first too, and wraps only a plan that generated.
+            final RecordCursorFactory factory = super.generateSelectOneShot(selectQueryModel, executionContext, generateProgressLogger);
+            final ObjList<ViewAuditModel> audits = selectQueryModel.getViewAudits();
+            if (isAuditedPlanRefused && audits.size() > 0) {
+                Misc.free(factory);
+                throw SqlException.$(0, "refused plan [audits=").put(audits.size()).put(']');
+            }
+            if (generatedPlanAudits != null) {
+                final String[] viewNames = new String[audits.size()];
+                for (int i = 0, n = audits.size(); i < n; i++) {
+                    viewNames[i] = audits.getQuick(i).getViewName().toString();
+                }
+                Arrays.sort(viewNames);
+                generatedPlanAudits.add(String.join(", ", viewNames));
+            }
+            return factory;
         }
     }
 }

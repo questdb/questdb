@@ -70,6 +70,7 @@ import io.questdb.griffin.model.ViewAuditModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.griffin.model.WithClauseModel;
+import io.questdb.std.BoolList;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
@@ -106,6 +107,14 @@ import static io.questdb.std.GenericLexer.assertNoDotsAndSlashes;
 import static io.questdb.std.GenericLexer.unquote;
 
 public class SqlParser {
+    // The most copies of declared sub-queries one statement may parse, see parseDeclaredQuery().
+    // Once optimised, a copy of even a small sub-query holds 10 to 25 query models of about
+    // 11 KB each, and the compiler's pool keeps them, so a statement at the cap keeps 12 to 35 MB.
+    public static final int MAX_DECLARED_QUERY_COPIES = 100;
+    // The most expression nodes one statement may copy for references to declared variables, as
+    // countDeclaredValueNodes() counts them. A node is about 200 bytes, and the compiler's pool
+    // keeps them, so a statement at the cap keeps about 25 MB.
+    public static final int MAX_DECLARED_VARIABLE_NODES = 100_000;
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
@@ -133,20 +142,38 @@ public class SqlParser {
     // The sub-queries in declared values: the node each one parsed to, the model it parsed, the
     // text it parsed from and how many views the parser was expanding where it was declared.
     // parseDeclaredQuery() parses a sub-query again from that text, inside those views only.
+    // It also numbers the copy's generated column names from the digit the sub-query's own parse
+    // began with, so that every read of the sub-query sees the same names. For the names of the
+    // CTEs the sub-query reads, the parser keeps whether the declaration sat in the text of a CTE
+    // that a later reference was parsing again: see isReparsingCte.
     private final ObjList<ExpressionNode> declaredQueries = new ObjList<>();
+    private final BoolList declaredQueryCteReparses = new BoolList();
+    private final IntList declaredQueryDigits = new IntList();
     private final ObjList<IQueryModel> declaredQueryModels = new ObjList<>();
     private final ObjList<CharSequence> declaredQuerySources = new ObjList<>();
     private final IntList declaredQueryViewDepths = new IntList();
+    // The sub-queries parsed while parseDeclare() reads a declared value, with the digit each
+    // one's parse began with. The node of a sub-query in the value reaches this parser only when
+    // the value is parsed, so addDeclaredQueries() finds the node's digit here, by its model.
+    private final IntList declaredValueQueryDigits = new IntList();
+    private final ObjList<IQueryModel> declaredValueQueryModels = new ObjList<>();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
+    // The lexers from viewLexers that have parsed a view body or a copy of a declared sub-query
+    // and are not reading now, each still set to the text it parsed. borrowViewLexer() hands them
+    // out to parse that text again.
+    private final ObjList<GenericLexer> idleViewLexers = new ObjList<>();
     private final ObjectPool<InsertModel> insertModelPool;
     // The views parseDeclaredQuery() takes off viewsBeingCompiled while it parses a copy, to put
     // back when the copy's parse returns.
     private final ObjList<CharSequence> parkedViewsBeingCompiled = new ObjList<>();
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
+    // The PIVOT ... FOR ... IN (SELECT ...) sub-queries parsed inside the audited views whose
+    // bodies the parser is expanding: each still lacks the audits of the views around it.
+    private final ObjList<IQueryModel> pivotSubQueryModelsInAuditedView = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     // One entry per reference to an audited view, in the order the parser expanded them, less the
@@ -176,6 +203,16 @@ public class SqlParser {
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjectPool<ViewAuditModel> viewAuditModelPool;
+    // Every read of an audited view, in the order the parser came to it, and never trimmed: a
+    // reference adds its read when it expands the view, and a reference to a CTE that takes the
+    // model the definition parsed adds the definition's reads again. So the reads of a sub-query
+    // are the entries added while it parsed, wherever the models it reads were parsed. Unlike
+    // recordedViewAudits, this keeps the reads an audited view shadows.
+    private final ObjList<ViewAuditModel> viewAuditTrace = new ObjList<>();
+    // The CTE definitions whose parse read audited views: the model each one parsed, and the
+    // entries of viewAuditTrace its parse added, as a pair of indexes, the second exclusive.
+    private final ObjList<IQueryModel> viewAuditWithModels = new ObjList<>();
+    private final IntList viewAuditWithReads = new IntList();
     private final ObjectPool<GenericLexer> viewLexers;
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
@@ -184,12 +221,35 @@ public class SqlParser {
     private final ObjList<CharSequence> viewsBeingCompiled = new ObjList<>();
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
+    // The CTE definitions: the digit each definition's parse began with, and the reference that
+    // took the model the definition parsed, as the text the reference sits in and its position
+    // there. A copy of a declared sub-query reads a CTE through them as the sub-query's
+    // declaration did: see parseWith().
+    private final IntList withDigits = new IntList();
+    private final ObjList<WithClauseModel> withModels = new ObjList<>();
+    private final IntList withTakenPositions = new IntList();
+    private final ObjList<CharSequence> withTakenSources = new ObjList<>();
     // Number of audited views whose bodies are being expanded at the current parse position.
     private int auditedViewDepth;
     private boolean copyMode = false;
     private boolean createTableMode = false;
     private boolean createViewMode = false;
+    // Number of copies of declared sub-queries the statement has parsed, see
+    // MAX_DECLARED_QUERY_COPIES.
+    private int declaredQueryCopyCount;
+    // Number of declared values parseDeclare() is reading at the current parse position.
+    private int declaredValueDepth;
+    // What the statement's copies of declared values cost, as countDeclaredValueNodes() counts
+    // it, see MAX_DECLARED_VARIABLE_NODES.
+    private int declaredVariableNodeCount;
     private int digit;
+    // Whether the parser is parsing a copy of a declared sub-query, see parseDeclaredQuery().
+    private boolean isCopyingDeclaredQuery;
+    // Whether the text at the current parse position belongs to a CTE that a later reference is
+    // parsing again from the current digit, or to a copy of a sub-query declared in such text.
+    // The parse this one repeats found the models of the CTEs it reads taken, so parseWith()
+    // has nothing to repeat for it.
+    private boolean isReparsingCte;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
     // The body parseViewSql() last parsed, for a caller that inspects it before the statement runs.
@@ -618,10 +678,13 @@ public class SqlParser {
     }
 
     /**
-     * Records the sub-queries in a declared value, with the text they parsed from, for
-     * {@link #parseDeclaredQuery} to parse again.
+     * Records the sub-queries in a declared value, with the text they parsed from and the digit
+     * their parse began with, for {@link #parseDeclaredQuery} to parse again.
+     *
+     * @param valueQueriesLo the first entry of {@link #declaredValueQueryModels} that the value's
+     *                       parse added
      */
-    private void addDeclaredQueries(ExpressionNode node, CharSequence source) {
+    private void addDeclaredQueries(ExpressionNode node, CharSequence source, int valueQueriesLo) {
         if (node == null) {
             return;
         }
@@ -630,17 +693,24 @@ public class SqlParser {
             // which its own declaration has recorded, with its own text: a view body can build on
             // a caller's variable, and the body's text is not the caller's.
             if (!declaredQueries.contains(node)) {
+                int index = declaredValueQueryModels.size() - 1;
+                while (index >= valueQueriesLo && declaredValueQueryModels.getQuick(index) != node.queryModel) {
+                    index--;
+                }
+                assert index >= valueQueriesLo : "parseAsSubQuery() records every sub-query parsed for a declared value";
                 declaredQueries.add(node);
+                declaredQueryCteReparses.add(isReparsingCte);
+                declaredQueryDigits.add(declaredValueQueryDigits.getQuick(index));
                 declaredQueryModels.add(node.queryModel);
                 declaredQuerySources.add(source);
                 declaredQueryViewDepths.add(viewsBeingCompiled.size());
             }
             return;
         }
-        addDeclaredQueries(node.lhs, source);
-        addDeclaredQueries(node.rhs, source);
+        addDeclaredQueries(node.lhs, source, valueQueriesLo);
+        addDeclaredQueries(node.rhs, source, valueQueriesLo);
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            addDeclaredQueries(node.args.getQuick(i), source);
+            addDeclaredQueries(node.args.getQuick(i), source, valueQueriesLo);
         }
     }
 
@@ -683,9 +753,63 @@ public class SqlParser {
         }
     }
 
+    /**
+     * Returns a lexer set to read {@code source} from {@code position}: the body of a view, for
+     * {@link #compileViewQuery} to expand the view from, or the text a sub-query was declared in,
+     * for {@link #parseDeclaredQuery} to parse a copy of the sub-query from. The caller adds the
+     * lexer to {@link #idleViewLexers} when its parse returns, however it ends.
+     * <p>
+     * A lexer cannot go back to its pool when the parse returns: the tokens of the model it parsed
+     * are windows over the lexer's text, and the pool sets the lexer to other text for whoever
+     * takes it next. The lexer can read the same text again, though, and the tokens it has handed
+     * out stay as they are. So a parse takes a lexer that an earlier parse of the same text has
+     * finished with, and only a parse that finds none, because every lexer set to that text is
+     * still reading, takes one from the pool. A lexer that is reading is not on the list, so a
+     * view expanded inside its own body, or a copy parsed inside another, never takes the lexer
+     * of the parse around it.
+     * <p>
+     * A statement then holds, for each text it parses from, as many lexers as it has parses of
+     * that text nested in one another, however many times it reads a view or a declared
+     * sub-query: one for the body of a view that is not expanded inside itself, and one for each
+     * level of copies nested in one another. A lexer for every expansion and every copy would make
+     * the lexers a statement holds grow with the number of its reads, which doubles with every
+     * level of sub-queries that read one another twice, and the pool never shrinks: it lives as
+     * long as the compiler does. The copies still parse query models of their own, so
+     * {@link #parseDeclaredQuery} also bounds how many a statement parses.
+     */
+    private GenericLexer borrowViewLexer(CharSequence source, int position) {
+        GenericLexer lexer = null;
+        for (int i = idleViewLexers.size() - 1; i > -1; i--) {
+            // The same text is the same object: the statement's text, or the body of a view, which
+            // every expansion of that view reads from the one definition the statement recorded.
+            // Equal text in another object takes a lexer of its own, which costs nothing else.
+            if (idleViewLexers.getQuick(i).getContent() == source) {
+                lexer = idleViewLexers.getQuick(i);
+                idleViewLexers.remove(i);
+                // drop the tokens the earlier parse read past its end and put back
+                while (lexer.hasUnparsed()) {
+                    lexer.next();
+                }
+                break;
+            }
+        }
+        if (lexer == null) {
+            // set to this text until clear(), so it outlives the models parsed with it
+            lexer = viewLexers.next();
+            lexer.of(source);
+        }
+        // also drops the token an earlier parse read ahead of its last one
+        lexer.backTo(position, null);
+        return lexer;
+    }
+
     private void clearRecordedViews() {
         recordedViews.clear();
         recordedViewAudits.clear();
+        viewAuditTrace.clear();
+        viewAuditWithModels.clear();
+        viewAuditWithReads.clear();
+        pivotSubQueryModelsInAuditedView.clear();
         viewAuditModelPool.clear();
         viewsBeingCompiled.clear();
         parkedViewsBeingCompiled.clear();
@@ -720,6 +844,7 @@ public class SqlParser {
         final boolean isOutermost = auditedViewDepth == 0;
         // Everything recorded from here until the body's parse returns was read inside this view.
         final int firstInnerAudit = recordedViewAudits.size();
+        final int firstInnerPivotSubQuery = pivotSubQueryModelsInAuditedView.size();
         auditedViewDepth++;
         final IQueryModel viewModel;
         try {
@@ -731,6 +856,7 @@ public class SqlParser {
             shadowCoveredViewAudits(firstInnerAudit, viewModel.getAuditedDecls());
         }
         recordViewAudit(viewToken, viewModel);
+        recordViewAuditOnPivotSubQueries(firstInnerPivotSubQuery, isOutermost);
         return viewModel;
     }
 
@@ -776,14 +902,59 @@ public class SqlParser {
             int viewPosition,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        final GenericLexer viewLexer = viewLexers.next();
-        viewLexer.of(viewDefinition.getViewSql());
-
-        final IQueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true, true);
+        final GenericLexer viewLexer = borrowViewLexer(viewDefinition.getViewSql(), 0);
+        final IQueryModel viewModel;
+        try {
+            viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true, true);
+        } finally {
+            idleViewLexers.add(viewLexer);
+        }
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;
+    }
+
+    /**
+     * Adds to {@link #declaredVariableNodeCount} what a copy of a declared value costs: each node
+     * and each window {@link ExpressionNode#deepCloneSharingQueries} copies, and each sub-query it
+     * shares. A shared sub-query takes no node, but the copy refers to it, and a value can refer to
+     * a sub-query any number of times at the cost of one node: a call with 400 arguments that each
+     * read the same sub-query variable copies as one node holding 400 references.
+     * <p>
+     * The count runs before the copy, so a reference the budget refuses copies nothing, and it
+     * stops once it passes the budget, so counting a large value takes no longer than the copies
+     * the budget allows.
+     */
+    private void countDeclaredValueNodes(ExpressionNode node) {
+        if (node == null || declaredVariableNodeCount > MAX_DECLARED_VARIABLE_NODES) {
+            return;
+        }
+        declaredVariableNodeCount++;
+        if (node.type == ExpressionNode.QUERY) {
+            return;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            countDeclaredValueNodes(node.args.getQuick(i));
+        }
+        countDeclaredValueNodes(node.lhs);
+        countDeclaredValueNodes(node.rhs);
+        final WindowExpression window = node.windowExpression;
+        if (window != null) {
+            declaredVariableNodeCount++;
+            final ObjList<ExpressionNode> partitionBy = window.getPartitionBy();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                countDeclaredValueNodes(partitionBy.getQuick(i));
+            }
+            final ObjList<ExpressionNode> orderBy = window.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                countDeclaredValueNodes(orderBy.getQuick(i));
+            }
+            countDeclaredValueNodes(window.getAnchorExpression());
+            countDeclaredValueNodes(window.getPendingSubsample());
+            countDeclaredValueNodes(window.getRowsLoExpr());
+            countDeclaredValueNodes(window.getRowsHiExpr());
+        }
     }
 
     private CharSequence createColumnAlias(
@@ -1239,11 +1410,17 @@ public class SqlParser {
             boolean isTopLevel
     ) throws SqlException {
         IQueryModel model;
+        final int digitLo = digit;
         this.subQueryMode = true;
         try {
             model = parseDml(lexer, withClauses, lexer.getPosition(), useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare, isTopLevel);
         } finally {
             this.subQueryMode = false;
+        }
+        if (declaredValueDepth > 0) {
+            // for addDeclaredQueries(), should a declared value hold this sub-query
+            declaredValueQueryModels.add(model);
+            declaredValueQueryDigits.add(digitLo);
         }
         return model;
     }
@@ -3878,7 +4055,9 @@ public class SqlParser {
                 tok = optTok(lexer);
             }
             if ((isAudited || isOverridable) && (tok == null || tok.charAt(0) != '@')) {
-                throw SqlException.$(pos, "variable name expected after ")
+                // The error points at the token in the variable's place, or at the ')' that ends a
+                // sub-query there. `pos` lies just past the marker, on whitespace or in a comment.
+                throw SqlException.$(lexer.lastTokenPosition(), "variable name expected after ")
                         .put(isAudited && isOverridable ? "OVERRIDABLE/AUDITED" : (isAudited ? "AUDITED" : "OVERRIDABLE"));
             }
 
@@ -3887,6 +4066,7 @@ public class SqlParser {
                 break;
             }
 
+            final int variablePosition = lexer.lastTokenPosition();
             CharacterStoreEntry cse = characterStore.newEntry();
             cse.put(tok);
             tok = cse.toImmutable();
@@ -3903,26 +4083,47 @@ public class SqlParser {
             final boolean isValueListRhs = isValueListAhead(lexer.getContent(), lexer.getPosition());
 
             final ExpressionNode expr;
-            if (isValueListRhs) {
-                expr = expressionNodePool.next().of(ExpressionNode.OPERATION, ":=", 0, pos);
-                expr.paramCount = 2;
-                expr.lhs = expressionNodePool.next().of(ExpressionNode.LITERAL, tok, 0, pos);
-                expr.rhs = parseValueList(lexer, model, sqlParserCallback);
-            } else {
-                lexer.goToPosition(pos);
+            final int valueQueriesLo = declaredValueQueryModels.size();
+            declaredValueDepth++;
+            try {
+                if (isValueListRhs) {
+                    expr = expressionNodePool.next().of(ExpressionNode.OPERATION, ":=", 0, pos);
+                    expr.paramCount = 2;
+                    expr.lhs = expressionNodePool.next().of(ExpressionNode.LITERAL, tok, 0, pos);
+                    expr.rhs = parseValueList(lexer, model, sqlParserCallback);
+                } else {
+                    // expr() parses the declaration again, from the variable on. A comment glued to
+                    // DECLARE or a marker, as in `DECLARE--c`, leaves `pos` inside the comment: the
+                    // lexer holds the comment's opener as its next token and has already moved past
+                    // it, so a parse from `pos` would read the comment's text as code. `pos` lies
+                    // past the variable only when the previous value's parse read the variable and
+                    // handed it back, which a missing comma does. The parse from `pos` then finds no
+                    // variable on the left of `:=`, and the declaration fails.
+                    lexer.goToPosition(Math.max(pos, variablePosition));
 
-                expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
+                    expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
 
-                if (expr == null) {
-                    throw errUnexpected(lexer, tok, "declaration was empty or could not be parsed");
+                    if (expr == null) {
+                        throw errUnexpected(lexer, tok, "declaration was empty or could not be parsed");
+                    }
+
+                    // A malformed value can leave another operand on the left of `:=`: the sub-query
+                    // in `@x := (SELECT 1) = (2, 3)`, which has no token, or the self-reference in
+                    // `@x := @x = (2, 3)`, which has the variable's token at another position. A
+                    // parse from past the variable can leave no operand there at all.
+                    if (expr.lhs == null || !Chars.equalsIgnoreCaseNc(tok, expr.lhs.token) || expr.lhs.position != variablePosition) {
+                        throw errUnexpected(lexer, tok, "unexpected bind expression");
+                    }
                 }
-
-                if (!Chars.equalsIgnoreCase(expr.lhs.token, tok)) {
-                    throw errUnexpected(lexer, tok, "unexpected bind expression");
-                }
+            } finally {
+                declaredValueDepth--;
             }
 
-            addDeclaredQueries(expr.rhs, lexer.getContent());
+            addDeclaredQueries(expr.rhs, lexer.getContent(), valueQueriesLo);
+            // release the value's models, keeping the ones of the value around it below the offset
+            declaredValueQueryModels.set(valueQueriesLo, declaredValueQueryModels.size(), null);
+            declaredValueQueryModels.setPos(valueQueriesLo);
+            declaredValueQueryDigits.setPos(valueQueriesLo);
             model.getDecls().put(tok, expr);
             if (isAudited) {
                 model.getAuditedDecls().add(tok);
@@ -3952,14 +4153,41 @@ public class SqlParser {
      * read that same view, which is no cycle: the declaration's parse expanded the view outside
      * itself, with the view's own value. A reference to a view the declaration sat in, or to one
      * the copy's parse is already expanding, remains a circular reference.
+     * <p>
+     * The copy also generates the column names the declaration's parse did. {@link #digit} numbers
+     * the names of unaliased constants and counts through the whole statement, so the copy starts
+     * from the digit the declaration's parse began with: a copy that went on counting from where
+     * the read sits named its columns differently, and a reference to a generated name read
+     * another column, or none. The digit the read found comes back when the copy's parse returns,
+     * because a read moves the digit no further than the first read does, which takes the parsed
+     * model and parses nothing.
+     * <p>
+     * The starting digit alone does not give the copy the names of a CTE whose model the
+     * declaration's parse took: the declaration read the names the CTE's definition generated and
+     * parsed nothing, while the copy finds the model gone and parses the CTE's text. So the copy
+     * parses under {@link #isCopyingDeclaredQuery}, and {@link #parseWith} parses such a CTE from
+     * the digit its definition began with. A sub-query declared in the text of a CTE that a later
+     * reference was parsing again took no such model, and its copy parses as that text did, under
+     * {@link #isReparsingCte}.
+     * <p>
+     * A statement parses at most {@link #MAX_DECLARED_QUERY_COPIES} copies. Each copy parses
+     * query models of its own, which stay in the compiler's pool until {@link #clear()}, and the
+     * reads multiply through sub-queries that read one another: a sub-query that reads the one
+     * before it twice, ten levels deep, made over 2,000 copies out of 700 characters. The parser
+     * refuses the copy that would pass the budget before it parses anything, at the sub-query it
+     * would copy, which names what the statement reads too often. The read that crosses the
+     * budget would name less: it often sits in the text of another declaration, parsed again for
+     * a copy of that one, and a read in an expression keeps no position, because the sub-query
+     * has replaced the variable there by the time the read copies it.
      */
     private IQueryModel parseDeclaredQuery(ExpressionNode query, SqlParserCallback sqlParserCallback) throws SqlException {
+        if (++declaredQueryCopyCount > MAX_DECLARED_QUERY_COPIES) {
+            throw SqlException.$(query.position, "declared sub-queries are read too many times [max=")
+                    .put(MAX_DECLARED_QUERY_COPIES).put(']');
+        }
         final int index = declaredQueries.indexOf(query);
         assert index > -1 : "addDeclaredQueries() records every sub-query in a declared value";
-        // borrowed from the pool views parse with, which outlives the models parsed with it
-        final GenericLexer queryLexer = viewLexers.next();
-        queryLexer.of(declaredQuerySources.getQuick(index));
-        queryLexer.goToPosition(query.position);
+        final GenericLexer queryLexer = borrowViewLexer(declaredQuerySources.getQuick(index), query.position);
         // parseAsSubQuery() switches subQueryMode off when it returns. The read sits mid-statement,
         // possibly inside a sub-query that still needs the flag to accept its closing ')', so this
         // method restores the flag the read found, as the first read, which parses nothing, keeps it.
@@ -3973,9 +4201,22 @@ public class SqlParser {
         while (viewsBeingCompiled.size() > viewDepth) {
             parkedViewsBeingCompiled.add(viewsBeingCompiled.popLast());
         }
+        // The copy numbers its generated column names as the declaration's parse did, and the
+        // digit the read found comes back however the parse ends.
+        final int readDigit = digit;
+        digit = declaredQueryDigits.getQuick(index);
+        // The copy reads CTEs as the declaration's parse did, wherever the read sits.
+        final boolean isCopyingBefore = isCopyingDeclaredQuery;
+        final boolean isReparsingCteBefore = isReparsingCte;
+        isCopyingDeclaredQuery = true;
+        isReparsingCte = declaredQueryCteReparses.get(index);
         try {
             return parseAsSubQuery(queryLexer, null, true, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
         } finally {
+            isReparsingCte = isReparsingCteBefore;
+            isCopyingDeclaredQuery = isCopyingBefore;
+            digit = readDigit;
+            idleViewLexers.add(queryLexer);
             subQueryMode = isSubQueryMode;
             while (parkedViewsBeingCompiled.size() > parkedLo) {
                 viewsBeingCompiled.add(parkedViewsBeingCompiled.popLast());
@@ -5881,10 +6122,12 @@ public class SqlParser {
             model.addPivotForColumn(pivotForColumn);
 
             if (isSubquery) { // IN list from subquery
+                final int firstViewAuditRead = viewAuditTrace.size();
                 ExpressionNode expr = expr(lexer, model, sqlParserCallback);
                 if (expr == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "missing subquery");
                 }
+                recordPivotSubQueryViewAudits(expr.queryModel, firstViewAuditRead);
                 pivotForColumn.setSelectSubqueryExpr(expr);
                 expectTok(lexer, ')');
             } else {
@@ -6272,6 +6515,10 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
+        // The callers have put back the table name for expr() to read, so this is where the
+        // reference sits. expr.position is not: a name read from a declared variable carries the
+        // position of the variable's value, which every reference through that variable shares.
+        final int referencePosition = lexer.lastTokenPosition();
         ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
         if (expr == null) {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
@@ -6298,7 +6545,7 @@ public class SqlParser {
             case ExpressionNode.CONSTANT:
                 final WithClauseModel withClause = masterModel.get(tableName);
                 if (withClause != null) {
-                    IQueryModel cteModel = parseWith(lexer, withClause, sqlParserCallback, model.getDecls());
+                    IQueryModel cteModel = parseWith(lexer, withClause, sqlParserCallback, model.getDecls(), referencePosition);
                     cteModel.setIsCteModel(true);
                     model.setNestedModel(cteModel);
                     model.setAlias(literal(tableName, expr.position));
@@ -6662,23 +6909,80 @@ public class SqlParser {
         throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");
     }
 
+    /**
+     * Returns the model a reference to a CTE reads the CTE through: the model the definition
+     * parsed if no other reference has taken it, and otherwise one this parses from the CTE's
+     * text.
+     * <p>
+     * A later reference parses the text from the current {@link #digit}, so it names the CTE's
+     * unaliased constants differently than the definition did. A copy of a declared sub-query
+     * must not: every read of the sub-query sees the names its declaration saw, as
+     * {@link #parseDeclaredQuery} describes, and where the declaration's parse took the
+     * definition's model, those are the definition's names. So inside a copy, the reference that
+     * took the model parses the text from the digit the definition's parse began with, and the
+     * digit it found comes back when that parse returns, because taking a model moves no digit.
+     * The same holds inside the text parsed that way: it repeats the definition's parse, and
+     * reads the CTEs whose models the definition took as the definition did.
+     * <p>
+     * Any other reference repeats nothing: the parse the copy repeats found the model gone as
+     * well, and parsed the text from the digit it had reached, as this does. Everything inside
+     * that text was parsed from the current digit then, the CTEs it reads included, although the
+     * definitions of those took their models at the same places. {@link #isReparsingCte} tells
+     * the two apart, and a sub-query declared in such text keeps it for its copies.
+     *
+     * @param referencePosition where the reference sits in the text {@code lexer} reads
+     */
     private IQueryModel parseWith(
             GenericLexer lexer,
             WithClauseModel wcm,
             SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            int referencePosition
     ) throws SqlException {
         IQueryModel m = wcm.popModel();
         if (m != null) {
+            // for a copy of a declared sub-query that comes to this reference
+            final int withIndex = withModels.indexOf(wcm);
+            if (withIndex > -1) {
+                withTakenPositions.setQuick(withIndex, referencePosition);
+                withTakenSources.setQuick(withIndex, lexer.getContent());
+            }
+            // The definition parsed before whatever this reference sits in began, so its reads
+            // are counted here, as the reads of the copy a later reference parses are.
+            final int index = viewAuditWithModels.indexOf(m);
+            if (index > -1) {
+                viewAuditTrace.addAll(viewAuditTrace, viewAuditWithReads.getQuick(2 * index), viewAuditWithReads.getQuick(2 * index + 1));
+            }
             return m;
         }
 
-        lexer.stash();
-        lexer.goToPosition(wcm.getPosition());
-        // this will not throw exception because this is second pass over the same sub-query
-        // we wouldn't be here is syntax was wrong
-        m = parseAsSubQueryAndExpectClosingBrace(lexer, wcm.getWithClauses(), false, sqlParserCallback, decls);
-        lexer.unstash();
+        final int readDigit = digit;
+        final boolean isReparsingCteBefore = isReparsingCte;
+        boolean isTakingReference = false;
+        if (isCopyingDeclaredQuery && !isReparsingCte) {
+            final int withIndex = withModels.indexOf(wcm);
+            // The same text is the same object, as in borrowViewLexer().
+            isTakingReference = withIndex > -1
+                    && withTakenPositions.getQuick(withIndex) == referencePosition
+                    && withTakenSources.getQuick(withIndex) == lexer.getContent();
+            if (isTakingReference) {
+                digit = withDigits.getQuick(withIndex);
+            }
+        }
+        isReparsingCte = !isTakingReference;
+        try {
+            lexer.stash();
+            lexer.goToPosition(wcm.getPosition());
+            // The definition parsed once already, so its syntax holds, but the parse can still
+            // throw: a declared sub-query in it can pass MAX_DECLARED_QUERY_COPIES.
+            m = parseAsSubQueryAndExpectClosingBrace(lexer, wcm.getWithClauses(), false, sqlParserCallback, decls);
+            lexer.unstash();
+        } finally {
+            isReparsingCte = isReparsingCteBefore;
+            if (isTakingReference) {
+                digit = readDigit;
+            }
+        }
         return m;
     }
 
@@ -6702,8 +7006,22 @@ public class SqlParser {
             expectTok(lexer, '(');
             int lo = lexer.lastTokenPosition();
             WithClauseModel wcm = withClauseModelPool.next();
+            final int definitionDigit = digit;
+            final int firstViewAuditRead = viewAuditTrace.size();
             // todo: review passing non-null here
-            wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, decls));
+            final IQueryModel definitionModel = parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, decls);
+            if (viewAuditTrace.size() > firstViewAuditRead) {
+                // for the reference that takes this model, see parseWith()
+                viewAuditWithModels.add(definitionModel);
+                viewAuditWithReads.add(firstViewAuditRead);
+                viewAuditWithReads.add(viewAuditTrace.size());
+            }
+            wcm.of(lo + 1, model, definitionModel);
+            // for a copy of a declared sub-query that reads this CTE, see parseWith()
+            withDigits.add(definitionDigit);
+            withModels.add(wcm);
+            withTakenPositions.add(-1);
+            withTakenSources.add(null);
             model.put(name.token, wcm);
 
             CharSequence tok = optTok(lexer);
@@ -6959,6 +7277,43 @@ public class SqlParser {
     }
 
     /**
+     * Hands a {@code PIVOT ... FOR ... IN (SELECT ...)} sub-query the audits of the audited views
+     * its own plan reads.
+     * <p>
+     * The optimiser generates that plan and opens its cursor while the statement compiles, because
+     * the rows it returns name the columns the PIVOT produces. A statement that is prepared and
+     * never executed, or one that fails later in its compile, has read those views by then, and
+     * the statement's own plan, which carries every audit of the statement, never opens a cursor
+     * to record them. So the model the sub-query's plan is generated from carries the audits of
+     * what that plan reads.
+     * <p>
+     * Those are the reads {@link #viewAuditTrace} gained while the sub-query parsed, less the ones
+     * an audited view shadows. A sub-query that reads no audited view gets none: it does not take
+     * the audits of the statement around it, or a statement that is only prepared would record
+     * reads it never made. The statement keeps every audit it had, these included: the names of
+     * the columns its plan returns are rows the sub-query read.
+     * <p>
+     * A sub-query in the body of an audited view is also a read of that view, whose audit does not
+     * exist until its body is parsed, see {@link #recordViewAuditOnPivotSubQueries}.
+     */
+    private void recordPivotSubQueryViewAudits(@Nullable IQueryModel subQueryModel, int firstViewAuditRead) {
+        if (subQueryModel == null) {
+            return;
+        }
+        final ObjList<ViewAuditModel> viewAudits = subQueryModel.getViewAudits();
+        for (int i = firstViewAuditRead, n = viewAuditTrace.size(); i < n; i++) {
+            final ViewAuditModel viewAudit = viewAuditTrace.getQuick(i);
+            // The trace holds a read twice when the sub-query both defines a CTE and reads it.
+            if (recordedViewAudits.contains(viewAudit) && !viewAudits.contains(viewAudit)) {
+                viewAudits.add(viewAudit);
+            }
+        }
+        if (auditedViewDepth > 0) {
+            pivotSubQueryModelsInAuditedView.add(subQueryModel);
+        }
+    }
+
+    /**
      * Snapshots what an audited view was read with, at one reference site.
      * <p>
      * Only the view's own AUDITED variables are recorded, read off the view's model rather than the
@@ -6991,6 +7346,43 @@ public class SqlParser {
         }
         viewAudit.sortParams();
         recordedViewAudits.add(viewAudit);
+        viewAuditTrace.add(viewAudit);
+    }
+
+    /**
+     * Adds the audit of the audited view whose body the parser has just expanded, the last one
+     * recorded, to the PIVOT IN sub-queries parsed inside that body.
+     * <p>
+     * The principal asked for the view, and the rows such a sub-query reads while the statement
+     * compiles are part of how the view is built: they name the columns the view returns. So the
+     * sub-query's plan records the view, with the parameters the view audits, as the statement's
+     * plan does when it runs. Every audited view around the sub-query adds its own audit this way.
+     * <p>
+     * The outermost one then drops, from each sub-query, the reads it shadows, which are the ones
+     * {@link #shadowCoveredViewAudits} has just dropped from the statement. Its own row covers
+     * them in the sub-query's plan as it does in the statement's.
+     *
+     * @param firstInnerPivotSubQuery the index of the first sub-query parsed inside the view
+     */
+    private void recordViewAuditOnPivotSubQueries(int firstInnerPivotSubQuery, boolean isOutermost) {
+        final ViewAuditModel viewAudit = recordedViewAudits.getLast();
+        for (int i = firstInnerPivotSubQuery, n = pivotSubQueryModelsInAuditedView.size(); i < n; i++) {
+            final ObjList<ViewAuditModel> viewAudits = pivotSubQueryModelsInAuditedView.getQuick(i).getViewAudits();
+            viewAudits.add(viewAudit);
+            if (isOutermost) {
+                int kept = 0;
+                for (int j = 0, m = viewAudits.size(); j < m; j++) {
+                    final ViewAuditModel innerViewAudit = viewAudits.getQuick(j);
+                    if (recordedViewAudits.contains(innerViewAudit)) {
+                        viewAudits.setQuick(kept++, innerViewAudit);
+                    }
+                }
+                viewAudits.setPos(kept);
+            }
+        }
+        if (isOutermost) {
+            pivotSubQueryModelsInAuditedView.clear();
+        }
     }
 
     /**
@@ -7774,10 +8166,23 @@ public class SqlParser {
 
     void clear() {
         declaredQueries.clear();
+        declaredQueryCteReparses.clear();
+        declaredQueryDigits.clear();
         declaredQueryModels.clear();
         declaredQuerySources.clear();
         declaredQueryViewDepths.clear();
+        declaredValueQueryDigits.clear();
+        declaredValueQueryModels.clear();
+        declaredValueDepth = 0;
+        declaredQueryCopyCount = 0;
+        declaredVariableNodeCount = 0;
+        isCopyingDeclaredQuery = false;
+        isReparsingCte = false;
         takenDeclaredQueries.clear();
+        withDigits.clear();
+        withModels.clear();
+        withTakenPositions.clear();
+        withTakenSources.clear();
         queryModelPool.clear();
         queryColumnPool.clear();
         expressionNodePool.clear();
@@ -7801,6 +8206,7 @@ public class SqlParser {
         copyModelPool.clear();
         topLevelWithModel.clear();
         explainModelPool.clear();
+        idleViewLexers.clear();
         viewLexers.clear();
         digit = 1;
         traversalAlgo.clear();
@@ -7963,7 +8369,22 @@ public class SqlParser {
                 // into `a != b` for every other reference to the variable too. The copy has
                 // windows of its own as well, but shares the value's sub-queries, which
                 // readDeclaredQueries() sorts out once the whole expression is rewritten.
-                return ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, decls.get(node.token).rhs);
+                // References in later declarations copy too, so declarations that each read the
+                // one before twice double the copies with every level, in a pool that keeps them
+                // until clear(). The parser refuses the reference whose copy would take the
+                // statement past its budget, before copying anything.
+                final ExpressionNode value = decls.get(node.token).rhs;
+                final int countedLo = declaredVariableNodeCount;
+                countDeclaredValueNodes(value);
+                if (declaredVariableNodeCount > MAX_DECLARED_VARIABLE_NODES) {
+                    throw SqlException.$(node.position, "declared variables expand to too many expression nodes [max=")
+                            .put(MAX_DECLARED_VARIABLE_NODES).put(']');
+                }
+                final int takenLo = expressionNodePool.getPos() + windowExpressionPool.getPos();
+                final ExpressionNode copy = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, value);
+                assert expressionNodePool.getPos() + windowExpressionPool.getPos() - takenLo <= declaredVariableNodeCount - countedLo
+                        : "countDeclaredValueNodes() counts less than the copy takes";
+                return copy;
             } else if (hasAtChar) {
                 throw SqlException.$(node.position, "tried to use undeclared variable `" + node.token + '`');
             }

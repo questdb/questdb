@@ -175,6 +175,36 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertIntoViewRejectedAfterOptimiseClosesTableFunctionFactoryOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE VIEW v_plain AS (SELECT x FROM long_sequence(1))");
+            drainWalAndViewQueues();
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            TableFunctionTestUtils.register(engine, FUNCTION_NAME, SqlExecutionRequirements.NONE, factories);
+            try {
+                // The compiler rejects an INSERT into a view after it optimised the SELECT and before
+                // it generates it. The SELECT reads owned_cursor() in its FROM clause, so the catch
+                // block's walk of the statement's models closes that factory and detaches it from
+                // its model. The sweep that follows must leave it alone: closing everything the
+                // optimiser opened would close it a second time.
+                assertExceptionNoLeakCheck(
+                        "INSERT INTO v_plain SELECT * FROM " + FUNCTION_NAME + "()",
+                        12,
+                        "cannot modify view [view=v_plain]"
+                );
+                assertEquals(1, factories.size());
+                assertEachClosedOnce(factories, 1);
+
+                execute("CREATE TABLE other (x LONG)");
+                assertEachClosedOnce(factories, 1);
+            } finally {
+                TableFunctionTestUtils.unregister(engine, FUNCTION_NAME);
+            }
+        });
+    }
+
+    @Test
     public void testPivotInSubQueryOverTableFunction() throws Exception {
         assertMemoryLeak(() -> {
             createParquetFile();
@@ -517,6 +547,31 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 assertEquals(16, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "wrong number of arguments for function `sin`");
+                assertSuppressedOnce(e, fixture.closeFailure);
+            }
+            assertEquals(1, fixture.failingFactories.size());
+            assertEquals(1, fixture.factories.size());
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
+    public void testSubQueryNeverGeneratedCloseFailureIsSuppressedWhenRejectedAfterOptimise() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            execute("CREATE VIEW v_plain AS (SELECT x FROM long_sequence(1))");
+            drainWalAndViewQueues();
+
+            // The compiler rejects an INSERT into a view after it optimised the SELECT and before
+            // it generates it. The catch block's walk of the statement's models does not reach
+            // the sub-queries in its columns, so the sweep that follows closes all three of their
+            // factories, and the close of b's throws. The statement still reports why it was
+            // rejected, and the close failure travels with that error as suppressed.
+            try {
+                execute("INSERT INTO v_plain SELECT a, c, d FROM " + SUB_QUERIES_WITH_CLOSE_FAILURE);
+                fail("the insert must be rejected");
+            } catch (SqlException e) {
+                assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify view [view=v_plain]");
                 assertSuppressedOnce(e, fixture.closeFailure);
             }
             assertEquals(1, fixture.failingFactories.size());
