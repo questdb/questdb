@@ -223,7 +223,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+        final CompiledFilter compiledFilter = filterCtx.getExecutionCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         // navigateTo() can throw, so it must sit inside the try that releases the slot: the locks
         // have no reset and the atom outlives the query, so a leaked slot starves the pool.

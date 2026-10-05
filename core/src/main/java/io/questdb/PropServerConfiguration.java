@@ -556,6 +556,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJitIRMemoryMaxPages;
     private final int sqlJitIRMemoryPageSize;
     private final int sqlJitMaxInListSizeThreshold;
+    private final boolean sqlJitSymbolInBitsetEnabled;
+    private final boolean sqlSymbolInBitsetEnabled;
+    private final int sqlSymbolInBitsetMaxKeys;
     private final int sqlJitMode;
     private final int sqlJoinContextPoolCapacity;
     private final int sqlJoinMetadataMaxResizes;
@@ -1866,6 +1869,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 8);
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
             this.sqlJitMaxInListSizeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 10);
+            this.sqlJitSymbolInBitsetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, true);
+            this.sqlSymbolInBitsetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, true);
+            this.sqlSymbolInBitsetMaxKeys = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 16 * 1024 * 1024);
 
             this.maxSqlRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
 
@@ -5301,6 +5307,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlSymbolInBitsetMaxKeys() {
+            return sqlSymbolInBitsetMaxKeys;
+        }
+
+        @Override
         public int getSqlJitMode() {
             return sqlJitMode;
         }
@@ -5941,6 +5952,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitSymbolInBitsetEnabled() {
+            return sqlJitSymbolInBitsetEnabled;
+        }
+
+        @Override
+        public boolean isSqlSymbolInBitsetEnabled() {
+            return sqlSymbolInBitsetEnabled;
         }
 
         @Override

@@ -359,7 +359,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final RecordSink groupByMapSink = atom.getMapSink(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
             final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
-            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+            final CompiledFilter compiledFilter = filterCtx.getExecutionCompiledFilter();
             final Function filter = filterCtx.getFilter(slotId);
 
             // Apply filter to master rows

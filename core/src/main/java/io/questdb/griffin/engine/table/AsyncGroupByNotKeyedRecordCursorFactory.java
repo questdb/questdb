@@ -526,7 +526,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+        final CompiledFilter compiledFilter = filterCtx.getExecutionCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         // navigateTo() can throw; it must sit inside the try that releases the slot. See
         // aggregate() for why a leaked slot is permanent.

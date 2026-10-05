@@ -519,7 +519,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final GroupByMapFragment fragment = atom.getFragment(slotId);
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+        final CompiledFilter compiledFilter = filterCtx.getExecutionCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         // navigateTo() can throw; it must sit inside the try that releases the slot. See

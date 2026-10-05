@@ -415,9 +415,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             }
             record.init(frameMemory);
 
-            if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
+            if (atom.compiledFilterSuspended || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter in case of a page frame with column tops
-                // or type-cast columns (fixed→var conversion not supported in JIT).
+                // or type-cast columns (fixed→var conversion not supported in JIT),
+                // or for an execution whose bind variables the compiled filter cannot take.
                 final Function filter = atom.getFilter(filterId);
 
                 if (task.isCountOnly()) {
@@ -560,6 +561,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final MemoryCARW bindVarMemory;
         final CompiledCountOnlyFilter compiledCountOnlyFilter;
         final CompiledFilter compiledFilter;
+        // Set per execution by init(): the execution runs the Java filter on every frame.
+        boolean compiledFilterSuspended;
 
         public AsyncJitFilterAtom(
                 CairoConfiguration configuration,
@@ -584,7 +587,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+            compiledFilterSuspended = !AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 }

@@ -70,6 +70,8 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
+    // Set per execution by initFilters(), see getExecutionCompiledFilter().
+    private boolean compiledFilterSuspended;
 
     AsyncFilterContext(
             CairoConfiguration configuration,
@@ -215,6 +217,17 @@ public class AsyncFilterContext implements Closeable {
         return compiledFilter;
     }
 
+    /**
+     * The compiled filter the current execution runs, or null when it must run the Java filter:
+     * either no filter was compiled, or {@link #initFilters} found a bind variable set the
+     * compiled filter cannot take for this execution (see
+     * {@link AsyncFilterUtils#prepareBindVarMemory}). {@link #getCompiledFilter()} is the static
+     * answer, for plans and {@code usesCompiledFilter()}.
+     */
+    public @Nullable CompiledFilter getExecutionCompiledFilter() {
+        return compiledFilterSuspended ? null : compiledFilter;
+    }
+
     public DirectLongList getDataAddresses(int slotId) {
         if (slotId == -1) {
             return ownerDataAddresses;
@@ -284,7 +297,7 @@ public class AsyncFilterContext implements Closeable {
         }
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+            compiledFilterSuspended = !AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 

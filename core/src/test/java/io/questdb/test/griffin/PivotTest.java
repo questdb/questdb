@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.jit.JitUtil;
 import org.junit.Test;
 
 public class PivotTest extends AbstractSqlParserTest {
@@ -2199,6 +2200,9 @@ public class PivotTest extends AbstractSqlParserTest {
                     ) select * from A asof join B ON (vehicle_id) LIMIT 10
                     ;""";
 
+            // The ten-value sensor_name filters are over the JIT IN-list threshold: a native library
+            // that compiles the symbol IN set keeps them JIT-compiled.
+            final String groupBy = JitUtil.isSymbolInSetSupported() ? "Async JIT Group By" : "Async Group By";
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("timestamp")
@@ -2213,7 +2217,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
                                               values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i001',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i002',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i003',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i004',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i005',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i006',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i007',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i008',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
-                                                Async Group By workers: 1
+                                                %s workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [avg(int_value)]
                                                   filter: sensor_name in [i000,i001,i002,i003,i004,i005,i006,i007,i008,i009]
@@ -2225,14 +2229,14 @@ public class PivotTest extends AbstractSqlParserTest {
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
                                               values: [first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s000',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s001',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s002',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s003',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s004',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s005',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s006',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s007',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s008',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s009',last(str_value),null)]))]
-                                                Async Group By workers: 1
+                                                %s workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [last(str_value)]
                                                   filter: sensor_name in [s000,s001,s002,s003,s004,s005,s006,s007,s008,s009]
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: sensors
-                            """)
+                            """.formatted(groupBy, groupBy))
                     .returns("""
                             timestamp	vehicle_id	i000	i001	i002	i003	i004	i005	i006	i007	i008	i009	timestamp1	vehicle_id1	s000	s001	s002	s003	s004	s005	s006	s007	s008	s009
                             2025-01-01T00:00:00.000000Z	AAA000	null	856.0	366.0	25.0	-475.0	29.0	373.0	-998.0	-881.0	-6.0	2025-01-01T00:00:00.000000Z	AAA000	val_-48	val_-516	val_-972	val_-714	val_-703	val_481	val_512	val_116	val_97	val_-405

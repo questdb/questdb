@@ -1004,6 +1004,49 @@ namespace questdb::avx2 {
         }
     }
 
+    // Symbol IN-list membership for eight i32 lanes, see opcodes::Sym_In_Set: a masked gather of
+    // each lane's bitset word, then the lane's bit moved to the sign position and smeared into an
+    // all-ones / all-zeros mask. Every register written here is freshly allocated, so `key` - which
+    // may be a cached column read - stays intact.
+    inline jit_value_t sym_in_set(Compiler &c, const Vec &key, const Gp &vars_ptr, int32_t var_idx) {
+        Vec ones = c.new_ymm("sym_ones");
+        c.vpcmpeqd(ones, ones, ones);
+        Vec idx = c.new_ymm("sym_bit_idx");
+        c.vpsubd(idx, key, ones); // key + 1
+        Vec sign = c.new_ymm("sym_sign");
+        c.vpsrad(sign, key, 31);
+        c.vpandn(idx, sign, idx); // (key + 1) & ~(key >> 31)
+
+        // idx <= last bit index, unsigned: min_u(idx, last) == idx.
+        Vec last = c.new_ymm("sym_last_idx");
+        c.vpbroadcastd(last, dword_ptr(vars_ptr, 16 * var_idx + 8));
+        Vec in_range = c.new_ymm("sym_in_range");
+        c.vpminud(in_range, idx, last);
+        c.vpcmpeqd(in_range, in_range, idx);
+
+        // Gather only the in-range lanes; the others keep the zero they start with, so an index
+        // past the bitset never reads memory.
+        Vec word_idx = c.new_ymm("sym_word_idx");
+        c.vpsrld(word_idx, idx, 5);
+        Gp words = c.new_gp64("sym_words");
+        c.mov(words, qword_ptr(vars_ptr, 16 * var_idx));
+        Vec word = c.new_ymm("sym_word");
+        c.vpxor(word, word, word);
+        Vec gather_mask = c.new_ymm("sym_gather_mask");
+        c.vmovdqa(gather_mask, in_range); // the gather consumes its mask
+        c.vpgatherdd(word, ptr(words, word_idx, 2), gather_mask);
+
+        // Shift the lane's bit up to bit 31 - by 31 - (idx & 31), which is ~idx & 31 - then smear
+        // it across the lane with an arithmetic shift.
+        Vec shift = c.new_ymm("sym_shift");
+        c.vpsrld(shift, ones, 27); // 31 in every lane
+        c.vpandn(shift, idx, shift);
+        Vec member = c.new_ymm("sym_member");
+        c.vpsllvd(member, word, shift);
+        c.vpsrad(member, member, 31);
+        return {member, data_type_t::i32, data_kind_t::kMemory, true};
+    }
+
     void
     emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane,
               uint32_t lane_count,
@@ -1068,6 +1111,21 @@ namespace questdb::avx2 {
                     }
                     values.append(arena, sx_i64(c, get_argument(values), ncheck));
                     break;
+                case opcodes::Sym_In_Set: {
+                    auto key = get_argument(values);
+                    // The Var placeholder: the bitset is addressed through this instruction's payload.
+                    get_argument(values);
+                    auto var_idx = static_cast<int32_t>(instr.ipayload.lo);
+                    if (wide_lane || key.dtype() != data_type_t::i32) {
+                        // The serializer emits the set over a SYMBOL key only, which reads at i32,
+                        // and a symbol IN list never makes a filter wide-lane eligible.
+                        decline_filter(c, "symbol IN set over a non-i32 lane in the SIMD path");
+                        values.append(arena, key);
+                        break;
+                    }
+                    values.append(arena, sym_in_set(c, key.vec(), vars_ptr, var_idx));
+                    break;
+                }
                 default:
                     emit_bin_op(c, arena, instr, values, ncheck, wide_lane, lane_count);
                     break;

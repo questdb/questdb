@@ -1230,6 +1230,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSymbolInBitsetMaxKeys() {
+        return getDelegate().getSqlSymbolInBitsetMaxKeys();
+    }
+
+    @Override
     public int getSqlJitMode() {
         return getDelegate().getSqlJitMode();
     }
@@ -1897,6 +1902,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlJitDebugEnabled() {
         return getDelegate().isSqlJitDebugEnabled();
+    }
+
+    @Override
+    public boolean isSqlJitSymbolInBitsetEnabled() {
+        return getDelegate().isSqlJitSymbolInBitsetEnabled();
+    }
+
+    @Override
+    public boolean isSqlSymbolInBitsetEnabled() {
+        return getDelegate().isSqlSymbolInBitsetEnabled();
     }
 
     @Override

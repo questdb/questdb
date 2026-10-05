@@ -45,6 +45,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.TestOnly;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
 
@@ -119,7 +120,22 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             // Fast path for all constants case.
             return BooleanConstant.of(set.contains(var.getSymbol(null)));
         }
-        return new Func(var, set, deferredValues, deferredValuePositions);
+        return new Func(
+                var,
+                set,
+                deferredValues,
+                deferredValuePositions,
+                configuration.isSqlSymbolInBitsetEnabled() ? configuration.getSqlSymbolInBitsetMaxKeys() : -1
+        );
+    }
+
+    /**
+     * Whether {@code function} is this factory's non-constant IN function and its last
+     * {@code init()} chose the membership bitset over the hash set.
+     */
+    @TestOnly
+    public static boolean isBitSetInUse(Function function) {
+        return function instanceof Func func && func.testFunc == func.bitSetTest;
     }
 
     @Override
@@ -134,17 +150,29 @@ public class InSymbolFunctionFactory implements FunctionFactory {
 
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
+        private final TestFunc bitSetTest = this::testAsBitSet;
+        // The bitset cap, see SymbolKeyBitSet.fitsCap(), or -1 when the bitset is disabled.
+        private final int bitSetMaxKeys;
         private final CharSequenceHashSet deferredSet;
         private final IntList deferredValuePositions;
         private final ObjList<Function> deferredValues;
         private final IntHashSet intSet = new IntHashSet();
+        private final IntList resolvedKeys = new IntList();
         private final TestFunc intTest = this::testAsInt;
         private final CharSequenceHashSet set;
         private final TestFunc strTest = this::testAsString;
+        private SymbolKeyBitSet bitSet;
         private TestFunc testFunc;
 
-        public Func(SymbolFunction arg, CharSequenceHashSet set, ObjList<Function> deferredValues, IntList deferredValuePositions) {
+        public Func(
+                SymbolFunction arg,
+                CharSequenceHashSet set,
+                ObjList<Function> deferredValues,
+                IntList deferredValuePositions,
+                int bitSetMaxKeys
+        ) {
             this.arg = arg;
+            this.bitSetMaxKeys = bitSetMaxKeys;
             this.set = set;
             this.deferredValues = deferredValues;
             this.deferredSet = deferredValues != null ? new CharSequenceHashSet() : null;
@@ -197,17 +225,37 @@ public class InSymbolFunctionFactory implements FunctionFactory {
 
             final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
             if (symbolTable != null) {
-                intSet.clear();
+                // Keys are resolved once per execution, against the symbol table the cursor reads,
+                // so a rebound variable or a symbol added since the factory was compiled resolves
+                // afresh. A value the table does not hold resolves to VALUE_NOT_FOUND and matches
+                // no row either way.
+                resolvedKeys.clear();
+                int maxKey = -1;
                 for (int i = 0, n = set.size(); i < n; i++) {
-                    intSet.add(symbolTable.keyOf(set.get(i)));
+                    maxKey = Math.max(maxKey, addResolvedKey(symbolTable.keyOf(set.get(i))));
                 }
                 if (deferredValues != null) {
                     for (int i = 0, n = deferredValues.size(); i < n; i++) {
                         final Function func = deferredValues.getQuick(i);
-                        intSet.add(symbolTable.keyOf(deferredValueToString(func)));
+                        maxKey = Math.max(maxKey, addResolvedKey(symbolTable.keyOf(deferredValueToString(func))));
                     }
                 }
-                testFunc = intTest;
+                if (bitSetMaxKeys >= 0 && SymbolKeyBitSet.fitsCap(maxKey, bitSetMaxKeys)) {
+                    if (bitSet == null) {
+                        bitSet = new SymbolKeyBitSet();
+                    }
+                    bitSet.reset(maxKey);
+                    for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
+                        bitSet.add(resolvedKeys.getQuick(i));
+                    }
+                    testFunc = bitSetTest;
+                } else {
+                    intSet.clear();
+                    for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
+                        intSet.add(resolvedKeys.getQuick(i));
+                    }
+                    testFunc = intTest;
+                }
             } else {
                 if (deferredValues != null) {
                     deferredSet.clear();
@@ -253,6 +301,15 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 }
                 sink.val(" in ").val(deferredValues);
             }
+        }
+
+        private int addResolvedKey(int key) {
+            resolvedKeys.add(key);
+            return key;
+        }
+
+        private boolean testAsBitSet(Record rec) {
+            return bitSet.contains(arg.getInt(rec));
         }
 
         private boolean testAsInt(Record rec) {

@@ -1067,6 +1067,17 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
     return reinterpret_cast<jlong>(fn);
 }
 
+JNIEXPORT jint JNICALL
+Java_io_questdb_jit_FiltersCompiler_getFeatures(JNIEnv *e, jclass cl)
+{
+#ifdef __aarch64__
+    // The aarch64 backend declines opcodes::Sym_In_Set.
+    return 0;
+#else
+    return jit_features::kFeatureSymInSet;
+#endif
+}
+
 JNIEXPORT void JNICALL
 Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress)
 {

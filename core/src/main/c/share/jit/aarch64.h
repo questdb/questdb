@@ -1260,6 +1260,18 @@ namespace questdb::aarch64 {
                     value_cache.truncate(sc_value_cache_snapshot);
                     break;
                 }
+                case opcodes::Sym_In_Set: {
+                    // Not implemented for this backend yet. Decline, so the filter runs on the
+                    // Java one - which tests the same membership bitset - exactly as a symbol IN
+                    // list over the JIT threshold did before the opcode existed. Pop both operands
+                    // and push a placeholder mask to keep the value stack balanced; the declined
+                    // function is never finalized.
+                    values.pop();
+                    values.pop();
+                    decline_filter(c, "symbol IN set is not supported in the aarch64 path");
+                    values.append(arena, {c.new_gp32("declined_mask"), data_type_t::i32, data_kind_t::kConst});
+                    break;
+                }
                 default: {
                     opcodes next_op = (i + 1 < size) ? istream[i + 1].opcode : opcodes::Ret;
                     emit_bin_op(c, arena, instr, values, null_check, labels.has(0), next_op);

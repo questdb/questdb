@@ -191,10 +191,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     // opcodes::Inv in core/src/main/c/share/jit/common.h. The serializer's own constant
     // is package-private, so the value is repeated here.
     private static final int IR_OPCODE_INV = -1;
-    // One past opcodes::Sx_I64, the highest value the opcodes enum in common.h defines. It stands
-    // for the opcode a corrupted stream, or a frontend that has grown one this backend has not,
-    // presents to emit_bin_op's default arm.
-    private static final int IR_OPCODE_OUT_OF_ENUM = 23;
+    // One past opcodes::Sym_In_Set, the highest value the opcodes enum in common.h defines. It
+    // stands for the opcode a corrupted stream, or a frontend that has grown one this backend has
+    // not, presents to emit_bin_op's default arm.
+    private static final int IR_OPCODE_OUT_OF_ENUM = CompiledFilterIRSerializer.SYM_IN_SET + 1;
     // The eight-row LONG column writeProbeIr()'s stream runs against, plus the row ids and the
     // match count a correctly compiled filter must answer with for each comparison that stream can
     // spell. A backend that abandoned code generation and then fell into scalar_tail's
