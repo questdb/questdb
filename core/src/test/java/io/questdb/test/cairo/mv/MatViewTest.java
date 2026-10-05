@@ -2186,7 +2186,7 @@ public class MatViewTest extends AbstractCairoTest {
         // An aggregating view's refresh reads a bare name that matches no column as a call to the zero-argument
         // function of that name, so the queries that older binaries stored as written keep refreshing. Once the
         // base drops or renames the version column, the refresh calls version() and the view stays valid.
-        // questdb/questdb#TBD tracks making this refresh fail instead.
+        // questdb/questdb#7744 tracks making this refresh fail instead.
         assertMemoryLeak(() -> {
             final String[] alters = {
                     "alter table base_price drop column version",
