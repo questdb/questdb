@@ -94,6 +94,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // @AfterClass frees, so a first page taken inside a method reads as a NATIVE_JIT leak.
         irMemory.extend(1);
         serializer = new CompiledFilterIRSerializer();
+        // Pin the SYM_IN_SET stream whatever native library this run loaded; the fast decline
+        // without the capability has its own test.
+        serializer.setSymbolInSetSupported(true);
     }
 
     @AfterClass
@@ -1635,12 +1638,59 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertInThresholdDeclined("asymbol IN " + list + "'h')");
         setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, "true");
 
-        // A symbol table larger than the bitset cap. asymbol holds two symbols.
-        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 1);
+        // The cap applies to the largest key the literals resolve to, not to the symbol count.
+        // asymbol holds two symbols: ABC at key 0 and -5 at key 1; the list's other values are absent.
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 0);
         assertInThresholdDeclined("asymbol IN " + list + "'h')");
-        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 2);
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 1);
+        // Two symbols, a cap of one: the list names key 0 only, so it fits.
         serialize("asymbol IN " + list + "'h')");
         assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(ret)");
+        // Key 1 does not fit under a cap of one.
+        assertInThresholdDeclined("asymbol IN " + list + "'" + KNOWN_SYMBOL_NEGATIVE_NUMBER + "')");
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 2);
+        serialize("asymbol IN " + list + "'" + KNOWN_SYMBOL_NEGATIVE_NUMBER + "')");
+        assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(ret)");
+        // Bind variables are not resolved at compile time; the set checks them per execution.
+        setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 0);
+        bindVariableService.clear();
+        bindVariableService.setStr("s0", KNOWN_SYMBOL_NEGATIVE_NUMBER);
+        serialize("asymbol IN ('DEF', 'XYZ', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', :s0)");
+        assertIR("(i32 :0)(i32 asymbol)(sym_in 0)(ret)");
+    }
+
+    @Test
+    public void testInSymbolBitSetDeclinesFastWithoutNativeSupport() throws Exception {
+        // aarch64, or a native library older than SYM_IN_SET: the list is declined by the
+        // threshold check before any bitset work, exactly as before the opcode existed.
+        final String list = "('ABC', 'DEF', 'XYZ', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h')";
+        serializer.setSymbolInSetSupported(false);
+        try {
+            assertInThresholdDeclined("asymbol IN " + list);
+            Assert.assertEquals(0, bindVarFunctions.size());
+            Assert.assertEquals(0, countOpcodes(SYM_IN_SET));
+            // A short list keeps the equality chain either way.
+            serialize("asymbol IN ('ABC', 'DEF')");
+            Assert.assertEquals(2, countOpcodes(EQ));
+        } finally {
+            serializer.setSymbolInSetSupported(true);
+        }
+    }
+
+    @Test
+    public void testInSymbolBitSetUndefinedBindVariableFreesLinks() throws Exception {
+        // The second variable is undefined: the link function made for the first must not leak.
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setStr("s0", "ABC");
+            try {
+                serialize("asymbol IN (:s0, :undefined, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i')");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "failed to find function for bind variable: :undefined");
+            }
+            Assert.assertEquals(0, bindVarFunctions.size());
+        });
     }
 
     @Test

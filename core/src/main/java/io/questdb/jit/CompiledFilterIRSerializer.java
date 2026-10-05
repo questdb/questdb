@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolInBitSet;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bool.SymbolKeyBitSet;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -66,6 +67,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -321,6 +323,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private MemoryCARW memory;
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
+    // Whether the loaded native library compiles SYM_IN_SET. Survives clear(): it is a property of
+    // the library, not of the filter. See JitUtil.isSymbolInSetSupported().
+    private boolean symbolInSetSupported = JitUtil.isSymbolInSetSupported();
+
+    /**
+     * Overrides the native capability probe, so a serializer test can pin the SYM_IN_SET stream
+     * against any library, and the fast decline without one.
+     */
+    @TestOnly
+    public void setSymbolInSetSupported(boolean symbolInSetSupported) {
+        this.symbolInSetSupported = symbolInSetSupported;
+    }
 
     @Override
     public void clear() {
@@ -4834,11 +4848,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * this path does not cover; the caller then serializes the list as before.
      * <p>
      * The VAR is pushed at I4 beside the I4 key, so every width rule - the execution hint, the
-     * harmonisation walk - sees the pairing a symbol equality makes. A backend that predates
-     * {@link #SYM_IN_SET} sees an unknown binary opcode and declines the filter, which then runs
-     * on the Java filter exactly as an over-threshold list did before.
+     * harmonisation walk - sees the pairing a symbol equality makes. The opcode is emitted only to
+     * a native library that reports it compiles it (see {@link JitUtil#isSymbolInSetSupported()}):
+     * without one - aarch64, or a library older than the opcode - this returns false before any
+     * work, and the caller's threshold check declines the filter at once, as it did before the
+     * opcode existed.
+     * <p>
+     * The {@code cairo.sql.symbol.in.bitset.max.keys} cap is checked here against the largest key
+     * the list's literals resolve to now, and again per execution by
+     * {@link CompiledFilterSymbolInBitSet}, which also covers bind variables and symbols the table
+     * gains later. See {@link SymbolKeyBitSet#fitsCap(int, int)}.
      */
     private boolean trySerializeSymbolInBitSet(ObjList<ExpressionNode> args, ExpressionNode inKey) throws SqlException {
+        if (!symbolInSetSupported) {
+            return false;
+        }
         final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
         final int elementCount = args.size() - 1;
         if (!configuration.isSqlJitSymbolInBitsetEnabled()
@@ -4856,8 +4880,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return false;
         }
         final SymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-        if (!(symbolTable instanceof StaticSymbolTable staticSymbolTable)
-                || staticSymbolTable.getSymbolCount() > configuration.getSqlSymbolInBitsetMaxKeys()) {
+        if (!(symbolTable instanceof StaticSymbolTable staticSymbolTable)) {
             return false;
         }
         for (int i = 0; i < elementCount; i++) {
@@ -4877,23 +4900,43 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
+        final int maxKeys = configuration.getSqlSymbolInBitsetMaxKeys();
         final ObjList<String> constants = new ObjList<>();
-        final ObjList<Function> variables = new ObjList<>();
+        int maxKey = -1;
         for (int i = 0; i < elementCount; i++) {
             final ExpressionNode element = args.getQuick(i);
             if (element.type == ExpressionNode.CONSTANT) {
-                constants.add(symbolInConstantValue(element.token));
-            } else {
-                final Function variable = getBindVariableFunction(element.position, element.token);
-                variables.add(variable);
-                if (!CompiledFilterSymbolInBitSet.isSupportedVariableType(variable.getType())) {
-                    Misc.freeObjList(variables);
-                    return false;
-                }
+                final String value = symbolInConstantValue(element.token);
+                constants.add(value);
+                maxKey = Math.max(maxKey, staticSymbolTable.keyOf(value));
             }
         }
+        if (!SymbolKeyBitSet.fitsCap(maxKey, maxKeys)) {
+            // Every execution would exceed the cap: keep the threshold's decline.
+            return false;
+        }
 
-        bindVarFunctions.add(new CompiledFilterSymbolInBitSet(columnIndex, constants, variables));
+        final ObjList<Function> variables = new ObjList<>();
+        try {
+            for (int i = 0; i < elementCount; i++) {
+                final ExpressionNode element = args.getQuick(i);
+                if (element.type == ExpressionNode.BIND_VARIABLE) {
+                    final Function variable = getBindVariableFunction(element.position, element.token);
+                    variables.add(variable);
+                    if (!CompiledFilterSymbolInBitSet.isSupportedVariableType(variable.getType())) {
+                        Misc.freeObjList(variables);
+                        return false;
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            // An undefined or malformed variable past the first: the link functions made so far
+            // belong to no one yet.
+            Misc.freeObjList(variables);
+            throw th;
+        }
+
+        bindVarFunctions.add(new CompiledFilterSymbolInBitSet(columnIndex, constants, variables, maxKeys));
         final int index = bindVarFunctions.size() - 1;
         // The elements side first and the key last, the order an EQ pairing pushes them in.
         putOperand(VAR, I4_TYPE, index);

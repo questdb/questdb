@@ -39,6 +39,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * The membership set of a JIT-compiled {@code symbol IN (...)} list. It is not evaluated as a
@@ -55,21 +56,33 @@ import io.questdb.std.Vect;
  * Resolving per execution rather than at compile time is what keeps a cached factory correct
  * across bind variable rebinding, and across symbols the table gains between executions: a
  * literal absent at compile time resolves once it exists.
+ * <p>
+ * The {@code cairo.sql.symbol.in.bitset.max.keys} cap is enforced here, per execution, against
+ * the largest key the list resolves to (see {@link SymbolKeyBitSet#fitsCap(int, int)}). A cached
+ * factory may meet a list - a rebound variable, or a literal the table has since gained under a
+ * high key - whose set would not fit. That execution then allocates nothing past the cap:
+ * {@link #isOverCap()} reports it, {@code AsyncFilterUtils.prepareBindVarMemory} returns false,
+ * and the factory runs the Java filter for the whole execution. The slot still names a valid,
+ * empty one-word set, so a backend that read it would match nothing rather than read past it.
  */
 public class CompiledFilterSymbolInBitSet extends BooleanFunction {
     private final int columnIndex;
     // Literal values; a null element stands for NULL.
     private final ObjList<String> constants;
+    // See SymbolKeyBitSet.fitsCap().
+    private final int maxKeys;
     // Bind variables, read at init() time.
     private final ObjList<Function> variables;
     private long address;
     private long allocatedSize;
     private int maxBitIndex;
+    private boolean overCap;
 
-    public CompiledFilterSymbolInBitSet(int columnIndex, ObjList<String> constants, ObjList<Function> variables) {
+    public CompiledFilterSymbolInBitSet(int columnIndex, ObjList<String> constants, ObjList<Function> variables, int maxKeys) {
         this.columnIndex = columnIndex;
         this.constants = constants;
         this.variables = variables;
+        this.maxKeys = maxKeys;
     }
 
     /**
@@ -99,6 +112,11 @@ public class CompiledFilterSymbolInBitSet extends BooleanFunction {
         return address;
     }
 
+    @TestOnly
+    public long getAllocatedSize() {
+        return allocatedSize;
+    }
+
     @Override
     public boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
@@ -123,13 +141,17 @@ public class CompiledFilterSymbolInBitSet extends BooleanFunction {
             maxKey = Math.max(maxKey, symbolTable.keyOf(variableValue(variables.getQuick(i))));
         }
 
-        final long bitCount = SymbolKeyBitSet.bitsFor(maxKey);
-        final long size = ((bitCount + 63) >>> 6) << 3;
-        if (size > allocatedSize) {
-            address = Unsafe.realloc(address, allocatedSize, size, MemoryTag.NATIVE_FUNC_RSS);
-            allocatedSize = size;
+        overCap = !SymbolKeyBitSet.fitsCap(maxKey, maxKeys);
+        if (overCap) {
+            // This execution runs the Java filter. Leave an empty one-word set behind, so the
+            // slot stays a valid address and the native allocation stays under the cap.
+            allocate(Long.BYTES);
+            maxBitIndex = 0;
+            return;
         }
-        Vect.memset(address, size, 0);
+
+        final long bitCount = SymbolKeyBitSet.bitsFor(maxKey);
+        allocate(((bitCount + 63) >>> 6) << 3);
         maxBitIndex = (int) (bitCount - 1);
 
         for (int i = 0, n = constants.size(); i < n; i++) {
@@ -143,6 +165,14 @@ public class CompiledFilterSymbolInBitSet extends BooleanFunction {
     @Override
     public boolean isNonDeterministic() {
         return true;
+    }
+
+    /**
+     * Whether the set the last {@code init()} resolved exceeds the cap, so that execution must run
+     * the Java filter instead of the compiled one.
+     */
+    public boolean isOverCap() {
+        return overCap;
     }
 
     @Override
@@ -167,6 +197,14 @@ public class CompiledFilterSymbolInBitSet extends BooleanFunction {
             return c != 0 ? String.valueOf(c) : null;
         }
         return func.getStrA(null);
+    }
+
+    private void allocate(long size) {
+        if (size > allocatedSize) {
+            address = Unsafe.realloc(address, allocatedSize, size, MemoryTag.NATIVE_FUNC_RSS);
+            allocatedSize = size;
+        }
+        Vect.memset(address, size, 0);
     }
 
     private void setBit(int key) {

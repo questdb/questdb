@@ -59,6 +59,18 @@ public final class SymbolKeyBitSet {
     }
 
     /**
+     * Whether a set covering keys up to {@code maxKey} fits under the
+     * {@code cairo.sql.symbol.in.bitset.max.keys} cap: every key the list resolves to must be
+     * below {@code maxKeys}, so the set holds at most {@code maxKeys + 1} bits (one per key, plus
+     * NULL), about {@code maxKeys / 8} bytes. The JIT and the Java filter apply this same test
+     * to the largest key a list resolves to; it does not depend on how many symbols the column
+     * holds.
+     */
+    public static boolean fitsCap(int maxKey, int maxKeys) {
+        return bitsFor(maxKey) - 1 <= maxKeys;
+    }
+
+    /**
      * Adds a resolved key. {@link SymbolTable#VALUE_NOT_FOUND} and any other negative non-NULL
      * key name no row and are ignored. The caller must have sized the set with {@link #reset(int)}
      * to cover the key.

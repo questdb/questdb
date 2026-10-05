@@ -45,6 +45,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.TestOnly;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
 
@@ -128,6 +129,15 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         );
     }
 
+    /**
+     * Whether {@code function} is this factory's non-constant IN function and its last
+     * {@code init()} chose the membership bitset over the hash set.
+     */
+    @TestOnly
+    public static boolean isBitSetInUse(Function function) {
+        return function instanceof Func func && func.testFunc == func.bitSetTest;
+    }
+
     @Override
     public boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
         return args.size() > 2;
@@ -141,7 +151,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
         private final TestFunc bitSetTest = this::testAsBitSet;
-        // Largest key range the bitset may cover, or -1 when the bitset is disabled.
+        // The bitset cap, see SymbolKeyBitSet.fitsCap(), or -1 when the bitset is disabled.
         private final int bitSetMaxKeys;
         private final CharSequenceHashSet deferredSet;
         private final IntList deferredValuePositions;
@@ -230,7 +240,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                         maxKey = Math.max(maxKey, addResolvedKey(symbolTable.keyOf(deferredValueToString(func))));
                     }
                 }
-                if (bitSetMaxKeys >= 0 && SymbolKeyBitSet.bitsFor(maxKey) - 1 <= bitSetMaxKeys) {
+                if (bitSetMaxKeys >= 0 && SymbolKeyBitSet.fitsCap(maxKey, bitSetMaxKeys)) {
                     if (bitSet == null) {
                         bitSet = new SymbolKeyBitSet();
                     }

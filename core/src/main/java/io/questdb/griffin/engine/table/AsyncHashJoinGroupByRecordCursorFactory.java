@@ -266,7 +266,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         return filterContext.getCompiledFilter() != null;
     }
 
-    /** True when the build scan's WHERE filter runs as JIT code. */
+    /**
+     * True when the build scan's WHERE filter runs as JIT code.
+     */
     public boolean usesCompiledBuildFilter() {
         return buildFilterContext.getCompiledFilter() != null;
     }
@@ -345,7 +347,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         }
     }
 
-    /** Returns false when cancellation cut the frame short, so the caller skips its frame epilogue. */
+    /**
+     * Returns false when cancellation cut the frame short, so the caller skips its frame epilogue.
+     */
     private static boolean aggregateInt(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -395,7 +399,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         return true;
     }
 
-    /** The filtered twin of aggregateInt(), driven by the rows the filter phase kept. */
+    /**
+     * The filtered twin of aggregateInt(), driven by the rows the filter phase kept.
+     */
     private static boolean aggregateIntFiltered(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -576,7 +582,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         return true;
     }
 
-    /** The twin of aggregateIntFilteredUnique() for a build of more than one hash partition; see aggregateIntPartitioned(). */
+    /**
+     * The twin of aggregateIntFilteredUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
+     */
     private static void aggregateIntPartitionedFilteredUnique(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -607,7 +615,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         }
     }
 
-    /** The twin of aggregateIntUnique() for a build of more than one hash partition; see aggregateIntPartitioned(). */
+    /**
+     * The twin of aggregateIntUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
+     */
     private static void aggregateIntPartitionedUnique(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -721,7 +731,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         return true;
     }
 
-    /** The filtered twin of aggregateRecord(), driven by the rows the filter phase kept. */
+    /**
+     * The filtered twin of aggregateRecord(), driven by the rows the filter phase kept.
+     */
     private static boolean aggregateRecordFiltered(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -904,7 +916,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         return true;
     }
 
-    /** The twin of aggregateRecordFilteredUnique() for a build of more than one hash partition; see aggregateRecordPartitioned(). */
+    /**
+     * The twin of aggregateRecordFilteredUnique() for a build of more than one hash partition; see aggregateRecordPartitioned().
+     */
     private static void aggregateRecordPartitionedFilteredUnique(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -936,7 +950,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         }
     }
 
-    /** The twin of aggregateRecordUnique() for a build of more than one hash partition; see aggregateRecordPartitioned(). */
+    /**
+     * The twin of aggregateRecordUnique() for a build of more than one hash partition; see aggregateRecordPartitioned().
+     */
     private static void aggregateRecordPartitionedUnique(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -1051,7 +1067,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         return true;
     }
 
-    /** The filtered twin of aggregateSymbol(), driven by the rows the filter phase kept. */
+    /**
+     * The filtered twin of aggregateSymbol(), driven by the rows the filter phase kept.
+     */
     private static boolean aggregateSymbolFiltered(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -1234,7 +1252,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         return true;
     }
 
-    /** The twin of aggregateSymbolFilteredUnique() for a build of more than one hash partition; see aggregateIntPartitioned(). */
+    /**
+     * The twin of aggregateSymbolFilteredUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
+     */
     private static void aggregateSymbolPartitionedFilteredUnique(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -1266,7 +1286,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         }
     }
 
-    /** The twin of aggregateSymbolUnique() for a build of more than one hash partition; see aggregateIntPartitioned(). */
+    /**
+     * The twin of aggregateSymbolUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
+     */
     private static void aggregateSymbolPartitionedUnique(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -1354,7 +1376,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 // the logical record resolves per row, fall back to the interpreted filter.
                 final DirectLongList rows = filterCtx.getFilteredRows(slotId);
                 rows.clear();
-                final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+                final CompiledFilter compiledFilter = filterCtx.getExecutionCompiledFilter();
                 if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                     AsyncFilterUtils.applyFilter(filterCtx.getFilter(slotId), rows, probeRecord, rowCount);
                 } else {

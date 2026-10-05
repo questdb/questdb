@@ -68,6 +68,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callCountOnlyFunctio
 
 JNIEXPORT void JNICALL Java_io_questdb_jit_FiltersCompiler_runTests(JNIEnv *e, jclass cl);
 
+JNIEXPORT jint JNICALL Java_io_questdb_jit_FiltersCompiler_getFeatures(JNIEnv *e, jclass cl);
+
 }
 
 #endif //QUESTDB_COMPILER_H

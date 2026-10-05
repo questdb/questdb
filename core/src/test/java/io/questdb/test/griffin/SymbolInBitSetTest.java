@@ -29,18 +29,23 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolInBitSet;
+import io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -55,18 +60,23 @@ import org.junit.Test;
  * <li>JIT_VECTOR: JIT on with both bitsets, the AVX2 loop where the filter allows it;</li>
  * <li>JIT_SCALAR: JIT forced scalar with both bitsets.</li>
  * </ul>
- * The JIT modes also assert the filter compiled, so a silent fallback to Java cannot pass for
- * parity.
+ * The parity half runs on every architecture and against every native library: it is what proves
+ * the fallback. Where the loaded library compiles the set - x86-64, built since the opcode
+ * existed, see {@link JitUtil#isSymbolInSetSupported()} - the JIT modes also assert the filter
+ * compiled, so a silent fallback to Java cannot pass for parity. Elsewhere they assert it did NOT
+ * compile: the serializer declines such a list up front.
  */
 public class SymbolInBitSetTest extends AbstractCairoTest {
+    // Whether the JIT modes are expected to compile an over-threshold symbol IN list.
+    private static final boolean JIT_SYM_IN_SET = Os.arch == Os.ARCH_X86_64 && JitUtil.isSymbolInSetSupported();
     private static final Log LOG = LogFactory.getLog(SymbolInBitSetTest.class);
     private final StringSink sink = new StringSink();
 
     @Override
     @Before
     public void setUp() {
-        Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
+        LOG.info().$("symbol IN set JIT capability [expected=").$(JIT_SYM_IN_SET).$(", arch=").$(Os.arch).I$();
     }
 
     @Test
@@ -99,7 +109,7 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
                 bindValues(0);
                 mode.apply();
                 try (RecordCursorFactory factory = select(query)) {
-                    Assert.assertEquals(mode.toString(), mode.isJit, factory.usesCompiledFilter());
+                    Assert.assertEquals(mode.toString(), mode.expectsJit(), factory.usesCompiledFilter());
                     // The same factory across rebinds, as the query cache reuses it: the set must be
                     // resolved per execution, not frozen at compile time.
                     for (int round = 0; round < 4; round++) {
@@ -128,7 +138,7 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
                 bindVariableService.setStr("n", null);
                 mode.apply();
                 try (RecordCursorFactory factory = select(query)) {
-                    Assert.assertEquals(mode.toString(), mode.isJit, factory.usesCompiledFilter());
+                    Assert.assertEquals(mode.toString(), mode.expectsJit(), factory.usesCompiledFilter());
                     Assert.assertEquals(mode.toString(), expected, print(factory));
                 }
             }
@@ -166,7 +176,7 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
                 Assert.assertTrue(countRows(snapshot) > 0);
                 mode.apply();
                 try (RecordCursorFactory factory = select(query)) {
-                    Assert.assertEquals(mode.toString(), mode.isJit, factory.usesCompiledFilter());
+                    Assert.assertEquals(mode.toString(), mode.expectsJit(), factory.usesCompiledFilter());
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         execute("insert into x select rnd_symbol('new0','new1','new2','new3') sym, rnd_symbol('p','q') s2," +
                                 " 1 i, 1 j, 0.5 d, 1L l, timestamp_sequence(0, 1_000_000) ts from long_sequence(500)");
@@ -226,9 +236,16 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
             final String where = " where sym in " + list(null, 0, 30) + " and i + j > 0";
             final String query = "x" + where;
             setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, "true");
-            assertPlanContains("explain " + query, "Async JIT Filter");
-            assertPlanContains("explain select count() from x" + where, "Async JIT Filter");
-            Assert.assertTrue(usesJit("select sym, sum(d) from x" + where));
+            if (JIT_SYM_IN_SET) {
+                assertPlanContains("explain " + query, "Async JIT Filter");
+                assertPlanContains("explain select count() from x" + where, "Async JIT Filter");
+                Assert.assertTrue(usesJit("select sym, sum(d) from x" + where));
+            } else {
+                // No native support: declined at compile time, as before the opcode existed.
+                assertPlanContains("explain " + query, "Async Filter");
+                assertPlanNotContains("explain " + query, "JIT");
+                Assert.assertFalse(usesJit("select sym, sum(d) from x" + where));
+            }
             setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, "false");
             assertPlanContains("explain " + query, "Async Filter");
             assertPlanNotContains("explain " + query, "JIT");
@@ -236,29 +253,91 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedFactoryGrowsPastCap() throws Exception {
+        // The cap is enforced per execution. A factory compiled while its list fits keeps the JIT
+        // for that list; once a rebind - or a table that grew - resolves a key past the cap, the
+        // execution runs the Java filter with the same rows, and allocates nothing past the cap.
+        // Rebinding back under the cap returns to the compiled filter.
+        assertMemoryLeak(() -> {
+            final String[] queries = {
+                    "x where sym in (:v0, :v1, :v2, :v3, :v4, :v5, :v6, :v7, :v8, :v9, :v10, :v11)",
+                    "select count() from x where sym in (:v0, :v1, :v2, :v3, :v4, :v5, :v6, :v7, :v8, :v9, :v10, :v11)",
+                    "select sym, count(), sum(i) from x where sym in (:v0, :v1, :v2, :v3, :v4, :v5, :v6, :v7, :v8, :v9, :v10, :v11) order by sym",
+                    "select * from x where sym in (:v0, :v1, :v2, :v3, :v4, :v5, :v6, :v7, :v8, :v9, :v10, :v11) and i + j > 0 order by d desc limit 9",
+                    // WINDOW JOIN's master filter.
+                    "select x.sym, x.ts, sum(p.price) w from x window join p on (sym) range between 1 minute preceding and 1 minute following" +
+                            " where x.sym in (:v0, :v1, :v2, :v3, :v4, :v5, :v6, :v7, :v8, :v9, :v10, :v11) order by x.ts, x.sym",
+            };
+            for (String query : queries) {
+                for (Mode mode : Mode.values()) {
+                    execute("drop table if exists x");
+                    // Capacity for the 20,000 symbols added below: an auto-grown symbol capacity
+                    // bumps the metadata version, and the cached factory would be out of date.
+                    createTable(2_000, 50, " capacity 32768");
+                    execute("drop table if exists p");
+                    execute("create table p as (select rnd_symbol('sym_0','sym_3','sym_6','big_19990','big_19992') sym, rnd_double() price," +
+                            " timestamp_sequence(0, 60_000_000) ts from long_sequence(5_000)) timestamp(ts) partition by day bypass wal");
+                    setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 100);
+                    bindVariableService.clear();
+                    bindGrowthValues(false);
+                    mode.apply();
+                    try (RecordCursorFactory factory = select(query)) {
+                        // A window join's plan does not say whether its master filter compiled;
+                        // parity over the empty over-cap set convicts it either way.
+                        if (!query.contains("window join")) {
+                            Assert.assertEquals(mode + ": " + query, mode.expectsJit(), factory.usesCompiledFilter());
+                        }
+                        assertCapRound(factory, query, mode, false);
+
+                        // 20,000 new symbols, keys 50 to 20,049, far past the cap of 100.
+                        execute("insert into x select cast(concat('big_', x) as symbol), 's2_a', 1, 1, 0.5, 1L," +
+                                " '1970-01-03'::timestamp + x from long_sequence(20_000)");
+                        bindGrowthValues(true);
+                        assertCapRound(factory, query, mode, true);
+
+                        bindGrowthValues(false);
+                        assertCapRound(factory, query, mode, false);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeSymbolTableFallsBack() throws Exception {
         assertMemoryLeak(() -> {
             createTable(5_000, 200);
-            // The table holds 200 symbols. A cap below that keeps the JIT on the equality chain, so
-            // an over-threshold list falls back to the Java filter; the Java filter keeps its bitset
-            // while the keys the list names fit under the cap, and the hash set once they do not.
-            setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 100);
+            // The table holds 200 symbols, more than the cap of 100. The cap applies to the keys the
+            // list resolves to, in the JIT and the Java filter alike: a list of keys 0 - 19 fits, so
+            // the JIT compiles it and the Java filter tests a bitset; a list of keys 150 - 169 does
+            // not, so the JIT declines it and the Java filter tests a hash set.
             final String lowKeys = list(null, 0, 20);
             final String highKeys = list(null, 150, 20);
             for (String l : new String[]{lowKeys, highKeys}) {
+                final boolean fits = l == lowKeys;
                 final String query = "x where sym in " + l;
                 final String expected = referenceOf(query);
                 Assert.assertTrue(countRows(expected) > 0);
-                Mode.JIT_VECTOR.apply();
-                setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 100);
-                try (RecordCursorFactory factory = select(query)) {
-                    Assert.assertFalse(factory.usesCompiledFilter());
-                    Assert.assertEquals(expected, print(factory));
-                }
-                setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 1_000);
-                try (RecordCursorFactory factory = select(query)) {
-                    Assert.assertTrue(factory.usesCompiledFilter());
-                    Assert.assertEquals(expected, print(factory));
+                for (Mode mode : Mode.values()) {
+                    if (mode == Mode.REFERENCE) {
+                        continue;
+                    }
+                    setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 100);
+                    mode.apply();
+                    Assert.assertEquals(100, engine.getConfiguration().getSqlSymbolInBitsetMaxKeys());
+                    Assert.assertTrue(engine.getConfiguration().isSqlSymbolInBitsetEnabled());
+                    try (RecordCursorFactory factory = select(query)) {
+                        Assert.assertEquals(mode + ": " + l, mode.expectsJit() && fits, factory.usesCompiledFilter());
+                        Assert.assertEquals(mode + ": " + l, expected, print(factory));
+                        Assert.assertEquals(mode + ": " + l, fits, InSymbolFunctionFactory.isBitSetInUse(findFilter(factory)));
+                    }
+                    // A cap above every listed key takes both lists.
+                    setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_MAX_KEYS, 1_000);
+                    try (RecordCursorFactory factory = select(query)) {
+                        Assert.assertEquals(mode + ": " + l, mode.expectsJit(), factory.usesCompiledFilter());
+                        Assert.assertEquals(mode + ": " + l, expected, print(factory));
+                        Assert.assertTrue(mode + ": " + l, InSymbolFunctionFactory.isBitSetInUse(findFilter(factory)));
+                    }
                 }
             }
         });
@@ -373,7 +452,7 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
         }
         for (Mode mode : Mode.values()) {
             mode.apply();
-            Assert.assertEquals(mode + " JIT usage: " + query, mode.isJit && isJitPossible, usesJit(query));
+            Assert.assertEquals(mode + " JIT usage: " + query, mode.expectsJit() && isJitPossible, usesJit(query));
             try (RecordCursorFactory factory = select(query)) {
                 TestUtils.assertEquals(mode + ": " + query, expected, print(factory));
             }
@@ -414,6 +493,38 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
         Assert.assertFalse(sink.toString(), sink.toString().contains(fragment));
     }
 
+    private void assertCapRound(RecordCursorFactory factory, String query, Mode mode, boolean overCap) throws SqlException {
+        final String actual = print(factory);
+        final String expected = referenceOf(query);
+        mode.apply();
+        // Parity alone convicts a compiled filter run over an over-cap set: that set is empty, so
+        // every row would drop.
+        TestUtils.assertEquals(mode + (overCap ? ", over the cap: " : ": ") + query, expected, actual);
+        if (!query.startsWith("x where")) {
+            return;
+        }
+        // The plain filter: look inside.
+        Assert.assertEquals(query, overCap, actual.contains("big_"));
+        if (mode != Mode.REFERENCE) {
+            // The factory's Java filter: a bitset under the cap, the hash set over it.
+            Assert.assertEquals(mode + ": " + query, !overCap, InSymbolFunctionFactory.isBitSetInUse(findFilter(factory)));
+        }
+        final CompiledFilterSymbolInBitSet set = findBitSet(factory);
+        Assert.assertEquals(mode + ": " + query, mode.expectsJit(), set != null);
+        if (set != null) {
+            Assert.assertEquals(mode + ": " + query, overCap, set.isOverCap());
+            // Never more than the cap's words, however far past it the keys went.
+            Assert.assertTrue(mode + ": " + query, set.getAllocatedSize() <= ((100 + 1 + 63) >>> 6) << 3);
+        }
+    }
+
+    private void bindGrowthValues(boolean overCap) throws SqlException {
+        // Half the values name keys past the cap once the table has grown; the others stay low.
+        for (int i = 0; i < 12; i++) {
+            bindVariableService.setStr("v" + i, overCap && i % 2 == 0 ? "big_" + (19_990 + i) : "sym_" + (i * 3));
+        }
+    }
+
     private void bindValues(int round) throws SqlException {
         for (int i = 0; i < 14; i++) {
             bindVariableService.setStr("v" + i, roundValue(round, i));
@@ -421,9 +532,13 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
     }
 
     private void createTable(int rows, int symbols) throws SqlException {
+        createTable(rows, symbols, "");
+    }
+
+    private void createTable(int rows, int symbols, String symCapacity) throws SqlException {
         // Symbol values sym_0 .. sym_<symbols - 1>, inserted first and in order so that sym_<i>
         // holds key i, then rows that draw on them at random, NULLs included, over five days.
-        execute("create table x (sym symbol, s2 symbol, i int, j int, d double, l long, ts timestamp)" +
+        execute("create table x (sym symbol" + symCapacity + ", s2 symbol, i int, j int, d double, l long, ts timestamp)" +
                 " timestamp(ts) partition by day bypass wal");
         execute("insert into x select cast(concat('sym_', x - 1) as symbol), 's2_a', 1, 1, 0.5, 1L, 0::timestamp" +
                 " from long_sequence(" + symbols + ")");
@@ -440,6 +555,35 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
      * A list literal of {@code count} values, {@code prefix_<i>} for {@code i} from {@code from} on,
      * or the table's own {@code sym_<i>} when the prefix is null.
      */
+    private static @Nullable CompiledFilterSymbolInBitSet findBitSet(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof AsyncJitFilteredRecordCursorFactory jit) {
+                return findBitSet(jit.getBindVarFunctions());
+            }
+        }
+        return null;
+    }
+
+    // The filter of the first factory down the base chain that has one; select() wraps the
+    // filtering factory in QueryProgress.
+    private static @Nullable Function findFilter(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f.getFilter() != null) {
+                return f.getFilter();
+            }
+        }
+        return null;
+    }
+
+    private static @Nullable CompiledFilterSymbolInBitSet findBitSet(ObjList<Function> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (functions.getQuick(i) instanceof CompiledFilterSymbolInBitSet set) {
+                return set;
+            }
+        }
+        return null;
+    }
+
     private String list(String prefix, int from, int count) {
         final StringBuilder sb = new StringBuilder("(");
         for (int i = 0; i < count; i++) {
@@ -523,6 +667,11 @@ public class SymbolInBitSetTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_SYMBOL_IN_BITSET_ENABLED, bitSet ? "true" : "false");
             setProperty(PropertyKey.CAIRO_SQL_JIT_SYMBOL_IN_BITSET_ENABLED, bitSet ? "true" : "false");
             sqlExecutionContext.setJitMode(jitMode);
+        }
+
+        // Whether this mode compiles an over-threshold symbol IN list on this platform and library.
+        boolean expectsJit() {
+            return isJit && JIT_SYM_IN_SET;
         }
     }
 }

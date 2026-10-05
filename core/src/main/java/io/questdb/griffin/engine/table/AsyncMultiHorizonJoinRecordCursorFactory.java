@@ -343,7 +343,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             final RecordSink groupByMapSink = atom.getMapSink(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
             final MultiHorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
-            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+            final CompiledFilter compiledFilter = filterCtx.getExecutionCompiledFilter();
             final Function filter = filterCtx.getFilter(slotId);
             final int slaveCount = atom.getSlaveCount();
 

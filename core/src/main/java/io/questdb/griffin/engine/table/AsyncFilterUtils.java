@@ -131,20 +131,34 @@ public class AsyncFilterUtils {
         }
     }
 
-    public static void prepareBindVarMemory(
+    /**
+     * Writes the compiled filter's bind variable slots for this execution, after
+     * {@code Function.init()} has initialised {@code bindVarFunctions}.
+     *
+     * @return false when this execution must not run the compiled filter: a symbol IN list's
+     * membership set resolved past the bitset cap (see {@link CompiledFilterSymbolInBitSet#isOverCap()}).
+     * The caller then runs its Java filter for every frame of the execution, as it does for a
+     * frame with column tops.
+     */
+    public static boolean prepareBindVarMemory(
             SqlExecutionContext executionContext,
             SymbolTableSource symbolTableSource,
             ObjList<Function> bindVarFunctions,
             MemoryCARW bindVarMemory
     ) throws SqlException {
+        boolean compiledFilterUsable = true;
         // don't trigger memory allocation if there are no variables
         if (bindVarFunctions.size() > 0) {
             bindVarMemory.truncate();
             for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
                 Function function = bindVarFunctions.getQuick(i);
                 writeBindVarFunction(bindVarMemory, function, symbolTableSource, executionContext);
+                if (function instanceof CompiledFilterSymbolInBitSet bitSet && bitSet.isOverCap()) {
+                    compiledFilterUsable = false;
+                }
             }
         }
+        return compiledFilterUsable;
     }
 
     private static void writeBindVarFunction(
@@ -160,7 +174,8 @@ public class AsyncFilterUtils {
         // padding.
         if (function instanceof CompiledFilterSymbolInBitSet bitSet) {
             // A symbol IN list's membership bitset: its address, then the index of its last bit
-            // (see read_sym_in_set in jit/x86.h). Function.init() resolved it for this execution.
+            // (see sym_in_set in jit/x86.h and jit/avx2.h). Function.init() resolved it for this
+            // execution.
             bindVarMemory.putLong(bitSet.getAddress());
             bindVarMemory.putLong(bitSet.getMaxBitIndex());
             return;

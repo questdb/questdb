@@ -86,6 +86,15 @@ enum class opcodes : int32_t {
     Sym_In_Set = 23,
 };
 
+// Capabilities this library's backend reports to Java through FiltersCompiler.getFeatures(), so
+// the frontend emits an opcode only to a library that compiles it. A library that predates the
+// function has none of them: Java treats the missing JNI symbol as a zero mask. Keep in sync with
+// JitUtil.FEATURE_*.
+enum jit_features : int32_t {
+    // opcodes::Sym_In_Set, in both the scalar and the AVX2 x86 backends.
+    kFeatureSymInSet = 1,
+};
+
 struct instruction_t {
     opcodes opcode;
     int32_t options;

@@ -330,7 +330,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    /** Page frames of the open cursor's build input. */
+    /**
+     * Page frames of the open cursor's build input.
+     */
     @TestOnly
     public int getBuildFrameCount() {
         return buildFrames.getFrameCount();
@@ -352,13 +354,17 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return size;
     }
 
-    /** Hash partitions of the open cursor's build: one for a build on the owner. */
+    /**
+     * Hash partitions of the open cursor's build: one for a build on the owner.
+     */
     @TestOnly
     public int getBuildPartitionCount() {
         return getPartitionCount();
     }
 
-    /** The build published for the open cursor, or null when no cursor is open. */
+    /**
+     * The build published for the open cursor, or null when no cursor is open.
+     */
     @TestOnly
     public FrozenHashJoinBuild getFrozenBuild() {
         return frozen;
@@ -368,13 +374,17 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return functions;
     }
 
-    /** The class of this factory's row updater, which no other factory shares. */
+    /**
+     * The class of this factory's row updater, which no other factory shares.
+     */
     @TestOnly
     public Class<?> getRowUpdaterClass() {
         return rowUpdater.getClass();
     }
 
-    /** True when the open cursor's build ran on the workers, in rounds of the frame sequence's tasks. */
+    /**
+     * True when the open cursor's build ran on the workers, in rounds of the frame sequence's tasks.
+     */
     @TestOnly
     public boolean isBuiltInRounds() {
         return isBuiltInRounds;
@@ -769,7 +779,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         rows.clear();
         final Function filter = buildFilterContext.getFilter(slotId);
         if (filter != null) {
-            final CompiledFilter compiledFilter = buildFilterContext.getCompiledFilter();
+            final CompiledFilter compiledFilter = buildFilterContext.getExecutionCompiledFilter();
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 AsyncFilterUtils.applyFilter(filter, rows, record, rowCount);
             } else {
@@ -858,7 +868,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return slots.getQuick(slot + 1);
     }
 
-    /** Binds the sequence that owns this atom, which a parallel build dispatches its rounds through. */
+    /**
+     * Binds the sequence that owns this atom, which a parallel build dispatches its rounds through.
+     */
     void bindFrameSequence(UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence) {
         this.frameSequence = frameSequence;
     }
@@ -875,7 +887,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return isBuildUnique;
     }
 
-    /** True when the probe stages its key through a {@link RecordSink} rather than reading an INT. */
+    /**
+     * True when the probe stages its key through a {@link RecordSink} rather than reading an INT.
+     */
     boolean isKeyStaged() {
         return isKeyStaged;
     }
@@ -884,7 +898,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return outer;
     }
 
-    /** True for the INT layout's lone SYMBOL pair, whose probe key translates before every lookup. */
+    /**
+     * True for the INT layout's lone SYMBOL pair, whose probe key translates before every lookup.
+     */
     boolean isSymbolKey() {
         return isSymbolKey;
     }
@@ -922,7 +938,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         perWorkerLocks.releaseSlot(slot);
     }
 
-    /** True when some execution may copy the build's payload columns, as EXPLAIN reports. */
+    /**
+     * True when some execution may copy the build's payload columns, as EXPLAIN reports.
+     */
     boolean canCopyPayload() {
         return buildFrames.getCopyRowSize() > 0 && copyMaxSize >= buildFrames.getCopyRowSize();
     }
@@ -1050,7 +1068,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             CairoException.rethrowCleanupFailure(failure);
         }
 
-        /** The translation path of one SYMBOL key column, wherever this slot keeps it. */
+        /**
+         * The translation path of one SYMBOL key column, wherever this slot keeps it.
+         */
         SymbolKeyTranslator.View getSymbolKeyView(int key) {
             return probeKeyRecord != null ? probeKeyRecord.getView(key) : symbolKeyView;
         }
