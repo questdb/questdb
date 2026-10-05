@@ -24,6 +24,9 @@
 
 package io.questdb.test.cairo.types;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PgTypeOids;
+import io.questdb.cairo.RelationKind;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.log.Log;
@@ -42,6 +45,7 @@ import org.junit.runners.Parameterized;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -143,16 +147,35 @@ public class TypeConformancePgWireTest extends BasePGTest {
 
     /**
      * A binary value of a type registered later in the form its value rows hold: a fixed-size
-     * value's big-endian bits, the type's width, checked; a var-size value by its accessor
-     * family, where STRING and VARCHAR send their UTF-8 bytes.
+     * value's big-endian bits at the width of the type's PostgreSQL type, checked; a value sent
+     * wider than the type (an unsigned INT as int8) must be the type's value widened by its tier,
+     * and reads back as the type's bits; a var-size value by its accessor family, where STRING and
+     * VARCHAR send their UTF-8 bytes.
      */
     private static long[] decodeBinary(TypeConformanceTypes.Entry type, TypeConformanceValues.Row row, String hex) {
         if (row.family == null) {
-            if (hex.length() != 2 * row.width) {
+            final int pgOid = ColumnType.getTypeDriver(type.columnType).getPgOid();
+            final int width = switch (pgOid) {
+                case PgTypeOids.PG_INT2 -> 2;
+                case PgTypeOids.PG_INT4, PgTypeOids.PG_FLOAT4 -> 4;
+                case PgTypeOids.PG_INT8, PgTypeOids.PG_FLOAT8 -> 8;
+                default -> row.width;
+            };
+            if (hex.length() != 2 * width) {
                 Assert.fail(TypeConformanceInvariants.context(type, row.label, "pg.binary", MODE)
-                        + ": the binary value is not the type's " + row.width + " bytes: " + hex);
+                        + ": the binary value is not the " + width + " bytes of the type's PostgreSQL type: " + hex);
             }
-            return decodeBigEndian(hex);
+            final long[] bits = decodeBigEndian(hex);
+            if (width <= row.width) {
+                return bits;
+            }
+            final RelationKind kind = pgOid == PgTypeOids.PG_FLOAT4 || pgOid == PgTypeOids.PG_FLOAT8 ? RelationKind.FLOAT : RelationKind.INT;
+            final long[] expected = TypeConformanceInvariants.widened(type, row.bits, kind, width);
+            if (expected == null || !Arrays.equals(expected, bits)) {
+                Assert.fail(TypeConformanceInvariants.context(type, row.label, "pg.binary", MODE)
+                        + ": the value sent as " + width + " bytes is not the type's value widened by its tier: " + hex);
+            }
+            return row.bits;
         }
         switch (row.family) {
             case STRING, VARCHAR -> {
@@ -283,10 +306,15 @@ public class TypeConformancePgWireTest extends BasePGTest {
             }
             if (isBinary) {
                 final String value = values.get(row.label);
-                if (value == null) {
+                // under SENTINEL the sentinel-pattern row is NULL, which the NULL-policy check below reads
+                final boolean isSentinelNull = "sentinel".equals(row.label)
+                        && TypeConformanceInvariants.POLICY_SENTINEL.equals(TypeConformanceInvariants.policyOf(type));
+                if (value == null && !isSentinelNull) {
                     Assert.fail(TypeConformanceInvariants.context(type, row.label, path, MODE) + ": the value arrived as NULL");
                 }
-                TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, MODE, row.bits, decodeBinary(type, row, value));
+                if (value != null) {
+                    TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, MODE, row.bits, decodeBinary(type, row, value));
+                }
             }
         }
         if (sentinel == null) {

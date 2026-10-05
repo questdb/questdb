@@ -34,6 +34,7 @@ import io.questdb.cutlass.line.LineUtils;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
+import io.questdb.test.cairo.types.TypeConformanceInvariants;
 import io.questdb.test.cairo.types.TypeConformanceTypes;
 import org.junit.Assert;
 import org.junit.Test;
@@ -61,6 +62,9 @@ public class ProtocolOpcodeCoverageTest {
     private static final Set<String> INTERVALS = Set.of("INTERVAL", "INTERVAL(us)", "INTERVAL(ns)");
     // the transient read_parquet type: no protocol describes a column as VARCHAR_SLICE
     private static final String NOT_STORED = "VARCHAR_SLICE";
+    // the guarded site whose refusal a type registered later may declare for an opcode function
+    // that does not handle it: the Parquet conversion target and the ILP column kind
+    private static final Map<String, String> REFUSED_SITES = Map.of("fixedTargetOpcode", "Parquet conversion", "columnKind", "ILP column kind");
 
     @Test
     public void testOpcodeFunctionsHandleEveryType() throws Exception {
@@ -125,7 +129,9 @@ public class ProtocolOpcodeCoverageTest {
         } catch (Exception e) {
             throw new AssertionError(e);
         }
-        if (isUnhandled != unhandled.get(function).contains(entry.label)) {
+        final String site = REFUSED_SITES.get(function);
+        final boolean isDeclared = site != null && TypeConformanceInvariants.isDeclaredRefused(entry, site);
+        if (isUnhandled != (unhandled.get(function).contains(entry.label) || isDeclared)) {
             failures.append(function).append(": ").append(entry.label)
                     .append(isUnhandled ? " is not handled" : " is handled but listed as unhandled")
                     .append('\n');

@@ -729,10 +729,14 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 Assert.fail(TypeConformanceInvariants.context(type, row.label, path, mode) + ": the value row did not arrive");
             }
             final long[] read = bits.get(row.label);
-            if (read == null) {
+            // under SENTINEL the sentinel-pattern row is NULL, which the NULL-policy check below reads
+            final boolean isSentinelNull = "sentinel".equals(row.label) && TypeConformanceInvariants.POLICY_SENTINEL.equals(policy);
+            if (read == null && !isSentinelNull) {
                 Assert.fail(TypeConformanceInvariants.context(type, row.label, path, mode) + ": the value arrived as NULL");
             }
-            TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, read);
+            if (read != null) {
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, read);
+            }
             if ("sentinel".equals(row.label)) {
                 sentinel = row;
             }
