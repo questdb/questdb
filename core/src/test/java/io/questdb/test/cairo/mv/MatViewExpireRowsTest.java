@@ -53,6 +53,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -667,6 +668,43 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     B\t5.0
                     C\t9.0
                     """);
+        });
+    }
+
+    @Test
+    public void testExpireScalarCleanupNanoTimestampLogsPartitionsInNanos() throws Exception {
+        // Cleanup logs each partition it compacts or wipes by its floor, which a TIMESTAMP_NS table holds in
+        // nanos. The log line formats the floor with the table's timestamp driver, so it names the partition's
+        // actual day.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp_ns) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000000Z')," +   // v<2 -> expired (d1 partial)
+                    "('B', 5.0, '2024-01-01T00:00:00.000000000Z')," +   // kept
+                    "('C', 1.5, '2024-01-02T00:00:00.000000000Z')," +   // v<2 -> d2 fully expired
+                    "('D', 9.0, '2024-01-03T00:00:00.000000000Z')");    // active partition
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                    job.cleanupTable(token, predicate);
+                }
+                capture.drain();
+                capture.assertLoggedRE("compacted expired-rows partition \\[table=mv, partitionTs=2024-01-01T00:00:00\\.000000000Z]");
+                capture.assertLoggedRE("reclaimed fully-expired partition \\[table=mv, partitionTs=2024-01-02T00:00:00\\.000000000Z]");
+            } finally {
+                capture.stop();
+            }
+            drainWalAndMatViewQueues();
         });
     }
 

@@ -518,6 +518,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         RecordToRowCopier survivorCopier = null;
         int selectTsIndex = -1;
         WalWriter walWriter = null;
+        // Partition floors carry the designated timestamp's unit, so the log lines format them with its driver.
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         // Bound every survivor query on this sweep to the MAT_VIEW_REFRESH per-workload memory budget.
         // A bound tracker makes an oversized scalar survivor query trip the configured limit and DEFER to a
         // later sweep. EXPIRE ROWS is materialized-view-only, so cleanup shares the mat-view refresh budget,
@@ -552,11 +554,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             isWorkDone = true;
                             forgetScalarPartition(tableToken, floorTs);
                             LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
-                                    .$(", partitionTs=").$ts(floorTs).I$();
+                                    .$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
                         } else {
                             isLastCleanupDeferred = true;
                             LOG.info().$("deferred expired-rows partition wipe; table changed concurrently [table=")
-                                    .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
+                                    .$safe(tableName).$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
                             // Fence rejected: an external txn advanced the sequencer past our reader-snapshot
                             // baseline. expectedSeqTxn is intentionally not re-read (a fresh baseline could
                             // commit a stale-predicate wipe), and sequencer txns only move forward, so every
@@ -590,11 +592,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                 isWorkDone = true;
                                 forgetScalarPartition(tableToken, floorTs);
                                 LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
-                                        .$(", partitionTs=").$ts(floorTs).I$();
+                                        .$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
                             } else {
                                 isLastCleanupDeferred = true;
                                 LOG.info().$("deferred expired-rows partition wipe; table changed concurrently [table=")
-                                        .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
+                                        .$safe(tableName).$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
                                 // Fence rejected; every remaining partition would reject the same way. Stop the
                                 // sweep (see the bounds-wipe branch above); the next sweep re-baselines.
                                 break;
@@ -653,7 +655,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     walWriter = Misc.free(walWriter);
                     isLastCleanupFailed = true;
                     LOG.error().$("row-expiry partition cleanup failed [table=").$safe(tableName)
-                            .$(", partitionTs=").$ts(floorTs)
+                            .$(", partitionTs=").$ts(timestampDriver, floorTs)
                             .$(", msg=").$safe(th.getMessage())
                             .I$();
                 }
@@ -1067,9 +1069,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      */
     private boolean refuseCommitOnReadOnly(WalWriter walWriter, long floorTs) {
         walWriter.rollback();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(walWriter.getMetadata().getTimestampType());
         LOG.info().$("skipped expired-rows reclamation; node is read-only [table=")
                 .$safe(walWriter.getTableToken().getTableName())
-                .$(", partitionTs=").$ts(floorTs).I$();
+                .$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
         return false;
     }
 
@@ -1205,13 +1208,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // and allocates this REPLACE transaction in the same ordering decision. WalWriter prepares and syncs
         // the event first, then rolls the unsequenced event and appended survivors back when the fence rejects.
         // An empty survivor set is a legitimate fully-expired partition and commits as a pure-delete range.
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         if (!commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
             LOG.info().$("deferred expired-rows compaction; table changed concurrently [table=").$safe(tableName)
-                    .$(", partitionTs=").$ts(floorTs).I$();
+                    .$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
             return false;
         }
         LOG.info().$(appended == 0 ? "reclaimed fully-expired partition [table=" : "compacted expired-rows partition [table=")
-                .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
+                .$safe(tableName).$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
         return true;
     }
 
