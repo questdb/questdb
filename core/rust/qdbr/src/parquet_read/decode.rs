@@ -381,10 +381,6 @@ pub fn decode_page(
     decode_page_dispatch::<false, false>(page, dict, bufs, col_info, mode)
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 PhysicalType"
-)]
 fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -396,6 +392,10 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     let column_type = col_info.column_type;
 
     let primitive_type = &page.descriptor.primitive_type;
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 PhysicalType"
+    )]
     let supported = match primitive_type.physical_type {
         PhysicalType::Int32 => decode_int32_dispatch::<FILTERED, FILL_NULLS>(
             page,
@@ -5470,12 +5470,12 @@ mod tests {
     // shape a spec-following encoder emits for an all-null page. It decodes cleanly
     // today (block_size/num_mini_blocks are non-zero), so it serves as the golden
     // reference for what the header-less empty-buffer page must decode to.
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-    )]
     fn compliant_zero_value_delta_values(encoding: Encoding) -> Vec<u8> {
         let mut values = Vec::new();
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+        )]
         match encoding {
             Encoding::DeltaLengthByteArray => {
                 parquet2::encoding::delta_length_byte_array::encode(
@@ -5651,10 +5651,6 @@ mod tests {
     // that regressed C1: decode_byte_array_dispatch hands row_hi straight to the
     // DELTA slicer, so the value-bytes offset must be computed over the whole length
     // stream, not the blocks take(row_hi) entered.
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-    )]
     fn decode_delta_varlen_page_partial(
         column_type: ColumnType,
         encoding: Encoding,
@@ -5666,6 +5662,10 @@ mod tests {
         let n = strings.len();
 
         let mut values = Vec::new();
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+        )]
         match encoding {
             Encoding::DeltaLengthByteArray => {
                 parquet2::encoding::delta_length_byte_array::encode(

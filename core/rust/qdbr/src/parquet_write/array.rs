@@ -213,10 +213,6 @@ impl Iterator for DefLevelsIterator<'_> {
 }
 
 // encodes array as nested lists
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-)]
 pub fn array_to_page(
     // inner-most type of the array group field
     primitive_type: PrimitiveType,
@@ -320,6 +316,10 @@ pub fn array_to_page(
 
     let definition_levels_byte_length = buffer.len() - repetition_levels_byte_length;
 
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => {
             encode_data_plain_streaming(aux, &parser, &mut buffer);
@@ -417,10 +417,6 @@ fn build_array_page(
 }
 
 // encodes in native QDB format
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-)]
 pub fn array_to_raw_page(
     aux: &[[u8; 16]],
     data: &[u8],
@@ -462,6 +458,10 @@ pub fn array_to_raw_page(
 
     let definition_levels_byte_length = buffer.len();
 
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => {
             encode_raw_plain_streaming(aux, &raw_parser, &mut buffer);

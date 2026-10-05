@@ -2259,10 +2259,6 @@ fn generate_required_zero_page(
     Ok(vec![0u8; row_count * value_size])
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 PhysicalType"
-)]
 fn build_column_infos_from_qdb_meta<'a>(
     qdb_meta: &'a QdbMeta,
     schema_columns: &'a [parquet2::metadata::ColumnDescriptor],
@@ -2305,6 +2301,10 @@ fn build_column_infos_from_qdb_meta<'a>(
                 // field_id, matching the convert path's `_pm` generation.
                 id: resolve_column_id(cm.and_then(|c| c.id), field_info.id),
                 flags,
+                #[allow(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "not a tag match: parquet2 PhysicalType"
+                )]
                 fixed_byte_len: match phys_type {
                     parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
                     _ => 0,
@@ -2560,10 +2560,6 @@ mod tests {
         .unwrap()
     }
 
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "not a tag match: parquet2 page Index"
-    )]
     fn exercise_hybrid_rewrite(
         unchanged_count: usize,
         changed_position: usize,
@@ -2761,6 +2757,10 @@ mod tests {
                     metadata.row_group(0).column(column_position).data_page_offset(),
                     "mixed offset index must point at the copied/encoded data page for column {column_position}"
                 );
+                #[allow(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "not a tag match: parquet2 page Index"
+                )]
                 match &column_index[0][column_position] {
                     Index::INT64(native) => {
                         let (expected_min, expected_max) =
@@ -3393,10 +3393,6 @@ mod tests {
     /// Asserts every column carries both indexes, each OffsetIndex points at the
     /// column's data page, and the timestamp ColumnIndex matches `ts_bounds` with
     /// ASCENDING order. Loads with the page index Required (a mixed file rejects).
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "not a tag match: parquet2 page Index"
-    )]
     fn assert_fully_indexed(bytes: &[u8], ts_bounds: &[(i64, i64)]) {
         use parquet::arrow::arrow_reader::ArrowReaderOptions;
         use parquet::file::page_index::index::Index;
@@ -3438,6 +3434,10 @@ mod tests {
                 );
             }
             let (min, max) = ts_bounds[rg_i];
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "not a tag match: parquet2 page Index"
+            )]
             match &column_index[rg_i][0] {
                 Index::INT64(native) => {
                     assert_eq!(
@@ -3587,10 +3587,6 @@ mod tests {
     /// fresh-encode path (boundary order from sorting_columns) and the copy path
     /// disagreeing on direction.
     #[test]
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "not a tag match: parquet2 page Index"
-    )]
     fn rewrite_preserves_descending_boundary_order_in_copied_group() -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;
         use parquet::arrow::arrow_reader::ArrowReaderOptions;
@@ -3641,6 +3637,10 @@ mod tests {
         )?;
         let md = builder.metadata();
         let column_index = md.column_index().expect("parsed column index");
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "not a tag match: parquet2 page Index"
+        )]
         match &column_index[0][0] {
             Index::INT64(native) => assert_eq!(
                 native.boundary_order,
@@ -4719,14 +4719,14 @@ mod tests {
         use parquet2::schema::Repetition;
         use parquet2::write::Version;
 
-        #[allow(
-            clippy::wildcard_enum_match_arm,
-            reason = "test helper: builds only the tags its cases name"
-        )]
         fn build_field(tag: ColumnTypeTag, repetition: Repetition, id: i32) -> ParquetType {
             // Mirrors the field definitions schema.rs builds for these tags
             // (Byte=Int8, Short=Int16, Char=Uint16); only the repetition is
             // a parameter so the test can pin both legacy and modern shapes.
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "test helper: builds only the tags its cases name"
+            )]
             let (converted, logical) = match tag {
                 ColumnTypeTag::Byte => (
                     PrimitiveConvertedType::Int8,

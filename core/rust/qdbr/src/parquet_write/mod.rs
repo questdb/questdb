@@ -4749,10 +4749,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "test helper: builds only the tags its cases name"
-    )]
     fn parquet_encoding_override_round_trip_representative_types() {
         // For each (column_tag, encoding) pair we know the encoder supports,
         // build a single-partition column with that encoding configured via
@@ -4783,6 +4779,10 @@ mod tests {
                 Long(Vec<i64>),
             }
 
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "test helper: builds only the tags its cases name"
+            )]
             let (col, owned) = match tag {
                 ColumnTypeTag::Int => {
                     let data: Vec<i32> = (0..100i32).collect();

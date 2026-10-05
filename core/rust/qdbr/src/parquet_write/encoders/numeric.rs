@@ -25,10 +25,6 @@ use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveSta
 use parquet2::types::NativeType;
 use qdb_core::col_type::nulls;
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-)]
 pub fn int_slice_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
     slice: &[T],
     column_top: usize,
@@ -42,6 +38,10 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => slice_to_page_nullable_impl::<_, P, UNSIGNED_STATS, _>(
             slice,
@@ -168,10 +168,6 @@ where
     )
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-)]
 pub fn int_slice_to_page_notnull<T, P>(
     slice: &[T],
     column_top: usize,
@@ -184,6 +180,10 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug,
 {
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => slice_to_page_notnull(
             slice,
@@ -396,10 +396,6 @@ pub trait SimdEncodable: NativeType {
     }
 
     /// Encode data values, dispatching to Plain or Delta based on encoding.
-    #[allow(
-        clippy::wildcard_enum_match_arm,
-        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-    )]
     fn encode_data(
         slice: &[Self],
         null_count: usize,
@@ -408,6 +404,10 @@ pub trait SimdEncodable: NativeType {
     ) -> ParquetResult<Vec<u8>> {
         let non_null_count = slice.len() - null_count;
 
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+        )]
         match encoding {
             Encoding::Plain => {
                 // An all-null page has no values to write. PLAIN reads the empty

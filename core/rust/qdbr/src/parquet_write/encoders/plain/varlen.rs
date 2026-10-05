@@ -323,10 +323,6 @@ pub fn binary_to_page(
     )
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-)]
 pub fn binary_slices_to_page(
     byte_slices: &[Option<&[u8]>],
     options: WriteOptions,
@@ -343,6 +339,10 @@ pub fn binary_slices_to_page(
     let definition_levels_byte_length = buffer.len();
 
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => {
             encode_binary_plain(
@@ -524,10 +524,6 @@ pub fn string_to_page(
     )
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-)]
 pub fn string_slices_to_page(
     utf16_slices: &[Option<&[u16]>],
     options: WriteOptions,
@@ -545,6 +541,10 @@ pub fn string_slices_to_page(
     let definition_levels_byte_length = buffer.len();
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
 
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => {
             encode_string_plain(
@@ -769,10 +769,6 @@ pub fn varchar_to_page(
     )
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-)]
 pub fn varchar_slices_to_page(
     utf8_slices: &[Option<&[u8]>],
     options: WriteOptions,
@@ -790,6 +786,10 @@ pub fn varchar_slices_to_page(
     let definition_levels_byte_length = buffer.len();
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
 
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => {
             encode_varchar_plain(

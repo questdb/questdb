@@ -82,7 +82,7 @@ pub(super) fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: 
 #[inline(always)]
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only: only decimal tags reach this match"
+    reason = "family-only: only decimal tags reach the two ColumnTypeTag matches"
 )]
 pub(super) fn decode_fixed_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage<'_>,
@@ -770,10 +770,6 @@ impl<'a, const N: usize> SignExtendDecimalColumnSink<'a, N> {
     }
 }
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "family-only: only decimal tags reach this match"
-)]
 fn decode_byte_array_decimal_with_slicer_mode<
     const FILTERED: bool,
     const FILL_NULLS: bool,
@@ -785,6 +781,10 @@ fn decode_byte_array_decimal_with_slicer_mode<
     mode: super::DecodeModeContext<'_>,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "family-only: only decimal tags reach this match"
+    )]
     match target_tag {
         ColumnTypeTag::Decimal8 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
             page,
@@ -1033,7 +1033,7 @@ fn validate_flba_dict(dict_page: &DictPage, src_len: usize) -> ParquetResult<()>
 
 #[allow(
     clippy::wildcard_enum_match_arm,
-    reason = "family-only: only decimal tags reach this match"
+    reason = "family-only: only decimal tags reach the two ColumnTypeTag matches"
 )]
 fn decode_fixed_decimal_with_slicer_mode<'a, const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,

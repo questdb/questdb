@@ -30,10 +30,6 @@ pub const COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT: i32 = 0x4000_0000;
 /// bit 30 carries [`COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT`].
 pub const COLUMN_TYPE_ID_MASK: i32 = 0x3FFF_FFFF;
 
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "family-only: the decimal widths, inside the decimal arm"
-)]
 pub fn column_type_to_parquet_type(
     column_id: i32,
     column_name: &str,
@@ -318,6 +314,10 @@ pub fn column_type_to_parquet_type(
         | ColumnTypeTag::Decimal64
         | ColumnTypeTag::Decimal128
         | ColumnTypeTag::Decimal256 => {
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "family-only: the decimal widths, inside the decimal arm"
+            )]
             let size = match column_type.tag() {
                 ColumnTypeTag::Decimal8 => 1,
                 ColumnTypeTag::Decimal16 => 2,
@@ -628,11 +628,11 @@ pub fn is_encoding_valid_for_column_tag(encoding_id: i32, col_type_tag: i32) -> 
 
 /// Validate that the given encoding is supported for the column type.
 /// Falls back to the default encoding if the combination is unsupported.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
-)]
 fn validate_encoding(data_type: ColumnType, encoding: Encoding) -> Encoding {
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     let valid = match encoding {
         Encoding::Plain => !matches!(
             data_type.tag(),
