@@ -577,7 +577,10 @@ public class Bootstrap {
                 .$(", tcp.enabled:").$(enabled)
                 .$(", pg.enabled:").$(pgEnabled).$(pgReadOnlyHint).$();
         if (cairoConfig != null) {
-            log.advisoryW().$(" - open database [").$uuid(cairoConfig.getDatabaseIdLo(), cairoConfig.getDatabaseIdHi()).I$();
+            // evaluate before opening the log chain: config getters may log themselves
+            final long databaseIdLo = cairoConfig.getDatabaseIdLo();
+            final long databaseIdHi = cairoConfig.getDatabaseIdHi();
+            log.advisoryW().$(" - open database [").$uuid(databaseIdLo, databaseIdHi).I$();
             if (cairoConfig.isReadOnlyInstance()) {
                 log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
             }
@@ -616,11 +619,12 @@ public class Bootstrap {
         long ramUsageLimitBytes = ramConfig.getRamUsageLimitBytes();
         long ramUsageLimitPercent = ramConfig.getRamUsageLimitPercent();
         long effectiveRamUsageLimit = ramConfig.getResolvedRamUsageLimitBytes();
+        long totalSystemMemory = ramConfig.getTotalSystemMemory();
         log.advisoryW().$(" - configured ram.usage.limit.bytes: ")
                 .$(ramUsageLimitBytes != 0 ? toSizePretty(ramUsageLimitBytes) : "0 (no limit)").$();
         log.advisoryW().$(" - configured ram.usage.limit.percent: ")
                 .$(ramUsageLimitPercent != 0 ? ramUsageLimitPercent : "0 (no limit)").$();
-        log.advisoryW().$(" - system RAM: ").$(toSizePretty(ramConfig.getTotalSystemMemory())).$();
+        log.advisoryW().$(" - system RAM: ").$(toSizePretty(totalSystemMemory)).$();
         log.advisoryW().$(" - resolved RAM usage limit: ")
                 .$(effectiveRamUsageLimit != 0 ? toSizePretty(effectiveRamUsageLimit) : "0 (no limit)").$();
     }

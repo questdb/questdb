@@ -1026,6 +1026,21 @@ public interface CairoConfiguration {
      */
     int getSqlJoinMetadataPageSize();
 
+    /**
+     * Number of entries at which each master-to-slave symbol key translation cache stops
+     * allocating memory. Hash, LT, HORIZON and multi-key ASOF joins on SYMBOL keys build these
+     * caches when the two sides have different symbol tables. Past the limit, a cache still
+     * stores the symbol keys that fall into its allocated pages, and the join translates the
+     * other symbol keys via their string values on every lookup.
+     * <p>
+     * ASOF joins on a single SYMBOL key, and multi-key ASOF joins where no SYMBOL key can
+     * use this cache (e.g. because the master SYMBOL key columns are computed by a function),
+     * cache the translations under {@link #getSqlAsOfJoinShortCircuitCacheCapacity()} instead.
+     *
+     * @return number of symbol key translations per join key column at which the cache stops allocating
+     */
+    int getSqlJoinSymbolTranslationCacheCapacity();
+
     long getSqlLatestByRowCount();
 
     int getSqlLexerPoolCapacity();
@@ -1289,6 +1304,13 @@ public interface CairoConfiguration {
     default boolean isAdaptiveEpochColumnSyncBatched() {
         return true;
     }
+
+    /**
+     * When true, SQL compilation does not reject UPDATE, ALTER COLUMN TYPE and ADD INDEX on
+     * tables whose partition layout (parquet, read-only or cold storage partitions) cannot
+     * support them. Such statements then fail when applied, which suspends a WAL table.
+     */
+    boolean isAllPartitionOperationsAllowed();
 
     /**
      * Whether an ADAPTIVE WAL commit drains writeback across its whole segment before taking barriers.

@@ -544,15 +544,14 @@ public class PostingIndexWriter implements IndexWriter {
                     // full -- precisely what a saturated log under the ENOSPC / OOM
                     // pressure this catch exists for looks like.
                     // The logging sits inside its own swallow: AsyncLogRecord
-                    // .$(Throwable) releases the log ring slot and RETHROWS when
-                    // formatting `e` fails, which an OutOfMemoryError can do in
-                    // exactly the ENOSPC / OOM case this catch exists for -- and
-                    // that throw would otherwise escape close(). $(Object),
-                    // $(Sinkable) and $(Throwable) all self-release; $safe and
-                    // $(CharSequence) do not, so the trailing rec.I$() is what
-                    // returns the slot if one of THOSE throws. I$() no-ops unless
-                    // isLogRecordInProgress, which $() clears on release, so it
-                    // cannot double-release after a self-releasing segment.
+                    // .$(Throwable) publishes the partial message and RETHROWS
+                    // when formatting `e` fails, which an OutOfMemoryError can do
+                    // in exactly the ENOSPC / OOM case this catch exists for --
+                    // and that throw would otherwise escape close(). The chain
+                    // claims its log ring slot only in $(), so a failed segment
+                    // never holds a slot; the trailing rec.I$() publishes what
+                    // was staged. I$() no-ops unless isLogRecordInProgress,
+                    // which $() clears, so it cannot publish twice.
                     try {
                         LogRecord rec = LOG.critical();
                         try {
@@ -3002,7 +3001,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         // Trial delta encode from the pre-merged buffer (encode directly from native memory)
-        int bpDataTotal = 0;
+        long bpDataTotal = 0;
         for (int j = 0; j < ks; j++) {
             int count = keyCounts[j];
             if (count > 0) {
@@ -3038,55 +3037,24 @@ public class PostingIndexWriter implements IndexWriter {
         int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
         int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
 
-        // Compute sizes for all three options: delta, flat-natural, flat-aligned
         int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-        int deltaSize = deltaHeaderSize + bpDataTotal;
-
+        long deltaSize = deltaHeaderSize + bpDataTotal;
         int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-        int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-        int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
-
-        // Choose: prefer aligned flat (AVX2-friendly) if it still beats delta,
-        // otherwise natural flat if it beats delta, otherwise delta.
-        int localBitWidth;
-        int flatDataSize;
-        int flatSize;
-        if (alignedBitWidth != naturalBitWidth) {
-            int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-            int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-            if (alignedFlatSize < deltaSize) {
-                // Aligned flat beats delta — use it for AVX2 decode
-                localBitWidth = alignedBitWidth;
-                flatDataSize = alignedFlatDataSize;
-                flatSize = alignedFlatSize;
-            } else if (naturalFlatSize < deltaSize) {
-                // Aligned too big, but natural flat still beats delta
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-                flatSize = naturalFlatSize;
-            } else {
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-                flatSize = naturalFlatSize;
-            }
-        } else {
-            localBitWidth = naturalBitWidth;
-            flatDataSize = naturalFlatDataSize;
-            flatSize = naturalFlatSize;
-        }
-
-        boolean useFlat = flatSize < deltaSize;
+        int localBitWidth = PostingIndexUtils.selectFlatBitWidth(totalStrideValues, naturalBitWidth, alignedBitWidth, flatHeaderSize, deltaSize);
+        boolean isFlat = localBitWidth != 0;
+        int flatDataSize = isFlat ? BitpackUtils.packedDataSize(totalStrideValues, localBitWidth) : 0;
+        long flatSize = flatHeaderSize + (isFlat ? flatDataSize : ((long) totalStrideValues * naturalBitWidth + 7) / 8);
 
         LOG.debug().$("stride mode [s=").$(s)
                 .$(", deltaSize=").$(deltaSize)
                 .$(", flatSize=").$(flatSize)
                 .$(", natBW=").$(naturalBitWidth)
-                .$(", alnBW=").$(localBitWidth)
+                .$(", alnBW=").$(isFlat ? localBitWidth : naturalBitWidth)
                 .$(", totalVals=").$(totalStrideValues)
-                .$(", useFlat=").$(useFlat)
+                .$(", useFlat=").$(isFlat)
                 .$(']').$();
 
-        if (useFlat) {
+        if (isFlat) {
             writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue, flatHeaderSize, flatDataSize,
                     localHeaderBuf, mergedValuesAddr);
         } else {
@@ -3098,7 +3066,7 @@ public class PostingIndexWriter implements IndexWriter {
             int ks, int[] keyCounts, long[] keyOffsets, long strideValsAddr,
             int[] bpKeySizes, long bpTrialBuf, long localHeaderBuf
     ) {
-        int bpDataTotal = 0;
+        long bpDataTotal = 0;
         for (int j = 0; j < ks; j++) {
             int count = keyCounts[j];
             if (count > 0) {
@@ -3112,7 +3080,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-        int deltaSize = deltaHeaderSize + bpDataTotal;
+        long deltaSize = deltaHeaderSize + bpDataTotal;
         int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
 
         long totalStrideValuesL = 0;
@@ -3133,38 +3101,12 @@ public class PostingIndexWriter implements IndexWriter {
             strideMaxValue = 0;
         }
 
-        boolean useFlat;
-        int localBitWidth = 0;
-        int flatDataSize = 0;
-
-        if (totalStrideValuesL > Integer.MAX_VALUE) {
-            useFlat = false;
-        } else {
-            int totalStrideValues = (int) totalStrideValuesL;
-            long strideRange = strideMaxValue - strideMinValue;
-            int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
-            int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
-            int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-
-            if (alignedBitWidth != naturalBitWidth) {
-                int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-                int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-                if (alignedFlatSize < deltaSize) {
-                    localBitWidth = alignedBitWidth;
-                    flatDataSize = alignedFlatDataSize;
-                } else {
-                    localBitWidth = naturalBitWidth;
-                    flatDataSize = naturalFlatDataSize;
-                }
-            } else {
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-            }
-            int flatSize = flatHeaderSize + flatDataSize;
-            useFlat = flatSize < deltaSize;
-        }
-
-        if (useFlat) {
+        long strideRange = strideMaxValue - strideMinValue;
+        int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
+        int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
+        int localBitWidth = PostingIndexUtils.selectFlatBitWidth(totalStrideValuesL, naturalBitWidth, alignedBitWidth, flatHeaderSize, deltaSize);
+        if (localBitWidth != 0) {
+            int flatDataSize = BitpackUtils.packedDataSize((int) totalStrideValuesL, localBitWidth);
             writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
                     flatHeaderSize, flatDataSize, localHeaderBuf, strideValsAddr);
         } else {
@@ -7117,7 +7059,7 @@ public class PostingIndexWriter implements IndexWriter {
         long offsetsBase = countsBase + (long) ks * Integer.BYTES;
 
         long dataOffset = 0;
-        int bpBufOffset = 0;
+        long bpBufOffset = 0;
         for (int j = 0; j < ks; j++) {
             Unsafe.putInt(countsBase + (long) j * Integer.BYTES, keyCounts[j]);
             Unsafe.putLong(offsetsBase + (long) j * Long.BYTES, dataOffset);

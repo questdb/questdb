@@ -96,6 +96,20 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
+  # The full enterprise run (every platform and replication store); test-pipeline.yml triggers
+  # the light, Linux amd64 one on every PR build.
+  - stage: TriggerEnterpriseCI
+    displayName: "Trigger Enterprise CI"
+    # An explicit condition drops the implicit succeeded(), so restore it: a queue build
+    # whose CheckChanges stage failed must not post a real enterprise run.
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/trigger-enterprise-job.yml
+        parameters:
+          flavour: full
+
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
     dependsOn:
