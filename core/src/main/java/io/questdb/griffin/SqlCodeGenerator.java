@@ -2587,7 +2587,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      *   <li>Changes the keyTypes entry from STRING to INT</li>
      *   <li>Collects master/slave column indices into arrays</li>
      * </ul>
-     * Must be called after createSymbolShortCircuit() and before createRecordCopierMaster/Slave().
+     * Must be called before createRecordCopierMaster/Slave().
      *
      * @return null if no SYMBOL-SYMBOL pairs found, otherwise [masterIndices, slaveIndices]
      */
@@ -5833,6 +5833,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
         try {
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
+            if (!hasLinearHint && !slave.supportsTimeFrameCursor()) {
+                final IntList stolenCrossIndex = slave.isProjection() ? slave.getColumnCrossIndex() : null;
+                final RecordCursorFactory filterFactory = stolenCrossIndex != null ? slave.getBaseFactory() : slave;
+                if ((filterFactory.supportsFilterStealing() || filterFactory instanceof FilteredRecordCursorFactory)
+                        && filterFactory.getBaseFactory().supportsTimeFrameCursor()) {
+                    // Filtered ASOF seeks and evaluates the filter on the caller thread, so it can
+                    // also consume serial filters. asof_linear keeps the original filter instead.
+                    RecordCursorFactory slaveBase = filterFactory.getBaseFactory();
+                    int slaveTimestampIndex = stolenCrossIndex != null
+                            ? slaveMetadata.getTimestampIndex()
+                            : validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
+                    assert stolenCrossIndex == null
+                            || stolenCrossIndex.get(slaveTimestampIndex) == slaveBase.getMetadata().getTimestampIndex();
+                    Function stolenFilter = filterFactory.getFilter();
+                    assert stolenFilter != null;
+
+                    Misc.free(filterFactory.getCompiledFilter());
+                    Misc.free(filterFactory.getBindVarMemory());
+                    Misc.freeObjList(filterFactory.getBindVarFunctions());
+                    filterFactory.halfClose();
+
+                    if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
+                        int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                        return new FilteredAsOfJoinFastRecordCursorFactory(
+                                configuration,
+                                joinMetadata,
+                                master,
+                                createRecordCopierMaster(masterMetadata),
+                                slaveBase,
+                                createRecordCopierSlave(slaveMetadata),
+                                stolenFilter,
+                                masterMetadata.getColumnCount(),
+                                NullRecordFactory.getInstance(slaveMetadata),
+                                stolenCrossIndex,
+                                slaveTimestampIndex,
+                                toleranceInterval,
+                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
+                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null
+                        );
+                    }
+                    return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slaveBase,
+                            stolenFilter,
+                            masterMetadata.getColumnCount(),
+                            NullRecordFactory.getInstance(slaveMetadata),
+                            stolenCrossIndex,
+                            slaveTimestampIndex,
+                            toleranceInterval
+                    );
+                }
+            }
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                 SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
                 int joinColumnSplit = masterMetadata.getColumnCount();
@@ -5941,79 +5995,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null
                             );
                         }
-                    } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
-                        RecordCursorFactory slaveBase = slave.getBaseFactory();
-                        int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
-
-                        Function stolenFilter = slave.getFilter();
-                        assert stolenFilter != null;
-
-                        Misc.free(slave.getCompiledFilter());
-                        Misc.free(slave.getBindVarMemory());
-                        Misc.freeObjList(slave.getBindVarFunctions());
-                        slave.halfClose();
-
-                        int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
-                        return new FilteredAsOfJoinFastRecordCursorFactory(
-                                configuration,
-                                joinMetadata,
-                                master,
-                                createRecordCopierMaster(masterMetadata),
-                                slaveBase,
-                                createRecordCopierSlave(slaveMetadata),
-                                stolenFilter,
-                                masterMetadata.getColumnCount(),
-                                NullRecordFactory.getInstance(slaveMetadata),
-                                null,
-                                slaveTimestampIndex,
-                                toleranceInterval,
-                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
-                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null
-                        );
-                    } else if (slave.isProjection()) {
-                        RecordCursorFactory projectionBase = slave.getBaseFactory();
-                        // We know projectionBase does not support supportsTimeFrameCursor, because
-                        // Projections forward this call to its base factory and if we are in this branch
-                        // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
-                        // There is still chance that projectionBase is just a filter
-                        // and its own base supports timeFrameCursor. let's see.
-                        if (projectionBase.supportsFilterStealing()) {
-                            // ok cool, it's used only as a filter.
-                            RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
-                            if (filterStealingBase.supportsTimeFrameCursor()) {
-                                IntList stolenCrossIndex = slave.getColumnCrossIndex();
-                                assert stolenCrossIndex != null;
-                                Function stolenFilter = projectionBase.getFilter();
-                                assert stolenFilter != null;
-
-                                // index *after* applying the projection
-                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-                                assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
-
-                                Misc.free(projectionBase.getCompiledFilter());
-                                Misc.free(projectionBase.getBindVarMemory());
-                                Misc.freeObjList(projectionBase.getBindVarFunctions());
-                                projectionBase.halfClose();
-
-                                int[][] projFilteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
-                                return new FilteredAsOfJoinFastRecordCursorFactory(
-                                        configuration,
-                                        joinMetadata,
-                                        master,
-                                        createRecordCopierMaster(masterMetadata),
-                                        filterStealingBase,
-                                        createRecordCopierSlave(slaveMetadata),
-                                        stolenFilter,
-                                        masterMetadata.getColumnCount(),
-                                        NullRecordFactory.getInstance(slaveMetadata),
-                                        stolenCrossIndex,
-                                        slaveTimestampIndex,
-                                        toleranceInterval,
-                                        projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[0] : null,
-                                        projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[1] : null
-                                );
-                            }
-                        }
                     }
                 }
 
@@ -6073,74 +6054,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             masterMetadata.getColumnCount(),
                             toleranceInterval
                     );
-                }
-                if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
-                    // Try to steal the filter from the slave. This downgrades to
-                    // single-threaded Java-level filtering, so it's only worth it if the filter
-                    // selectivity is low. We don't have statistics to tell selectivity, so
-                    // we allow the user to disable this with the asof_linear_search hint.
-                    RecordCursorFactory slaveBase = slave.getBaseFactory();
-                    int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
-
-                    Function stolenFilter = slave.getFilter();
-                    assert stolenFilter != null;
-
-                    Misc.free(slave.getCompiledFilter());
-                    Misc.free(slave.getBindVarMemory());
-                    Misc.freeObjList(slave.getBindVarFunctions());
-                    slave.halfClose();
-                    return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
-                            configuration,
-                            joinMetadata,
-                            master,
-                            slaveBase,
-                            stolenFilter,
-                            masterMetadata.getColumnCount(),
-                            NullRecordFactory.getInstance(slaveMetadata),
-                            null,
-                            slaveTimestampIndex,
-                            toleranceInterval
-                    );
-                }
-                if (slave.isProjection()) {
-                    RecordCursorFactory projectionBase = slave.getBaseFactory();
-                    // We know projectionBase does not support supportsTimeFrameCursor, because
-                    // projections forward this call to its base factory, and if we are in this branch,
-                    // slave.supportsTimeFrameCursor() returned false in a previous branch.
-                    // There is still chance that projectionBase is just a filter
-                    // and its own base supports timeFrameCursor. Let's see.
-                    if (projectionBase.supportsFilterStealing()) {
-                        // ok, cool, it's used only as a filter
-                        RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
-                        if (filterStealingBase.supportsTimeFrameCursor()) {
-                            IntList stolenCrossIndex = slave.getColumnCrossIndex();
-                            assert stolenCrossIndex != null;
-                            Function stolenFilter = projectionBase.getFilter();
-                            assert stolenFilter != null;
-
-                            // index *after* applying the projection
-                            int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-                            assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
-
-                            Misc.free(projectionBase.getCompiledFilter());
-                            Misc.free(projectionBase.getBindVarMemory());
-                            Misc.freeObjList(projectionBase.getBindVarFunctions());
-                            projectionBase.halfClose();
-
-                            return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
-                                    configuration,
-                                    joinMetadata,
-                                    master,
-                                    filterStealingBase,
-                                    stolenFilter,
-                                    masterMetadata.getColumnCount(),
-                                    NullRecordFactory.getInstance(slaveMetadata),
-                                    stolenCrossIndex,
-                                    slaveTimestampIndex,
-                                    toleranceInterval
-                            );
-                        }
-                    }
                 }
             }
             // fallback for non-keyed join when no optimizations are applicable, or the asof_linear hint is used:

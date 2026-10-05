@@ -57,6 +57,50 @@ public class NoParallelHintTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinKeyedFilter() throws Exception {
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, true, false);
+    }
+
+    @Test
+    public void testAsOfJoinKeyedFilterWithParallelFiltersDisabled() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "false");
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, true, false);
+    }
+
+    @Test
+    public void testAsOfJoinKeyedProjectedFilter() throws Exception {
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, true, true);
+    }
+
+    @Test
+    public void testAsOfJoinKeyedProjectedJitFilter() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_ENABLED, true, true);
+    }
+
+    @Test
+    public void testAsOfJoinNonKeyedFilter() throws Exception {
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, false, false);
+    }
+
+    @Test
+    public void testAsOfJoinNonKeyedJitFilter() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_ENABLED, false, false);
+    }
+
+    @Test
+    public void testAsOfJoinNonKeyedProjectedFilter() throws Exception {
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, false, true);
+    }
+
+    @Test
+    public void testAsOfJoinNonKeyedProjectedFilterWithParallelFiltersDisabled() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "false");
+        assertFilteredAsOfJoin(SqlJitMode.JIT_MODE_DISABLED, false, true);
+    }
+
+    @Test
     public void testCompilationFailure() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -169,6 +213,28 @@ public class NoParallelHintTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedSerialFilterGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            try (
+                    SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 4);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                context.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                assertParallelPlan(compiler, context, "SELECT sum(v) FROM (SELECT v FROM tab WHERE v > 40)", "Async");
+                assertQuery("SELECT sum(v) FROM (SELECT /*+ no_parallel */ v FROM tab WHERE v > 40)")
+                        .withContext(context)
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Filter")
+                        .withPlanNotContaining("Async", "GroupBy vectorized: true")
+                        .noLeakCheck()
+                        .returns("sum\n4230\n");
+            }
+        });
+    }
+
+    @Test
     public void testParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -261,6 +327,88 @@ public class NoParallelHintTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             assertSerialQuery("select t.ts, sum(p.v) from tab t window join tab p on t.k = p.k range between 2 seconds preceding and 2 seconds following", "Async");
+        });
+    }
+
+    private void assertFilteredAsOfJoin(int jitMode, boolean isKeyed, boolean isProjected) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (ts TIMESTAMP, k SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (ts TIMESTAMP, k SYMBOL, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO master VALUES
+                        (0, 'x'), (1_000_000, 'y'), (2_000_000, 'x'), (3_000_000, null), (4_000_000, 'z')
+                    """);
+            execute("""
+                    INSERT INTO slave VALUES
+                        (0, 'y', 10), (1_000_000, 'x', 20), (2_000_000, 'x', 30), (3_000_000, null, 40)
+                    """);
+            String queryBody = (isProjected ? "m.ts, m.k, s.k slave_k, s.v" : "*")
+                    + " FROM master m ASOF JOIN (SELECT "
+                    + (isProjected ? "v, ts, k" : "*")
+                    + " FROM slave WHERE v != 20) s" + (isKeyed ? " ON (k)" : "");
+            String expected;
+            if (isProjected) {
+                expected = isKeyed ? """
+                        ts\tk\tslave_k\tv
+                        1970-01-01T00:00:00.000000Z\tx\t\tnull
+                        1970-01-01T00:00:01.000000Z\ty\ty\t10
+                        1970-01-01T00:00:02.000000Z\tx\tx\t30
+                        1970-01-01T00:00:03.000000Z\t\t\t40
+                        1970-01-01T00:00:04.000000Z\tz\t\tnull
+                        """ : """
+                        ts\tk\tslave_k\tv
+                        1970-01-01T00:00:00.000000Z\tx\ty\t10
+                        1970-01-01T00:00:01.000000Z\ty\ty\t10
+                        1970-01-01T00:00:02.000000Z\tx\tx\t30
+                        1970-01-01T00:00:03.000000Z\t\t\t40
+                        1970-01-01T00:00:04.000000Z\tz\t\t40
+                        """;
+            } else {
+                expected = isKeyed ? """
+                        ts\tk\tts1\tk1\tv
+                        1970-01-01T00:00:00.000000Z\tx\t\t\tnull
+                        1970-01-01T00:00:01.000000Z\ty\t1970-01-01T00:00:00.000000Z\ty\t10
+                        1970-01-01T00:00:02.000000Z\tx\t1970-01-01T00:00:02.000000Z\tx\t30
+                        1970-01-01T00:00:03.000000Z\t\t1970-01-01T00:00:03.000000Z\t\t40
+                        1970-01-01T00:00:04.000000Z\tz\t\t\tnull
+                        """ : """
+                        ts\tk\tts1\tk1\tv
+                        1970-01-01T00:00:00.000000Z\tx\t1970-01-01T00:00:00.000000Z\ty\t10
+                        1970-01-01T00:00:01.000000Z\ty\t1970-01-01T00:00:00.000000Z\ty\t10
+                        1970-01-01T00:00:02.000000Z\tx\t1970-01-01T00:00:02.000000Z\tx\t30
+                        1970-01-01T00:00:03.000000Z\t\t1970-01-01T00:00:03.000000Z\t\t40
+                        1970-01-01T00:00:04.000000Z\tz\t1970-01-01T00:00:03.000000Z\t\t40
+                        """;
+            }
+            try (
+                    SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 4);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                context.setJitMode(jitMode);
+                if (jitMode == SqlJitMode.JIT_MODE_ENABLED) {
+                    assertParallelPlan(compiler, context, "SELECT * FROM slave WHERE v != 20", "Async JIT Filter");
+                }
+                for (int i = 0; i < 2; i++) {
+                    assertQuery("SELECT " + (i == 0 ? "" : "/*+ no_parallel */ ") + queryBody)
+                            .withContext(context)
+                            .timestamp("ts")
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Filtered AsOf Join Fast")
+                            .withPlanNotContaining("Async")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+                assertQuery("SELECT /*+ no_parallel asof_linear(m s) */ " + queryBody)
+                        .withContext(context)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining(isKeyed ? "AsOf Join Light" : "AsOf Join\n")
+                        .withPlanNotContaining("Filtered AsOf Join Fast", "Async")
+                        .noLeakCheck()
+                        .returns(expected);
+            }
         });
     }
 
