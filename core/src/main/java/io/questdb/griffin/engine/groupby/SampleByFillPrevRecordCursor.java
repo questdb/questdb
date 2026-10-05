@@ -81,7 +81,8 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                false
         );
         this.map = map;
         this.keyMapSink = keyMapSink;

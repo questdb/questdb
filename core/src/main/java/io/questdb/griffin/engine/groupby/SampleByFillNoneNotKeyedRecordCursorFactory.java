@@ -60,7 +60,8 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
@@ -82,7 +83,8 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleFromFunc,
                     sampleFromFuncPos,
                     sampleToFunc,
-                    sampleToFuncPos
+                    sampleToFuncPos,
+                    isFromToUtc
             );
         } catch (Throwable th) {
             Misc.free(this, th);

@@ -4983,6 +4983,54 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromToSubDayTimeZoneLimit() throws Exception {
+        // For a sub-day stride with a time zone, code generation converts FROM and TO to UTC, and the
+        // SAMPLE BY cursor applies the time zone offset to the timestamps as well. A rewind before the
+        // first read, such as the one LIMIT makes, starts a cursor that reads a converted bound from a
+        // zero offset, as on master, so every statement below returns master's rows. Here those equal
+        // the rows of the same statement on the GROUP BY path, which does not hold for every such
+        // statement. A read without a rewind applies the offset on top of the converted bounds, so this
+        // test does not pin it.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE trades AS (
+                        SELECT (100 + (x % 7))::DOUBLE price,
+                               timestamp_sequence('2021-10-29T20:15:00', 37 * 60_000_000L)::TIMESTAMP_NS ts
+                        FROM long_sequence(240)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // the sub-query keeps the statements on the SAMPLE BY cursor
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertQuery(sql + " LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-29T18:00:00.000000000Z\t5
+                            2021-10-29T23:00:00.000000000Z\t8
+                            2021-10-30T04:00:00.000000000Z\t8
+                            """);
+            assertQuery(sql + " LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-30T09:00:00.000000000Z\t8
+                            2021-10-30T14:00:00.000000000Z\t8
+                            2021-10-30T19:00:00.000000000Z\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByLastIndexFilterByNullConcurrent() throws Exception {
         testSampleByFirstLastIndexedConcurrent(
                 """

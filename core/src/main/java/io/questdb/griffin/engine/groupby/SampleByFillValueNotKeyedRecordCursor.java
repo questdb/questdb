@@ -58,7 +58,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) {
         super(
                 configuration,
@@ -76,7 +77,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                isFromToUtc
         );
         this.peeker = peeker;
         this.value = value;

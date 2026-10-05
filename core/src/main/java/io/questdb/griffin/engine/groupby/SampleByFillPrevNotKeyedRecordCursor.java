@@ -48,7 +48,8 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) {
         super(
                 configuration,
@@ -65,7 +66,8 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                isFromToUtc
         );
         this.value = value;
         record.of(value);

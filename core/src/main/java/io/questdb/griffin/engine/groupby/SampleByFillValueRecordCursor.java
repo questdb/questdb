@@ -85,7 +85,8 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                false
         );
         this.map = map;
         this.keyMapSink = keyMapSink;

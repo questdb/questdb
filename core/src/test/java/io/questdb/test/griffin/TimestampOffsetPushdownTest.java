@@ -499,6 +499,23 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateaddCalendarUnitMaterializedViewRejectsSampleBy() throws Exception {
+        // CREATE MATERIALIZED VIEW compiles the view's SAMPLE BY query. A month dateadd() projection
+        // has no designated timestamp to bucket on, so CREATE fails at the SELECT that samples it.
+        // Without the unit check, CREATE succeeded.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_t (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv AS (" +
+                            "SELECT x, count() c FROM (SELECT dateadd('M', 1, ts) x FROM base_t) SAMPLE BY 12h" +
+                            ") PARTITION BY DAY",
+                    32,
+                    NO_DESIGNATED_TIMESTAMP_ERROR
+            );
+        });
+    }
+
+    @Test
     public void testDateaddCalendarUnitNanosIsNotDesignatedTimestamp() throws Exception {
         // The nanosecond twin of the micros tests: the nanosecond driver clamps the day of month the
         // same way.
@@ -976,6 +993,17 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateaddCalendarUnitViewRejectsSampleBy() throws Exception {
+        // A view over a month dateadd() projection has no designated timestamp either, so SAMPLE BY
+        // over the view fails the way it does over the sub-query.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            execute("CREATE VIEW v AS SELECT dateadd('M', 1, ts) x FROM jan");
+            assertExceptionNoLeakCheck("SELECT x, count() FROM v SAMPLE BY 12h", 0, NO_DESIGNATED_TIMESTAMP_ERROR);
+        });
+    }
+
+    @Test
     public void testDateaddCalendarUnitZeroStrideIsNotDesignatedTimestamp() throws Exception {
         // A zero stride leaves every timestamp unchanged, so this projection is in order. The code
         // generator still classifies it by unit alone and drops the designated timestamp: the cost
@@ -1003,6 +1031,25 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                 2024-01-29T06:00:00.000000Z
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testDateaddEscapeStringUnitIsNotDesignatedTimestamp() throws Exception {
+        // The optimiser tags a dateadd() with any constant unit, including the escape-string spelling
+        // E'M', which the function parser reads as months. Its token is not a quoted single character,
+        // so only the reject-by-default arm of the code generator's unit check keeps the designated
+        // timestamp away from it, and ORDER BY sorts.
+        assertMemoryLeak(() -> {
+            createDayClampTables();
+            assertDateaddCalendarUnitOrderBySorts("dateadd(E'M', 1, ts)", "jan", JAN_PLUS_ONE_MONTH_ORDERED);
+            // The same arm rejects E'h', a fixed-duration unit, so that projection loses its designated
+            // timestamp too and SAMPLE BY over it fails.
+            assertExceptionNoLeakCheck(
+                    "SELECT x, count() FROM (SELECT dateadd(E'h', 1, ts) x FROM jan) SAMPLE BY 1d",
+                    0,
+                    NO_DESIGNATED_TIMESTAMP_ERROR
+            );
         });
     }
 
@@ -4734,6 +4781,29 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         });
     }
 
+    private static void createDayClampTables() throws SqlException {
+        // 6-hourly rows around the three dates where month and year arithmetic clamps the day:
+        // jan covers 2024-01-29..02-01, mar covers 2024-03-28..04-01, feb covers 2024-02-28..03-01
+        execute("""
+                CREATE TABLE jan AS (
+                    SELECT x::INT i, timestamp_sequence('2024-01-29', 21_600_000_000) ts
+                    FROM long_sequence(16)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("""
+                CREATE TABLE mar AS (
+                    SELECT x::INT i, timestamp_sequence('2024-03-28', 21_600_000_000) ts
+                    FROM long_sequence(20)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("""
+                CREATE TABLE feb AS (
+                    SELECT x::INT i, timestamp_sequence('2024-02-28', 21_600_000_000) ts
+                    FROM long_sequence(12)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+    }
+
     // rows at the month ends where one month added to ts clamps the day of month
     private static void createMonthEndTable() throws SqlException {
         execute("CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
@@ -4801,28 +4871,5 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                 .timestamp("x")
                 .noRandomAccess()
                 .returns(expectedBuckets);
-    }
-
-    private void createDayClampTables() throws SqlException {
-        // 6-hourly rows around the three dates where month and year arithmetic clamps the day:
-        // jan covers 2024-01-29..02-01, mar covers 2024-03-28..04-01, feb covers 2024-02-28..03-01
-        execute("""
-                CREATE TABLE jan AS (
-                    SELECT x::INT i, timestamp_sequence('2024-01-29', 21_600_000_000) ts
-                    FROM long_sequence(16)
-                ) TIMESTAMP(ts) PARTITION BY DAY
-                """);
-        execute("""
-                CREATE TABLE mar AS (
-                    SELECT x::INT i, timestamp_sequence('2024-03-28', 21_600_000_000) ts
-                    FROM long_sequence(20)
-                ) TIMESTAMP(ts) PARTITION BY DAY
-                """);
-        execute("""
-                CREATE TABLE feb AS (
-                    SELECT x::INT i, timestamp_sequence('2024-02-28', 21_600_000_000) ts
-                    FROM long_sequence(12)
-                ) TIMESTAMP(ts) PARTITION BY DAY
-                """);
     }
 }

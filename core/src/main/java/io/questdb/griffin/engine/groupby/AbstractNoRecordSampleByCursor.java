@@ -46,6 +46,9 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
     protected final int timestampIndex;
     private final GroupByAllocator allocator;
+    // true when code generation converted to UTC a bound that this cursor reads, see
+    // SqlCodeGenerator.generateSampleBy()
+    private final boolean isFromToUtc;
     private final ObjList<Function> recordFunctions;
     protected RecordCursor baseCursor;
     protected Record baseRecord;
@@ -77,7 +80,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) {
         super(
                 timestampSampler,
@@ -95,6 +99,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+        this.isFromToUtc = isFromToUtc;
         // Lazy variant: the allocator's chunk index is not allocated until the
         // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
         // per-query alloc/free accounting symmetric from the very first cursor.
@@ -127,8 +132,13 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         parseParams(baseCursor, executionContext);
         // toTop() restores tzOffset from topTzOffset. initTimestamps() saves it on the first read,
         // but a caller such as LIMIT rewinds the cursor before that, and only a time zone name has
-        // rules to recompute the offset from. Save the numeric offset that parseParams() derived.
-        topTzOffset = tzOffset;
+        // rules to recompute the offset from. Save the numeric offset that parseParams() derived,
+        // unless code generation converted to UTC a bound that this cursor reads (isFromToUtc):
+        // FROM, which initTimestamps() reads, or TO, which only the FILL(NULL) and FILL(value)
+        // cursor reads, in its end fill. Such a cursor rewinds to a zero offset instead. It adds the
+        // time zone offset on top of the converted bound, and neither offset gives the right rows
+        // for every such statement; GitHub issue #7743 tracks that root cause.
+        topTzOffset = isFromToUtc ? 0 : tzOffset;
         topNextDst = nextDstUtc;
         circuitBreaker = executionContext.getCircuitBreaker();
         // Consult the breaker at open, so an empty base scan (whose row loops never run) stays cancellable.

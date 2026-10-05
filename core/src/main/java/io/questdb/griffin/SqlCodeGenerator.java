@@ -9104,6 +9104,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 sampleToFuncPos = 0;
             }
 
+            boolean isSampleFromUtc = false;
+            boolean isSampleToUtc = false;
             // For sub-day strides with a timezone, the old SAMPLE BY cursor receives
             // FROM/TO as local time but uses them as UTC for bucket anchoring. Convert
             // FROM/TO to UTC so the cursor anchors correctly.
@@ -9136,6 +9138,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             timestampType
                                     );
                                     Misc.free(staleFromFunc);
+                                    isSampleFromUtc = true;
                                 }
                             }
                             if (sampleToFunc != timestampDriver.getTimestampConstantNull()) {
@@ -9148,6 +9151,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             timestampType
                                     );
                                     Misc.free(staleToFunc);
+                                    isSampleToUtc = true;
                                 }
                             }
                         } catch (NumericException e) {
@@ -9380,6 +9384,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            // The cursors of the not-keyed factories below add the time zone offset to every
+            // timestamp, also on top of a bound that the conversion above made UTC (#7743). Every
+            // such cursor reads FROM, but only the FILL(NULL) and FILL(value) cursor reads TO, in
+            // its end fill. AbstractNoRecordSampleByCursor.of() saves the numeric offset for a
+            // rewind before the first read, such as the one LIMIT makes, except for a cursor that
+            // reads a bound the conversion changed: that cursor rewinds to a zero offset, see of().
+            // The FILL(PREV) and FILL(NONE) factories therefore take isSampleFromUtc, and the
+            // FILL(NULL) and FILL(value) factories take isSampleFromOrToUtc. The keyed factories
+            // reject FROM and TO, and the FILL(LINEAR) and first/last index factories above do not
+            // use that cursor, so they take no flag.
+            final boolean isSampleFromOrToUtc = isSampleFromUtc || isSampleToUtc;
+
             if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                 if (keyTypes.getColumnCount() == 0) {
                     final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
@@ -9414,7 +9430,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             sampleFromFunc0,
                             sampleFromFuncPos,
                             sampleToFunc0,
-                            sampleToFuncPos
+                            sampleToFuncPos,
+                            isSampleFromUtc
                     );
                 }
 
@@ -9493,7 +9510,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             sampleFromFunc0,
                             sampleFromFuncPos,
                             sampleToFunc0,
-                            sampleToFuncPos
+                            sampleToFuncPos,
+                            isSampleFromUtc
                     );
                 }
 
@@ -9572,7 +9590,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             sampleFromFunc0,
                             sampleFromFuncPos,
                             sampleToFunc0,
-                            sampleToFuncPos
+                            sampleToFuncPos,
+                            isSampleFromOrToUtc
                     );
                 }
 
@@ -9654,7 +9673,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         sampleFromFunc0,
                         sampleFromFuncPos,
                         sampleToFunc0,
-                        sampleToFuncPos
+                        sampleToFuncPos,
+                        isSampleFromOrToUtc
                 );
             }
 
