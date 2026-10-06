@@ -870,7 +870,9 @@ admits is written at each: `converters.cpp` `fixedToFixed`, with `converters.h`'
 also adds its arms in `encodeFixed8` and `encodeFixedColumn`. A sort key orders the stored bits,
 so a type whose NULL word is not the lowest value of its order (an unsigned INT that keeps INT's
 NULL) gets no key kind: ORDER BY then takes the comparator, whose compare arm puts NULL first
-(`sql.order_*` checks where NULL sorts). The copier test's item covers every
+(`sql.order_*` checks where NULL sorts). `GeneratedAccessorCoverageTest` accepts that for a type
+`keyKind`'s guard refuses (not ordered like its family). The comparator sorts more slowly than the
+sort-key encoder; a key that put NULL first would need more bytes than the type has. The copier test's item covers every
 copier conversion the type admits, and each pair needs its arm in all three copiers: the
 single-method and the chunked bytecode copiers (`RecordToRowCopierUtils.generateSingleMethodCopier`,
 `generateChunkedCopier`) and the looping copier (`LoopingRecordToRowCopier`: a target arm in the
@@ -945,9 +947,14 @@ What the run did not list, found by checking its result: an answer in `OverloadS
 a later manual decision made stale (the kit step now runs both soundness tests, section 9); NULL
 sorting between 2,147,483,647 and 2,147,483,649, because the kit's order check skipped the NULL
 row; and the copiers' INSERT conversion arms, which no kit path ran (right under all three copier
-implementations when run by hand). The Rust unit tests that round-trip every tag
-(`ColumnTypeTag::VALUES`, `test_lookup_driver`) list the types by hand, so they skip a new type
-without failing; add it to both.
+implementations when run by hand). The kit now checks both (section 3). Run on that run's final
+tree, the tool lists three items: ORDER BY ascending and descending, where NULL sorts mid-range
+because the type took an unsigned sort-key kind (section 7), and the stale soundness answer.
+With no key kind, NULL first in the compare arm (5 lines removed, 6 added) and the soundness
+answer corrected, the run exits 0, the whole kit included.
+
+The Rust unit tests that round-trip every tag (`ColumnTypeTag::VALUES`, `test_lookup_driver`) list
+the types by hand, so they skip a new type without failing; add it to both.
 
 ## 9. Limits
 

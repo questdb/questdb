@@ -197,7 +197,10 @@ public class GeneratedAccessorCoverageTest extends AbstractCairoTest {
                 comparator.invoke(null, type);
                 return false;
             });
-            check(failures, unhandled, "keyKind", entry, () -> (int) keyKind.invoke(null, type) == constant(SortKeyEncoder.class, "KIND_NONE"));
+            // a later type that does not order like its family has no key kind by design (the
+            // guard in keyKind): ORDER BY takes the comparator, which comparatorOpcode checks
+            check(failures, unhandled, "keyKind", entry, () -> (int) keyKind.invoke(null, type) == constant(SortKeyEncoder.class, "KIND_NONE")
+                    && !(entry.isLater() && !PhysicalDescriptor.isOrderedLikeFamily(PhysicalDescriptor.storedTypeDriverOf(type))));
             check(failures, unhandled, "materializeOpcode", entry, () -> {
                 materialize.invoke(null, type);
                 return false;
