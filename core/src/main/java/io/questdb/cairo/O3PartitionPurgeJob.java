@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -39,12 +40,15 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.PriorityQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -53,13 +57,18 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPurgeTask> implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
+    private static final long RETRY_DELAY_MICROS = 5_000_000L;
     private final CairoConfiguration configuration;
     private final PartitionDeltaWriter deltaWriter;
     private final CairoEngine engine;
     private final Utf8StringSink fileNameSink;
     private final AtomicBoolean halted = new AtomicBoolean(false);
+    private final MicrosecondClock microsecondClock;
     private final DirectLongList partitionList;
+    private final CharSequenceObjHashMap<RetryTask> retryByTableDir = new CharSequenceObjHashMap<>();
+    private final PriorityQueue<RetryTask> retryQueue = new PriorityQueue<>(O3PartitionPurgeJob::compareRetryTasks);
     private final TxReader txnReader;
+    private boolean hasPendingPartitions;
 
     public O3PartitionPurgeJob(CairoEngine engine) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
@@ -67,6 +76,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             this.engine = engine;
             this.configuration = engine.getMessageBus().getConfiguration();
             this.fileNameSink = new Utf8StringSink();
+            this.microsecondClock = configuration.getMicrosecondClock();
             this.partitionList = new DirectLongList(
                     configuration.getPartitionPurgeListCapacity() * 2L,
                     MemoryTag.NATIVE_O3
@@ -91,6 +101,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     @Override
     public void close() {
         if (halted.compareAndSet(false, true)) {
+            retryByTableDir.clear();
+            retryQueue.clear();
             Misc.free(partitionList);
             Misc.free(txnReader);
             Misc.free(deltaWriter);
@@ -100,6 +112,29 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     @Override
     public void closeInstance() {
         close();
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        boolean isUseful = super.run(workerContext);
+        RetryTask task = retryQueue.peek();
+        if (task == null || microsecondClock.getTicks() < task.nextRunTimestamp) {
+            return isUseful;
+        }
+
+        // Retry one table per run so a failed root does not starve new purge tasks.
+        retryQueue.poll();
+        if (discoverPartitions(task)) {
+            task.nextRunTimestamp = microsecondClock.getTicks() + RETRY_DELAY_MICROS;
+            retryQueue.add(task);
+        } else {
+            retryByTableDir.remove(task.getTableToken().getDirName());
+        }
+        return true;
+    }
+
+    private static int compareRetryTasks(RetryTask a, RetryTask b) {
+        return Long.compare(a.nextRunTimestamp, b.nextRunTimestamp);
     }
 
     private static void parsePartitionDateVersion(
@@ -147,6 +182,39 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         } catch (NumericException e) {
             LOG.error().$("unknown directory [table=").$(tableToken).$(", dir=").$(fileNameSink).I$();
         }
+    }
+
+    private boolean discoverPartitions(O3PartitionPurgeTask task) {
+        hasPendingPartitions = false;
+        TableToken tableToken = engine.getUpdatedTableToken(task.getTableToken());
+        if (tableToken == null || tableToken.getTableId() != task.getTableToken().getTableId() || engine.isTableDropped(tableToken)) {
+            return false;
+        }
+
+        try {
+            discoverPartitions(
+                    configuration.getFilesFacade(),
+                    fileNameSink,
+                    partitionList,
+                    configuration.getDbRoot(),
+                    tableToken,
+                    txnReader,
+                    task.getTimestampType(),
+                    task.getPartitionBy()
+            );
+        } catch (TableReferenceOutOfDateException e) {
+            // A rename or a busy table lock can be transient. Recheck the token on retry.
+            hasPendingPartitions = true;
+            LOG.info().$("table reference out of date, aborting [table=").$(tableToken).I$();
+        } catch (CairoException ex) {
+            hasPendingPartitions = true;
+            LOG.error()
+                    .$("could not purge partitions [table=").$(tableToken)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+        }
+        return hasPendingPartitions;
     }
 
     private void discoverPartitions(
@@ -236,19 +304,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         n
                 );
             }
-        } catch (TableReferenceOutOfDateException e) {
-            // the table is dropped and recreated since we started processing it.
-            // abort the table processing
-            LOG.info().$("table reference out of date, aborting [table=").$(tableToken).I$();
-        } catch (CairoException ex) {
-            // It is possible that the table is dropped while this async job was in the queue.
-            // so it can be not too bad. Log error and continue work on the queue
-            LOG.error()
-                    .$("could not purge partition open [table=").$(tableToken)
-                    .$(", msg=").$safe(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .I$();
-            LOG.error().$safe(ex.getFlyweightMessage()).$();
         } finally {
             txReader.clear();
             Misc.free(txnScoreboard);
@@ -295,6 +350,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging dropped partition directory [path=");
                 lastTxn = nameTxn;
             } else {
+                hasPendingPartitions = true;
                 LOG.debug().$("cannot purge partition directory, locked for reading [path=")
                         .$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path)
                         .I$();
@@ -398,6 +454,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     );
                     if (!ff.exists(path.$())) {
                         // We see some phantom partitions, the best way is to abort processing this partition
+                        hasPendingPartitions = true;
                         LOG.info().$("partition dir removed after scanning the directories, aborting processing the partition [partition=")
                                 .$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path)
                                 .I$();
@@ -434,6 +491,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                             "purging overwritten partition directory [path="
                     );
                 } else {
+                    hasPendingPartitions = true;
                     LOG.info().$("cannot purge overwritten partition directory, locked for reading path=")
                             .$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 }
@@ -449,7 +507,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     LOG.info().$(message).$substr(pathFrom, path).I$();
                     // Delta files that remain keep the directory for the next purge pass.
                     if (deltaWriter == null || deltaWriter.purge(path)) {
-                        ff.unlinkOrRemove(path, LOG);
+                        hasPendingPartitions |= !ff.unlinkOrRemove(path, LOG);
+                    } else {
+                        hasPendingPartitions = true;
                     }
                 } else {
                     // the table is dropped and recreated since we started processing it.
@@ -469,17 +529,27 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final O3PartitionPurgeTask task = queue.get(cursor);
-        discoverPartitions(
-                configuration.getFilesFacade(),
-                fileNameSink,
-                partitionList,
-                configuration.getDbRoot(),
-                task.getTableToken(),
-                txnReader,
-                task.getTimestampType(),
-                task.getPartitionBy()
-        );
-        subSeq.done(cursor);
+        try {
+            if (discoverPartitions(task)) {
+                String tableDirName = task.getTableToken().getDirName();
+                RetryTask retryTask = retryByTableDir.get(tableDirName);
+                if (retryTask == null) {
+                    retryTask = new RetryTask();
+                    retryTask.nextRunTimestamp = microsecondClock.getTicks() + RETRY_DELAY_MICROS;
+                    retryByTableDir.put(tableDirName, retryTask);
+                    retryQueue.add(retryTask);
+                }
+                // Refresh the token and partition format if the directory was reused.
+                // Copy the notification before releasing its ring queue slot.
+                retryTask.of(task.getTableToken(), task.getTimestampType(), task.getPartitionBy());
+            }
+        } finally {
+            subSeq.done(cursor);
+        }
         return true;
+    }
+
+    private static class RetryTask extends O3PartitionPurgeTask {
+        private long nextRunTimestamp;
     }
 }
