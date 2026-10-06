@@ -226,18 +226,21 @@ public final class GroupByBatchKernels {
 
     private static boolean castSupported(int from, int to) {
         // The explicit cast rules of CastXToYFunctionFactory, keyed by the getter the cast reads.
+        // Casts to FLOAT are left out: the optimiser strips ::float from an aggregate's argument,
+        // so none reaches the evaluator and no test could cover one. FLOAT to FLOAT and DOUBLE to
+        // DOUBLE are the casts that read the getter of their own result type (long::float,
+        // long::double): the value passes through.
         switch (from) {
             case ColumnType.INT:
-                return to == ColumnType.LONG || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
+            case ColumnType.SHORT:
+            case ColumnType.BYTE:
+                return to == ColumnType.INT || to == ColumnType.LONG || to == ColumnType.DOUBLE;
             case ColumnType.LONG:
                 return to == ColumnType.INT;
             case ColumnType.FLOAT:
                 return to == ColumnType.INT || to == ColumnType.LONG || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
             case ColumnType.DOUBLE:
-                return to == ColumnType.INT || to == ColumnType.LONG || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
-            case ColumnType.SHORT:
-            case ColumnType.BYTE:
-                return to == ColumnType.INT || to == ColumnType.LONG || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
+                return to == ColumnType.INT || to == ColumnType.LONG || to == ColumnType.DOUBLE;
             default:
                 return false;
         }
@@ -262,7 +265,7 @@ public final class GroupByBatchKernels {
                 || clazz == DoubleColumn.class || clazz == ShortColumn.class || clazz == ByteColumn.class) {
             final int columnIndex = ((ColumnFunction) f).getColumnIndex();
             if (getterType != nativeType
-                    && convertSupported(nativeType, getterType)
+                    && columnConvertSupported(nativeType, getterType)
                     && getterType != ColumnType.SHORT
                     && declaredBy(clazz, getterName(getterType), baseClassOf(nativeType))) {
                 // the load converts as the base class's getter does: no separate pass
@@ -377,23 +380,33 @@ public final class GroupByBatchKernels {
         return new Args(nodes);
     }
 
-    private static boolean convertSupported(int from, int to) {
+    private static boolean columnConvertSupported(int from, int to) {
         // The getters IntFunction, LongFunction, FloatFunction, DoubleFunction, ShortFunction and
-        // ByteFunction define for types other than their own.
+        // ByteFunction define for types other than their own, applied by the column load itself.
         switch (from) {
             case ColumnType.INT:
                 return to == ColumnType.LONG || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
             case ColumnType.LONG:
-                return to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
+            case ColumnType.FLOAT:
+                // no FLOAT consumer reads a LONG or DOUBLE: QuestDB widens such mixes to DOUBLE
+                return to == ColumnType.DOUBLE;
+            case ColumnType.SHORT:
+            case ColumnType.BYTE:
+                return to == ColumnType.INT || to == ColumnType.LONG || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean convertSupported(int from, int to) {
+        // The same getters for a computed value. SHORT and BYTE values only come from columns, and
+        // no FLOAT consumer reads a LONG or DOUBLE, so those pairs are not needed here.
+        switch (from) {
+            case ColumnType.INT:
+                return to == ColumnType.LONG || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
+            case ColumnType.LONG:
             case ColumnType.FLOAT:
                 return to == ColumnType.DOUBLE;
-            case ColumnType.DOUBLE:
-                return to == ColumnType.FLOAT;
-            case ColumnType.SHORT:
-                return to == ColumnType.INT || to == ColumnType.LONG || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
-            case ColumnType.BYTE:
-                return to == ColumnType.SHORT || to == ColumnType.INT || to == ColumnType.LONG
-                        || to == ColumnType.FLOAT || to == ColumnType.DOUBLE;
             default:
                 return false;
         }
@@ -667,28 +680,6 @@ public final class GroupByBatchKernels {
                 }
                 break;
             }
-            case ColumnType.FLOAT: {
-                final float[] out = node.floats;
-                if (from == ColumnType.INT) {
-                    final int[] in = a.ints;
-                    for (int i = 0; i < n; i++) {
-                        final int value = in[i];
-                        out[i] = value != Numbers.INT_NULL ? value : Float.NaN;
-                    }
-                } else if (from == ColumnType.DOUBLE) {
-                    final double[] in = a.doubles;
-                    for (int i = 0; i < n; i++) {
-                        final double value = in[i];
-                        out[i] = Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE ? Float.NaN : (float) value;
-                    }
-                } else {
-                    final int[] in = a.ints;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = in[i];
-                    }
-                }
-                break;
-            }
             default: {
                 final double[] out = node.doubles;
                 if (from == ColumnType.INT) {
@@ -779,18 +770,6 @@ public final class GroupByBatchKernels {
                         // IntFunction.getFloat()
                         for (int i = 0; i < n; i++) {
                             out[i] = Numbers.intToFloat(Unsafe.getInt(addr + (rowIndex(mode, lo, rowsAddr, i) << 2)));
-                        }
-                        break;
-                    case ColumnType.LONG:
-                        // LongFunction.getFloat()
-                        for (int i = 0; i < n; i++) {
-                            out[i] = Numbers.longToFloat(Unsafe.getLong(addr + (rowIndex(mode, lo, rowsAddr, i) << 3)));
-                        }
-                        break;
-                    case ColumnType.DOUBLE:
-                        // DoubleFunction.getFloat()
-                        for (int i = 0; i < n; i++) {
-                            out[i] = (float) Unsafe.getDouble(addr + (rowIndex(mode, lo, rowsAddr, i) << 3));
                         }
                         break;
                     case ColumnType.SHORT:
@@ -915,8 +894,8 @@ public final class GroupByBatchKernels {
     }
 
     private void convert(Node node) {
-        // The getters the standard base classes define for types other than their own, operand
-        // type in node.op, result type node.type.
+        // The getters IntFunction, LongFunction and FloatFunction define for other types, operand
+        // type in node.op, result type node.type (see convertSupported())
         final int n = rowCount;
         final Node a = node.a;
         final int from = node.op;
@@ -924,43 +903,20 @@ public final class GroupByBatchKernels {
             case ColumnType.LONG: {
                 final long[] out = node.longs;
                 final int[] in = a.ints;
-                if (from == ColumnType.INT) {
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Numbers.intToLong(in[i]);
-                    }
-                } else {
-                    for (int i = 0; i < n; i++) {
-                        out[i] = in[i];
-                    }
+                for (int i = 0; i < n; i++) {
+                    out[i] = Numbers.intToLong(in[i]);
                 }
                 break;
             }
             case ColumnType.FLOAT: {
                 final float[] out = node.floats;
-                if (from == ColumnType.INT) {
-                    final int[] in = a.ints;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Numbers.intToFloat(in[i]);
-                    }
-                } else if (from == ColumnType.LONG) {
-                    final long[] in = a.longs;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Numbers.longToFloat(in[i]);
-                    }
-                } else if (from == ColumnType.DOUBLE) {
-                    final double[] in = a.doubles;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = (float) in[i];
-                    }
-                } else {
-                    final int[] in = a.ints;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = in[i];
-                    }
+                final int[] in = a.ints;
+                for (int i = 0; i < n; i++) {
+                    out[i] = Numbers.intToFloat(in[i]);
                 }
                 break;
             }
-            case ColumnType.DOUBLE: {
+            default: {
                 final double[] out = node.doubles;
                 if (from == ColumnType.INT) {
                     final int[] in = a.ints;
@@ -973,22 +929,12 @@ public final class GroupByBatchKernels {
                         final long value = in[i];
                         out[i] = value != Numbers.LONG_NULL ? value : Double.NaN;
                     }
-                } else if (from == ColumnType.FLOAT) {
+                } else {
                     final float[] in = a.floats;
                     for (int i = 0; i < n; i++) {
                         out[i] = in[i];
                     }
-                } else {
-                    final int[] in = a.ints;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = in[i];
-                    }
                 }
-                break;
-            }
-            default: {
-                // INT or SHORT from SHORT or BYTE: held widened to int already
-                System.arraycopy(a.ints, 0, node.ints, 0, n);
                 break;
             }
         }

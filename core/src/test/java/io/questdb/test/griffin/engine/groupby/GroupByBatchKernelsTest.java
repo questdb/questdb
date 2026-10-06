@@ -94,7 +94,7 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
             "f + g", "f - g", "f * g", "f / g",
             "d + e", "d - e", "d * e", "d / e",
             // mixed types: implicit conversions through the base classes' getters
-            "i * f", "l * d", "s + b", "i + l", "f * d", "b * f", "s * l",
+            "i * f", "l * d", "s + b", "i + l", "f * d", "b * f", "s * l", "(l + m) * f", "(i - j) * g", "s * f", "b * l",
             // casts
             "i::double", "i::float", "i::long", "f::double", "f::int", "f::long",
             "l::double", "l::int", "l::float", "d::float", "d::int", "d::long",
@@ -280,10 +280,15 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
 
     @Test
     public void testHugeKeyCountWithoutWorkers() throws Exception {
-        // every row its own group: every batch entry is new
+        // every row its own group: every batch entry is new, and every row's argument value shows
+        // in the result on its own, not folded into a group already NULL from another row
         assertMemoryLeak(() -> {
             createTable("t", ROW_COUNT, 17, MODE_SPECIALS);
-            for (String arg : new String[]{"d + e", "f * g", "i - j", "(j * f + i * g) / (j + i)"}) {
+            for (String arg : new String[]{
+                    "d + e", "f * g", "i - j", "(j * f + i * g) / (j + i)",
+                    "d::float", "d::int", "d::long", "f::int", "f::long", "l::int", "l::float", "i::float",
+                    "i / j", "l / m", "f / g", "d / e", "i * j", "l * m", "s + b", "b::float"
+            }) {
                 assertMatchesRowPath("select ts, " + String.format(AGGREGATES, arg) + " from t group by ts order by ts", true);
                 assertMatchesRowPath("select i, l, " + String.format(AGGREGATES, arg) + " from t group by i, l order by i, l", true);
             }
