@@ -74,6 +74,12 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
     long openDetached(Path partitionPath, long readerSeqTxn);
 
     /**
+     * Reads the physical-source fields from the snapshot's pinned catalog base.
+     * Works with both live and detached handles, without opening physical files or binding data windows.
+     */
+    void readSource(long state, PartitionFrameSource target);
+
+    /**
      * Reads logical rows and Delta-only bounds from the same pinned snapshot.
      */
     void readStats(long state, PartitionDeltaStats target);
