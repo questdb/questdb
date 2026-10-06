@@ -147,13 +147,14 @@ public class PartitionCompactionPolicy implements Mutable {
      * The hard ceiling on the folders one logical partition may hold. {@code cairo.o3.partition.max.splits} is the
      * squash target, not a split gate: a split that pays always happens, and housekeeping squashes the smallest cold
      * adjacent pairs back down to the cap once the folders cool. The overflow allowance covers the folders the last
-     * {@code hot.commits} commits keep hot - and so out of the squash's reach - but never more than the cap itself,
-     * so a day never holds more than twice the cap.
+     * {@code hot.commits} commits keep hot - and so out of the squash's reach - but never more than
+     * {@code split.overflow.percent} of the cap, so by default a day never holds more than twice the cap.
      */
     public static int getSplitCeiling(CairoConfiguration configuration) {
         final int cap = Math.max(1, configuration.getO3PartitionMaxSplits());
-        final int overflow = Math.min(cap, Math.max(1, configuration.getPartitionCompactionHotCommits()));
-        return (int) Math.min(Integer.MAX_VALUE, (long) cap + overflow);
+        final long overflowCap = (long) cap * configuration.getPartitionCompactionSplitOverflowPercent() / 100;
+        final long overflow = Math.min(overflowCap, Math.max(1, configuration.getPartitionCompactionHotCommits()));
+        return (int) Math.min(Integer.MAX_VALUE, cap + overflow);
     }
 
     /**
@@ -253,9 +254,13 @@ public class PartitionCompactionPolicy implements Mutable {
 
     public void onDeclined(long partitionTimestamp, long nowMicros) {
         final long max = configuration.getPartitionCompactionDeclineBackoffMax();
+        final long min = configuration.getPartitionCompactionDeclineBackoffMin();
+        final int multiplier = configuration.getPartitionCompactionDeclineBackoffMultiplier();
         for (int i = 0, n = backoff.size(); i < n; i += BACKOFF_LONGS) {
             if (backoff.getQuick(i) == partitionTimestamp) {
-                final long next = Math.min(max, Math.max(Micros.MINUTE_MICROS, backoff.getQuick(i + 2) * 2));
+                final long prev = backoff.getQuick(i + 2);
+                final long grown = prev > max / multiplier ? max : prev * multiplier;
+                final long next = Math.min(max, Math.max(min, grown));
                 backoff.setQuick(i + 1, nowMicros + next);
                 backoff.setQuick(i + 2, next);
                 return;
@@ -264,8 +269,8 @@ public class PartitionCompactionPolicy implements Mutable {
         if (backoff.size() >= MAX_TRACKED * BACKOFF_LONGS) {
             backoff.removeIndexBlock(0, BACKOFF_LONGS);
         }
-        backoff.add(partitionTimestamp, nowMicros + Micros.MINUTE_MICROS);
-        backoff.add(Micros.MINUTE_MICROS);
+        backoff.add(partitionTimestamp, nowMicros + min);
+        backoff.add(min);
     }
 
     /**
@@ -760,7 +765,8 @@ public class PartitionCompactionPolicy implements Mutable {
         final long deadBytes = totalDeadRows * Math.max(1, avgRecordSize);
         if (tablePressureOn) {
             tablePressureOn = !(totalDeadRows * 100 < tableRowCount * configuration.getPartitionCompactionTableDeadStopPercent()
-                    && deadBytes <= configuration.getPartitionCompactionTableDeadTrigger() / 2);
+                    && deadBytes <= O3CompositeMergeStrategy.percentOf(configuration.getPartitionCompactionTableDeadTrigger(),
+                    configuration.getPartitionCompactionTableDeadStopTriggerPercent()));
         } else {
             // tableRowCount == 0 must never turn this on: 0 >= 0 would otherwise satisfy the percentage
             // check trivially, latching table pressure on from the first commit of an empty table.

@@ -64,7 +64,8 @@ executing it:
 Trigger on `D_after > 0.10 * L_after OR P_after > 1000`, with `L_after > 0`.
 Exactly 10% or exactly 1,000 pieces does not trigger. The 10% is
 `cairo.partition.compaction.move.tail.dead.rows.percent` (default 10); the 1,000 limit
-is fixed, not scaled with the folder's row count. Use overflow-safe comparisons.
+is `cairo.partition.compaction.move.tail.piece.threshold` (default 1000), and is not
+scaled with the folder's row count. Use overflow-safe comparisons.
 
 Reuse the accounting behind `wouldBreachCompactionThresholds`, but do not substitute
 these split limits into the general compaction policy. MERGE retires the old piece;
@@ -79,7 +80,8 @@ estimated average record size). Exactly 50 MiB does not qualify. Both fragmentat
 triggers require this dead-space floor. There is no absolute prefix-size minimum.
 
 The prefix must dominate the existing tail plus incoming rows, as in classic O3
-(roughly more than twice the resulting tail). Do not use dead physical bytes to
+(more than `cairo.partition.compaction.move.tail.prefix.multiple`, default 2, times the
+tail plus the incoming rows). Do not use dead physical bytes to
 make an otherwise expensive tail copy appear economical.
 
 ### Untouched, not necessarily file-contiguous or old
@@ -155,7 +157,8 @@ Before an ordinary squash, flatten a composite **target** when both conditions h
 
 - Its geometry was not updated by the just-applied commit/block.
 - Its actual directory size, including dead ranges, variable columns and indexes,
-  is strictly below `4 * cairo.o3.partition.split.min.size` (default **200 MiB**).
+  is strictly below `cairo.partition.compaction.squash.target.size.multiple` (default 4)
+  times `cairo.o3.partition.split.min.size` (default **200 MiB**).
 
 Use the existing JOIN/MAKE-PLAIN/REWRITE path to clean the target, then append the
 sources directly. A REWRITE copies the target's live rows once, and squash copies

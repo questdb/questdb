@@ -93,7 +93,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
     // Bin cap for transaction clustering: the finest bin is a minute, widened when a partition's span
     // needs more bins than this.
-    private static final int O3_CLUSTER_MAX_BINS = 4096;
     // Per-worker scratch for the composite plan; none of its lists outlive the call.
     private static final CarrierLocal<O3CompositeContext> COMPOSITE_CONTEXT =
             new CarrierLocal<>(O3CompositeContext::new);
@@ -146,14 +145,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final TxReader txReader = tableWriter.getTxReader();
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         final long srcNameTxn = txReader.getPartitionNameTxn(partitionIndex);
-        // Twice the piece-count rule's target average piece size, so a pre-split cannot on its own drive the
-        // partition past the piece cap effectiveMaxPieces() derives from that same number. Saturated, because
-        // the knob is allowed to be set high enough to turn the piece-count rule off entirely, and doubling
-        // that would wrap negative and turn the floor off with it.
-        final long minPieceRows = 2 * Math.min(
-                tableWriter.getConfiguration().getPartitionCompactionAvgRowsPieceLim(),
-                Long.MAX_VALUE / 8
-        );
+        // A multiple (2 by default) of the piece-count rule's target average piece size, so a pre-split cannot
+        // on its own drive the partition past the piece cap effectiveMaxPieces() derives from that same number.
+        // Saturated at Long.MAX_VALUE / 4, because the knob is allowed to be set high enough to turn the
+        // piece-count rule off entirely, and computeCuts() doubles this again: an overflow would wrap negative
+        // and turn the floor off with it.
+        final CairoConfiguration configuration = tableWriter.getConfiguration();
+        final long avgRowsPieceLim = configuration.getPartitionCompactionAvgRowsPieceLim();
+        final int minPieceMultiple = configuration.getO3PartitionPreSplitMinPieceMultiple();
+        final long minPieceRows = avgRowsPieceLim > Long.MAX_VALUE / 4 / minPieceMultiple
+                ? Long.MAX_VALUE / 4
+                : avgRowsPieceLim * minPieceMultiple;
         final FilesFacade ff = tableWriter.getFilesFacade();
 
         // Steps 1 and 2 both read the designated-timestamp column, so it is mapped ONCE over the whole physical extent.
@@ -1590,11 +1592,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         for (int i = 0, n = txnRanges.size(); i < n; i += 2) {
             clusterer.addTxnRange(txnRanges.getQuick(i), txnRanges.getQuick(i + 1));
         }
+        final CairoConfiguration configuration = tableWriter.getConfiguration();
+        final long minBinDuration = Math.max(1, ColumnType.getTimestampDriver(tableWriter.getMetadata().getTimestampType())
+                .fromMicros(configuration.getO3PartitionClusterBinWidth()));
         return clusterer.computeCuts(
                 t0,
                 t1,
-                ColumnType.getTimestampDriver(tableWriter.getMetadata().getTimestampType()).fromMinutes(1),
-                O3_CLUSTER_MAX_BINS,
+                minBinDuration,
+                configuration.getO3PartitionClusterMaxBins(),
                 minPieceRows,
                 rowCount
         );

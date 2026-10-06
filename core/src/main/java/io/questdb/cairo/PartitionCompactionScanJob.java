@@ -91,12 +91,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // CompositePartitionSwapCommand.LONGS_PER_FOLDER: a swap re-checks the folder's column version too, and
     // the scan reads no _cv file to fill that word with.
     private static final int LONGS_PER_SCANNED_FOLDER = 4;
-    // A queued swap the writer never reports back on - it refused the command without moving _txn, say, or
-    // dropped it - would otherwise park its logical partition for the life of that writer instance. Once a
-    // record is this old the sweep takes the writer out of the pool and ticks it, which consumes whatever is
-    // still queued, and only then forgets the record. Nothing is rebuilt on the strength of the timeout
-    // alone: that is what made the note worth keeping in the first place.
-    private static final long MAX_IN_FLIGHT_MICROS = 30 * Micros.MINUTE_MICROS;
     // Bounds the clean-parquet memo. Kept across two generations so a full memo evicts its oldest half
     // rather than being wiped whole - see rememberCleanParquetPartition.
     private static final int MAX_MEMO_SIZE = 100_000;
@@ -238,12 +232,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 : columnType;
     }
 
-    private static long estimateCompactionIoBytes(TableMetadata metadata, long liveRows) {
+    /**
+     * A rewrite reads and writes every live row once, so by default it costs twice the live bytes.
+     */
+    private static long estimateCompactionIoBytes(TableMetadata metadata, long liveRows, int ioCostMultiplier) {
         final long avgRecordSize = Math.max(1, TableUtils.estimateAvgRecordSize(metadata));
-        if (liveRows > Long.MAX_VALUE / avgRecordSize / 2) {
+        if (liveRows > Long.MAX_VALUE / avgRecordSize / ioCostMultiplier) {
             return Long.MAX_VALUE;
         }
-        return liveRows * avgRecordSize * 2;
+        return liveRows * avgRecordSize * ioCostMultiplier;
     }
 
     /**
@@ -839,8 +836,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Resolves this table's in-flight records that have outlived {@link #MAX_IN_FLIGHT_MICROS}. A record that old
-     * describes a command the writer never reported on - one it refused without moving {@code _txn}, say - and it
+     * Resolves this table's in-flight records that have outlived
+     * {@link CairoConfiguration#getPartitionCompactionSwapTimeout()}. A record that old describes a command the writer never reported on - one it refused without moving {@code _txn}, say - and it
      * would otherwise park its logical partition for the life of that writer instance. Taking the writer out of
      * the pool and ticking it consumes whatever is still queued, which is what makes forgetting the records safe:
      * nothing is rebuilt on the strength of the timeout alone. A writer too busy to hand over keeps its records,
@@ -885,7 +882,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         if (!isDrained) {
             // Do not retry on every sweep: a pool round-trip per table per tick buys nothing.
             for (int i = firstRecordIndex; i < lastRecordIndex; i++) {
-                inFlightSwaps.setQuick(i * IN_FLIGHT_STRIDE + IN_FLIGHT_EXPIRY_OFFSET, nowMicros + MAX_IN_FLIGHT_MICROS);
+                inFlightSwaps.setQuick(i * IN_FLIGHT_STRIDE + IN_FLIGHT_EXPIRY_OFFSET, nowMicros + configuration.getPartitionCompactionSwapTimeout());
             }
             return;
         }
@@ -1301,7 +1298,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         inFlightSwaps.setQuick(offset + IN_FLIGHT_TARGET_TIMESTAMP_OFFSET, targetTimestamp);
         inFlightSwaps.setQuick(offset + IN_FLIGHT_TARGET_NAME_TXN_OFFSET, targetNameTxn);
         inFlightSwaps.setQuick(offset + IN_FLIGHT_TARGET_GENERATION_OFFSET, targetGeneration);
-        inFlightSwaps.setQuick(offset + IN_FLIGHT_EXPIRY_OFFSET, nowMicros + MAX_IN_FLIGHT_MICROS);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_EXPIRY_OFFSET, nowMicros + configuration.getPartitionCompactionSwapTimeout());
         inFlightSwaps.setQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET, writerId);
     }
 
@@ -1384,7 +1381,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if (liveRows == 0) {
                 return true;
             }
-            if (!chargeDispatch(estimateCompactionIoBytes(metadata, liveRows))) {
+            if (!chargeDispatch(estimateCompactionIoBytes(metadata, liveRows, configuration.getPartitionCompactionIoCostMultiplier()))) {
                 return false;
             }
             openGeometry(tableToken, timestampType, partitionBy);
@@ -1428,7 +1425,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         configuration, txReader, geometry, partitionIndex, TableUtils.estimateAvgRecordSize(metadata), Long.MAX_VALUE) > 0;
                 final long estimatedIoBytes = isMakePlain
                         ? 0
-                        : estimateCompactionIoBytes(metadata, txReader.getPartitionSize(partitionIndex));
+                        : estimateCompactionIoBytes(metadata, txReader.getPartitionSize(partitionIndex), configuration.getPartitionCompactionIoCostMultiplier());
                 if (!chargeDispatch(estimatedIoBytes)) {
                     return false;
                 }
@@ -1466,7 +1463,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 )) {
                     continue;
                 }
-                if (!chargeDispatch(estimateCompactionIoBytes(metadata, txReader.getPartitionSize(partitionIndex)))) {
+                if (!chargeDispatch(estimateCompactionIoBytes(metadata, txReader.getPartitionSize(partitionIndex), configuration.getPartitionCompactionIoCostMultiplier()))) {
                     return false;
                 }
                 openGeometry(tableToken, timestampType, partitionBy);

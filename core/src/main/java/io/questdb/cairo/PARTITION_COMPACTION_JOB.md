@@ -139,6 +139,8 @@ record it retires.
 | `cairo.partition.compaction.idle.timeout` | 60 min | a composite folder must be untouched this long to be compacted on its own |
 | `cairo.partition.compaction.squash.idle.timeout` | 30 min | EVERY folder of a logical partition must be untouched this long for the whole partition to be merged; clamped to at most the key above |
 | `cairo.partition.compaction.io.budget` | 1 GiB | estimated read-plus-write bytes a sweep may start; the first dispatch always runs |
+| `cairo.partition.compaction.io.cost.multiplier` | 2 | a rewrite's cost against the budget, as a multiple of its estimated live bytes |
+| `cairo.partition.compaction.swap.timeout` | 30 min | how long an unanswered swap command parks its logical partition before the sweep drains the writer and forgets it |
 | `cairo.partition.compaction.time.budget` | 1 s | elapsed-time backstop checked between dispatches |
 
 The thresholds that decide *whether a partition is wasteful* (`dead.rows.ratio`, `piece.threshold`,

@@ -760,6 +760,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getO3PartitionClusterBinWidth() {
+        return getDelegate().getO3PartitionClusterBinWidth();
+    }
+
+    @Override
+    public int getO3PartitionClusterMaxBins() {
+        return getDelegate().getO3PartitionClusterMaxBins();
+    }
+
+    @Override
     public int getO3PartitionMaxSplits() {
         return getDelegate().getO3PartitionMaxSplits();
     }
@@ -777,6 +787,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3OpenColumnQueueCapacity() {
         return getDelegate().getO3OpenColumnQueueCapacity();
+    }
+
+    @Override
+    public int getO3PartitionPreSplitMinPieceMultiple() {
+        return getDelegate().getO3PartitionPreSplitMinPieceMultiple();
     }
 
     @Override
@@ -895,6 +910,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionDeclineBackoffMin() {
+        return getDelegate().getPartitionCompactionDeclineBackoffMin();
+    }
+
+    @Override
+    public int getPartitionCompactionDeclineBackoffMultiplier() {
+        return getDelegate().getPartitionCompactionDeclineBackoffMultiplier();
+    }
+
+    @Override
     public int getPartitionCompactionHotCommits() {
         return getDelegate().getPartitionCompactionHotCommits();
     }
@@ -902,6 +927,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getPartitionCompactionHotTime() {
         return getDelegate().getPartitionCompactionHotTime();
+    }
+
+    @Override
+    public int getPartitionCompactionIoCostMultiplier() {
+        return getDelegate().getPartitionCompactionIoCostMultiplier();
     }
 
     @Override
@@ -915,6 +945,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionMoveTailPieceThreshold() {
+        return getDelegate().getPartitionCompactionMoveTailPieceThreshold();
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailPrefixMultiple() {
+        return getDelegate().getPartitionCompactionMoveTailPrefixMultiple();
+    }
+
+    @Override
     public int getPartitionCompactionPieceThreshold() {
         return getDelegate().getPartitionCompactionPieceThreshold();
     }
@@ -925,13 +965,33 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionSplitOverflowPercent() {
+        return getDelegate().getPartitionCompactionSplitOverflowPercent();
+    }
+
+    @Override
     public long getPartitionCompactionSquashIdleTimeout() {
         return getDelegate().getPartitionCompactionSquashIdleTimeout();
     }
 
     @Override
+    public int getPartitionCompactionSquashTargetSizeMultiple() {
+        return getDelegate().getPartitionCompactionSquashTargetSizeMultiple();
+    }
+
+    @Override
+    public long getPartitionCompactionSwapTimeout() {
+        return getDelegate().getPartitionCompactionSwapTimeout();
+    }
+
+    @Override
     public int getPartitionCompactionTableDeadStopPercent() {
         return getDelegate().getPartitionCompactionTableDeadStopPercent();
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadStopTriggerPercent() {
+        return getDelegate().getPartitionCompactionTableDeadStopTriggerPercent();
     }
 
     @Override

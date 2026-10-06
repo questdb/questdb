@@ -31,7 +31,7 @@ incoming row and no I/O.
 
 | number | meaning |
 |---|---|
-| `minPieceRows` = 2x `cairo.partition.compaction.avg.rows.piece.lim` | a piece may exist |
+| `minPieceRows` = `cairo.o3.partition.presplit.min.piece.multiple` (default 2) x `cairo.partition.compaction.avg.rows.piece.lim` | a piece may exist |
 | 2x `minPieceRows` | a gap is worth a cut - the cost of a piece on each side of a cluster |
 | `liveRows / avg.rows.piece.lim` | pieces the partition tolerates before compaction rewrites it |
 

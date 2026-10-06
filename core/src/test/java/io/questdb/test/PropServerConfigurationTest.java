@@ -1990,6 +1990,86 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPartitionCompactionTuning() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            CairoConfiguration cfg = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(Micros.MINUTE_MICROS, cfg.getO3PartitionClusterBinWidth());
+            Assert.assertEquals(4096, cfg.getO3PartitionClusterMaxBins());
+            Assert.assertEquals(2, cfg.getO3PartitionPreSplitMinPieceMultiple());
+            Assert.assertEquals(Micros.MINUTE_MICROS, cfg.getPartitionCompactionDeclineBackoffMin());
+            Assert.assertEquals(2, cfg.getPartitionCompactionDeclineBackoffMultiplier());
+            Assert.assertEquals(2, cfg.getPartitionCompactionIoCostMultiplier());
+            Assert.assertEquals(10, cfg.getPartitionCompactionMoveTailDeadRowsPercent());
+            Assert.assertEquals(1_000, cfg.getPartitionCompactionMoveTailPieceThreshold());
+            Assert.assertEquals(2, cfg.getPartitionCompactionMoveTailPrefixMultiple());
+            Assert.assertEquals(100, cfg.getPartitionCompactionSplitOverflowPercent());
+            Assert.assertEquals(4, cfg.getPartitionCompactionSquashTargetSizeMultiple());
+            Assert.assertEquals(30 * Micros.MINUTE_MICROS, cfg.getPartitionCompactionSwapTimeout());
+            Assert.assertEquals(50, cfg.getPartitionCompactionTableDeadStopTriggerPercent());
+
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_CLUSTER_BIN_WIDTH.getPropertyPath(), "5s");
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_CLUSTER_MAX_BINS.getPropertyPath(), "100");
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MIN_PIECE_MULTIPLE.getPropertyPath(), "3");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN.getPropertyPath(), "10s");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER.getPropertyPath(), "4");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER.getPropertyPath(), "3");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_DEAD_ROWS_PERCENT.getPropertyPath(), "25");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD.getPropertyPath(), "500");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE.getPropertyPath(), "5");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SPLIT_OVERFLOW_PERCENT.getPropertyPath(), "50");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE.getPropertyPath(), "8");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT.getPropertyPath(), "5m");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT.getPropertyPath(), "25");
+            cfg = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(5 * Micros.SECOND_MICROS, cfg.getO3PartitionClusterBinWidth());
+            Assert.assertEquals(100, cfg.getO3PartitionClusterMaxBins());
+            Assert.assertEquals(3, cfg.getO3PartitionPreSplitMinPieceMultiple());
+            Assert.assertEquals(10 * Micros.SECOND_MICROS, cfg.getPartitionCompactionDeclineBackoffMin());
+            Assert.assertEquals(4, cfg.getPartitionCompactionDeclineBackoffMultiplier());
+            Assert.assertEquals(3, cfg.getPartitionCompactionIoCostMultiplier());
+            Assert.assertEquals(25, cfg.getPartitionCompactionMoveTailDeadRowsPercent());
+            Assert.assertEquals(500, cfg.getPartitionCompactionMoveTailPieceThreshold());
+            Assert.assertEquals(5, cfg.getPartitionCompactionMoveTailPrefixMultiple());
+            Assert.assertEquals(50, cfg.getPartitionCompactionSplitOverflowPercent());
+            Assert.assertEquals(8, cfg.getPartitionCompactionSquashTargetSizeMultiple());
+            Assert.assertEquals(5 * Micros.MINUTE_MICROS, cfg.getPartitionCompactionSwapTimeout());
+            Assert.assertEquals(25, cfg.getPartitionCompactionTableDeadStopTriggerPercent());
+
+            // Out-of-range values are clamped rather than rejected...
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_CLUSTER_MAX_BINS.getPropertyPath(), "100000000");
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MIN_PIECE_MULTIPLE.getPropertyPath(), "0");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN.getPropertyPath(), "2h");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER.getPropertyPath(), "0");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER.getPropertyPath(), "-1");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD.getPropertyPath(), "-1");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE.getPropertyPath(), "0");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SPLIT_OVERFLOW_PERCENT.getPropertyPath(), "-1");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE.getPropertyPath(), "-1");
+            cfg = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(1 << 20, cfg.getO3PartitionClusterMaxBins());
+            Assert.assertEquals(1, cfg.getO3PartitionPreSplitMinPieceMultiple());
+            // The minimum back-off never exceeds the maximum.
+            Assert.assertEquals(cfg.getPartitionCompactionDeclineBackoffMax(), cfg.getPartitionCompactionDeclineBackoffMin());
+            Assert.assertEquals(1, cfg.getPartitionCompactionDeclineBackoffMultiplier());
+            Assert.assertEquals(1, cfg.getPartitionCompactionIoCostMultiplier());
+            Assert.assertEquals(0, cfg.getPartitionCompactionMoveTailPieceThreshold());
+            Assert.assertEquals(1, cfg.getPartitionCompactionMoveTailPrefixMultiple());
+            Assert.assertEquals(0, cfg.getPartitionCompactionSplitOverflowPercent());
+            Assert.assertEquals(0, cfg.getPartitionCompactionSquashTargetSizeMultiple());
+
+            // ...except the stop-trigger percentage, which must be a percentage.
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT.getPropertyPath(), "101");
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("accepted a stop-trigger percentage above 100");
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT.getPropertyPath());
+            }
+        });
+    }
+
+    @Test
     public void testPartitionBy() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);

@@ -624,6 +624,10 @@ public interface CairoConfiguration {
     @Deprecated
     int getO3MidPartitionMaxSplits();
 
+    long getO3PartitionClusterBinWidth();
+
+    int getO3PartitionClusterMaxBins();
+
     default int getO3PartitionMaxSplits() {
         return getO3LastPartitionMaxSplits();
     }
@@ -633,6 +637,8 @@ public interface CairoConfiguration {
     int getO3PartitionPreSplitMaxCuts();
 
     int getO3OpenColumnQueueCapacity();
+
+    int getO3PartitionPreSplitMinPieceMultiple();
 
     int getO3PartitionQueueCapacity();
 
@@ -682,6 +688,10 @@ public interface CairoConfiguration {
 
     long getPartitionCompactionDeclineBackoffMax();
 
+    long getPartitionCompactionDeclineBackoffMin();
+
+    int getPartitionCompactionDeclineBackoffMultiplier();
+
     int getPartitionCompactionHotCommits();
 
     long getPartitionCompactionHotTime();
@@ -690,13 +700,21 @@ public interface CairoConfiguration {
 
     long getPartitionCompactionIoBudget();
 
+    int getPartitionCompactionIoCostMultiplier();
+
     int getPartitionCompactionMoveTailDeadRowsPercent();
 
     int getPartitionCompactionMoveTailMinGain();
 
+    int getPartitionCompactionMoveTailPieceThreshold();
+
+    int getPartitionCompactionMoveTailPrefixMultiple();
+
     int getPartitionCompactionPieceThreshold();
 
     int getPartitionCompactionPrefixMinPercent();
+
+    int getPartitionCompactionSplitOverflowPercent();
 
     /**
      * How long every folder of a logical partition - the main directory and all its MOVE-TAIL splits - has to
@@ -706,7 +724,13 @@ public interface CairoConfiguration {
      */
     long getPartitionCompactionSquashIdleTimeout();
 
+    int getPartitionCompactionSquashTargetSizeMultiple();
+
+    long getPartitionCompactionSwapTimeout();
+
     int getPartitionCompactionTableDeadStopPercent();
+
+    int getPartitionCompactionTableDeadStopTriggerPercent();
 
     long getPartitionCompactionTableDeadThreshold();
 

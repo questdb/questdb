@@ -345,25 +345,30 @@ public class O3CompositeMergeStrategy {
         return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_WRITER_TXN);
     }
 
-    public static boolean isMoveTailEconomical(long prefixRows, long tailRows, long incomingRows) {
+    /**
+     * Whether the prefix left behind is more than {@code prefixMultiple} times the tail plus the incoming rows,
+     * i.e. {@code prefixRows > prefixMultiple * (tailRows + incomingRows)}, without multiplying either count.
+     */
+    public static boolean isMoveTailEconomical(long prefixRows, long tailRows, long incomingRows, int prefixMultiple) {
         return prefixRows > 0 && tailRows > 0
-                && tailRows <= (prefixRows - 1) / 2
-                && incomingRows <= (prefixRows - 1) / 2 - tailRows;
+                && tailRows <= (prefixRows - 1) / prefixMultiple
+                && incomingRows <= (prefixRows - 1) / prefixMultiple - tailRows;
     }
 
     /**
      * MOVE-TAIL fires when dead rows exceed {@code deadRowThreshold} and either strictly exceed
-     * {@code deadRowsPercent}% of the live rows or the folder holds more than 1,000 pieces.
+     * {@code deadRowsPercent}% of the live rows or the folder holds more than {@code pieceThreshold} pieces.
      */
     public static boolean isMoveTailTriggered(
             long liveRows,
             long deadRows,
             int pieceCount,
             long deadRowThreshold,
-            int deadRowsPercent
+            int deadRowsPercent,
+            int pieceThreshold
     ) {
         return liveRows > 0 && deadRows > deadRowThreshold
-                && (deadRows > percentOf(liveRows, deadRowsPercent) || pieceCount > 1_000);
+                && (deadRows > percentOf(liveRows, deadRowsPercent) || pieceCount > pieceThreshold);
     }
 
     /**
@@ -386,9 +391,17 @@ public class O3CompositeMergeStrategy {
     }
 
     /** The highest legal boundary before the incoming range, or zero if moving is not economical. */
-    public static int moveTailCut(LongList bounds, Plan plan, long futureFloor, long deadRowThreshold, int deadRowsPercent) {
+    public static int moveTailCut(
+            LongList bounds,
+            Plan plan,
+            long futureFloor,
+            long deadRowThreshold,
+            int deadRowsPercent,
+            int pieceThreshold,
+            int prefixMultiple
+    ) {
         if (!isMoveTailTriggered(plan.projectedLiveRows, plan.projectedDeadRows, plan.projectedPieceCount,
-                deadRowThreshold, deadRowsPercent)) {
+                deadRowThreshold, deadRowsPercent, pieceThreshold)) {
             return 0;
         }
         final int pieceCount = bounds.size() / LONGS_PER_BOUND;
@@ -412,29 +425,18 @@ public class O3CompositeMergeStrategy {
             }
             prefixRows += getRowCount(bounds, p);
             if (getTsHi(bounds, p) < getTsLo(bounds, p + 1)
-                    && isMoveTailEconomical(prefixRows, existingRows - prefixRows, incomingRows)) {
+                    && isMoveTailEconomical(prefixRows, existingRows - prefixRows, incomingRows, prefixMultiple)) {
                 cut = p + 1;
             }
         }
         return cut;
     }
 
-    private static void addCut(LongList cutsOut, int piece, long cutTs, long minRowsBelow, long minRowsAbove) {
-        cutsOut.add((long) piece, cutTs, minRowsBelow, minRowsAbove);
-    }
-
-    /**
-     * Last O3 index in {@code [lo, hi]} whose timestamp is strictly {@code < value}, or {@code lo - 1}.
-     */
-    private static long findLastBelow(long sortedTimestampsAddr, long lo, long hi, long value) {
-        return lastAtOrBelow(sortedTimestampsAddr, lo, hi, value - 1);
-    }
-
     /**
      * {@code floor(rows * percent / 100)} for non-negative inputs, saturating at {@link Long#MAX_VALUE}
      * instead of overflowing.
      */
-    private static long percentOf(long rows, int percent) {
+    public static long percentOf(long rows, int percent) {
         if (percent == 0) {
             return 0;
         }
@@ -446,6 +448,17 @@ public class O3CompositeMergeStrategy {
         final long whole = hundreds * percent;
         final long fraction = (rows % 100) * percent / 100;
         return whole > Long.MAX_VALUE - fraction ? Long.MAX_VALUE : whole + fraction;
+    }
+
+    private static void addCut(LongList cutsOut, int piece, long cutTs, long minRowsBelow, long minRowsAbove) {
+        cutsOut.add((long) piece, cutTs, minRowsBelow, minRowsAbove);
+    }
+
+    /**
+     * Last O3 index in {@code [lo, hi]} whose timestamp is strictly {@code < value}, or {@code lo - 1}.
+     */
+    private static long findLastBelow(long sortedTimestampsAddr, long lo, long hi, long value) {
+        return lastAtOrBelow(sortedTimestampsAddr, lo, hi, value - 1);
     }
 
     /**

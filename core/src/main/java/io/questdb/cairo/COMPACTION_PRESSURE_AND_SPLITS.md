@@ -44,10 +44,10 @@ all splits are squashed in the apply path the moment the next day appears.
   could not work: a day at the cap never went over it, so the squash never ran. In TSBS
   every day reached 20 folders by mid-day, and from then on the last folder grew to
   1.4K-2.8K pieces and 100-225M physical rows.
-- One hard ceiling, `PartitionCompactionPolicy.getSplitCeiling`: cap + min(cap,
-  max(1, `hot.commits`)). The overflow allowance covers the folders the hot window keeps
-  out of the squash's reach, and is at most the cap itself, so a day never holds more than
-  twice the cap. Every split path checks `getSplitRoom`, so all paths agree on when a day is
+- One hard ceiling, `PartitionCompactionPolicy.getSplitCeiling`: cap + min(cap *
+  `split.overflow.percent` / 100, max(1, `hot.commits`)). The overflow allowance covers the
+  folders the hot window keeps out of the squash's reach, and is at most the cap itself by
+  default (`split.overflow.percent=100`), so a day never holds more than twice the cap. Every split path checks `getSplitRoom`, so all paths agree on when a day is
   full. The O3 split reserves room per logical day, because concurrent partition jobs can
   split the same day in one commit.
 - Plain WAL folders age by their native seqTxn. A folder with no seqTxn stamp (an O3 split's
@@ -67,7 +67,7 @@ all splits are squashed in the apply path the moment the next day appears.
 ## Change 3: a large folder is never rewritten whole when MOVE-TAIL pays
 
 Today MOVE-TAIL has its own gate (dead > split size and > `cairo.partition.compaction.move.tail.dead.rows.percent`, default
-10%, of live, or > 1,000 pieces);
+10%, of live, or > `move.tail.piece.threshold`, default 1,000, pieces);
 below it the sweep falls straight to REWRITE, which is how a 207M-row folder got copied.
 
 For any folder above `cairo.o3.partition.split.min.size`, whichever rule selected it, the

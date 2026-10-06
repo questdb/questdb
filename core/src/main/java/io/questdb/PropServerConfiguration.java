@@ -422,6 +422,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3LagCalculationWindowsSize;
     private final int o3LastPartitionMaxSplits;
     private final long o3MaxLagUs;
+    private final long o3PartitionClusterBinWidth;
+    private final int o3PartitionClusterMaxBins;
     private final int o3PartitionMaxSplits;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
@@ -429,6 +431,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3PartitionMergeAppendFrameCacheSize;
     private final boolean o3PartitionOverwriteControlEnabled;
     private final int o3PartitionPreSplitMaxCuts;
+    private final int o3PartitionPreSplitMinPieceMultiple;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
     private final long o3PartitionSplitMinSize;
@@ -452,16 +455,25 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long partitionCompactionDeadMinSize;
     private final double partitionCompactionDeadRowsRatio;
     private final long partitionCompactionDeclineBackoffMax;
+    private final long partitionCompactionDeclineBackoffMin;
+    private final int partitionCompactionDeclineBackoffMultiplier;
     private final int partitionCompactionHotCommits;
     private final long partitionCompactionHotTime;
     private final long partitionCompactionIdleTimeout;
     private final long partitionCompactionIoBudget;
+    private final int partitionCompactionIoCostMultiplier;
     private final long partitionCompactionSquashIdleTimeout;
     private final int partitionCompactionMoveTailDeadRowsPercent;
     private final int partitionCompactionMoveTailMinGain;
+    private final int partitionCompactionMoveTailPieceThreshold;
+    private final int partitionCompactionMoveTailPrefixMultiple;
     private final int partitionCompactionPieceThreshold;
     private final int partitionCompactionPrefixMinPercent;
+    private final int partitionCompactionSplitOverflowPercent;
+    private final int partitionCompactionSquashTargetSizeMultiple;
+    private final long partitionCompactionSwapTimeout;
     private final int partitionCompactionTableDeadStopPercent;
+    private final int partitionCompactionTableDeadStopTriggerPercent;
     private final long partitionCompactionTableDeadThreshold;
     private final int partitionCompactionTableDeadThresholdPercent;
     private final long partitionCompactionTableDeadTrigger;
@@ -1919,6 +1931,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY, 128);
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
             this.o3PartitionPreSplitMaxCuts = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 10_000));
+            this.o3PartitionClusterBinWidth = Math.max(1, getMicros(properties, env, PropertyKey.CAIRO_O3_PARTITION_CLUSTER_BIN_WIDTH, Micros.MINUTE_MICROS));
+            this.o3PartitionClusterMaxBins = Math.max(1, Math.min(1 << 20, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_CLUSTER_MAX_BINS, 4096)));
+            this.o3PartitionPreSplitMinPieceMultiple = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MIN_PIECE_MULTIPLE, 2));
             this.o3PartitionMergeAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
             this.o3PartitionMergeAppendFrameCacheSize = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_SIZE, 2));
             this.partitionCompactionDeadRowsRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1.0");
@@ -1963,6 +1978,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.partitionCompactionTimeBudgetMs = getMillis(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, 1000);
             this.partitionCompactionDeclineBackoffMax = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX, 60 * Micros.MINUTE_MICROS);
             this.partitionCompactionPrefixMinPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT, 50);
+            this.partitionCompactionDeclineBackoffMin = Math.max(0, Math.min(partitionCompactionDeclineBackoffMax, getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MIN, Micros.MINUTE_MICROS)));
+            this.partitionCompactionDeclineBackoffMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MULTIPLIER, 2));
+            this.partitionCompactionIoCostMultiplier = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IO_COST_MULTIPLIER, 2));
+            this.partitionCompactionMoveTailPieceThreshold = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PIECE_THRESHOLD, 1_000));
+            this.partitionCompactionMoveTailPrefixMultiple = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_PREFIX_MULTIPLE, 2));
+            this.partitionCompactionSplitOverflowPercent = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SPLIT_OVERFLOW_PERCENT, 100));
+            this.partitionCompactionSquashTargetSizeMultiple = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_TARGET_SIZE_MULTIPLE, 4));
+            this.partitionCompactionSwapTimeout = Math.max(1, getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_SWAP_TIMEOUT, 30 * Micros.MINUTE_MICROS));
+            this.partitionCompactionTableDeadStopTriggerPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_TRIGGER_PERCENT, 50);
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
             this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
@@ -4829,6 +4853,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getO3PartitionClusterBinWidth() {
+            return o3PartitionClusterBinWidth;
+        }
+
+        @Override
+        public int getO3PartitionClusterMaxBins() {
+            return o3PartitionClusterMaxBins;
+        }
+
+        @Override
         public int getO3PartitionMaxSplits() {
             return o3PartitionMaxSplits;
         }
@@ -4846,6 +4880,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3PartitionPreSplitMaxCuts() {
             return o3PartitionPreSplitMaxCuts;
+        }
+
+        @Override
+        public int getO3PartitionPreSplitMinPieceMultiple() {
+            return o3PartitionPreSplitMinPieceMultiple;
         }
 
         @Override
@@ -4954,6 +4993,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getPartitionCompactionDeclineBackoffMin() {
+            return partitionCompactionDeclineBackoffMin;
+        }
+
+        @Override
+        public int getPartitionCompactionDeclineBackoffMultiplier() {
+            return partitionCompactionDeclineBackoffMultiplier;
+        }
+
+        @Override
         public int getPartitionCompactionHotCommits() {
             return partitionCompactionHotCommits;
         }
@@ -4974,6 +5023,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPartitionCompactionIoCostMultiplier() {
+            return partitionCompactionIoCostMultiplier;
+        }
+
+        @Override
         public int getPartitionCompactionMoveTailDeadRowsPercent() {
             return partitionCompactionMoveTailDeadRowsPercent;
         }
@@ -4981,6 +5035,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionCompactionMoveTailMinGain() {
             return partitionCompactionMoveTailMinGain;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailPieceThreshold() {
+            return partitionCompactionMoveTailPieceThreshold;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailPrefixMultiple() {
+            return partitionCompactionMoveTailPrefixMultiple;
         }
 
         @Override
@@ -4994,13 +5058,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPartitionCompactionSplitOverflowPercent() {
+            return partitionCompactionSplitOverflowPercent;
+        }
+
+        @Override
         public long getPartitionCompactionSquashIdleTimeout() {
             return partitionCompactionSquashIdleTimeout;
         }
 
         @Override
+        public int getPartitionCompactionSquashTargetSizeMultiple() {
+            return partitionCompactionSquashTargetSizeMultiple;
+        }
+
+        @Override
+        public long getPartitionCompactionSwapTimeout() {
+            return partitionCompactionSwapTimeout;
+        }
+
+        @Override
         public int getPartitionCompactionTableDeadStopPercent() {
             return partitionCompactionTableDeadStopPercent;
+        }
+
+        @Override
+        public int getPartitionCompactionTableDeadStopTriggerPercent() {
+            return partitionCompactionTableDeadStopTriggerPercent;
         }
 
         @Override

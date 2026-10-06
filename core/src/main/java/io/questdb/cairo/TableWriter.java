@@ -9922,7 +9922,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (writerTxn < 0 || (!isKnownCold && writerTxn >= lastCommitTxn) || splitMinSize <= 0) {
             return false;
         }
-        final long sizeLimit = splitMinSize > Long.MAX_VALUE / 4 ? Long.MAX_VALUE : splitMinSize * 4;
+        final int sizeMultiple = configuration.getPartitionCompactionSquashTargetSizeMultiple();
+        final long sizeLimit = splitMinSize > Long.MAX_VALUE / Math.max(1, sizeMultiple)
+                ? Long.MAX_VALUE
+                : splitMinSize * sizeMultiple;
         // Count the actual directory, including variable columns, indexes and dead ranges, not live-row estimates.
         try {
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy,
@@ -10023,7 +10026,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long liveRows = txWriter.getPartitionSize(index);
             return O3CompositeMergeStrategy.isMoveTailTriggered(liveRows + incomingRows,
                     extent - liveRows, pieceCount + (isTailOwner ? 0 : 1), threshold,
-                    configuration.getPartitionCompactionMoveTailDeadRowsPercent());
+                    configuration.getPartitionCompactionMoveTailDeadRowsPercent(),
+                    configuration.getPartitionCompactionMoveTailPieceThreshold());
         }
         return true;
     }
@@ -10566,9 +10570,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 compactionForecastPlan, Long.MIN_VALUE, Long.MAX_VALUE);
                         O3PartitionJob.forecastCompositePlan(path.trimTo(pathSize), index, geometry,
                                 compactionForecastBounds, plan, sortedTimestampsAddr, o3Columns, this, dedupSink);
-                        final int cut = O3CompositeMergeStrategy.moveTailCut(compactionForecastBounds, plan,
-                                Math.min(incomingLo, futureFloor), getPartitionO3SplitThreshold(),
-                                configuration.getPartitionCompactionMoveTailDeadRowsPercent());
+                        final int cut = moveTailCut(compactionForecastBounds, plan, Math.min(incomingLo, futureFloor));
                         if (cut > 0 && moveTailToFreshPartition(index, compactionForecastBounds, cut, false) == COMPACTION_MOVED_TAIL) {
                             if (isMakePlainEligible(index)) {
                                 makePartitionPlain(index);
@@ -10584,6 +10586,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             walApplySeqTxn = savedWalApplySeqTxn;
         }
+    }
+
+    private int moveTailCut(LongList bounds, O3CompositeMergeStrategy.Plan plan, long futureFloor) {
+        return O3CompositeMergeStrategy.moveTailCut(
+                bounds,
+                plan,
+                futureFloor,
+                getPartitionO3SplitThreshold(),
+                configuration.getPartitionCompactionMoveTailDeadRowsPercent(),
+                configuration.getPartitionCompactionMoveTailPieceThreshold(),
+                configuration.getPartitionCompactionMoveTailPrefixMultiple()
+        );
     }
 
     /**
@@ -10626,7 +10640,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long liveRows = prefixRows + tailRows;
         final long e = geometry.getE(partitionIndex);
         final long deadRows = e - liveRows;
-        if ((isRewriteDue ? prefixRows <= tailRows : !O3CompositeMergeStrategy.isMoveTailEconomical(prefixRows, tailRows, 0))
+        if ((isRewriteDue ? prefixRows <= tailRows : !O3CompositeMergeStrategy.isMoveTailEconomical(prefixRows, tailRows, 0,
+                configuration.getPartitionCompactionMoveTailPrefixMultiple()))
                 || !PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, partitionIndex)
                 || !geometry.hasGenerationForNextPublish(partitionIndex, cut)) {
             return COMPACTION_NONE;
@@ -18725,8 +18740,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     boolean wouldMoveTailSucceed(int partitionIndex, LongList bounds, O3CompositeMergeStrategy.Plan plan) {
         return PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, partitionIndex)
                 && !isCommitReplaceMode() && txWriter.getLagRowCount() == 0
-                && O3CompositeMergeStrategy.moveTailCut(bounds, plan, getMoveTailFutureFloor(), getPartitionO3SplitThreshold(),
-                configuration.getPartitionCompactionMoveTailDeadRowsPercent()) > 0;
+                && moveTailCut(bounds, plan, getMoveTailFutureFloor()) > 0;
     }
 
     @FunctionalInterface

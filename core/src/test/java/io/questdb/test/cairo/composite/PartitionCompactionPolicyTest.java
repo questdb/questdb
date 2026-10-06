@@ -112,6 +112,56 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeclineBackoffMinAndMultiplierAreConfigurable() throws Exception {
+        assertMemoryLeak(() -> {
+            final TestConfiguration cfg = new TestConfiguration();
+            cfg.backoffMin = 2 * Micros.MINUTE_MICROS;
+            cfg.backoffMultiplier = 3;
+            try (TestTxWriter tx = new TestTxWriter(cfg); TestGeometry geometry = new TestGeometry(tx)) {
+                final PartitionCompactionPolicy policy = new PartitionCompactionPolicy(cfg);
+                Assert.assertEquals(3, policy.selectPartition(tx, geometry, 1, NOW, 0));
+                // The first decline backs off for the minimum.
+                policy.onDeclined(4, NOW);
+                Assert.assertEquals(2, policy.selectPartition(tx, geometry, 1, NOW + 2 * Micros.MINUTE_MICROS - 1, 0));
+                Assert.assertEquals(3, policy.selectPartition(tx, geometry, 1, NOW + 2 * Micros.MINUTE_MICROS, 0));
+                // The next one grows it by the multiplier: 2m * 3 = 6m.
+                final long now = NOW + 2 * Micros.MINUTE_MICROS;
+                policy.onDeclined(4, now);
+                Assert.assertEquals(2, policy.selectPartition(tx, geometry, 1, now + 6 * Micros.MINUTE_MICROS - 1, 0));
+                Assert.assertEquals(3, policy.selectPartition(tx, geometry, 1, now + 6 * Micros.MINUTE_MICROS, 0));
+                // ...and never past the maximum, even when the multiplication would overflow.
+                cfg.backoffMultiplier = Integer.MAX_VALUE;
+                final long later = now + 6 * Micros.MINUTE_MICROS;
+                policy.onDeclined(4, later);
+                final long max = cfg.getPartitionCompactionDeclineBackoffMax();
+                Assert.assertEquals(2, policy.selectPartition(tx, geometry, 1, later + max - 1, 0));
+                Assert.assertEquals(3, policy.selectPartition(tx, geometry, 1, later + max, 0));
+            }
+        });
+    }
+
+    @Test
+    public void testSplitOverflowPercentBoundsTheCeiling() {
+        final TestConfiguration cfg = new TestConfiguration();
+        cfg.hotCommits = 10;
+        cfg.maxSplits = 4;
+        Assert.assertEquals(8, PartitionCompactionPolicy.getSplitCeiling(cfg));
+        cfg.splitOverflowPercent = 50;
+        Assert.assertEquals(6, PartitionCompactionPolicy.getSplitCeiling(cfg));
+        cfg.splitOverflowPercent = 25;
+        Assert.assertEquals(5, PartitionCompactionPolicy.getSplitCeiling(cfg));
+        // 0 restores the cap as a hard gate.
+        cfg.splitOverflowPercent = 0;
+        Assert.assertEquals(4, PartitionCompactionPolicy.getSplitCeiling(cfg));
+        // Above 100%, the hot-commit window becomes the binding limit.
+        cfg.splitOverflowPercent = 1_000;
+        Assert.assertEquals(14, PartitionCompactionPolicy.getSplitCeiling(cfg));
+        cfg.maxSplits = Integer.MAX_VALUE;
+        cfg.splitOverflowPercent = Integer.MAX_VALUE;
+        Assert.assertEquals(Integer.MAX_VALUE, PartitionCompactionPolicy.getSplitCeiling(cfg));
+    }
+
+    @Test
     public void testWasteAndPieceRulesRetainTheirOwnTiers() throws Exception {
         assertMemoryLeak(() -> {
             final TestConfiguration cfg = new TestConfiguration();
@@ -154,7 +204,7 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
             cfg.hotCommits = 10;
             try (TestTxWriter tx = new TestTxWriter(cfg); TestGeometry geometry = new TestGeometry(tx)) {
                 geometry.pieceCount = 3;
-                Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(100, 9, 3, 50, 10));
+                Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(100, 9, 3, 50, 10, 1_000));
                 // 60 cold rows, 40 hot rows: beneficial, but below the old two-to-one economics guard.
                 Assert.assertEquals(1, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
                 Assert.assertEquals(0, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, 100));
@@ -186,12 +236,15 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
     }
 
     private static class TestConfiguration extends DefaultCairoConfiguration {
+        private long backoffMin = Micros.MINUTE_MICROS;
+        private int backoffMultiplier = 2;
         private long deadMinSize;
         private boolean hasPressureTrigger = true;
         private int hotCommits;
         private int maxSplits = 20;
         private double pressureRatio = 0.5;
         private long splitMinSize = 50;
+        private int splitOverflowPercent = 100;
 
         private TestConfiguration() {
             super(root);
@@ -208,6 +261,16 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getPartitionCompactionDeclineBackoffMin() {
+            return backoffMin;
+        }
+
+        @Override
+        public int getPartitionCompactionDeclineBackoffMultiplier() {
+            return backoffMultiplier;
+        }
+
+        @Override
         public int getPartitionCompactionHotCommits() {
             return hotCommits;
         }
@@ -215,6 +278,11 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
         @Override
         public long getPartitionCompactionIdleTimeout() {
             return 1;
+        }
+
+        @Override
+        public int getPartitionCompactionSplitOverflowPercent() {
+            return splitOverflowPercent;
         }
 
         @Override

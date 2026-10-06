@@ -755,6 +755,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getO3PartitionClusterBinWidth() {
+        return Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getO3PartitionClusterMaxBins() {
+        return 4096;
+    }
+
+    @Override
     public int getO3PartitionMergeAppendFrameCacheSize() {
         return 2;
     }
@@ -788,6 +798,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getO3OpenColumnQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getO3PartitionPreSplitMinPieceMultiple() {
+        return 2;
     }
 
     @Override
@@ -909,6 +924,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionDeclineBackoffMin() {
+        return Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionDeclineBackoffMultiplier() {
+        return 2;
+    }
+
+    @Override
     public int getPartitionCompactionHotCommits() {
         return 10;
     }
@@ -919,12 +944,27 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionIoCostMultiplier() {
+        return 2;
+    }
+
+    @Override
     public int getPartitionCompactionMoveTailDeadRowsPercent() {
         return 10;
     }
 
     @Override
     public int getPartitionCompactionMoveTailMinGain() {
+        return 2;
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailPieceThreshold() {
+        return 1_000;
+    }
+
+    @Override
+    public int getPartitionCompactionMoveTailPrefixMultiple() {
         return 2;
     }
 
@@ -939,13 +979,33 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionSplitOverflowPercent() {
+        return 100;
+    }
+
+    @Override
     public long getPartitionCompactionSquashIdleTimeout() {
+        return 30 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionSquashTargetSizeMultiple() {
+        return 4;
+    }
+
+    @Override
+    public long getPartitionCompactionSwapTimeout() {
         return 30 * Micros.MINUTE_MICROS;
     }
 
     @Override
     public int getPartitionCompactionTableDeadStopPercent() {
         return 10;
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadStopTriggerPercent() {
+        return 50;
     }
 
     @Override
