@@ -66,10 +66,10 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         // computeNext() per row, with the value held in a local
-        final double[] values = args.doubles(0);
+        final long valuesAddr = args.address(0);
         double max = mapValue.getDouble(valueIndex);
         for (int i = 0; i < rowCount; i++) {
-            final double next = values[i];
+            final double next = Unsafe.getDouble(valuesAddr + ((long) i << 3));
             if (next > max || Numbers.isNull(max)) {
                 max = next;
             }
@@ -131,12 +131,12 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
             int rowCount,
             GroupByBatchKernels.Args args
     ) {
-        final double[] values = args.doubles(0);
+        final long valuesAddr = args.address(0);
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         for (int i = 0; i < rowCount; i++) {
             final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
             final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-            final double value = values[i];
+            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
             if (Map.isNewBatchEntry(encoded)) {
                 Unsafe.putDouble(addr, value);
             } else {

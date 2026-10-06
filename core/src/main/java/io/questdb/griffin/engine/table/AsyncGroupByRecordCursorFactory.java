@@ -553,6 +553,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
                 lateMaterialized = true;
+                final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+                if (kernels != null) {
+                    kernels.countRowPathFrame();
+                }
             }
 
             if (atom.isSharded()) {

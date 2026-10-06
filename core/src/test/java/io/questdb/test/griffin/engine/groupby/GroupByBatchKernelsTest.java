@@ -31,6 +31,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,15 +41,23 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.columns.FloatColumn;
+import io.questdb.griffin.engine.functions.groupby.CovarSampleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.VarSampleGroupByFunctionFactory;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -281,7 +290,10 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
     @Test
     public void testHugeKeyCountWithoutWorkers() throws Exception {
         // every row its own group: every batch entry is new, and every row's argument value shows
-        // in the result on its own, not folded into a group already NULL from another row
+        // in the result on its own, not folded into a group already NULL from another row. Past the
+        // sharding threshold (1000 groups in the test configuration) the remaining rows of the
+        // query take the sharded reduce on the row path, so this also checks that a kernel-then-
+        // sharded mix within one query is exact; testShardedHeavy() covers the mostly sharded case.
         assertMemoryLeak(() -> {
             createTable("t", ROW_COUNT, 17, MODE_SPECIALS);
             for (String arg : new String[]{
@@ -289,7 +301,8 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
                     "d::float", "d::int", "d::long", "f::int", "f::long", "l::int", "l::float", "i::float",
                     "i / j", "l / m", "f / g", "d / e", "i * j", "l * m", "s + b", "b::float"
             }) {
-                assertMatchesRowPath("select ts, " + String.format(AGGREGATES, arg) + " from t group by ts order by ts", true);
+                final long[] counts = assertMatchesRowPath("select ts, " + String.format(AGGREGATES, arg) + " from t group by ts order by ts", true);
+                Assert.assertTrue(arg + ": kernel rows " + counts[3], counts[3] > 0 && counts[3] < ROW_COUNT);
                 assertMatchesRowPath("select i, l, " + String.format(AGGREGATES, arg) + " from t group by i, l order by i, l", true);
             }
         });
@@ -476,6 +489,315 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDefaultFrameAndBatchSizes() throws Exception {
+        // every other test uses 97-row frames and 61-row batches
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(configuration.getSqlPageFrameMinRows(), configuration.getSqlPageFrameMaxRows());
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, configuration.getGroupByBatchSize());
+            createTable("t", 150_000, 53, MODE_SPECIALS);
+            final String aggregates = "sum(%1$s) s1, avg(%1$s) a1, min(%1$s) mn, max(%1$s) mx, " +
+                    "stddev_samp(%1$s) sd, var_pop(%1$s) vp, weighted_avg(%1$s, j) w1, weighted_avg(d, %1$s) w2, " +
+                    "corr(%1$s, e) c1, covar_samp(g, %1$s) cs, covar_pop(%1$s, l) cp";
+            for (String arg : new String[]{"d + e", "i * j", "(j * f + i * g) / (j + i)", "l::double", "s + b", "f * 2"}) {
+                final String agg = String.format(aggregates, arg);
+                assertMatchesRowPath("select k, " + agg + " from t group by k order by k", true);
+                assertMatchesRowPath("select " + agg + " from t", true);
+                assertMatchesRowPath("select " + agg + " from t where i > 0", true);
+                assertMatchesRowPath("select k, " + agg + " from t where i > 0 group by k order by k", true);
+            }
+        });
+    }
+
+    @Test
+    public void testOddArgumentShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("t", ROW_COUNT, 59, MODE_SPECIALS);
+            final String[] queries = {
+                    // one argument read with different getters
+                    "select k, sum(i + j) a, avg(i + j) b, weighted_avg(i + j, i + j) c, max((i + j)::double) d2, min((i + j)::long) e2, stddev(i + j) f2 from t group by k order by k",
+                    // the key column as the argument
+                    "select j, sum(j * 2) a, avg(j + 0.5) b, stddev(j) c from t group by j order by j",
+                    // constant-only and NULL-constant arguments
+                    "select k, sum(1 + 2) a, avg(3.5) b, weighted_avg(d, 2) c, stddev(d + null) sd, sum(i + null) sn, max(f * null) mf from t group by k order by k",
+                    "select sum(1 + 2) a, avg(3.5) b, weighted_avg(d, 2) c, stddev(d + null) sd, sum(i + null) sn from t",
+                    // overflow and division by zero
+                    "select k, sum(l * 3037000500) a, sum(i * 46341) b, sum(l / 0) c, avg(d / 0) dd, sum(i / 0) e2, max(l - l) mx from t group by k order by k",
+                    // SHORT x BYTE
+                    "select k, corr(s, b) c, covar_pop(b, s) cp, weighted_avg(s::double, b) w, sum(s * b) sm, sum(b::long + 1) sb from t group by k order by k",
+                    // the same expression under a filter, next to a direct column
+                    "select k, max(d) filler, max(d * 1) a, min(d * 1) b, sum(d * 1) c from t where d > 0 group by k order by k",
+            };
+            for (String sql : queries) {
+                assertMatchesRowPath(sql, true);
+            }
+            // negation has no loop: the row path, bit for bit
+            assertMatchesRowPath("select k, sum(-i) a, sum(i - -j) b, max(-d) c, min(-(f)) mn from t group by k order by k", false);
+        });
+    }
+
+    @Test
+    public void testParquetLateMaterializedFramesTakeRowPath() throws Exception {
+        // a selective filter over Parquet frames: late materialization decodes the remaining columns
+        // for the filtered rows only, and such frames keep the row path (counted per frame)
+        assertMemoryLeak(() -> {
+            createTable("t", ROW_COUNT, 61, MODE_SPECIALS);
+            execute("alter table t convert partition to parquet where ts < '1970-01-04'");
+            for (String arg : new String[]{"d + e", "i * j", "l::double"}) {
+                final String agg = String.format(AGGREGATES, arg);
+                for (String sql : new String[]{
+                        "select k, " + agg + " from t where k = 'K3' group by k order by k",
+                        "select " + agg + " from t where k = 'K3'",
+                }) {
+                    final long[] counts = assertMatchesRowPath(sql, true);
+                    Assert.assertTrue(sql + ": late-materialized frames " + counts[2], counts[2] > 0);
+                    // the native partitions run the kernels
+                    Assert.assertTrue(sql, counts[0] > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetTypeCastFramesTakeRowPath() throws Exception {
+        // a VARCHAR column converted to DOUBLE after its partitions went to Parquet: those frames
+        // decode the VARCHAR and convert per row, so the column has no readable buffer there and the
+        // aggregate takes the row path for those batches (counted); the native partitions do not
+        assertMemoryLeak(() -> {
+            createTable("t", ROW_COUNT, 67, MODE_TAME);
+            execute("alter table t add column v varchar");
+            execute("update t set v = case when i % 7 = 0 then null else (i / 8.0)::varchar end");
+            execute("alter table t convert partition to parquet where ts < '1970-01-04'");
+            execute("alter table t alter column v type double");
+            for (String arg : new String[]{"v", "v * 2", "v + d", "(v - e)::long"}) {
+                final String agg = String.format(AGGREGATES, arg);
+                for (String sql : new String[]{
+                        "select k, " + agg + " from t group by k order by k",
+                        "select " + agg + " from t",
+                        "select k, " + agg + " from t where i > 0 group by k order by k",
+                        "select " + agg + " from t where i > 0",
+                }) {
+                    final long[] counts = assertMatchesRowPath(sql, true);
+                    // per batch, or per frame in the vectorized non-keyed reduce (sum(v) and the
+                    // other direct-column aggregates make the unfiltered non-keyed query vectorized)
+                    Assert.assertTrue(sql + ": row-path batches " + counts[1] + ", frames " + counts[2], counts[1] > 0 || counts[2] > 0);
+                    Assert.assertTrue(sql + ": kernel batches " + counts[0], counts[0] > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRebindSameFactory() throws Exception {
+        // one compiled factory executed again with new bind values: the kernels read the binds
+        // through their getters per batch, not once per compile
+        assertMemoryLeak(() -> {
+            createTable("t", ROW_COUNT, 71, MODE_SPECIALS);
+            final String[] queries = {
+                    "select k, weighted_avg(d * $1, i + $2) w, stddev_samp(f - $1) sd, sum(i * $2) s, max(l + $2) mx from t group by k order by k",
+                    "select weighted_avg(d * $1, i + $2) w, stddev_samp(f - $1) sd, sum(i * $2) s, max(l + $2) mx from t",
+            };
+            for (String sql : queries) {
+                bindVariableService.clear();
+                bindVariableService.setDouble(0, 1.5);
+                bindVariableService.setInt(1, 3);
+                setKernels(false);
+                try (RecordCursorFactory rowPath = select(sql)) {
+                    Assert.assertNull(sql, kernelCountsOrNull(rowPath));
+                    setKernels(true);
+                    try (RecordCursorFactory kernels = select(sql)) {
+                        Assert.assertNotNull(sql, kernelCountsOrNull(kernels));
+                        for (int round = 0; round < 4; round++) {
+                            bindVariableService.setDouble(0, round == 3 ? Double.NaN : 1.5 + round);
+                            bindVariableService.setInt(1, round == 2 ? Numbers.INT_NULL : 3 - round);
+                            TestUtils.assertEquals(sql + " round " + round, bits(rowPath, sqlExecutionContext), bits(kernels, sqlExecutionContext));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScratchCapFallsBackToRowPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("t", 500, 73, MODE_SPECIALS);
+            final String sql = "select k, weighted_avg(d * 2, i + j) w, stddev(d - e) sd from t group by k order by k";
+            final long saved = GroupByBatchKernels.getMaxScratchBytes();
+            try {
+                setKernels(true);
+                final long need;
+                try (RecordCursorFactory factory = select(sql)) {
+                    final GroupByBatchKernels kernels = findAsync(factory, AsyncGroupByRecordCursorFactory.class).getAtom().getBatchKernels(-1);
+                    Assert.assertNotNull(kernels);
+                    need = kernels.getProgram().getScratchBytes();
+                    Assert.assertTrue(need > 0);
+                }
+                // just below what the owner and the workers would need together
+                GroupByBatchKernels.setMaxScratchBytes(need - 1);
+                assertMatchesRowPath(sql, false);
+                GroupByBatchKernels.setMaxScratchBytes(need * 1024);
+                assertMatchesRowPath(sql, true);
+            } finally {
+                GroupByBatchKernels.setMaxScratchBytes(saved);
+            }
+        });
+    }
+
+    @Test
+    public void testScratchIsNativeAndFreedOnCursorClose() throws Exception {
+        // the per-slot argument buffers are native memory, allocated on first use, charged to the
+        // tag (so assertMemoryLeak sees them), and freed when the cursor closes even though the
+        // factory, as in a cache, stays open
+        assertMemoryLeak(() -> {
+            createTable("t", ROW_COUNT, 79, MODE_SPECIALS);
+            setKernels(true);
+            for (String sql : new String[]{
+                    "select k, weighted_avg(d * 2, i + j) w, stddev(d - e) sd, sum(i * j) s from t group by k",
+                    "select weighted_avg(d * 2, i + j) w, stddev(d - e) sd, sum(i * j) s from t",
+                    "select weighted_avg(d * 2, i + j) w, stddev(d - e) sd, sum(i * j) s from t where i > 0",
+            }) {
+                try (RecordCursorFactory factory = select(sql)) {
+                    final GroupByBatchKernels kernels = ownerKernels(factory);
+                    Assert.assertNotNull(sql, kernels);
+                    Assert.assertEquals(sql, 0, kernels.getAllocatedScratchBytes());
+                    for (int run = 0; run < 2; run++) {
+                        final long tagBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue(sql, cursor.hasNext());
+                            final long allocated = kernels.getAllocatedScratchBytes();
+                            Assert.assertEquals(sql, kernels.getProgram().getScratchBytes(), allocated);
+                            Assert.assertTrue(sql, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_GROUP_BY_FUNCTION) - tagBefore >= allocated);
+                        }
+                        Assert.assertEquals(sql, 0, kernels.getAllocatedScratchBytes());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testShardedHeavy() throws Exception {
+        // every row its own group, far past the sharding threshold: most rows go through the
+        // sharded reduce, which keeps the row path, after the first frames ran the kernels
+        assertMemoryLeak(() -> {
+            final int rows = 20_000;
+            createTable("t", rows, 83, MODE_SPECIALS);
+            Assert.assertTrue(configuration.getGroupByShardingThreshold() < rows / 10);
+            for (String arg : new String[]{"d + e", "i * j", "f::double", "l / m"}) {
+                final long[] counts = assertMatchesRowPath("select ts, " + String.format(AGGREGATES, arg) + " from t group by ts order by ts", true);
+                Assert.assertTrue(arg + ": kernel rows " + counts[3], counts[3] > 0);
+                Assert.assertTrue(arg + ": kernel rows " + counts[3], counts[3] < rows / 5);
+            }
+        });
+    }
+
+    @Test
+    public void testStructureMismatchHasNoKernels() {
+        // a slot's aggregates must have the shape the program was compiled from
+        final ObjList<GroupByFunction> owner = new ObjList<>();
+        owner.add(new VarSampleGroupByFunctionFactory.VarSampleGroupByFunction(DoubleColumn.newInstance(0)));
+        final GroupByBatchKernels.Program program = GroupByBatchKernels.compile(owner, 64, 1);
+        Assert.assertNotNull(program);
+        Assert.assertNotNull(program.newInstance(owner));
+        final ObjList<GroupByFunction> otherColumn = new ObjList<>();
+        otherColumn.add(new VarSampleGroupByFunctionFactory.VarSampleGroupByFunction(DoubleColumn.newInstance(1)));
+        Assert.assertNull(program.newInstance(otherColumn));
+        final ObjList<GroupByFunction> otherClass = new ObjList<>();
+        otherClass.add(new SumDoubleGroupByFunction(DoubleColumn.newInstance(0)));
+        Assert.assertNull(program.newInstance(otherClass));
+        Assert.assertNull(program.newInstance(new ObjList<>()));
+    }
+
+    @Test
+    public void testSubclassOverridingAggregateHasNoKernel() {
+        // the kernels inline aggregate(): a subclass with its own keeps the row path
+        final VarSampleGroupByFunctionFactory.VarSampleGroupByFunction variance =
+                new VarSampleGroupByFunctionFactory.VarSampleGroupByFunction(DoubleColumn.newInstance(0)) {
+                    @Override
+                    protected void aggregate(MapValue mapValue, double value) {
+                        super.aggregate(mapValue, value);
+                    }
+                };
+        Assert.assertFalse(GroupByBatchKernels.supportsKernel(variance));
+        final CovarSampleGroupByFunctionFactory.CovarSampleGroupByFunction covar =
+                new CovarSampleGroupByFunctionFactory.CovarSampleGroupByFunction(DoubleColumn.newInstance(0), DoubleColumn.newInstance(1)) {
+                    @Override
+                    protected void aggregate(MapValue mapValue, double y, double x) {
+                        super.aggregate(mapValue, y, x);
+                    }
+                };
+        Assert.assertFalse(GroupByBatchKernels.supportsKernel(covar));
+        Assert.assertTrue(GroupByBatchKernels.supportsKernel(
+                new CovarSampleGroupByFunctionFactory.CovarSampleGroupByFunction(DoubleColumn.newInstance(0), DoubleColumn.newInstance(1)) {
+                }
+        ));
+    }
+
+    @Test
+    public void testSubclassOverridingComputeKeyedBatchHasNoKernel() {
+        // the keyed kernel mirrors computeKeyedBatch(), the keyed row path: a subclass with its own
+        // keeps the row path
+        final VarSampleGroupByFunctionFactory.VarSampleGroupByFunction variance =
+                new VarSampleGroupByFunctionFactory.VarSampleGroupByFunction(DoubleColumn.newInstance(0)) {
+                    @Override
+                    public void computeKeyedBatch(PageFrameMemoryRecord record, FlyweightPackedMapValue mapValue, long baseValueAddr, long batchAddr, long rowCount, long baseRowId) {
+                        super.computeKeyedBatch(record, mapValue, baseValueAddr, batchAddr, rowCount, baseRowId);
+                    }
+                };
+        Assert.assertFalse(GroupByBatchKernels.supportsKernel(variance));
+        final SumDoubleGroupByFunction sum = new SumDoubleGroupByFunction(FloatColumn.newInstance(0)) {
+            @Override
+            public void computeKeyedBatch(PageFrameMemoryRecord record, FlyweightPackedMapValue mapValue, long baseValueAddr, long batchAddr, long rowCount, long baseRowId) {
+                super.computeKeyedBatch(record, mapValue, baseValueAddr, batchAddr, rowCount, baseRowId);
+            }
+        };
+        Assert.assertFalse(GroupByBatchKernels.supportsKernel(sum));
+        // a FLOAT column read as DOUBLE: sum(double) has a kernel for it
+        Assert.assertTrue(GroupByBatchKernels.supportsKernel(new SumDoubleGroupByFunction(FloatColumn.newInstance(0))));
+    }
+
+    @Test
+    public void testWorkersShareOneProgram() throws Exception {
+        // the kernels compile once per factory: every slot runs the owner's program, and a worker's
+        // evaluator is made on the slot's first use
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+                createTable(engine, ctx, "t", 1_000, 89, MODE_TAME);
+                setKernels(true);
+                for (String sql : new String[]{
+                        "select k, weighted_avg((j * f + i * g) / (j + i), j + i) w, stddev_samp(d - e) sd, corr(d - e, f * g) c, sum(i * $1) s from t group by k",
+                        "select weighted_avg((j * f + i * g) / (j + i), j + i) w, stddev_samp(d - e) sd, corr(d - e, f * g) c, sum(i * $1) s from t",
+                        // count_distinct is not thread-safe: the workers get their own aggregates
+                        "select k, count_distinct(i) cd, stddev_samp(d - e + $1) sd from t group by k",
+                        "select count_distinct(i) cd, stddev_samp(d - e + $1) sd from t",
+                }) {
+                    ctx.getBindVariableService().clear();
+                    ctx.getBindVariableService().setInt(0, 3);
+                    try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                        final GroupByBatchKernels owner = ownerKernels(factory);
+                        Assert.assertNotNull(sql, owner);
+                        final GroupByBatchKernels.PerWorker perWorker = perWorkerKernels(factory);
+                        final int workerCount = perWorker.size();
+                        Assert.assertTrue(sql, workerCount > 0);
+                        // compiling made no worker evaluator: each is made on its slot's first use
+                        for (int i = 0; i < workerCount; i++) {
+                            Assert.assertNull(sql, perWorker.getIfMade(i));
+                        }
+                        for (int i = 0; i < workerCount; i++) {
+                            final GroupByBatchKernels worker = workerKernels(factory, i);
+                            Assert.assertNotNull(sql, worker);
+                            Assert.assertNotSame(sql, owner, worker);
+                            Assert.assertSame(sql, owner.getProgram(), worker.getProgram());
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
     private static void assertWithinTolerance(String sql, String expected, String actual) {
         final String[] e = expected.split("\n");
         final String[] a = actual.split("\n");
@@ -615,6 +937,16 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
         final AsyncGroupByNotKeyedRecordCursorFactory notKeyed = findAsync(factory, AsyncGroupByNotKeyedRecordCursorFactory.class);
         Assert.assertNotNull("no parallel GROUP BY in the plan", notKeyed);
         return notKeyed.getAtom().getBatchKernelCounts();
+    }
+
+    private static GroupByBatchKernels ownerKernels(RecordCursorFactory factory) {
+        final AsyncGroupByRecordCursorFactory keyed = findAsync(factory, AsyncGroupByRecordCursorFactory.class);
+        if (keyed != null) {
+            return keyed.getAtom().getBatchKernels(-1);
+        }
+        final AsyncGroupByNotKeyedRecordCursorFactory notKeyed = findAsync(factory, AsyncGroupByNotKeyedRecordCursorFactory.class);
+        Assert.assertNotNull("no parallel GROUP BY in the plan", notKeyed);
+        return notKeyed.getAtom().getBatchKernels(-1);
     }
 
     private static String runToString(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext ctx, String sql) throws SqlException {
@@ -778,12 +1110,29 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
         }
     }
 
+    private static GroupByBatchKernels.PerWorker perWorkerKernels(RecordCursorFactory factory) {
+        final AsyncGroupByRecordCursorFactory keyed = findAsync(factory, AsyncGroupByRecordCursorFactory.class);
+        if (keyed != null) {
+            return keyed.getAtom().getPerWorkerBatchKernels();
+        }
+        return findAsync(factory, AsyncGroupByNotKeyedRecordCursorFactory.class).getAtom().getPerWorkerBatchKernels();
+    }
+
+    private static GroupByBatchKernels workerKernels(RecordCursorFactory factory, int slotId) {
+        final AsyncGroupByRecordCursorFactory keyed = findAsync(factory, AsyncGroupByRecordCursorFactory.class);
+        if (keyed != null) {
+            return keyed.getAtom().getBatchKernels(slotId);
+        }
+        return findAsync(factory, AsyncGroupByNotKeyedRecordCursorFactory.class).getAtom().getBatchKernels(slotId);
+    }
+
     /**
      * Runs the query on the row path, then with the kernels, and asserts the same text through the
      * fluent assertion and the same raw bits value by value. With {@code expectKernels}, the plan
      * must show them and they must have run.
      *
-     * @return the kernel batch counts of the kernel run: [kernel batches, row-path batches]
+     * @return the counts of the kernel run, see {@code getBatchKernelCounts()}: [kernel batches,
+     * row-path batches, late-materialized frames kept on the row path, rows in kernel batches]
      */
     private long[] assertMatchesRowPath(String sql, boolean expectKernels) throws Exception {
         final String expected = rowPathResult(sql);

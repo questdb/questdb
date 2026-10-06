@@ -69,15 +69,15 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     @Override
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         // aggregate() per row with finite y and x, with the state held in locals
-        final double[] ys = args.doubles(0);
-        final double[] xs = args.doubles(1);
+        final long ysAddr = args.address(0);
+        final long xsAddr = args.address(1);
         double meanY = mapValue.getDouble(valueIndex);
         double meanX = mapValue.getDouble(valueIndex + 1);
         double sumXY = mapValue.getDouble(valueIndex + 2);
         long count = mapValue.getLong(valueIndex + 3);
         for (int i = 0; i < rowCount; i++) {
-            final double y = ys[i];
-            final double x = xs[i];
+            final double y = Unsafe.getDouble(ysAddr + ((long) i << 3));
+            final double x = Unsafe.getDouble(xsAddr + ((long) i << 3));
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                 count++;
                 final double oldMeanY = meanY;
@@ -114,8 +114,8 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
             int rowCount,
             GroupByBatchKernels.Args args
     ) {
-        final double[] ys = args.doubles(0);
-        final double[] xs = args.doubles(1);
+        final long ysAddr = args.address(0);
+        final long xsAddr = args.address(1);
         final long meanYOffset = mapValue.getOffset(valueIndex);
         final long meanXOffset = mapValue.getOffset(valueIndex + 1);
         final long sumXYOffset = mapValue.getOffset(valueIndex + 2);
@@ -123,8 +123,8 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
         for (int i = 0; i < rowCount; i++) {
             final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
             final long valueAddr = baseValueAddr + Map.decodeBatchOffset(encoded);
-            final double y = ys[i];
-            final double x = xs[i];
+            final double y = Unsafe.getDouble(ysAddr + ((long) i << 3));
+            final double x = Unsafe.getDouble(xsAddr + ((long) i << 3));
             final boolean isNew = Map.isNewBatchEntry(encoded);
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                 // computeFirst() starts from zeros, then aggregate()

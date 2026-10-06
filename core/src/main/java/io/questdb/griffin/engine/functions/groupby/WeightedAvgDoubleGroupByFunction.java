@@ -51,13 +51,13 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
 
     @Override
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
-        final double[] samples = args.doubles(0);
-        final double[] weights = args.doubles(1);
+        final long samplesAddr = args.address(0);
+        final long weightsAddr = args.address(1);
         double sum = mapValue.getDouble(valueIndex);
         double weightSum = mapValue.getDouble(valueIndex + 1);
         for (int i = 0; i < rowCount; i++) {
-            final double sample = samples[i];
-            final double weight = weights[i];
+            final double sample = Unsafe.getDouble(samplesAddr + ((long) i << 3));
+            final double weight = Unsafe.getDouble(weightsAddr + ((long) i << 3));
             if (Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0) {
                 sum += sample * weight;
                 weightSum += weight;
@@ -88,15 +88,15 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
             int rowCount,
             GroupByBatchKernels.Args args
     ) {
-        final double[] samples = args.doubles(0);
-        final double[] weights = args.doubles(1);
+        final long samplesAddr = args.address(0);
+        final long weightsAddr = args.address(1);
         final long sumOffset = mapValue.getOffset(valueIndex);
         final long weightOffset = mapValue.getOffset(valueIndex + 1);
         for (int i = 0; i < rowCount; i++) {
             final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
             final long valueAddr = baseValueAddr + Map.decodeBatchOffset(encoded);
-            final double sample = samples[i];
-            final double weight = weights[i];
+            final double sample = Unsafe.getDouble(samplesAddr + ((long) i << 3));
+            final double weight = Unsafe.getDouble(weightsAddr + ((long) i << 3));
             final boolean valid = Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0;
             if (Map.isNewBatchEntry(encoded)) {
                 Unsafe.putDouble(valueAddr + sumOffset, valid ? sample * weight : 0.0);

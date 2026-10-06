@@ -69,10 +69,10 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         // computeNext() per row, with the value held in a local
-        final double[] values = args.doubles(0);
+        final long valuesAddr = args.address(0);
         double sum = mapValue.getDouble(valueIndex);
         for (int i = 0; i < rowCount; i++) {
-            final double value = values[i];
+            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
             if (!Double.isNaN(value)) {
                 sum = !Double.isNaN(sum) ? sum + value : value;
             }
@@ -132,12 +132,12 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
             int rowCount,
             GroupByBatchKernels.Args args
     ) {
-        final double[] values = args.doubles(0);
+        final long valuesAddr = args.address(0);
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         for (int i = 0; i < rowCount; i++) {
             final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
             final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-            final double value = values[i];
+            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
             if (Map.isNewBatchEntry(encoded)) {
                 // as computeKeyedBatch(): a NULL first value leaves the empty value, the canonical NaN
                 Unsafe.putDouble(addr, !Double.isNaN(value) ? value : Double.NaN);

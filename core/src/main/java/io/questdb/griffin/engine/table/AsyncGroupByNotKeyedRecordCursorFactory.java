@@ -418,6 +418,10 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Fall back to row-by-row for the entire frame.
+                final GroupByBatchKernels frameKernels = atom.getBatchKernels(slotId);
+                if (frameKernels != null) {
+                    frameKernels.countRowPathFrame();
+                }
                 record.init(frameMemory);
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
                 record.setRowIndex(0);
@@ -671,6 +675,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             if (kernels != null && !lateMaterialized) {
                 aggregateWithKernels(record, rows.getAddress(), rows.size(), baseRowId, value, atom, slotId, kernels);
             } else {
+                if (kernels != null) {
+                    kernels.countRowPathFrame();
+                }
                 aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
             }
         } finally {

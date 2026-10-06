@@ -76,11 +76,11 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         // computeNext() per row, with the state held in locals
-        final double[] values = args.doubles(0);
+        final long valuesAddr = args.address(0);
         double sum = mapValue.getDouble(valueIndex);
         long count = mapValue.getLong(valueIndex + 1);
         for (int i = 0; i < rowCount; i++) {
-            final double d = values[i];
+            final double d = Unsafe.getDouble(valuesAddr + ((long) i << 3));
             if (!Double.isNaN(d)) {
                 sum += d;
                 count++;
@@ -147,13 +147,13 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
             int rowCount,
             GroupByBatchKernels.Args args
     ) {
-        final double[] values = args.doubles(0);
+        final long valuesAddr = args.address(0);
         final long sumOffset = mapValue.getOffset(valueIndex);
         final long countOffset = mapValue.getOffset(valueIndex + 1);
         for (int i = 0; i < rowCount; i++) {
             final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
             final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-            final double d = values[i];
+            final double d = Unsafe.getDouble(valuesAddr + ((long) i << 3));
             if (Map.isNewBatchEntry(encoded)) {
                 // computeFirst()
                 if (!Double.isNaN(d)) {

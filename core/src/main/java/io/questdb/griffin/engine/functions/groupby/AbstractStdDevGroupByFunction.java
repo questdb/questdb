@@ -57,12 +57,12 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     @Override
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         // aggregate() per finite value, with the state held in locals
-        final double[] values = args.doubles(0);
+        final long valuesAddr = args.address(0);
         double mean = mapValue.getDouble(valueIndex);
         double sum = mapValue.getDouble(valueIndex + 1);
         long count = mapValue.getLong(valueIndex + 2);
         for (int i = 0; i < rowCount; i++) {
-            final double value = values[i];
+            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
             if (Numbers.isFinite(value)) {
                 count++;
                 final double oldMean = mean;
@@ -94,14 +94,14 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
             int rowCount,
             GroupByBatchKernels.Args args
     ) {
-        final double[] values = args.doubles(0);
+        final long valuesAddr = args.address(0);
         final long meanOffset = mapValue.getOffset(valueIndex);
         final long sumOffset = mapValue.getOffset(valueIndex + 1);
         final long countOffset = mapValue.getOffset(valueIndex + 2);
         for (int i = 0; i < rowCount; i++) {
             final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
             final long valueAddr = baseValueAddr + Map.decodeBatchOffset(encoded);
-            final double value = values[i];
+            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
             final boolean isNew = Map.isNewBatchEntry(encoded);
             if (Numbers.isFinite(value)) {
                 // computeFirst() starts from (0, 0, 0), then aggregate()

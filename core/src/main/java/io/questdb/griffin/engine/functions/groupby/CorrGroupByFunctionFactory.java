@@ -80,8 +80,8 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
             // aggregate() per row with finite y and x, with the state held in locals
-            final double[] ys = args.doubles(0);
-            final double[] xs = args.doubles(1);
+            final long ysAddr = args.address(0);
+            final long xsAddr = args.address(1);
             double meanY = mapValue.getDouble(valueIndex);
             double sumY = mapValue.getDouble(valueIndex + 1);
             double meanX = mapValue.getDouble(valueIndex + 2);
@@ -89,8 +89,8 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             double sumXY = mapValue.getDouble(valueIndex + 4);
             long count = mapValue.getLong(valueIndex + 5);
             for (int i = 0; i < rowCount; i++) {
-                final double y = ys[i];
-                final double x = xs[i];
+                final double y = Unsafe.getDouble(ysAddr + ((long) i << 3));
+                final double x = Unsafe.getDouble(xsAddr + ((long) i << 3));
                 if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                     count++;
                     final double oldMeanY = meanY;
@@ -134,8 +134,8 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
                 int rowCount,
                 GroupByBatchKernels.Args args
         ) {
-            final double[] ys = args.doubles(0);
-            final double[] xs = args.doubles(1);
+            final long ysAddr = args.address(0);
+            final long xsAddr = args.address(1);
             final long meanYOffset = mapValue.getOffset(valueIndex);
             final long sumYOffset = mapValue.getOffset(valueIndex + 1);
             final long meanXOffset = mapValue.getOffset(valueIndex + 2);
@@ -145,8 +145,8 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             for (int i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
                 final long valueAddr = baseValueAddr + Map.decodeBatchOffset(encoded);
-                final double y = ys[i];
-                final double x = xs[i];
+                final double y = Unsafe.getDouble(ysAddr + ((long) i << 3));
+                final double x = Unsafe.getDouble(xsAddr + ((long) i << 3));
                 final boolean isNew = Map.isNewBatchEntry(encoded);
                 if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                     // computeFirst() starts from zeros, then aggregate()

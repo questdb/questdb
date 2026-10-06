@@ -70,10 +70,10 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         // computeNext() per row, with the value held in a local
-        final int[] values = args.ints(0);
+        final long valuesAddr = args.address(0);
         long sum = mapValue.getLong(valueIndex);
         for (int i = 0; i < rowCount; i++) {
-            final int value = values[i];
+            final int value = Unsafe.getInt(valuesAddr + ((long) i << 2));
             if (value != Numbers.INT_NULL) {
                 sum = sum != Numbers.LONG_NULL ? sum + value : value;
             }
@@ -137,12 +137,12 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
             int rowCount,
             GroupByBatchKernels.Args args
     ) {
-        final int[] values = args.ints(0);
+        final long valuesAddr = args.address(0);
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         for (int i = 0; i < rowCount; i++) {
             final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
             final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-            final int value = values[i];
+            final int value = Unsafe.getInt(valuesAddr + ((long) i << 2));
             if (Map.isNewBatchEntry(encoded)) {
                 Unsafe.putLong(addr, value != Numbers.INT_NULL ? value : Numbers.LONG_NULL);
             } else if (value != Numbers.INT_NULL) {

@@ -98,8 +98,9 @@ public interface GroupByFunction extends Function, Mutable {
      *
      * @param mapValue the group's value, not new
      * @param rowCount number of rows in the batch
-     * @param args     the evaluated arguments: value {@code i} of argument {@code k} is element
-     *                 {@code i} of the array for {@link #getBatchKernelArgType(int)}
+     * @param args     the evaluated arguments: value {@code i} of argument {@code k} is value
+     *                 {@code i} of the native buffer at {@code args.address(k)}, typed by
+     *                 {@link #getBatchKernelArgType(int)}, see {@link GroupByBatchKernels.Args}
      */
     default void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         throw new UnsupportedOperationException();

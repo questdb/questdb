@@ -72,10 +72,10 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         // computeNext() per row, with the value held in a local
-        final float[] values = args.floats(0);
+        final long valuesAddr = args.address(0);
         float min = mapValue.getFloat(valueIndex);
         for (int i = 0; i < rowCount; i++) {
-            final float next = values[i];
+            final float next = Unsafe.getFloat(valuesAddr + ((long) i << 2));
             if (next < min || Numbers.isNull(min)) {
                 min = next;
             }
@@ -136,12 +136,12 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
             int rowCount,
             GroupByBatchKernels.Args args
     ) {
-        final float[] values = args.floats(0);
+        final long valuesAddr = args.address(0);
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         for (int i = 0; i < rowCount; i++) {
             final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
             final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-            final float value = values[i];
+            final float value = Unsafe.getFloat(valuesAddr + ((long) i << 2));
             if (Map.isNewBatchEntry(encoded)) {
                 Unsafe.putFloat(addr, value);
             } else {
