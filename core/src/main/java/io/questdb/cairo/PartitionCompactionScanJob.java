@@ -124,6 +124,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Path path = new Path();
     private final ObjList<CompositePartitionSwapCommand> pendingSquashes = new ObjList<>();
+    private final LongList rewriteRanges = new LongList();
     private final Rnd rnd;
     private final Utf8StringSink sidecarName = new Utf8StringSink();
     private final FindVisitor sidecarVisitor = this::copyParquetPartitionSidecar;
@@ -409,6 +410,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             final int tableRootLen = path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).size();
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
             try (Frame sourceFrame = frameFactory.openRO(path, partitionTimestamp, reader.getMetadata(), cvr, e)) {
+                targetFrame.setKeepColumnsOpen(true);
+                sourceFrame.setKeepColumnsOpen(true);
+                rewriteRanges.clear();
+                for (int p = 0; p < pieceCount; p++) {
+                    final long rowCount = readerGeometry.getPieceRowCount(partitionIndex, p);
+                    if (rowCount > 0) {
+                        final long rowOffset = readerGeometry.getPieceRowOffset(partitionIndex, p);
+                        rewriteRanges.add(rowOffset, rowOffset + rowCount);
+                    }
+                }
+                targetFrame.reserve(liveRows, sourceFrame, rewriteRanges, null, null);
                 for (int p = 0; p < pieceCount; p++) {
                     final long rowCount = readerGeometry.getPieceRowCount(partitionIndex, p);
                     if (rowCount == 0) {

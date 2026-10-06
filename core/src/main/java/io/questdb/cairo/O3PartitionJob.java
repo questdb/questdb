@@ -1216,6 +1216,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // One piece after another into the same files: open each column file once, not once per piece.
                 target.setKeepColumnsOpen(true);
                 source.setKeepColumnsOpen(true);
+                ctx.pieceRanges.clear();
+                for (int i = 0, n = ctx.bounds.size(); i < n; i += O3CompositeMergeStrategy.LONGS_PER_BOUND) {
+                    final int pieceIndex = i / O3CompositeMergeStrategy.LONGS_PER_BOUND;
+                    final long rowCount = O3CompositeMergeStrategy.getRowCount(ctx.bounds, pieceIndex);
+                    final long rowOffset = O3CompositeMergeStrategy.getRowOffset(ctx.bounds, pieceIndex);
+                    ctx.pieceRanges.add(rowOffset, rowOffset + rowCount);
+                }
+                target.reserve(sourceRows, source, ctx.pieceRanges, null, null);
                 for (int i = 0, n = ctx.bounds.size(); i < n; i += O3CompositeMergeStrategy.LONGS_PER_BOUND) {
                     final int pieceIndex = i / O3CompositeMergeStrategy.LONGS_PER_BOUND;
                     final long rowCount = O3CompositeMergeStrategy.getRowCount(ctx.bounds, pieceIndex);
@@ -1368,6 +1376,42 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 target.setKeepColumnsOpen(true);
                 source.setKeepColumnsOpen(true);
                 final ObjList<O3CompositeMergeStrategy.Action> actions = plan.actions;
+                long eMax = 0;
+                ctx.o3Ranges.clear();
+                ctx.pieceRanges.clear();
+                for (int i = 0, actionCount = actions.size(); i < actionCount; i++) {
+                    final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
+                    switch (action.type) {
+                        case APPEND -> {
+                            final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                            final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
+                            eMax += pieceRows + action.getO3RowCount();
+                            ctx.pieceRanges.add(pieceLo, pieceLo + pieceRows);
+                            ctx.o3Ranges.add(action.o3Lo, action.o3Hi + 1);
+                        }
+                        case DROP -> {
+                            // Nothing is written.
+                        }
+                        case KEEP -> {
+                            final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                            final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
+                            eMax += pieceRows;
+                            ctx.pieceRanges.add(pieceLo, pieceLo + pieceRows);
+                        }
+                        case NEW_PIECE -> {
+                            eMax += action.getO3RowCount();
+                            ctx.o3Ranges.add(action.o3Lo, action.o3Hi + 1);
+                        }
+                        case MERGE -> {
+                            final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                            final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
+                            eMax += pieceRows + action.getO3RowCount();
+                            ctx.pieceRanges.add(pieceLo, pieceLo + pieceRows);
+                            ctx.o3Ranges.add(action.o3Lo, action.o3Hi + 1);
+                        }
+                    }
+                }
+                target.reserve(eMax, o3, ctx.o3Ranges, source, ctx.pieceRanges);
                 for (int i = 0, actionCount = actions.size(); i < actionCount; i++) {
                     final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
                     final long o3Rows = action.getO3RowCount();

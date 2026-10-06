@@ -128,8 +128,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
         final long dstAuxSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
         if (mixedIOFlag) {
+            assertAuxWriteReserved(dstAuxOffset + dstAuxSize);
             writeShiftedAux(srcDataOffset - targetDataOffset, srcAuxAddr, sourceLo, sourceHi, appendOffsetRowCount);
-            allocatedAuxBytes = Math.max(allocatedAuxBytes, dstAuxOffset + dstAuxSize);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsync(auxFd);
             }
@@ -167,8 +167,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             int commitMode
     ) {
         if (mixedIOFlag) {
-            // Positioned writes, which grow the file as they go: no allocation and no mapping of the target. Only a
-            // file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            // reserve() allocated the plan's full extent before this positioned write; mixed I/O needs no target
+            // mapping. Only a file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            assertDataWriteReserved(targetDataOffset + srcDataSize);
             if (isFileSource) {
                 final long sourceFd = sourceColumn.getPrimaryFd();
                 if (ff.copyData(sourceFd, dataFd, srcDataOffset, targetDataOffset, srcDataSize) != srcDataSize) {
@@ -184,7 +185,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             } else {
                 ColumnWriteBuffer.write(ff, dataFd, sourceColumn.getContiguousDataAddr(sourceRowHi) + srcDataOffset, srcDataSize, targetDataOffset);
             }
-            allocatedDataBytes = Math.max(allocatedDataBytes, targetDataOffset + srcDataSize);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsync(dataFd);
             }
@@ -499,18 +499,23 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public void reserve(long rowLo, long rowHi, long dataBytes, boolean isMerging) {
-        if (mixedIOFlag && !isMerging) {
-            // Every write is a positioned append, which grows the files itself and maps nothing.
-            return;
-        }
         final long rows = rowHi - columnTop;
         if (rows > 0) {
-            mapAuxWritable(columnTypeDriver.getAuxVectorSize(rows));
+            final long auxSize = columnTypeDriver.getAuxVectorSize(rows);
+            if (mixedIOFlag) {
+                ensureAuxAllocated(auxSize);
+            } else {
+                mapAuxWritable(auxSize);
+            }
         }
         if (dataBytes > 0) {
             // The data file grows from wherever the rows already in it end, which the aux vector says.
             final long dataOffset = getDataAppendOffsetBytes(Math.max(0, rowLo - columnTop));
-            mapDataWritable(dataOffset + dataBytes);
+            if (mixedIOFlag) {
+                ensureDataAllocated(dataOffset + dataBytes);
+            } else {
+                mapDataWritable(dataOffset + dataBytes);
+            }
         }
     }
 
@@ -557,12 +562,26 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     /**
+     * Makes the aux file at least {@code size} bytes long; see ContiguousFileFixFrameColumn#ensureAllocated.
+     */
+    private void ensureAuxAllocated(long size) {
+        if (size > allocatedAuxBytes) {
+            if (!isAllocatedAuxBytesKnown) {
+                allocatedAuxBytes = Math.max(allocatedAuxBytes, ff.length(auxFd));
+                isAllocatedAuxBytesKnown = true;
+            }
+            if (size > allocatedAuxBytes) {
+                allocatedAuxBytes = allocate(auxFd, allocatedAuxBytes, size);
+            }
+        }
+    }
+
+    /**
      * Makes the data file at least {@code size} bytes long; see ContiguousFileFixFrameColumn#ensureAllocated.
      */
     private void ensureDataAllocated(long size) {
         if (size > allocatedDataBytes) {
             if (!isAllocatedDataBytesKnown) {
-                // Positioned writes may have grown the file past what was asked for so far.
                 allocatedDataBytes = Math.max(allocatedDataBytes, ff.length(dataFd));
                 isAllocatedDataBytesKnown = true;
                 if (size <= allocatedDataBytes) {
@@ -591,15 +610,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
      */
     private long mapAuxWritable(long size) {
         assert !isReadOnly;
-        if (size > allocatedAuxBytes) {
-            if (!isAllocatedAuxBytesKnown) {
-                allocatedAuxBytes = Math.max(allocatedAuxBytes, ff.length(auxFd));
-                isAllocatedAuxBytesKnown = true;
-            }
-            if (size > allocatedAuxBytes) {
-                allocatedAuxBytes = allocate(auxFd, allocatedAuxBytes, size);
-            }
-        }
+        ensureAuxAllocated(size);
         if (auxMapSize < allocatedAuxBytes) {
             auxMapAddr = auxMapAddr == 0
                     ? TableUtils.mapRWNoAlloc(ff, auxFd, allocatedAuxBytes, 0, MEMORY_TAG)
@@ -631,6 +642,18 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             this.appendOffsetRowCount = appendOffsetRowCount;
         }
         return dataAppendOffsetBytes;
+    }
+
+    private void assertAuxWriteReserved(long fileOffsetHi) {
+        assert isAllocatedAuxBytesKnown;
+        assert fileOffsetHi <= allocatedAuxBytes : "positioned aux write exceeds reservation [column=" + columnIndex
+                + ", writeHi=" + fileOffsetHi + ", allocated=" + allocatedAuxBytes + ']';
+    }
+
+    private void assertDataWriteReserved(long fileOffsetHi) {
+        assert isAllocatedDataBytesKnown;
+        assert fileOffsetHi <= allocatedDataBytes : "positioned data write exceeds reservation [column=" + columnIndex
+                + ", writeHi=" + fileOffsetHi + ", allocated=" + allocatedDataBytes + ']';
     }
 
     private void mapAllRows(long rowHi) {

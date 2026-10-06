@@ -96,13 +96,11 @@ public interface FrameColumn extends Closeable {
 
     /**
      * Writable file columns only, a no-op for every other kind. Grows this column's files, in one allocation each,
-     * to the size the writes about to land on them need, and maps them once, so that none of those writes has to
-     * allocate or map itself. A plan of several appends and merges against one partition calls this once, ahead of
-     * its first action, with the extent the whole plan reaches. An estimate is fine: a write past it still allocates
-     * for itself, and a file grown further than its rows need is what every writer-sized column file looks like.
-     * <p>
-     * When the writer allows mixed I/O an append goes to the file with a positioned write, which grows the file as
-     * it goes; only a merge writes through the mapping. A plan without merges then reserves nothing.
+     * to the size the writes about to land on them need, and maps them when needed, so that none of those writes has
+     * to allocate or map itself. A plan of several appends and merges against one partition calls this once, ahead of
+     * its first action, with the extent the whole plan reaches. The reservation must cover every write: mixed-I/O
+     * appends use positioned writes, so growing the file later can force XFS to synchronously flush the dirty tail.
+     * Mixed I/O allocates without mapping; mmap I/O keeps the existing allocation-and-map behavior.
      *
      * @param rowLo     the partition row the first write starts at, i.e. the extent the column holds now
      * @param rowHi     the partition row the last write ends at, exclusive

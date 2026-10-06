@@ -125,6 +125,28 @@ public class FrameImpl implements Frame {
     }
 
     @Override
+    public void addDataBytes(LongList dataBytes, LongList ranges) {
+        final int columnCount = metadata.getColumnCount();
+        final int previousSize = dataBytes.size();
+        if (previousSize < columnCount) {
+            dataBytes.setPos(columnCount);
+            dataBytes.fill(previousSize, columnCount, 0);
+        }
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (columnType >= 0 && ColumnType.isVarSize(columnType)) {
+                final FrameColumn column = openColumn(columnIndex);
+                try {
+                    final long bytes = varDataBytes(column, ColumnType.getDriver(columnType), ranges);
+                    dataBytes.setQuick(columnIndex, dataBytes.getQuick(columnIndex) + bytes);
+                } finally {
+                    releaseColumn(column);
+                }
+            }
+        }
+    }
+
+    @Override
     public void appendColumns(Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode) {
         assert source.getWindowLo() <= sourceLo && sourceHi <= source.getWindowHi();
         this.upcomingTableTxn = upcomingTableTxn;
@@ -463,6 +485,27 @@ public class FrameImpl implements Frame {
             this.reserveSource1Ranges = null;
             this.reserveSource2Ranges = null;
             this.isReserveMappingSource2 = false;
+        }
+    }
+
+    @Override
+    public void reserve(long rowHi, LongList dataBytes) {
+        if (rowHi <= rowCount) {
+            return;
+        }
+        assert canWrite;
+        final int columnCount = metadata.getColumnCount();
+        assert dataBytes.size() >= columnCount;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (columnType >= 0) {
+                final FrameColumn column = openColumn(columnIndex);
+                try {
+                    column.reserve(rowCount, rowHi, dataBytes.getQuick(columnIndex), false);
+                } finally {
+                    releaseColumn(column);
+                }
+            }
         }
     }
 

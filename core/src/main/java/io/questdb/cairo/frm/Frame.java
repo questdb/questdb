@@ -35,6 +35,13 @@ import java.io.Closeable;
 public interface Frame extends Closeable {
 
     /**
+     * Adds the exact data-vector sizes of the source rows in {@code ranges} to {@code dataBytes}, indexed by column.
+     * Fixed-size columns add zero. This lets a caller aggregate var-size reservations across source frames before it
+     * starts writing a multi-frame plan.
+     */
+    void addDataBytes(LongList dataBytes, LongList ranges);
+
+    /**
      * Appends {@code [sourceLo, sourceHi)} of {@code source} to this frame's tail, one column at a time.
      *
      * @param upcomingTableTxn tags posting-index chain entries published during this append, so a partial publish is
@@ -129,6 +136,12 @@ public interface Frame extends Closeable {
      *                      {@code source2} is null
      */
     void reserve(long rowHi, Frame source1, LongList source1Ranges, @Nullable Frame source2, @Nullable LongList source2Ranges);
+
+    /**
+     * Grows every target column from its current extent to {@code rowHi}, using exact per-column var-size byte totals
+     * accumulated with {@link #addDataBytes}. This overload supports plans that read more than two source frames.
+     */
+    void reserve(long rowHi, LongList dataBytes);
 
     void saveChanges(FrameColumn column);
 

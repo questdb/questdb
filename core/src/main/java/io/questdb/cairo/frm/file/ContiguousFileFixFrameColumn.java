@@ -111,8 +111,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         final long dstOffset = appendOffsetRowCount << shl;
 
         if (mixedIOFlag) {
-            // Positioned writes, which grow the file as they go: no allocation and no mapping of the target. Only a
-            // file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            // reserve() allocated the plan's full extent before this positioned write; mixed I/O needs no target
+            // mapping. Only a file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            assertWriteReserved(dstOffset + size);
             if (sourceStorageType == COLUMN_CONTIGUOUS_FILE) {
                 copyFromFile(sourceColumn, srcOffset, dstOffset, size);
             } else if (sourceColumn.isTimestampIndex()) {
@@ -120,7 +121,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             } else {
                 ColumnWriteBuffer.write(ff, fd, sourceColumn.getContiguousDataAddr(sourceHi) + srcOffset, size, dstOffset);
             }
-            noteWritten(dstOffset + size);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsync(fd);
             }
@@ -402,14 +402,15 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
     @Override
     public void reserve(long rowLo, long rowHi, long dataBytes, boolean isMerging) {
-        if (mixedIOFlag && !isMerging) {
-            // Every write is a positioned append, which grows the file itself and maps nothing.
-            return;
-        }
         // Fixed width: the rows alone say how long the file gets, whatever is written into them.
         final long rows = rowHi - columnTop;
         if (rows > 0) {
-            mapWritable(rows << shl);
+            final long size = rows << shl;
+            if (mixedIOFlag) {
+                ensureAllocated(size);
+            } else {
+                mapWritable(size);
+            }
         }
     }
 
@@ -486,10 +487,12 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     /**
-     * A positioned write grows the file to its own end, so the file is at least that long now.
+     * Verifies that reserve() allocated the whole plan before its first positioned write.
      */
-    private void noteWritten(long fileOffsetHi) {
-        allocatedBytes = Math.max(allocatedBytes, fileOffsetHi);
+    private void assertWriteReserved(long fileOffsetHi) {
+        assert isAllocatedBytesKnown;
+        assert fileOffsetHi <= allocatedBytes : "positioned write exceeds reservation [column=" + columnIndex
+                + ", writeHi=" + fileOffsetHi + ", allocated=" + allocatedBytes + ']';
     }
 
     /**

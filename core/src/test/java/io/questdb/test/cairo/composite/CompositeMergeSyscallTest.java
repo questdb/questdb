@@ -61,8 +61,9 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
     private static final int BATCH_ROWS = 20;
     private static final int DAY_ROWS = 8640;
     private static final int DOUBLE_COLUMNS = 10;
-    // s SYMBOL, d0..d9 DOUBLE, ts TIMESTAMP: the shape of TSBS cpu-only, give or take its tag columns.
-    private static final int COLUMN_COUNT = DOUBLE_COLUMNS + 2;
+    // s SYMBOL, v STRING, d0..d9 DOUBLE, ts TIMESTAMP, topped LONG.
+    private static final int COLUMN_COUNT = DOUBLE_COLUMNS + 4;
+    private static final int COLUMN_FILE_COUNT = COLUMN_COUNT + 1;
     private static final int MERGE_ROWS_PER_PIECE = 3;
     private static final long MINUTE = 60_000_000L;
     private static final int REWRITE_TEST_PIECES = 30;
@@ -70,7 +71,7 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
     private static final int WORKER_COUNT = 4;
 
     @Test
-    public void testAppendToManyPieceCompositePartitionWithMixedIoNeitherMapsNorAllocates() throws Exception {
+    public void testAppendToManyPieceCompositePartitionWithMixedIoDoesNotMap() throws Exception {
         final SyscallCountingFilesFacade ff = new SyscallCountingFilesFacade();
         ff.setPartitionDir("2024-01-01");
         assertMemoryLeak(ff, () -> {
@@ -89,7 +90,7 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
 
                 // Rows above the day's last one and below the next day: appends only, no MERGE.
                 ff.arm();
-                execute("INSERT INTO x SELECT " + valuesSelect("x + 8_000") + ", "
+                execute("INSERT INTO x (" + columnNames() + ") SELECT " + valuesSelect("x + 8_000") + ", "
                         + "timestamp_sequence('2024-01-01T23:59:51', 1_000_000L) ts FROM long_sequence(" + APPEND_ROWS + ")");
                 drainWalQueue();
                 ff.disarm();
@@ -104,12 +105,14 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
                         + ", workers=" + WORKER_COUNT
                         + "] " + ff.report();
                 LOG.info().$(report).$();
+                ff.assertReservedWrites(report);
 
                 Assert.assertEquals("the commit did not append to the composite partition: " + report, eBefore + APPEND_ROWS, eAfter);
-                // A positioned write grows the file itself: the partition's column files are written without being
-                // allocated, mapped or remapped first. The one mapping left is the planner's: it reads the designated
-                // timestamp column to place the batch among the pieces, read-only, once per commit.
-                Assert.assertEquals("partition column files allocated: " + report, 0, ff.partition(SyscallCountingFilesFacade.ALLOCATE));
+                // The plan reserves the full extent before its positioned writes but does not map the targets. A
+                // previous page-rounded reservation can already cover this small append, hence the upper bound.
+                // The one mapping left is the planner's designated-timestamp read.
+                Assert.assertTrue("partition column files allocated more than once: " + report,
+                        ff.partition(SyscallCountingFilesFacade.ALLOCATE) <= COLUMN_FILE_COUNT);
                 Assert.assertTrue("partition column files mapped: " + report, ff.partition(SyscallCountingFilesFacade.MMAP) <= 1);
                 Assert.assertEquals("partition column files remapped: " + report, 0, ff.partition(SyscallCountingFilesFacade.MREMAP));
                 Assert.assertTrue("partition column files unmapped: " + report, ff.partition(SyscallCountingFilesFacade.MUNMAP) <= 1);
@@ -129,8 +132,29 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
 
     @Test
     public void testMergeIntoEveryPieceOfManyPieceCompositePartition() throws Exception {
+        assertMergeAllocations(false);
+    }
+
+    @Test
+    public void testMergeIntoEveryPieceOfManyPieceCompositePartitionWithMixedIo() throws Exception {
+        assertMergeAllocations(true);
+    }
+
+    @Test
+    public void testRewriteAllocatesOncePerColumnFile() throws Exception {
+        assertRewriteAllocations(false);
+    }
+
+    @Test
+    public void testRewriteWithMixedIoAllocatesOncePerColumnFile() throws Exception {
+        assertRewriteAllocations(true);
+    }
+
+    private void assertMergeAllocations(boolean mixedIo) throws Exception {
         final SyscallCountingFilesFacade ff = new SyscallCountingFilesFacade();
+        ff.setPartitionDir("2024-01-01");
         assertMemoryLeak(ff, () -> {
+            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, mixedIo);
             createDayTable();
             final TableToken tableToken = engine.verifyTableName("x");
             final long day = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
@@ -148,7 +172,7 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
                 final long eBefore = readE(tableToken, day);
 
                 // One commit that lands rows strictly inside every piece: a plan of one MERGE per piece.
-                mergeSql.append("INSERT INTO x VALUES ");
+                mergeSql.append("INSERT INTO x (").append(columnNames()).append(") VALUES ");
                 for (int p = 0, n = before.size() / 4; p < n; p++) {
                     final long tsLo = before.getQuick(p * 4);
                     final long tsHi = before.getQuick(p * 4 + 1);
@@ -165,6 +189,9 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
                         appendValuesRow(mergeSql, 9_000_000 + mergeRows, ts);
                     }
                 }
+                // The same plan also has a tail APPEND, which executeCompositePlan performs before the MERGEs.
+                mergeSql.append(", ");
+                appendValuesRow(mergeSql, 9_000_000 + ++mergeRows, day + 24 * 60 * MINUTE - 1);
 
                 ff.arm();
                 execute(mergeSql);
@@ -199,11 +226,14 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
                         + ", workers=" + WORKER_COUNT
                         + "] " + ff.report();
                 LOG.info().$(report).$();
+                ff.assertReservedWrites(report);
 
                 Assert.assertTrue("the commit did not MERGE into most pieces: " + report, mergedPieces >= targetedPieces * 3 / 4);
                 // The work this commit does is all of one plan, over files it can open, size and map once. A
                 // budget of a few per column holds whatever the piece count; one map per MERGE per column does not.
                 final long budget = 4L * COLUMN_COUNT;
+                Assert.assertTrue("plan did not reserve target columns: " + report,
+                        ff.partition(SyscallCountingFilesFacade.ALLOCATE) > 0);
                 Assert.assertTrue("fallocate per piece: " + report, ff.total(SyscallCountingFilesFacade.ALLOCATE) <= budget);
                 Assert.assertTrue("mmap per piece: " + report, ff.total(SyscallCountingFilesFacade.MMAP) <= budget);
                 Assert.assertTrue("munmap per piece: " + report, ff.total(SyscallCountingFilesFacade.MUNMAP) <= budget);
@@ -217,26 +247,24 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testRewriteAllocatesOncePerColumnFile() throws Exception {
-        assertRewriteAllocations(false);
-    }
-
-    @Test
-    public void testRewriteWithMixedIoAllocatesNothing() throws Exception {
-        assertRewriteAllocations(true);
-    }
-
     private static void appendValuesRow(StringBuilder sink, long id, long ts) {
-        sink.append("('h").append(id % 100).append('\'');
+        sink.append("('h").append(id % 100).append("', 'value").append(id).append('\'');
         for (int d = 0; d < DOUBLE_COLUMNS; d++) {
             sink.append(", ").append(id + d).append(".0");
         }
         sink.append(", ").append(ts).append("::TIMESTAMP)");
     }
 
+    private static String columnNames() {
+        final StringBuilder sink = new StringBuilder("s, v");
+        for (int d = 0; d < DOUBLE_COLUMNS; d++) {
+            sink.append(", d").append(d);
+        }
+        return sink.append(", ts").toString();
+    }
+
     private static String columnsDdl() {
-        final StringBuilder sink = new StringBuilder("s SYMBOL");
+        final StringBuilder sink = new StringBuilder("s SYMBOL INDEX, v STRING");
         for (int d = 0; d < DOUBLE_COLUMNS; d++) {
             sink.append(", d").append(d).append(" DOUBLE");
         }
@@ -254,7 +282,7 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             Assert.assertTrue("could not cut the day into " + targetPieces + " pieces, got "
                     + pieces.size() / 4 + " after " + batch + " batches", batch < 1440 / 7);
             final long start = day + batch * 7 * MINUTE + 3 * MINUTE + 3_000_000L;
-            execute("INSERT INTO x SELECT " + valuesSelect("x + " + (100_000 * (batch + 1))) + ", "
+            execute("INSERT INTO x (" + columnNames() + ") SELECT " + valuesSelect("x + " + (100_000 * (batch + 1))) + ", "
                     + "timestamp_sequence(" + start + "::TIMESTAMP, 2_000_000L) ts FROM long_sequence(" + BATCH_ROWS + ")");
             drainWalQueue();
             batch++;
@@ -279,9 +307,12 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         engine.resetFrameFactory();
 
         execute("CREATE TABLE x (" + columnsDdl() + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("INSERT INTO x SELECT " + valuesSelect("x") + ", timestamp_sequence('2024-01-01', 10_000_000L) ts" +
-                " FROM long_sequence(" + DAY_ROWS + ")");
-        execute("INSERT INTO x SELECT " + valuesSelect("x") + ", '2024-01-02T00:00:00'::TIMESTAMP ts FROM long_sequence(1)");
+        execute("INSERT INTO x (" + columnNames() + ") SELECT " + valuesSelect("x")
+                + ", timestamp_sequence('2024-01-01', 10_000_000L) ts FROM long_sequence(" + DAY_ROWS + ")");
+        drainWalQueue();
+        execute("ALTER TABLE x ADD COLUMN topped LONG");
+        execute("INSERT INTO x (" + columnNames() + ") SELECT " + valuesSelect("x")
+                + ", '2024-01-02T00:00:00'::TIMESTAMP ts FROM long_sequence(1)");
         drainWalQueue();
     }
 
@@ -320,7 +351,8 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
     }
 
     private static String valuesSelect(String idExpr) {
-        final StringBuilder sink = new StringBuilder("'h' || ((").append(idExpr).append(") % 100) s");
+        final StringBuilder sink = new StringBuilder("'h' || ((").append(idExpr).append(") % 100) s, 'value' || (")
+                .append(idExpr).append(") v");
         for (int d = 0; d < DOUBLE_COLUMNS; d++) {
             sink.append(", (").append(idExpr).append(") + ").append(d).append(".0 d").append(d);
         }
@@ -350,7 +382,7 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             int passes = 0;
             try {
                 batches = cutDayIntoPieces(tableToken, day, REWRITE_TEST_PIECES, pieces);
-                final StringBuilder mergeSql = new StringBuilder("INSERT INTO x VALUES ");
+                final StringBuilder mergeSql = new StringBuilder("INSERT INTO x (").append(columnNames()).append(") VALUES ");
                 for (int p = 0, n = pieces.size() / 4; p < n; p++) {
                     final long tsLo = pieces.getQuick(p * 4);
                     final long tsHi = pieces.getQuick(p * 4 + 1);
@@ -379,7 +411,7 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
                 ff.arm();
                 while (isComposite(tableToken, day) && passes < 10) {
                     passes++;
-                    execute("INSERT INTO x SELECT " + valuesSelect("x + 7_000_000") + ", "
+                    execute("INSERT INTO x (" + columnNames() + ") SELECT " + valuesSelect("x + 7_000_000") + ", "
                             + (day + (2 + passes) * 24 * 60 * MINUTE) + "::TIMESTAMP ts FROM long_sequence(1)");
                     drainWalQueue();
                 }
@@ -393,15 +425,13 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
                         + ", workers=" + WORKER_COUNT
                         + "] " + ff.report();
                 LOG.info().$(report).$();
+                ff.assertReservedWrites(report);
                 Assert.assertFalse("compaction did not rewrite the day: " + report, isComposite(tableToken, day));
-                // The REWRITE knows its final size before the first copy: one allocation per column file, up front.
-                // With mixed I/O the copies grow the files themselves, and nothing is allocated at all.
+                // The REWRITE knows its final size before the first copy: one allocation per column file, up front,
+                // for both mmap and mixed I/O.
                 final long allocations = ff.partition(SyscallCountingFilesFacade.ALLOCATE);
-                if (mixedIo) {
-                    Assert.assertEquals("REWRITE allocated: " + report, 0, allocations);
-                } else {
-                    Assert.assertTrue("REWRITE allocated per piece: " + report, allocations <= COLUMN_COUNT);
-                }
+                Assert.assertTrue("REWRITE did not allocate target columns: " + report, allocations > 0);
+                Assert.assertTrue("REWRITE allocated per piece: " + report, allocations <= COLUMN_FILE_COUNT);
                 // Each target column file opens once for the whole REWRITE, not once per piece.
                 Assert.assertTrue("REWRITE reopened its files per piece: " + report,
                         ff.partition(SyscallCountingFilesFacade.OPEN) <= 3L * COLUMN_COUNT);
@@ -435,11 +465,14 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         // A column's data or aux file, with or without a column name txn: s.d, d0.d.3, v.i.
         private static final Pattern COLUMN_FILE = Pattern.compile("[^/\\\\]+\\.[di](\\.\\d+)?$");
         private static final String[] NAMES = {"fallocate", "close", "copyData", "madvise", "mmap", "mremap", "munmap", "open", "truncate", "write"};
+        private final ConcurrentHashMap<Long, Integer> allocationCounts = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Long, Long> allocatedSizes = new ConcurrentHashMap<>();
         private final AtomicLongArray counts = new AtomicLongArray(NAMES.length * 2);
         private final AtomicLongArray partitionCounts = new AtomicLongArray(NAMES.length);
         // Tracked whether armed or not: a cached frame opens and maps its files on one commit and writes them on the next.
         private final ConcurrentHashMap<Long, Boolean> partitionFds = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<Long, Boolean> partitionMappings = new ConcurrentHashMap<>();
+        private volatile String allocationFailure;
         private volatile boolean armed;
         private volatile Thread armingThread;
         private long mmapReuseCountAtArm;
@@ -449,13 +482,21 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         @Override
         public boolean allocate(long fd, long size) {
             count(ALLOCATE, fd);
+            noteAllocation(fd, size);
             return super.allocate(fd, size);
         }
 
         @Override
         public boolean allocate(long fd, long allocatedSize, long size) {
             count(ALLOCATE, fd);
+            noteAllocation(fd, size);
             return super.allocate(fd, allocatedSize, size);
+        }
+
+        @Override
+        public long append(long fd, long buf, long len) {
+            checkPositionedWrite(fd, super.length(fd) + len);
+            return super.append(fd, buf, len);
         }
 
         @Override
@@ -463,6 +504,8 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             // Files.close() makes no call for an fd that was never opened, and callers close -1 freely.
             if (fd > 0) {
                 count(CLOSE, fd);
+                allocatedSizes.remove(fd);
+                allocationCounts.remove(fd);
                 partitionFds.remove(fd);
             }
             return super.close(fd);
@@ -477,6 +520,7 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         @Override
         public long copyData(long srcFd, long destFd, long offsetSrc, long destOffset, long length) {
             count(COPY_DATA, destFd);
+            checkPositionedWrite(destFd, destOffset + length);
             return super.copyData(srcFd, destFd, offsetSrc, destOffset, length);
         }
 
@@ -548,6 +592,7 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         @Override
         public long write(long fd, long address, long len, long offset) {
             count(WRITE, fd);
+            checkPositionedWrite(fd, offset + len);
             return super.write(fd, address, len, offset);
         }
 
@@ -558,6 +603,9 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             for (int i = 0, n = partitionCounts.length(); i < n; i++) {
                 partitionCounts.set(i, 0);
             }
+            allocatedSizes.clear();
+            allocationCounts.clear();
+            allocationFailure = null;
             armingThread = Thread.currentThread();
             mmapReuseCountAtArm = Files.getMmapReuseCount();
             armed = true;
@@ -566,6 +614,10 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
         void disarm() {
             armed = false;
             mmapReuseCountAtDisarm = Files.getMmapReuseCount();
+        }
+
+        void assertReservedWrites(String report) {
+            Assert.assertNull(allocationFailure + ": " + report, allocationFailure);
         }
 
         long partition(int op) {
@@ -600,8 +652,28 @@ public class CompositeMergeSyscallTest extends AbstractCairoTest {
             return counts.get(op * 2) + counts.get(op * 2 + 1);
         }
 
+        private void checkPositionedWrite(long fd, long endOffset) {
+            if (armed && fd > 0 && partitionFds.containsKey(fd)) {
+                final long allocatedSize = allocatedSizes.getOrDefault(fd, super.length(fd));
+                if (endOffset > allocatedSize && allocationFailure == null) {
+                    allocationFailure = "positioned write exceeded reservation [fd=" + fd
+                            + ", endOffset=" + endOffset + ", allocatedSize=" + allocatedSize + ']';
+                }
+            }
+        }
+
         private void count(int op, long fd) {
             count(op, fd > 0 && partitionFds.containsKey(fd));
+        }
+
+        private void noteAllocation(long fd, long size) {
+            if (armed && fd > 0 && partitionFds.containsKey(fd)) {
+                allocatedSizes.merge(fd, size, Math::max);
+                final int allocationCount = allocationCounts.merge(fd, 1, Integer::sum);
+                if (allocationCount > 1 && allocationFailure == null) {
+                    allocationFailure = "column file allocated more than once [fd=" + fd + ", count=" + allocationCount + ']';
+                }
+            }
         }
 
         private void count(int op, boolean isPartition) {

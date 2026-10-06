@@ -378,6 +378,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * pairs - one pair for an ordinary directory, one per piece the tail crosses for a composite one.
      */
     private final LongList splitTailFileRanges = new LongList();
+    private final LongList squashDataBytes = new LongList();
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final SymbolTableProviderFromWriter symbolTableProvider = new SymbolTableProviderFromWriter();
@@ -10673,10 +10674,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(other, timestampType, partitionBy, tailPartitionTs, newNameTxn);
             createDirsOrFail(ff, other, configuration.getMkDirMode());
             targetFrame = frameFactory.openRW(other, tailPartitionTs, metadata, columnVersionWriter, 0);
+            targetFrame.setKeepColumnsOpen(true);
 
             path.trimTo(pathSize);
             setPathForNativePartition(path, timestampType, partitionBy, partitionTs, srcNameTxn);
             try (Frame sourceFrame = frameFactory.openRO(path, partitionTs, metadata, columnVersionWriter, e)) {
+                sourceFrame.setKeepColumnsOpen(true);
+                compactionRewriteRanges.clear();
+                for (int p = cut; p < pieceCount; p++) {
+                    final long rowCount = O3CompositeMergeStrategy.getRowCount(bounds, p);
+                    if (rowCount > 0) {
+                        final long rowOffset = O3CompositeMergeStrategy.getRowOffset(bounds, p);
+                        compactionRewriteRanges.add(rowOffset, rowOffset + rowCount);
+                    }
+                }
+                targetFrame.reserve(tailRows, sourceFrame, compactionRewriteRanges, null, null);
                 for (int p = cut; p < pieceCount; p++) {
                     final long rowCount = O3CompositeMergeStrategy.getRowCount(bounds, p);
                     if (rowCount == 0) {
@@ -11580,6 +11592,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Self-tracking (no external ColumnTopSink): safe here the same way
                             // rewritePhysicalPartition and squash are - see Frame.publishColumnTops.
                             try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
+                                targetFrame.setKeepColumnsOpen(true);
+                                sourceFrame.setKeepColumnsOpen(true);
+                                targetFrame.reserve(
+                                        prevPartitionSize - newPrevPartitionSize,
+                                        sourceFrame,
+                                        splitTailFileRanges,
+                                        null,
+                                        null
+                                );
                                 for (int r = 0, n = splitTailFileRanges.size(); r < n; r += 2) {
                                     FrameAlgebra.append(
                                             targetFrame,
@@ -17306,13 +17327,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Frame.publishColumnTops.
         Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
         try {
+            squashDataBytes.clear();
+            long reservedRowHi = targetExtent;
+            if (copyTargetFrame) {
+                compactionRewriteRanges.clear();
+                compactionRewriteRanges.add(0L, originalSize);
+                firstPartitionFrame.addDataBytes(squashDataBytes, compactionRewriteRanges);
+            }
+            int reservedSquashCount = 0;
+            for (int i = 0; i < squashCount; i++) {
+                final int sourceIndex = targetPartitionIndex + 1 + i;
+                if (force && geometry.isComposite(sourceIndex)) {
+                    compactPartitionToPlain(sourceIndex, "squash");
+                }
+                final boolean sourceIsComposite = geometry.isComposite(sourceIndex);
+                if (sourceIsComposite && sourceIndex + 1 == txWriter.getPartitionCount()) {
+                    break;
+                }
+                final long sourcePartition = txWriter.getPartitionTimestampByIndex(sourceIndex);
+                final long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
+                final boolean isLastPartition = sourceIndex + 1 == txWriter.getPartitionCount();
+                final long sourceRows = isLastPartition
+                        ? txWriter.getTransientRowCount() + txWriter.getLagRowCount()
+                        : txWriter.getPartitionRowCountByTimestamp(sourcePartition);
+                final long sourceExtent = sourceIsComposite ? geometry.getE(sourceIndex) : sourceRows;
+                other.trimTo(pathSize);
+                setPathForNativePartition(other, timestampType, partitionBy, sourcePartition, sourceNameTxn);
+                try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, sourceExtent)) {
+                    compactionRewriteRanges.clear();
+                    if (sourceIsComposite) {
+                        for (int p = 0, pn = geometry.getPieceCount(sourceIndex); p < pn; p++) {
+                            final long pieceRows = geometry.getPieceRowCount(sourceIndex, p);
+                            if (pieceRows > 0) {
+                                final long pieceLo = geometry.getPieceRowOffset(sourceIndex, p);
+                                compactionRewriteRanges.add(pieceLo, pieceLo + pieceRows);
+                            }
+                        }
+                    } else {
+                        compactionRewriteRanges.add(0L, sourceRows);
+                    }
+                    sourceFrame.addDataBytes(squashDataBytes, compactionRewriteRanges);
+                }
+                reservedRowHi += sourceRows;
+                reservedSquashCount++;
+            }
+            squashCount = reservedSquashCount;
+
             if (copyTargetFrame) {
                 try {
+                    other.trimTo(pathSize);
                     setPathForNativePartition(other, timestampType, partitionBy, targetPartition, txWriter.txn);
                     createDirsOrFail(ff, other, configuration.getMkDirMode());
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
                     targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
+                    targetFrame.setKeepColumnsOpen(true);
+                    targetFrame.reserve(reservedRowHi, squashDataBytes);
                     FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                     txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
@@ -17323,6 +17393,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             } else {
                 targetFrame = firstPartitionFrame;
+                targetFrame.setKeepColumnsOpen(true);
+                targetFrame.reserve(reservedRowHi, squashDataBytes);
                 // The frame is opened at the extent, because that is where the appends have to land. A
                 // composite target's live rows stop short of it, and a column top - which describes a flat
                 // run from row 0 - cannot be extended over the dead rows in between. A plain target states
