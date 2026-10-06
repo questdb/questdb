@@ -525,6 +525,9 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
                     "select k, sum(l * 3037000500) a, sum(i * 46341) b, sum(l / 0) c, avg(d / 0) dd, sum(i / 0) e2, max(l - l) mx from t group by k order by k",
                     // SHORT x BYTE
                     "select k, corr(s, b) c, covar_pop(b, s) cp, weighted_avg(s::double, b) w, sum(s * b) sm, sum(b::long + 1) sb from t group by k order by k",
+                    // expressions with the same left operand and different right ones: distinct nodes
+                    "select k, sum(d + e) a, max(d + g) b, stddev(d - e) c, avg(d - l) dd, min(d + e) mn from t group by k order by k",
+                    "select sum(i * j) a, max(i * s) b, avg(i * 2) c, stddev(i * j) sd from t",
                     // the same expression under a filter, next to a direct column
                     "select k, max(d) filler, max(d * 1) a, min(d * 1) b, sum(d * 1) c from t where d > 0 group by k order by k",
             };
@@ -735,6 +738,48 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKernelsDeclaredAwayFromRowMethodsHaveNoKernel() {
+        // kernels declared in a subclass whose row methods sit in a superclass: not trusted
+        final VarSampleGroupByFunctionFactory.VarSampleGroupByFunction kernelsOnly =
+                new VarSampleGroupByFunctionFactory.VarSampleGroupByFunction(DoubleColumn.newInstance(0)) {
+                    @Override
+                    public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+                        super.computeBatchKernel(mapValue, rowCount, args);
+                    }
+
+                    @Override
+                    public void computeKeyedBatchKernel(FlyweightPackedMapValue mapValue, long baseValueAddr, long batchAddr, int rowCount, GroupByBatchKernels.Args args) {
+                        super.computeKeyedBatchKernel(mapValue, baseValueAddr, batchAddr, rowCount, args);
+                    }
+                };
+        Assert.assertFalse(GroupByBatchKernels.supportsKernel(kernelsOnly));
+        // kernels and row methods in a subclass, but the keyed row path computeKeyedBatch() in a
+        // superclass: the kernels do not mirror it
+        final SumDoubleGroupByFunction keyedRowPathAbove = new SumDoubleGroupByFunction(FloatColumn.newInstance(0)) {
+            @Override
+            public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+                super.computeBatchKernel(mapValue, rowCount, args);
+            }
+
+            @Override
+            public void computeFirst(MapValue mapValue, Record record, long rowId) {
+                super.computeFirst(mapValue, record, rowId);
+            }
+
+            @Override
+            public void computeKeyedBatchKernel(FlyweightPackedMapValue mapValue, long baseValueAddr, long batchAddr, int rowCount, GroupByBatchKernels.Args args) {
+                super.computeKeyedBatchKernel(mapValue, baseValueAddr, batchAddr, rowCount, args);
+            }
+
+            @Override
+            public void computeNext(MapValue mapValue, Record record, long rowId) {
+                super.computeNext(mapValue, record, rowId);
+            }
+        };
+        Assert.assertFalse(GroupByBatchKernels.supportsKernel(keyedRowPathAbove));
+    }
+
+    @Test
     public void testSubclassOverridingComputeKeyedBatchHasNoKernel() {
         // the keyed kernel mirrors computeKeyedBatch(), the keyed row path: a subclass with its own
         // keeps the row path
@@ -791,11 +836,29 @@ public class GroupByBatchKernelsTest extends AbstractCairoTest {
                             Assert.assertNotNull(sql, worker);
                             Assert.assertNotSame(sql, owner, worker);
                             Assert.assertSame(sql, owner.getProgram(), worker.getProgram());
+                            // each slot reads its own constant functions
+                            Assert.assertEquals(sql, owner.getConstantCount(), worker.getConstantCount());
+                            Assert.assertEquals(sql, sql.contains("count_distinct"), aggregates(factory, i) != aggregates(factory, -1));
+                            Assert.assertTrue(sql, owner.getConstantCount() > 0);
+                            // the slot's constants, at the owner's positions; the constants the
+                            // evaluator accepts (literals, bind variables) are thread-safe, so
+                            // per-worker copies share them with the owner
+                            for (int c = 0, n = owner.getConstantCount(); c < n; c++) {
+                                Assert.assertSame(sql, owner.getConstant(c).getClass(), worker.getConstant(c).getClass());
+                            }
                         }
                     }
                 }
             }, configuration, LOG);
         });
+    }
+
+    private static ObjList<GroupByFunction> aggregates(RecordCursorFactory factory, int slotId) {
+        final AsyncGroupByRecordCursorFactory keyed = findAsync(factory, AsyncGroupByRecordCursorFactory.class);
+        if (keyed != null) {
+            return keyed.getAtom().getGroupByFunctions(slotId);
+        }
+        return findAsync(factory, AsyncGroupByNotKeyedRecordCursorFactory.class).getAtom().getGroupByFunctions(slotId);
     }
 
     private static void assertWithinTolerance(String sql, String expected, String actual) {

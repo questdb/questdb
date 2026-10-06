@@ -297,6 +297,16 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
         return scratchAddr != 0 ? program.scratchBytes : 0;
     }
 
+    @TestOnly
+    public Function getConstant(int index) {
+        return constants[index];
+    }
+
+    @TestOnly
+    public int getConstantCount() {
+        return constants.length;
+    }
+
     public int getCapacity() {
         return program.capacity;
     }
