@@ -644,6 +644,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         this.decodeHint = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
         Misc.free(parquetMetaDecoder);
+        // A later query can reuse the same addresses for different partition mappings.
+        partitionFrameWindowContext = Misc.free(partitionFrameWindowContext);
         Misc.free(legacyDecoder);
         activeDecoder = null;
         hasFullProjectionMap = false;
