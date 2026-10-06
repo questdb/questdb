@@ -2656,14 +2656,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             assertion.withPlanContaining("slave filter: false").returns("count\tavg\n0\tnull\n");
                         }
                     }
-                    for (boolean isTrue : new boolean[]{true, false}) {
-                        bindVariableService.clear();
-                        bindVariableService.setBoolean(0, isTrue);
-                        assertQuery("SELECT count(q.price), avg(q.price) FROM trades t HORIZON JOIN quotes q ON (t.sym = q.sym AND $1) LIST (0s) AS h")
-                                .inferRandomAccess()
-                                .expectSize()
-                                .returns(isTrue ? "count\tavg\n1\t999.0\n" : "count\tavg\n0\tnull\n");
-                    }
+                    final ObjList<BindVarTuple> boolCases = new ObjList<>();
+                    boolCases.add(BindVarTuple.ok("false", "count\tavg\n0\tnull\n", b -> b.setBoolean(0, false)));
+                    boolCases.add(BindVarTuple.ok("true", "count\tavg\n1\t999.0\n", b -> b.setBoolean(0, true)));
+                    boolCases.add(BindVarTuple.ok("false again", "count\tavg\n0\tnull\n", b -> b.setBoolean(0, false)));
+                    assertQuery("SELECT count(q.price), avg(q.price) FROM trades t HORIZON JOIN quotes q ON (t.sym = q.sym AND $1) LIST (0s) AS h")
+                            .inferRandomAccess()
+                            .expectSize()
+                            .assertBinds(boolCases);
                     // A constant predicate filters only the right-hand table whose ON clause holds it.
                     assertQuery("SELECT count(q.price), avg(r.price) FROM trades t HORIZON JOIN quotes q ON (t.sym = q.sym AND 1 = 0) "
                             + "HORIZON JOIN quotes r ON (t.sym = r.sym AND 1 = 1) LIST (0s) AS h")
