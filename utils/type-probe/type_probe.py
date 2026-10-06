@@ -77,6 +77,7 @@ LAYER_SITES = (
     ('lv.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
 )
 MESSAGE_LIMIT = 200
+COVERAGE_MESSAGE_LIMIT = 2000
 
 REFUSAL = re.compile(r'\b(no (?:family arm|compare arm|UNION cast)) for (.+?) at (.+?): (.+)$')
 TEMP_DIR = re.compile(r'(?<![\w<])/\S*?/junit\d+/')
@@ -912,20 +913,35 @@ def cmake(tree, out):
     return text
 
 
-def kit(tree, out, is_rust_from_tree=True):
-    """The conformance kit and the coverage tests, with the local client; returns the reports.
-    The kit loads the tree's native code: the C++ library the CMake step builds, and a debug Rust
-    library Maven's build-rust-library profile builds, unless the run skips native builds."""
+KIT_TYPES_PROPERTY = 'questdb.test.kit.types'
+
+
+def kit(tree, out, is_rust_from_tree=True, only=None):
+    """The conformance kit and the coverage tests, with the local client; returns the reports and
+    whether the whole kit ran. With `only`, a type's name, the kit runs that type alone first,
+    about a minute; the whole kit, every type, runs only when that pass leaves no failure, so the
+    existing types are checked once the new type is green. The kit loads the tree's native code:
+    the C++ library the CMake step builds, and a debug Rust library Maven's build-rust-library
+    profile builds, unless the run skips native builds."""
+    if only:
+        reports = kit_pass(tree, out, is_rust_from_tree, only, 'kit-type.log', 'surefire-type')
+        if any(parse_surefire(r) for r in reports):
+            return reports, False
+    return kit_pass(tree, out, is_rust_from_tree, None, 'kit.log', 'surefire'), True
+
+
+def kit_pass(tree, out, is_rust_from_tree, only, log_name, copy_name):
     names = '|'.join(['TypeConformance.*Test'] + list(COVERAGE_TESTS))
     reports = tree.path(SUREFIRE_DIR)
     shutil.rmtree(reports, ignore_errors=True)
-    log = out / 'logs' / 'kit.log'
+    log = out / 'logs' / log_name
     profiles = 'local-client,build-rust-library' if is_rust_from_tree else 'local-client'
-    code, text = run_logged(
-        ['mvn', '-o', '-B', '-Dtest.exclude=None', '-DfailIfNoTests=false', '-Dsurefire.failIfNoSpecifiedTests=false',
-         '-pl', 'core', 'test', '-P', profiles, f'-Dtest.include=%regex[.*({names})\\.class]'],
-        log, tree.root)
-    copied = out / 'logs' / 'surefire'
+    cmd = ['mvn', '-o', '-B', '-Dtest.exclude=None', '-DfailIfNoTests=false', '-Dsurefire.failIfNoSpecifiedTests=false',
+           '-pl', 'core', 'test', '-P', profiles, f'-Dtest.include=%regex[.*({names})\\.class]']
+    if only:
+        cmd.append(f'-D{KIT_TYPES_PROPERTY}={only}')
+    code, text = run_logged(cmd, log, tree.root)
+    copied = out / 'logs' / copy_name
     shutil.rmtree(copied, ignore_errors=True)
     copied.mkdir(parents=True)
     xmls = sorted(reports.glob('TEST-*.xml')) if reports.exists() else []
@@ -1077,18 +1093,26 @@ class Item:
     site: str = ''
 
     def line(self):
-        message = ascii_message(self.message)
+        # a manual entry is the README's whole text; a coverage failure lists a line per case
+        if self.group == 'manual':
+            message = ascii_message(self.message, None)
+        elif self.group == 'coverage':
+            message = ascii_message(self.message, COVERAGE_MESSAGE_LIMIT, is_every_line=True)
+        else:
+            message = ascii_message(self.message)
         tail = f' | site: {self.site}' if self.site else ''
         return f'- [ ] {self.decision} | {self.location} | {message}{tail}'
 
 
-def ascii_message(text):
-    """The first line of a message, ASCII only, `|` as `/`, at most 200 characters; a test's
-    temporary directory, which differs on every run, reads as `<tmp>`."""
-    first = (text.strip().splitlines() or [''])[0]
+def ascii_message(text, limit=MESSAGE_LIMIT, is_every_line=False):
+    """The first line of a message, or every line joined by ` / `, ASCII only, `|` as `/`, at
+    most `limit` characters (no limit for None); a test's temporary directory, which differs on
+    every run, reads as `<tmp>`."""
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip()] or ['']
+    first = ' / '.join(lines) if is_every_line else lines[0]
     first = TEMP_DIR.sub('<tmp>/', first)
     first = first.encode('ascii', 'replace').decode('ascii').replace('|', '/').strip()
-    return first if len(first) <= MESSAGE_LIMIT else first[:MESSAGE_LIMIT - 3] + '...'
+    return first if limit is None or len(first) <= limit else first[:limit - 3] + '...'
 
 
 def enclosing_method(path, line):
@@ -1156,9 +1180,27 @@ def build_item(group, diag, sites, tree, driver_file):
     return Item(group, decision, location, diag.message, row.site)
 
 
+def kit_segments(failure):
+    """A kit failure that lists several paths (the SQL kit runs every path, then reports each
+    failing one on a line opening with its context) as one failure per path; any other failure
+    as itself."""
+    cls = failure.classname.rsplit('.', 1)[-1]
+    message = failure.message or failure.text
+    starts = [m.start() for m in KIT_CONTEXT.finditer(message)]
+    if not cls.startswith('TypeConformance') or cls == 'TypeConformanceTypesTest' or len(starts) < 2:
+        return [failure]
+    ends = starts[1:] + [len(message)]
+    parts = [message[s:e].strip() for s, e in zip(starts, ends)]
+    return [Failure(failure.classname, failure.name, part, part) for part in parts]
+
+
 def failure_items(failure, sites, facts, tree=None):
-    """The worklist items one failed test gives: its refusals, else its kit or coverage failure.
-    A refusal, and a coverage failure mapped to a site, is located at the site's method."""
+    """The worklist items one failed test gives: its refusals, else its kit or coverage failure,
+    one per path for a kit failure that lists several. A refusal, and a coverage failure mapped
+    to a site, is located at the site's method."""
+    segments = kit_segments(failure)
+    if len(segments) > 1:
+        return [i for s in segments for i in failure_items(s, sites, facts, tree)]
     items = []
     text = failure.text if failure.message and failure.message in failure.text else failure.message + '\n' + failure.text
     declared = set(facts['kit']['refused_sites'])
@@ -1343,7 +1385,10 @@ def cmd_run(args, tree):
     elif items:
         notes.append('the kit and the coverage tests did not run, because the build lists items')
     else:
-        for report in kit(tree, out, not args.skip_native):
+        reports, is_whole_kit = kit(tree, out, not args.skip_native, facts['type']['sql_names'][0])
+        if not is_whole_kit:
+            notes.append(f'the kit ran for {name} alone; the whole kit runs once that pass is green')
+        for report in reports:
             for failure in parse_surefire(report):
                 items += failure_items(failure, sites, facts, tree)
     done = Path(args.manual_done).read_text(encoding='utf-8') if args.manual_done else None

@@ -380,6 +380,10 @@ class WorklistTest(unittest.TestCase):
         long = tp.ascii_message('x' * 300)
         self.assertEqual(200, len(long))
         self.assertTrue(long.endswith('...'))
+        # a manual entry keeps its whole text; a coverage failure keeps every line
+        self.assertEqual(300, len(tp.Item('manual', 'manual', 'here', 'x' * 300).line().split(' | ')[2]))
+        self.assertEqual('expected:<BYTE -> CHAR / SHORT -> CHAR>',
+                         tp.Item('coverage', 'implement-pair', 'here', 'expected:<BYTE -> CHAR\nSHORT -> CHAR>').line().split(' | ')[2])
 
     def test_render(self):
         items = tp.sort_items([
@@ -439,6 +443,16 @@ class WorklistTest(unittest.TestCase):
         failure = tp.Failure('io.questdb.test.cairo.types.TypeConformanceSqlTest', 'testQueries[UINT32]',
                              'type=UINT32 row=- path=other.nowhere mode=single-nojit: odd', '')
         self.assertEqual('unmapped', tp.failure_items(failure, fixture_sites(), self.facts)[0].site)
+
+    def test_kit_failure_listing_two_paths_gives_an_item_per_path(self):
+        # the SQL kit runs every path of a mode and reports the failing ones together
+        message = ('type=UINT32 row=- path=sql.cast mode=single-nojit: first\n'
+                   'type=UINT32 row=r2 path=sql.copy_bind mode=single-nojit: second\nmore of the second')
+        failure = tp.Failure('io.questdb.test.cairo.types.TypeConformanceSqlTest', 'testQueries[uint32]', message,
+                             'java.lang.AssertionError: ' + message + '\n\tat io.questdb.test.X.y(X.java:1)')
+        items = tp.failure_items(failure, fixture_sites(), self.facts)
+        self.assertEqual(['`kit:sql.cast@single-nojit#-`', '`kit:sql.copy_bind@single-nojit#r2`'], [i.location for i in items])
+        self.assertEqual('type=UINT32 row=r2 path=sql.copy_bind mode=single-nojit: second\nmore of the second', items[1].message)
 
     def test_failure_on_a_path_no_row_names_maps_to_its_layer(self):
         def item(path):
@@ -526,6 +540,34 @@ class KitStepTest(unittest.TestCase):
                 tp.kit(tree, Path(d) / 'out', **kwargs)
         cmd = calls[0]
         return cmd[cmd.index('-P') + 1].split(',')
+
+    def kit_calls(self, is_type_red):
+        """The Maven calls of a kit step for UINT32 whose first pass, the type alone, fails or not."""
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            tree = tp.Tree(d)
+
+            def run(cmd, log_path, cwd, env=None, timeout=None):
+                calls.append([str(c) for c in cmd])
+                reports = tree.path(tp.SUREFIRE_DIR)
+                reports.mkdir(parents=True, exist_ok=True)
+                case = '<failure message="m">m</failure>' if is_type_red and len(calls) == 1 else ''
+                (reports / 'TEST-Probe.xml').write_text(f'<testsuite><testcase classname="X" name="t">{case}</testcase></testsuite>', encoding='utf-8')
+                return 0, ''
+
+            with mock.patch.object(tp, 'run_logged', run):
+                _, is_whole_kit = tp.kit(tree, Path(d) / 'out', only='UINT32')
+        return calls, is_whole_kit
+
+    def test_kit_runs_the_type_alone_before_the_whole_kit(self):
+        only = '-Dquestdb.test.kit.types=UINT32'
+        calls, is_whole_kit = self.kit_calls(is_type_red=True)
+        self.assertEqual((1, False), (len(calls), is_whole_kit))
+        self.assertIn(only, calls[0])
+        calls, is_whole_kit = self.kit_calls(is_type_red=False)
+        self.assertEqual((2, True), (len(calls), is_whole_kit))
+        self.assertIn(only, calls[0])
+        self.assertNotIn(only, calls[1])
 
     def test_kit_loads_the_trees_rust_library(self):
         # the kit runs the type's Rust answers, as it runs the C++ library the CMake step builds

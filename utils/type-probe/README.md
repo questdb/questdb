@@ -820,7 +820,7 @@ per group, in this order: `build-java`, `build-rust`, `build-c`, `refusal`, `kit
 |---|---|
 | decision | `name-yourself` (name the type in a switch or a refusal group), `implement-pair` (write the code an admitted pair, opcode or function needs), `add-writer-arm` (an arm keyed by the type's wire kind, NULL policy or order: the item names the switch that chooses an opcode, and the arm goes where that opcode is read, in the per-row writer of the same class), `fill-driver-answer` (an answer of the type driver), `declare-or-admit` (a guarded site refused the type: declare it in `refused_sites` or add the type's arm), `manual` (an entry of the manual list) |
 | location | `` `path:line` `` from the repository root; `` `kit:<path>@<mode>#<value row>` `` for a kit failure, `` `kit:<test class>#<test>` `` for one that names no path; `` `<test class>#<test>` `` for a coverage failure that names no site; `README "Manual list", item <n>` |
-| message | the first line of the compiler's, the test's or the refusal's text, ASCII, at most 200 characters, `\|` written as `/` |
+| message | the first line of the compiler's, the test's or the refusal's text, at most 200 characters; a coverage failure's every line, joined by ` / `, at most 2,000 characters; a manual entry's whole text; ASCII, `\|` written as `/` |
 | site | the label of the site's row in `sites.tsv`, or `unmapped` when no row matches, which is a defect of the site map |
 
 A refusal maps to the site it names, and the item sits at the site's method.
@@ -845,6 +845,15 @@ item. Of several failures at one kit location (two later types failing the same 
 keeps the one of the type the run adds, so a rerun lists the same item whatever order the tests ran
 in; a test's temporary directory reads as `<tmp>`. The kit and the coverage tests run only when
 every build group is empty, since a build error hides the tests behind it.
+
+The kit runs in two passes. The first runs the kit for the new type alone, with the coverage tests,
+in about a minute; while it fails, the worklist lists its items and a note says the whole kit did
+not run. Once it passes, the second pass runs the whole kit, every type, about ten minutes, so the
+existing types are checked against the type's edits once. The SQL kit's query test
+(`TypeConformanceSqlTest.testQueries`) runs every query path of a mode and reports each failing one
+as an item of its own; the next mode runs once a mode passes. Every other kit test stops at its
+first failing path or mode. To run the kit by hand for some
+types only, pass `-Dquestdb.test.kit.types=<label>,...` to Maven.
 
 Exit codes:
 
