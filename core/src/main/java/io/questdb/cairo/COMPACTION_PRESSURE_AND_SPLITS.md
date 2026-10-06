@@ -66,7 +66,8 @@ all splits are squashed in the apply path the moment the next day appears.
 
 ## Change 3: a large folder is never rewritten whole when MOVE-TAIL pays
 
-Today MOVE-TAIL has its own gate (dead > split size and > 10% live, or > 1,000 pieces);
+Today MOVE-TAIL has its own gate (dead > split size and > `cairo.partition.compaction.move.tail.dead.rows.percent`, default
+10%, of live, or > 1,000 pieces);
 below it the sweep falls straight to REWRITE, which is how a 207M-row folder got copied.
 
 For any folder above `cairo.o3.partition.split.min.size`, whichever rule selected it, the

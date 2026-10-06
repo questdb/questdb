@@ -690,6 +690,8 @@ public interface CairoConfiguration {
 
     long getPartitionCompactionIoBudget();
 
+    int getPartitionCompactionMoveTailDeadRowsPercent();
+
     int getPartitionCompactionMoveTailMinGain();
 
     int getPartitionCompactionPieceThreshold();

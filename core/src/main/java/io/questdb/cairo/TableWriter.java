@@ -10022,7 +10022,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // this piece-count upper bound.
             final long liveRows = txWriter.getPartitionSize(index);
             return O3CompositeMergeStrategy.isMoveTailTriggered(liveRows + incomingRows,
-                    extent - liveRows, pieceCount + (isTailOwner ? 0 : 1), threshold);
+                    extent - liveRows, pieceCount + (isTailOwner ? 0 : 1), threshold,
+                    configuration.getPartitionCompactionMoveTailDeadRowsPercent());
         }
         return true;
     }
@@ -10566,7 +10567,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         O3PartitionJob.forecastCompositePlan(path.trimTo(pathSize), index, geometry,
                                 compactionForecastBounds, plan, sortedTimestampsAddr, o3Columns, this, dedupSink);
                         final int cut = O3CompositeMergeStrategy.moveTailCut(compactionForecastBounds, plan,
-                                Math.min(incomingLo, futureFloor), getPartitionO3SplitThreshold());
+                                Math.min(incomingLo, futureFloor), getPartitionO3SplitThreshold(),
+                                configuration.getPartitionCompactionMoveTailDeadRowsPercent());
                         if (cut > 0 && moveTailToFreshPartition(index, compactionForecastBounds, cut, false) == COMPACTION_MOVED_TAIL) {
                             if (isMakePlainEligible(index)) {
                                 makePartitionPlain(index);
@@ -18723,7 +18725,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     boolean wouldMoveTailSucceed(int partitionIndex, LongList bounds, O3CompositeMergeStrategy.Plan plan) {
         return PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, partitionIndex)
                 && !isCommitReplaceMode() && txWriter.getLagRowCount() == 0
-                && O3CompositeMergeStrategy.moveTailCut(bounds, plan, getMoveTailFutureFloor(), getPartitionO3SplitThreshold()) > 0;
+                && O3CompositeMergeStrategy.moveTailCut(bounds, plan, getMoveTailFutureFloor(), getPartitionO3SplitThreshold(),
+                configuration.getPartitionCompactionMoveTailDeadRowsPercent()) > 0;
     }
 
     @FunctionalInterface

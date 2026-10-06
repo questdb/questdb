@@ -351,9 +351,19 @@ public class O3CompositeMergeStrategy {
                 && incomingRows <= (prefixRows - 1) / 2 - tailRows;
     }
 
-    public static boolean isMoveTailTriggered(long liveRows, long deadRows, int pieceCount, long deadRowThreshold) {
-        // Integer division preserves strict > 10%, without multiplying either row count.
-        return liveRows > 0 && deadRows > deadRowThreshold && (deadRows > liveRows / 10 || pieceCount > 1_000);
+    /**
+     * MOVE-TAIL fires when dead rows exceed {@code deadRowThreshold} and either strictly exceed
+     * {@code deadRowsPercent}% of the live rows or the folder holds more than 1,000 pieces.
+     */
+    public static boolean isMoveTailTriggered(
+            long liveRows,
+            long deadRows,
+            int pieceCount,
+            long deadRowThreshold,
+            int deadRowsPercent
+    ) {
+        return liveRows > 0 && deadRows > deadRowThreshold
+                && (deadRows > percentOf(liveRows, deadRowsPercent) || pieceCount > 1_000);
     }
 
     /**
@@ -376,8 +386,9 @@ public class O3CompositeMergeStrategy {
     }
 
     /** The highest legal boundary before the incoming range, or zero if moving is not economical. */
-    public static int moveTailCut(LongList bounds, Plan plan, long futureFloor, long deadRowThreshold) {
-        if (!isMoveTailTriggered(plan.projectedLiveRows, plan.projectedDeadRows, plan.projectedPieceCount, deadRowThreshold)) {
+    public static int moveTailCut(LongList bounds, Plan plan, long futureFloor, long deadRowThreshold, int deadRowsPercent) {
+        if (!isMoveTailTriggered(plan.projectedLiveRows, plan.projectedDeadRows, plan.projectedPieceCount,
+                deadRowThreshold, deadRowsPercent)) {
             return 0;
         }
         final int pieceCount = bounds.size() / LONGS_PER_BOUND;
@@ -417,6 +428,24 @@ public class O3CompositeMergeStrategy {
      */
     private static long findLastBelow(long sortedTimestampsAddr, long lo, long hi, long value) {
         return lastAtOrBelow(sortedTimestampsAddr, lo, hi, value - 1);
+    }
+
+    /**
+     * {@code floor(rows * percent / 100)} for non-negative inputs, saturating at {@link Long#MAX_VALUE}
+     * instead of overflowing.
+     */
+    private static long percentOf(long rows, int percent) {
+        if (percent == 0) {
+            return 0;
+        }
+        // floor(rows * percent / 100) == (rows / 100) * percent + floor((rows % 100) * percent / 100)
+        final long hundreds = rows / 100;
+        if (hundreds > Long.MAX_VALUE / percent) {
+            return Long.MAX_VALUE;
+        }
+        final long whole = hundreds * percent;
+        final long fraction = (rows % 100) * percent / 100;
+        return whole > Long.MAX_VALUE - fraction ? Long.MAX_VALUE : whole + fraction;
     }
 
     /**

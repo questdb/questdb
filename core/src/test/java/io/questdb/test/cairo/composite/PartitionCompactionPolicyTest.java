@@ -154,7 +154,7 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
             cfg.hotCommits = 10;
             try (TestTxWriter tx = new TestTxWriter(cfg); TestGeometry geometry = new TestGeometry(tx)) {
                 geometry.pieceCount = 3;
-                Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(100, 9, 3, 50));
+                Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(100, 9, 3, 50, 10));
                 // 60 cold rows, 40 hot rows: beneficial, but below the old two-to-one economics guard.
                 Assert.assertEquals(1, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
                 Assert.assertEquals(0, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, 100));

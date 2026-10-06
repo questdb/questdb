@@ -92,14 +92,41 @@ public class O3CompositeMergeStrategyTest {
 
     @Test
     public void testMoveTailRequiresDeadSpaceFloorAndStrictFragmentation() {
-        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_000, 99));
-        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 101, 1, 100));
-        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 101, 1, 101));
-        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_001, 99));
-        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_001, 100));
-        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(0, 101, 1_001, 100));
-        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE / 10, 1, 0));
-        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE / 10 + 1, 1, 0));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_000, 99, 10));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 101, 1, 100, 10));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 101, 1, 101, 10));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_001, 99, 10));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_001, 100, 10));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(0, 101, 1_001, 100, 10));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE / 10, 1, 0, 10));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE / 10 + 1, 1, 0, 10));
+    }
+
+    @Test
+    public void testMoveTailDeadRowsPercentIsConfigurable() {
+        // 25% of 1,000 is 250: only strictly more dead rows trigger.
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 250, 1, 0, 25));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 251, 1, 0, 25));
+        // The floor still applies on top of the percentage.
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 251, 1, 251, 25));
+        // Fractional thresholds round down: 25% of 1,001 is 250.25, so 251 dead rows trigger.
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_001, 251, 1, 0, 25));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_003, 250, 1, 0, 25));
+        // 0% triggers on any dead space above the floor.
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 1, 1, 0, 0));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 1, 1, 1, 0));
+        // Above 100% demands more dead rows than live rows; the piece-count rule is unaffected.
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 2_000, 1, 0, 200));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 2_001, 1, 0, 200));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 2_000, 1_001, 0, 200));
+        // Saturates rather than overflowing for huge live counts and percentages.
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE, 1, 0, Integer.MAX_VALUE));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE, 1, 0, 100));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE, 1, 0, 99));
+        // 200% of Long.MAX_VALUE / 2 is Long.MAX_VALUE - 1, which still fits: it must not saturate early.
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE / 2, Long.MAX_VALUE - 1, 1, 0, 200));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE / 2, Long.MAX_VALUE, 1, 0, 200));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE / 2 + 1, Long.MAX_VALUE, 1, 0, 200));
     }
 
     @Test
@@ -131,12 +158,15 @@ public class O3CompositeMergeStrategyTest {
         O3CompositeMergeStrategy.forecast(bounds, plan, 1_000);
         Assert.assertEquals(910, plan.projectedLiveRows);
         Assert.assertEquals(200, plan.projectedDeadRows);
-        Assert.assertEquals(2, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 100));
-        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, 100, 100));
-        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 200));
+        Assert.assertEquals(2, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 100, 10));
+        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, 100, 100, 10));
+        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 200, 10));
+        // 200 dead rows exceed 21% of 910 live rows (191), but not 22% (200).
+        Assert.assertEquals(2, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 100, 21));
+        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 100, 22));
         // A tie moves the cut left; the remaining prefix cannot dominate the larger tail.
         bounds.setQuick(O3CompositeMergeStrategy.LONGS_PER_BOUND + 1, 200);
-        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 100));
+        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 100, 10));
     }
 
     @Test

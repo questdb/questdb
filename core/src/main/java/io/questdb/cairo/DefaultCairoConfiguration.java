@@ -919,6 +919,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionMoveTailDeadRowsPercent() {
+        return 10;
+    }
+
+    @Override
     public int getPartitionCompactionMoveTailMinGain() {
         return 2;
     }

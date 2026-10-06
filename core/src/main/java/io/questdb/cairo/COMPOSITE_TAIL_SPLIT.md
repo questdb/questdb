@@ -62,8 +62,9 @@ executing it:
 - `P_after`: projected nonempty pieces after normal plan coalescing.
 
 Trigger on `D_after > 0.10 * L_after OR P_after > 1000`, with `L_after > 0`.
-Exactly 10% or exactly 1,000 pieces does not trigger. The 1,000 limit is fixed, not
-scaled with the folder's row count. Use overflow-safe comparisons.
+Exactly 10% or exactly 1,000 pieces does not trigger. The 10% is
+`cairo.partition.compaction.move.tail.dead.rows.percent` (default 10); the 1,000 limit
+is fixed, not scaled with the folder's row count. Use overflow-safe comparisons.
 
 Reuse the accounting behind `wouldBreachCompactionThresholds`, but do not substitute
 these split limits into the general compaction policy. MERGE retires the old piece;

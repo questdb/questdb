@@ -905,6 +905,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionMoveTailDeadRowsPercent() {
+        return getDelegate().getPartitionCompactionMoveTailDeadRowsPercent();
+    }
+
+    @Override
     public int getPartitionCompactionMoveTailMinGain() {
         return getDelegate().getPartitionCompactionMoveTailMinGain();
     }

@@ -457,6 +457,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long partitionCompactionIdleTimeout;
     private final long partitionCompactionIoBudget;
     private final long partitionCompactionSquashIdleTimeout;
+    private final int partitionCompactionMoveTailDeadRowsPercent;
     private final int partitionCompactionMoveTailMinGain;
     private final int partitionCompactionPieceThreshold;
     private final int partitionCompactionPrefixMinPercent;
@@ -1954,6 +1955,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.partitionCompactionHotTime = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_TIME, 10 * Micros.SECOND_MICROS);
             // MOVE-TAIL reclaims the partition's dead rows and pays a copy of its tail, so this is the
             // dead rows it must win per row copied. 1 breaks even on bytes moved.
+            // A merge triggers MOVE-TAIL once its projected dead rows exceed this percentage of the
+            // projected live rows. 0 triggers on any dead space above cairo.o3.partition.split.min.size.
+            this.partitionCompactionMoveTailDeadRowsPercent = Math.max(0, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_DEAD_ROWS_PERCENT, 10));
             this.partitionCompactionMoveTailMinGain = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MOVE_TAIL_MIN_GAIN, 2));
             this.partitionCompactionAvgRowsPieceLim = Math.max(1, getLong(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 4096));
             this.partitionCompactionTimeBudgetMs = getMillis(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, 1000);
@@ -4967,6 +4971,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getPartitionCompactionIoBudget() {
             return partitionCompactionIoBudget;
+        }
+
+        @Override
+        public int getPartitionCompactionMoveTailDeadRowsPercent() {
+            return partitionCompactionMoveTailDeadRowsPercent;
         }
 
         @Override
