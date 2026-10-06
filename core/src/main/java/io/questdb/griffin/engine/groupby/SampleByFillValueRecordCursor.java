@@ -204,11 +204,13 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
                 return;
             }
             sampleLocalEpoch = localEpoch;
-            nextSampleLocalEpoch = localEpoch;
+            nextSampleLocalEpoch = getGridLocalEpoch();
             isMapBuildPending = false;
         }
 
-        final long next = timestampSampler.nextTimestamp(localEpoch);
+        final long next = timestampSampler.nextTimestamp(getGridLocalEpoch());
+        // the row that starts the bucket falls inside it, so the first iteration consumes it
+        assert getBaseRecordTimestamp() < next;
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {

@@ -1410,10 +1410,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "B\t" + getSecondsDivisor() + "\t60.0\t61.0\n" +
                     "C\t0\t40.0\t41.0\n" +
                     "C\t" + getSecondsDivisor() + "\t40.0\t41.0\n";
-            for (boolean parallel : new boolean[]{false, true}) {
-                sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
-                final String singlePlan = parallel ? "Async Horizon Join workers: 1 offsets: 2" : "Horizon Join offsets: 2";
-                final String multiPlan = parallel ? "Async Multi Horizon Join workers: 1 offsets: 2" : "Multi Horizon Join offsets: 2";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String singlePlan = isParallel ? "Async Horizon Join workers: 1 offsets: 2" : "Horizon Join offsets: 2";
+                final String multiPlan = isParallel ? "Async Multi Horizon Join workers: 1 offsets: 2" : "Multi Horizon Join offsets: 2";
 
                 assertQuery("""
                         SELECT t.sym, h.offset, avg(q.bid) a
@@ -1532,8 +1532,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     """);
 
             final String on = "ON (t.sym = p.sym AND t.region = p.region AND t.venue = p.venue AND t.k = p.k)";
-            for (boolean parallel : new boolean[]{false, true}) {
-                sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
                 // At offset 0 (1s): US -> 100.0, EU -> 105.0. At offset 1s (2s): US -> 110.0, EU -> 115.0.
                 assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, t.region, avg(p.price) " +
                         "FROM orders t HORIZON JOIN prices p " + on + " LIST (0, 1s) AS h " +
@@ -8022,16 +8022,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     // Asserts that the wrappers which drop the ORDER BY of a HORIZON JOIN query with a hidden ORDER BY key
     // still see the query's rows: count(), count() over UNION ALL, and a re-sort.
     private void assertHorizonOrderByHiddenKeyInSubQuery(String sql, int rowCount, String sortKeys, String expectedResorted) throws Exception {
-        assertQuery("SELECT count() FROM (" + sql + ")")
-                .noLeakCheck()
-                .noRandomAccess()
-                .expectSize()
-                .returns("count\n" + rowCount + "\n");
-        assertQuery("SELECT count() FROM ((" + sql + ") UNION ALL (" + sql + "))")
-                .noLeakCheck()
-                .noRandomAccess()
-                .expectSize()
-                .returns("count\n" + 2 * rowCount + "\n");
+        assertRowCountInWrappers(sql, rowCount);
         assertQuery("SELECT * FROM (" + sql + ") ORDER BY " + sortKeys)
                 .noLeakCheck()
                 .expectSize()

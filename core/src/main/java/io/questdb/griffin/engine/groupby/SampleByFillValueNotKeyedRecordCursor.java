@@ -120,7 +120,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
 
             return localEpoch < upperBound;
         }
-        if (setActiveA(expectedLocalEpoch)) {
+        if (setActiveA()) {
             return peeker.reset();
         }
 
@@ -157,12 +157,12 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         record.setActiveA();
     }
 
-    private boolean setActiveA(long expectedLocalEpoch) {
+    // peeker.reset() sets the start of the bucket after the gap and the bucket that the gap check expects
+    // next, see SimpleMapValuePeeker.reset()
+    private boolean setActiveA() {
         if (gapFill) {
             gapFill = false;
             record.setActiveA();
-            sampleLocalEpoch = expectedLocalEpoch;
-            nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
         return false;

@@ -61,6 +61,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected long topTzOffset;
     private boolean areTimestampsInitialized;
     private boolean isNotKeyedLoopInitialized;
+    // the amount that nextSamplePeriod() added to localEpoch to label the bucket, see getGridLocalEpoch()
+    private long localEpochShift;
     private long rowId;
     private long topLocalEpoch;
     private long topNextDst;
@@ -224,6 +226,17 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         return baseRecord.getTimestamp(timestampIndex) + tzOffset;
     }
 
+    // Returns the start of the current bucket on the sampler grid, in the local time of the current
+    // offset. It differs from localEpoch only after nextSamplePeriod() shifted localEpoch to label a
+    // bucket that starts before the DST transition just crossed. The end of the bucket, and the bucket
+    // that the gap check expects after it, derive from the grid start. Derived from the shifted start,
+    // they moved by the offset delta: after a fall-back, the bucket ended before rows that belong to it,
+    // and such a row rounded back to the same bucket without end (GitHub issue #7752); after a
+    // spring-forward, the bucket took in rows of the next one.
+    protected long getGridLocalEpoch() {
+        return localEpoch - localEpochShift;
+    }
+
     protected void initTimestamps() {
         if (areTimestampsInitialized) {
             return;
@@ -265,6 +278,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         } else {
             topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
         }
+        localEpochShift = 0;
         sampleLocalEpoch = nextSampleLocalEpoch = topLocalEpoch;
         areTimestampsInitialized = true;
     }
@@ -277,10 +291,23 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         // localEpoch as-is, we'd back-convert with the post-transition offset even though the
         // bucket start belongs to the pre-transition offset. Shift localEpoch by the delta
         // between the current offset and the one valid at the bucket boundary so the emitted
-        // UTC timestamp lands on the correct side of the transition.
+        // UTC timestamp lands on the correct side of the transition. The bucket end derives from the
+        // unshifted start, see getGridLocalEpoch().
+        localEpochShift = 0;
         if (rules != null && localEpoch - tzOffset < prevDst) {
             final long boundaryTzOffset = rules.getOffset(localEpoch - tzOffset);
-            localEpoch += (tzOffset - boundaryTzOffset);
+            localEpochShift = tzOffset - boundaryTzOffset;
+            // A spring-forward can skip the local start of the bucket. The shift then labels the bucket with
+            // that start read in the offset before the change, which falls inside the bucket only when the
+            // stride is longer than the change. Otherwise, the label lands at or after the end of the bucket,
+            // and so at or after the label of the next bucket, and the bucket takes the first instant that it
+            // covers, the change itself. The not-keyed FILL(NULL) and FILL(value) cursor also calls this method
+            // with the TO bound once the rows run out (baseRecord is null), to find where its end fill stops. That
+            // call labels no bucket and keeps the shifted bound.
+            if (baseRecord != null && localEpoch + localEpochShift >= timestampSampler.nextTimestamp(localEpoch)) {
+                localEpochShift = prevDst + tzOffset - localEpoch;
+            }
+            localEpoch += localEpochShift;
         }
         GroupByUtils.toTop(groupByFunctions);
     }
@@ -288,7 +315,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected boolean notKeyedLoop(MapValue mapValue) {
         if (!isNotKeyedLoopInitialized) {
             sampleLocalEpoch = localEpoch;
-            nextSampleLocalEpoch = localEpoch;
+            nextSampleLocalEpoch = getGridLocalEpoch();
             // looks like we need to populate key map
             // at the start of this loop 'lastTimestamp' will be set to timestamp
             // of first record in base cursor
@@ -296,7 +323,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             isNotKeyedLoopInitialized = true;
         }
 
-        long next = timestampSampler.nextTimestamp(localEpoch);
+        long next = timestampSampler.nextTimestamp(getGridLocalEpoch());
         long timestamp;
         while (baseCursor.hasNext()) {
             timestamp = getBaseRecordTimestamp();

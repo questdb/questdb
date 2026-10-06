@@ -4359,31 +4359,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             // only the sort over the distinct factory reports its size
             final boolean[] isSizeKnown = {false, false, true};
             for (int i = 0, n = queries.length; i < n; i++) {
-                final String sql = queries[i][0];
-                assertQuery(sql)
-                        .noLeakCheck()
-                        .expectSize(isSizeKnown[i])
-                        .returns(queries[i][1]);
-                assertQuery("SELECT * FROM (" + sql + ")")
-                        .noLeakCheck()
-                        .expectSize(isSizeKnown[i])
-                        .returns(queries[i][1]);
-                assertQuery("SELECT count() FROM (" + sql + ")")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("""
-                                count
-                                4
-                                """);
-                assertQuery("SELECT count() FROM ((" + sql + ") UNION ALL (" + sql + "))")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("""
-                                count
-                                8
-                                """);
+                assertOrderByHiddenKey(queries[i][0], queries[i][1], isSizeKnown[i]);
             }
 
             // a re-sort over the query drops its ORDER BY

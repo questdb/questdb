@@ -154,31 +154,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                     {"SELECT DISTINCT sym, row_number() OVER () rn FROM trades ORDER BY row_number() OVER () * 2", rowNumbers},
             };
             for (String[] query : queries) {
-                final String sql = query[0];
-                assertQuery(sql)
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns(query[1]);
-                assertQuery("SELECT * FROM (" + sql + ")")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns(query[1]);
-                assertQuery("SELECT count() FROM (" + sql + ")")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("""
-                                count
-                                4
-                                """);
-                assertQuery("SELECT count() FROM ((" + sql + ") UNION ALL (" + sql + "))")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("""
-                                count
-                                8
-                                """);
+                assertOrderByHiddenKey(query[0], query[1], true);
             }
 
             // a re-sort over the query drops its ORDER BY

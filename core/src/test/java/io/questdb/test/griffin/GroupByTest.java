@@ -4004,27 +4004,4 @@ public class GroupByTest extends AbstractCairoTest {
         final int position = Integer.parseInt(errorMessage.substring(1, close));
         assertQuery(query).fails(position, errorMessage.substring(close + 2));
     }
-
-    private void assertOrderByHiddenKey(String sql, String expected, boolean isSizeKnown) throws Exception {
-        assertQuery(sql)
-                .noLeakCheck()
-                .expectSize(isSizeKnown)
-                .returns(expected);
-        assertQuery("SELECT * FROM (" + sql + ")")
-                .noLeakCheck()
-                .expectSize(isSizeKnown)
-                .returns(expected);
-        // the groups still split by the hidden key under count(), also over UNION ALL
-        final long rowCount = expected.chars().filter(c -> c == '\n').count() - 1;
-        assertQuery("SELECT count() FROM (" + sql + ")")
-                .noLeakCheck()
-                .noRandomAccess()
-                .expectSize()
-                .returns("count\n" + rowCount + "\n");
-        assertQuery("SELECT count() FROM ((" + sql + ") UNION ALL (" + sql + "))")
-                .noLeakCheck()
-                .noRandomAccess()
-                .expectSize()
-                .returns("count\n" + 2 * rowCount + "\n");
-    }
 }
