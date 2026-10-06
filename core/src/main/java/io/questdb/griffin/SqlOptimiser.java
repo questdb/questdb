@@ -86,6 +86,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.IntSortedList;
@@ -235,6 +236,17 @@ public class SqlOptimiser implements Mutable {
     private final JoinModelReferenceCollector joinModelReferenceCollector = new JoinModelReferenceCollector();
     // priority -> join model index, the inverse of joinModelPriorities
     private final IntList joinModelsByPriority = new IntList();
+    // isJoinedAfter answers of the current reorderTables pass, keyed by from * n + to: 1 when "from" is
+    // joined after "to", 0 when it is not. Only a key move in swapJoinOrder0 changes the graph that
+    // isJoinedAfter walks, so a move clears the answers. applyModelOnOrderingConstraints adds no edge to
+    // that graph: it copies the edges of tempIntList and deferredInnerKeyEdges, which isJoinedAfter
+    // already reads, into the join contexts.
+    private final IntIntHashMap keyMoveAnswers = new IntIntHashMap();
+    // The ordering edges of tempIntList by child model, which reorderTables indexes before its loop:
+    // keyMoveEdgeHeads holds, by model index, the number of the last edge into the model, or -1, and
+    // keyMoveEdgeLinks, by edge number, the number of the previous edge into the same model, or -1.
+    private final IntList keyMoveEdgeHeads = new IntList();
+    private final IntList keyMoveEdgeLinks = new IntList();
     // Scratch state of isJoinedAfter: the tables still to visit and the tables already queued.
     private final IntList keyMoveStack = new IntList();
     private final IntHashSet keyMoveVisited = new IntHashSet();
@@ -6522,6 +6534,18 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Indexes the ordering edges of tempIntList by child model, see keyMoveEdgeHeads. pushKeyMoveParents
+    // then reads the edges into one model instead of scanning every edge of the level.
+    private void indexKeyMoveEdges(int modelCount) {
+        keyMoveEdgeHeads.setAll(modelCount, -1);
+        keyMoveEdgeLinks.clear();
+        for (int i = 2 * tempExprs.size(), edge = 0, n = tempIntList.size(); i < n; i += 2, edge++) {
+            final int childIndex = tempIntList.getQuick(i + 1);
+            keyMoveEdgeLinks.add(keyMoveEdgeHeads.getQuick(childIndex));
+            keyMoveEdgeHeads.setQuick(childIndex, edge);
+        }
+    }
+
     private void initialiseOperatorExpressions() {
         final OperatorRegistry registry = OperatorExpression.getRegistry();
         opGeq = registry.map.get(">=");
@@ -6810,18 +6834,27 @@ public class SqlOptimiser implements Mutable {
     // that "from" shares with "to" onto "to" makes "to" follow "from", so the two tables would wait for
     // each other and doReorderTables could not order the level.
     private boolean isJoinedAfter(IQueryModel parent, int from, int to) {
+        // reorderTables asks again for every CROSS join of the level, see keyMoveAnswers
+        final int key = from * parent.getJoinModels().size() + to;
+        final int answer = keyMoveAnswers.get(key);
+        if (answer != -1) {
+            return answer == 1;
+        }
         keyMoveVisited.clear();
         keyMoveStack.clear();
+        boolean isAfter = false;
         pushKeyMoveParents(parent, from, to);
         while (keyMoveStack.size() > 0) {
             final int index = keyMoveStack.getLast();
             if (index == to) {
-                return true;
+                isAfter = true;
+                break;
             }
             keyMoveStack.setPos(keyMoveStack.size() - 1);
             pushKeyMoveParents(parent, index, -1);
         }
-        return false;
+        keyMoveAnswers.put(key, isAfter ? 1 : 0);
+        return isAfter;
     }
 
     private boolean isLateralCountTemplateResolvable(
@@ -9436,9 +9469,12 @@ public class SqlOptimiser implements Mutable {
                 }
             }
         }
-        for (int i = 2 * tempExprs.size(), n = tempIntList.size(); i < n; i += 2) {
-            final int p = tempIntList.getQuick(i);
-            if (tempIntList.getQuick(i + 1) == index && keyMoveVisited.add(p)) {
+        // reorderTables indexed the edges of tempIntList, which does not change during its loop
+        assert keyMoveEdgeLinks.size() == tempIntList.size() / 2 - tempExprs.size();
+        final int edgeBase = 2 * tempExprs.size();
+        for (int edge = keyMoveEdgeHeads.getQuick(index); edge != -1; edge = keyMoveEdgeLinks.getQuick(edge)) {
+            final int p = tempIntList.getQuick(edgeBase + 2 * edge);
+            if (keyMoveVisited.add(p)) {
                 keyMoveStack.add(p);
             }
         }
@@ -9814,6 +9850,10 @@ public class SqlOptimiser implements Mutable {
         ObjList<IQueryModel> joinModels = model.getJoinModels();
         int n = joinModels.size();
 
+        indexKeyMoveEdges(n);
+        if (keyMoveAnswers.size() > 0) {
+            keyMoveAnswers.clear();
+        }
         tempCrosses.clear();
         // collect crosses
         for (int i = 0; i < n; i++) {
@@ -15287,6 +15327,10 @@ public class SqlOptimiser implements Mutable {
             }
             jc.slaveIndex = to;
             jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
+            // the moved keys, and the deferred edges that reverse below, change what isJoinedAfter walks
+            if (keyMoveAnswers.size() > 0) {
+                keyMoveAnswers.clear();
+            }
             if (target.getJoinType() == IQueryModel.JOIN_CROSS) {
                 target.setJoinType(IQueryModel.JOIN_INNER);
             }
