@@ -546,6 +546,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
+        frameMemory.decodedColumnIndexes = null;
         frameMemory.frameIndex = frameIndex;
         frameMemory.frameFormat = format;
         return frameMemory;
@@ -620,6 +621,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
+        // Late materialization: only the filter's columns are decoded until
+        // populateRemainingColumns(), so only they can be judged for column tops.
+        frameMemory.decodedColumnIndexes = format == PartitionFormat.PARQUET ? columnIndexes : null;
         frameMemory.frameIndex = frameIndex;
         frameMemory.frameFormat = format;
         return frameMemory;
@@ -1955,6 +1959,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private int columnOffset;
         private DirectLongList columnTops;
         private ParquetBuffers currentRowGroupBuffer;
+        // The columns a late-materialized Parquet decode covered (navigateTo(int, IntHashSet)),
+        // or null when every column was decoded. See hasColumnTops().
+        private IntHashSet decodedColumnIndexes;
         private byte frameFormat = -1;
         private int frameIndex = -1;
         private DirectLongList pageAddresses;
@@ -1971,6 +1978,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             auxPageSizes = null;
             columnTops = null;
             currentRowGroupBuffer = null;
+            decodedColumnIndexes = null;
         }
 
         @Override
@@ -2053,10 +2061,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         @Override
         public boolean hasColumnTops() {
+            final IntHashSet decoded = decodedColumnIndexes;
+            if (decoded != null) {
+                // A late-materialized Parquet frame: the columns outside the filter's set are
+                // not decoded yet, and their zero addresses are not column tops. The callers ask
+                // before running a compiled filter, which reads the filter's columns only, so
+                // judging every column here would send every such frame to the Java filter.
+                for (int j = 0, n = decoded.size(); j < n; j++) {
+                    if (isColumnTop(decoded.get(j))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
             for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
-                // VARCHAR column that contains short strings will have zero data vector,
-                // so for such columns we also need to check that the aux (index) vector is zero.
-                if (pageAddresses.get(columnOffset + i) == 0 && auxPageAddresses.get(columnOffset + i) == 0) {
+                if (isColumnTop(i)) {
                     return true;
                 }
             }
@@ -2066,6 +2085,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public boolean hasColumnTypeCasts() {
             return frameFormat == PartitionFormat.PARQUET && hasTypeCasts;
+        }
+
+        private boolean isColumnTop(int columnIndex) {
+            // VARCHAR column that contains short strings will have zero data vector,
+            // so for such columns we also need to check that the aux (index) vector is zero.
+            return pageAddresses.get(columnOffset + columnIndex) == 0 && auxPageAddresses.get(columnOffset + columnIndex) == 0;
         }
 
         @Override
