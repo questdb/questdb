@@ -726,12 +726,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             return;
         }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        // An epoch owed after a change no WAL replay can redo is taken whatever the cadence.
+        final boolean epochOwed = tracker.isDurableEpochOwed();
         final long intervalMs = config.getAdaptiveEpochIntervalMs();
         // A negative interval disables adaptive epochs entirely (operator opt-out / test isolation).
-        if (intervalMs < 0) {
+        if (intervalMs < 0 && !epochOwed) {
             return;
         }
-        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
         // Feed the backlog counter for THIS batch BEFORE the gate, so the just-applied rows count toward it.
         tracker.addRowsSinceEpoch(rowsApplied);
         final long nowMs = microClock.getTicks() / 1000L;
@@ -745,7 +747,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // clock catches up; treat it as an elapsed interval (safe early flush) so the replay bound holds.
         final boolean timeElapsed = lastEpochTs == 0 || nowMs < lastEpochTs || (nowMs - lastEpochTs) >= intervalMs;
         final boolean backlogHit = maxRows > 0 && tracker.getRowsSinceEpoch() >= maxRows;
-        if (!timeElapsed && !backlogHit) {
+        if (!timeElapsed && !backlogHit && !epochOwed) {
             return;
         }
         try {

@@ -69,6 +69,7 @@ import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
@@ -379,6 +380,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private Path dirFsyncPath;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
+    // An enrolled adaptive WAL table, on the same terms as enrolment: recovery rewinds it to its last durable
+    // epoch, so a change no WAL replay can redo must be followed by one. Set once the constructor has settled
+    // the commit mode; the table's WAL flag changes only across a restart.
+    private boolean enrolledAdaptive;
     // Mirrors the hasParquetPartitions flag last published to the metadata cache, so
     // commit00() only takes the global metadata-cache write lock when the flag flips.
     private boolean hasNotifiedParquetPartitions;
@@ -566,8 +571,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // WAL behind it. The adaptive lifecycle belongs to the real table these rows are merged into,
             // not to the staging copy: attempting to enrol one fails with "could not publish adaptive
             // enrollment baseline" and aborts the whole parallel import.
+            // A writer holding a non-WAL token for a WAL table does not enrol it either: COPY into a new table
+            // holds one until the next restart, and every write through it bypasses the WAL, so a rewind to an
+            // anchor would lose those writes. The table enrols at the first open with its WAL token.
             final boolean privateRootWriter = !Chars.equals(root, configuration.getDbRoot());
             this.adaptiveEnrollmentPending = !privateRootWriter
+                    && tableToken.isWal()
                     && metadata.isWalEnabled()
                     && resolvedCommitMode == CommitMode.ADAPTIVE
                     && metadata.getEnrolledCommitMode() != CommitMode.ADAPTIVE;
@@ -724,6 +733,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else if (adaptiveExitPending) {
                 reconcileAdaptiveExit(effectiveCommitMode);
             }
+            enrolledAdaptive = !privateRootWriter
+                    && tableToken.isWal()
+                    && metadata.isWalEnabled()
+                    && effectiveCommitMode == CommitMode.ADAPTIVE;
 
             // Replay any posting seal-purge intents a prior close spilled to a
             // table-local file because it could not reach the purge queue or the
@@ -1076,20 +1089,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
-        final long rowsAffected = alterOp.apply(this, contextAllowsAnyStructureChanges);
-        // On a WAL table this call bypasses the WAL (a forced ALTER), so no WAL replay can redo the change.
-        if (tableToken.isWal()
-                && getEffectiveCommitMode() == CommitMode.ADAPTIVE
-                && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() != getTxn()) {
-            advanceDurableEpochBestEffort("forced alter");
-        }
-        return rowsAffected;
+        return applyOutsideWal(alterOp, contextAllowsAnyStructureChanges);
     }
 
     @Override
     public long apply(UpdateOperation operation) {
         operation.authorize();
         return operation.apply(this, true);
+    }
+
+    /**
+     * Applies a command directly to this writer. On a WAL table this bypasses the WAL (a forced ALTER, a queued
+     * command), so no WAL replay can redo the change, and an adaptive table takes a durable epoch after it,
+     * unless one already names the current txn. Every direct path ends here: the dispatcher, a command run
+     * once the writer frees up, and the writer's command queue.
+     */
+    public long applyOutsideWal(AsyncWriterCommand command, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        try {
+            return command.apply(this, contextAllowsAnyStructureChanges);
+        } finally {
+            // Also after a failure: a list command may have changed some partitions before it failed.
+            if (enrolledAdaptive
+                    && !distressed
+                    && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() != getTxn()) {
+                advanceDurableEpochBestEffort("direct change");
+            }
+        }
     }
 
     @Override
@@ -1330,10 +1355,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rollback();
             throw e;
         }
-        // The attach consumed the .attachable directory, so a WAL replay of it would find nothing to attach.
-        if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
-            advanceDurableEpochBestEffort("attach partition");
-        }
         return AttachDetachStatus.OK;
     }
 
@@ -1496,13 +1517,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // next boot) and moves the epoch pin, so the purges below can reclaim the superseded column
             // files and parquet dirs inline instead of leaving them to the async purge jobs until the next
             // cadence epoch. Best-effort; WAL-only (the durable epoch is a WAL-apply mechanism).
-            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
-                try {
-                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (CairoException | CairoError e) {
-                    handleBestEffortDurableEpochFailure(e, "column type change");
-                }
-            }
+            advanceDurableEpochAfter("column type change");
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", error=").$(th).I$();
@@ -1941,13 +1956,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Txn() defer the old-dir purge below to the async O3PartitionPurgeJob, leaking the superseded
             // partition dir until the next cadence epoch. Best-effort: on failure the convert stays durable
             // (WAL) and the purge falls back to async. WAL-only: the durable epoch is a WAL-apply mechanism.
-            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
-                try {
-                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (CairoException | CairoError e) {
-                    handleBestEffortDurableEpochFailure(e, "partition convert");
-                }
-            }
+            advanceDurableEpochAfter("partition convert");
 
             // remove old partition dir
             safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
@@ -2109,13 +2118,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Txn() defer the old-dir purge below to the async O3PartitionPurgeJob, leaking the superseded
             // partition dir until the next cadence epoch. Best-effort: on failure the convert stays durable
             // (WAL) and the purge falls back to async. WAL-only: the durable epoch is a WAL-apply mechanism.
-            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
-                try {
-                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (CairoException | CairoError e) {
-                    handleBestEffortDurableEpochFailure(e, "partition convert");
-                }
-            }
+            advanceDurableEpochAfter("partition convert");
 
             // remove old partition dir
             safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
@@ -2318,13 +2321,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // pin moves past this txn; otherwise the stale pre-detach pin defers the in-table partition-dir
         // purge below to the async O3PartitionPurgeJob, leaking the detached base dir until the next
         // cadence epoch. Best-effort; WAL-only (the durable epoch is a WAL-apply mechanism).
-        if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
-            try {
-                advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-            } catch (CairoException | CairoError e) {
-                handleBestEffortDurableEpochFailure(e, "detach partition");
-            }
-        }
+        advanceDurableEpochAfter("detach partition");
         safeDeletePartitionDir(timestamp, partitionNameTxn);
         return AttachDetachStatus.OK;
     }
@@ -2927,6 +2924,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isDistressed() {
         return distressed;
+    }
+
+    public boolean isEnrolledAdaptive() {
+        return enrolledAdaptive;
     }
 
     public boolean isOpen() {
@@ -3909,7 +3910,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void releaseEpochPin() {
-        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
         final long pinnedTxn = tracker.getPinnedEpochTxn();
         if (pinnedTxn >= 0) {
             txnScoreboard.releaseTxn(
@@ -4316,13 +4317,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Under adaptive, advance the durable epoch so the native<->parquet switch is the recovery
             // anchor and the epoch pin moves past this txn; otherwise the stale pin defers the old-dir
             // purge below to the async O3PartitionPurgeJob. Best-effort; WAL-only.
-            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
-                try {
-                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (CairoException | CairoError ex) {
-                    handleBestEffortDurableEpochFailure(ex, "native<->parquet switch");
-                }
-            }
+            advanceDurableEpochAfter("native<->parquet switch");
 
             // remove old partition dir
             safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
@@ -6271,7 +6266,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // can reclaim the old value file on its next pass.
         boolean reseal = postingResealPurgePublished;
         postingResealPurgePublished = false;
-        if (reseal && tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+        if (reseal && enrolledAdaptive) {
             try {
                 advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
             } catch (CairoException | CairoError e) {
@@ -7690,11 +7685,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (fullyConstructed
                 && !distressed
                 && configuration.isAdaptiveEpochFlushOnClose()
-                && tableToken.isWal()
-                && getEffectiveCommitMode() == CommitMode.ADAPTIVE
+                && enrolledAdaptive
                 && configuration.getAdaptiveEpochIntervalMs() >= 0) {
             try {
-                if (getSeqTxn() > engine.getTableSequencerAPI().getTxnTracker(tableToken).getDurableEpochSeqTxn()) {
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                if (getSeqTxn() > tracker.getDurableEpochSeqTxn() || tracker.isDurableEpochOwed()) {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
             } catch (Throwable e) {
@@ -9042,7 +9037,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!tableToken.isWal()) {
             return false;
         }
-        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
         return tracker != null && !tracker.isRangeAvailableToEpoch(fromTxn, toTxn);
     }
 
@@ -10843,7 +10838,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // assert is a redundant consumer-side check that the invariant still holds.
             assert !tableToken.isWal() || !asyncWriterCommand.isStructural()
                     : "structural command must not reach a WAL table's async command queue";
-            affectedRowsCount = asyncWriterCommand.apply(this, contextAllowsAnyStructureChanges);
+            affectedRowsCount = applyOutsideWal(asyncWriterCommand, contextAllowsAnyStructureChanges);
         } catch (TableReferenceOutOfDateException ex) {
             LOG.info()
                     .$("cannot complete async cmd, reader is out of date [type=").$(cmdType)
@@ -16188,6 +16183,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Takes a durable epoch after a change no WAL replay can redo: an attach, which consumes its .attachable
+     * directory, or a change made outside the WAL. Recovery rewinds only an enrolled adaptive table to its last
+     * epoch, so on any other table this does nothing.
+     */
+    @Override
+    public void advanceDurableEpochAfter(CharSequence operation) {
+        if (enrolledAdaptive) {
+            advanceDurableEpochBestEffort(operation);
+        }
+    }
+
+    /**
      * Number of LIVE symbol columns in the writer's metadata. Dropped columns carry a negated type and are
      * excluded, matching how configureSymbolTable() decides which columns get a symbol map writer.
      */
@@ -16220,13 +16227,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return denseSymbolMapWriters.size() == countLiveSymbolColumns();
     }
 
-    private void advanceDurableEpoch(long nowMs, boolean forceBaseline) {
+    private boolean advanceDurableEpoch(long nowMs, boolean forceBaseline) {
         // Demote-in-window re-check: bail before writing anything if local durability was disabled since
         // the caller's gate (an Enterprise replica demote). Baseline enrollment is exempt: publishing the
         // first trustworthy anchor must complete before current-format adaptive metadata can be exposed.
         if (!forceBaseline && !engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             LOG.info().$("adaptive durable epoch skipped: local durability disabled [table=").$(tableToken).I$();
-            return;
+            return false;
         }
 
         // An epoch is only a usable recovery cut if its _meta.epoch and _txn.epoch payloads describe the
@@ -16253,7 +16260,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("adaptive durable epoch skipped: structural change in flight [table=").$(tableToken)
                     .$(", denseSymbolWriters=").$(denseSymbolMapWriters.size())
                     .$(", metaSymbolColumns=").$(countLiveSymbolColumns()).I$();
-            return;
+            return false;
         }
 
         // Select the INACTIVE epoch-copy generation before writing any payload. A failed attempt can damage
@@ -16277,7 +16284,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long epochSeqTxn = getSeqTxn();
         fsyncMaterializedState(epochGeneration);
 
-        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
         if (epochSeqTxn > 0) {
             // An epoch must never post-date the durable sequencer. This matters on macOS/Windows, where the
             // materialized-state fallback fsyncs table files individually rather than issuing Linux syncfs:
@@ -16319,7 +16326,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Do NOT release the prior pin; leave the prior marker/frontier intact and retry later.
             LOG.error().$("epoch pin slot busy, skipping epoch publish [table=").$(tableToken)
                     .$(", epochTxn=").$(epochTxn).$(", slotA=").$(newSlotA).I$();
-            return;
+            return false;
         }
 
         // Step 3: write + fsync the _snapshot marker (the hard crash boundary) LAST. If marker publication
@@ -16342,6 +16349,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         tracker.setDurableEpochSeqTxn(epochSeqTxn);
         engine.getMetrics().walMetrics().incrementEpochAdvances();
         tracker.setLastEpochTs(nowMs);
+        tracker.setDurableEpochOwed(false);
         // Restart the backlog count now the epoch is published (success path only).
         tracker.resetRowsSinceEpoch();
         // Success-path-only: everything the write set named is now durable, so the next epoch owes only
@@ -16354,15 +16362,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("adaptive durable epoch [table=").$(tableToken)
                 .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();
+        return true;
     }
 
-    // Recovery rewinds an adaptive table to its last durable epoch and replays the WAL after it. A change the
-    // replay cannot redo must therefore be followed by an epoch. Best effort: on failure the change stays.
+    // Best effort: on failure the change stays. Until an epoch covers it, a crash rewinds below it, so a failed
+    // or skipped epoch is logged as critical and owed: the next apply batch or a clean close takes one
+    // regardless of the cadence. A replica keeps no epoch, so its skip is neither.
     private void advanceDurableEpochBestEffort(CharSequence operation) {
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
         try {
-            advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+            if (advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L, false)
+                    || !engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+                return;
+            }
+            tracker.setDurableEpochOwed(true);
+            LOG.critical().$("durable epoch skipped after ").$(operation)
+                    .$(", a crash before the next one undoes it [table=").$(tableToken).I$();
         } catch (CairoException | CairoError e) {
-            handleBestEffortDurableEpochFailure(e, operation);
+            tracker.setDurableEpochOwed(true);
+            LOG.critical().$("could not advance durable epoch after ").$(operation)
+                    .$(", a crash before the next one undoes it [table=").$(tableToken).$(", e=").$((Throwable) e).I$();
+            if (CairoException.isDataSyncFailure(e)) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
+            }
         }
     }
 
