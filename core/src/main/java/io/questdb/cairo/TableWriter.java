@@ -5625,6 +5625,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void checkIndexCreation(CharSequence columnName) {
+        // Accepted interim trade-off until cold/Delta index creation is supported:
+        // keep ADD INDEX and indexed ADD COLUMN behind the same guard, although a new
+        // column needs no historical index build (existing partitions have a column top).
+        //
+        // WalWriter validates only the submitting instance's applied state. A later cold
+        // switch, different replica storage states, or a rolling upgrade can therefore
+        // make indexed ADD COLUMN suspend WAL apply, even with Delta disabled and no
+        // retention override. RESUME WAL fails while this guard holds; skipping the ALTER
+        // with RESUME WAL FROM TXN leaves the schema behind and can break later transactions.
+        // We accept these suspension and recovery failures until the index-support work.
+        // That work must cover switch races, different primary/replica storage states,
+        // rolling upgrades, matching schemas and continued WAL apply for both statements.
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             if (txWriter.isPartitionDeltaActive(i) || txWriter.isPartitionRemotelyServed(i)) {
                 throw CairoException.invalidMetadataRecoverable(
