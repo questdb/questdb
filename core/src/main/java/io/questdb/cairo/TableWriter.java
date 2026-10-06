@@ -7537,7 +7537,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // First publish entries already safe for the current committed txn.
         // Only finite future entries must cross an indexer reopen in the
         // TableWriter-owned list below.
-        indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
+        final boolean published = indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
 
         IndexWriter writer = indexer.getWriter();
         // Same lock the parquet O3-worker path takes; keeps every deferredPostingSealPurges
@@ -7552,9 +7552,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     currentTableTxn
             );
         }
-        // Native reseal twin of the parquet path: flag the superseded-.pv purge so
-        // the ADAPTIVE commit path advances the durable epoch past it.
-        postingResealPurgePublished = true;
+        // Native reseal twin of the parquet path: flag a superseded-.pv purge published
+        // here so the ADAPTIVE commit path advances the durable epoch past it. Drained
+        // entries are flagged when publishDeferredPostingSealPurges0 publishes them.
+        if (published) {
+            postingResealPurgePublished = true;
+        }
     }
 
     private void discardAbandonedDeferredPostingSealPurges(long currentTableTxn) {
@@ -17276,7 +17279,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // deferredPostingSealPurges list and task pool under parquetSealPurgeLock -- the
     // same lock every writer-side list/pool access now also takes.
     void deferParquetPostingSealPurges(IndexWriter writer, long currentTableTxn) {
-        writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
+        final boolean published = writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
         synchronized (parquetSealPurgeLock) {
             writer.drainPendingFuturePurges(
                     deferredPostingSealPurges,
@@ -17287,11 +17290,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     currentTableTxn
             );
         }
-        // A parquet reseal superseded a .pv; its scoreboard-gated purge needs the
-        // durable epoch advanced past this commit under ADAPTIVE (see the check in
-        // commitTxWriterAndPublishPendingPostingSealPurges). Written on an O3 worker,
-        // read post-join -- volatile carries the visibility.
-        postingResealPurgePublished = true;
+        // A purge published here needs the durable epoch advanced past this commit
+        // under ADAPTIVE (see commitTxWriterAndPublishPendingPostingSealPurges); drained
+        // entries are flagged when publishDeferredPostingSealPurges0 publishes them.
+        // Written on an O3 worker, read post-join -- volatile carries the visibility.
+        if (published) {
+            postingResealPurgePublished = true;
+        }
     }
 
     long getColumnTop(int columnIndex) {
