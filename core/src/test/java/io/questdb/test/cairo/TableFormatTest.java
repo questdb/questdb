@@ -179,6 +179,11 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBlockApplyAfterForceDropOnlyPartitionIntoEarlierPartition() throws Exception {
+        assertBlockApplyIntoEarlierPartitionAfterEmptying("ALTER TABLE tango FORCE DROP PARTITION LIST '2024-01-05'");
+    }
+
+    @Test
     public void testBlockApplyAfterTruncateIntoEarlierPartition() throws Exception {
         assertBlockApplyIntoEarlierPartitionAfterEmptying("TRUNCATE TABLE tango");
     }
@@ -346,6 +351,49 @@ public class TableFormatTest extends AbstractCairoTest {
                             "2024-01-02\tfalse\n" +
                             "2024-01-03\tfalse\n" +
                             "2024-01-04\ttrue\n");
+        });
+    }
+
+    @Test
+    public void testForceDropLastPartitionThenInsertIntoParquetLastPartition() throws Exception {
+        // FORCE DROP of the last partition must move the writer's append horizon
+        // (partitionTimestampHi) to the new last partition even though that one is parquet and
+        // the writer does not open it. A horizon left on the dropped 2024-01-05 partition tripped
+        // processWalCommit's partition-timestamp consistency assert on the next insert and
+        // suspended the table. With assertions off, the row it committed was missing from the
+        // partition row count instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("""
+                    INSERT INTO tango VALUES
+                    ('2024-01-04T00:00:00.000000Z', 1),
+                    ('2024-01-05T00:00:00.000000Z', 2)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE tango FORCE DROP PARTITION LIST '2024-01-05'");
+
+            execute("INSERT INTO tango VALUES ('2024-01-04T01:00:00.000000Z', 3)");
+            drainWalQueue();
+
+            assertFalse("tango is suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("tango")));
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2024-01-04\t2\ttrue
+                            """);
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tn
+                            2024-01-04T00:00:00.000000Z\t1
+                            2024-01-04T01:00:00.000000Z\t3
+                            """);
         });
     }
 

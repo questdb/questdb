@@ -2402,7 +2402,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
                 if (activePartitionDropped) {
-                    openLastPartition();
+                    if (isLastPartitionParquet()) {
+                        // The writer does not open a parquet partition, so openLastPartition() would
+                        // leave the append horizon on the dropped partition. Move it to the new last
+                        // partition, as dropPartitionByExactTimestamp() does. Left stale, it fails
+                        // processWalCommit's partition-timestamp consistency assert on the next commit.
+                        partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(maxTimestamp);
+                    } else {
+                        openLastPartition();
+                    }
                 }
                 txWriter.bumpTruncateVersion();
 
@@ -2412,6 +2420,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 // all partitions are deleted, effectively the same as truncating the table
                 rowAction = ROW_ACTION_OPEN_PARTITION;
+                // No partition is left, the table is empty: see removeAllPartitions()
+                partitionTimestampHi = Long.MIN_VALUE;
+                lastPartitionTimestamp = Long.MIN_VALUE;
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
                 freeColumns(false);
