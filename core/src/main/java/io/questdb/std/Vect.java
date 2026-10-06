@@ -429,6 +429,10 @@ public final class Vect {
 
     public static native void sortEncodedVarEntries(long addr, long count, long heapAddr, long parallelThreshold);
 
+    /**
+     * Sorts count (key, index) pairs of longs by the key compared as unsigned. Arrays of fewer than 600 pairs
+     * order equal keys by the index compared as unsigned, larger arrays keep equal keys in their input order.
+     */
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
     /**

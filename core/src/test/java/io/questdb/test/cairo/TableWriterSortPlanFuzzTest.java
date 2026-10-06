@@ -91,6 +91,27 @@ public class TableWriterSortPlanFuzzTest {
     }
 
     @Test
+    public void testAllRunsBelowCopyRowsAreNotPlanned() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // 4 writers commit 599 transactions of 32 rows of the same timestamp. There are not enough
+            // transactions to coalesce them, no run reaches the copy threshold of 64 rows, so the plan is
+            // rejected before the runs are sorted.
+            Block block = new Block();
+            for (int t = 0; t < 599; t++) {
+                block.addSortedTxn(t % 4, 1_700_000_000_000_000L, 32, 0);
+            }
+            assertRejectedBeforeSort(block.assertPlanMatchesRadix());
+
+            // 63-row transactions do not overlap, but each one is too short to copy
+            block = new Block();
+            for (int t = 0; t < 100; t++) {
+                block.addSortedTxn(t % 4, 1_000_000 + t * 63L, 63, 1);
+            }
+            assertRejectedBeforeSort(block.assertPlanMatchesRadix());
+        });
+    }
+
+    @Test
     public void testCoalescingStopsAtSegmentEnd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // 9 transactions of 25 rows are short enough to coalesce the transactions of a segment into runs.
@@ -113,6 +134,78 @@ public class TableWriterSortPlanFuzzTest {
             // the plan copies the run that coalesces 3 transactions of segment 2 and sorts segments 0 and 1
             Assert.assertEquals(75, result.copyRows);
             Assert.assertEquals(2, result.itemCount);
+        });
+    }
+
+    @Test
+    public void testCopyBenefitThreshold() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // the plan must copy at least a quarter of the rows, rows / 4 rounds down
+            for (int unorderedRows : new int[]{192, 195}) {
+                Block block = new Block();
+                block.addSortedTxn(0, 0, 64, 1);
+                block.addTxn(1, descending(1_000, unorderedRows));
+                PlanResult result = block.assertPlanMatchesRadix();
+                Assert.assertTrue("unordered rows " + unorderedRows, result.planned);
+                Assert.assertEquals(64, result.copyRows);
+                Assert.assertEquals(2, result.itemCount);
+            }
+
+            // 64 rows of 260 or 261 cannot reach 65 copied rows
+            Block block;
+            for (int unorderedRows : new int[]{196, 197}) {
+                block = new Block();
+                block.addSortedTxn(0, 0, 64, 1);
+                block.addTxn(1, descending(1_000, unorderedRows));
+                assertRejectedBeforeSort(block.assertPlanMatchesRadix());
+            }
+
+            // 63 rows are too few to copy
+            block = new Block();
+            block.addSortedTxn(0, 0, 63, 1);
+            block.addTxn(1, descending(1_000, 100));
+            assertRejectedBeforeSort(block.assertPlanMatchesRadix());
+
+            // both runs could be copied, but they overlap, the plan sorts all the rows and is rejected after
+            // the runs are sorted
+            block = new Block();
+            block.addSortedTxn(0, 0, 64, 1);
+            block.addSortedTxn(1, 32, 64, 1);
+            PlanResult result = block.assertPlanMatchesRadix();
+            Assert.assertFalse(result.planned);
+            Assert.assertEquals(0, result.copyRows);
+            Assert.assertEquals(1, result.itemCount);
+        });
+    }
+
+    @Test
+    public void testEmptyAndUnorderedTxns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // unordered transactions cannot be copied, even when they do not overlap
+            Block block = new Block();
+            for (int t = 0; t < 5; t++) {
+                block.addTxn(t % 2, descending(1_000_000 + t * 1_000L, 100));
+            }
+            assertRejectedBeforeSort(block.assertPlanMatchesRadix());
+
+            // empty transactions do not stop the plan from copying the others
+            block = new Block();
+            block.addTxn(0, new long[0]);
+            block.addSortedTxn(0, 1_000, 100, 1);
+            block.addSortedTxn(1, 2_000, 100, 1);
+            block.addTxn(0, new long[0]);
+            block.addTxn(1, new long[0]);
+            PlanResult result = block.assertPlanMatchesRadix();
+            Assert.assertTrue(result.planned);
+            Assert.assertEquals(200, result.copyRows);
+
+            // empty and unordered transactions only
+            block = new Block();
+            block.addTxn(0, new long[0]);
+            block.addTxn(1, descending(1_000, 100));
+            block.addTxn(1, new long[0]);
+            block.addTxn(0, descending(5_000, 100));
+            assertRejectedBeforeSort(block.assertPlanMatchesRadix());
         });
     }
 
@@ -156,18 +249,22 @@ public class TableWriterSortPlanFuzzTest {
             int planned = 0;
             int compared = 0;
             int copied = 0;
+            int rejectedBeforeSort = 0;
             for (int i = 0; i < 300; i++) {
                 Block block = new Block();
                 block.generate(rnd);
                 PlanResult result = block.assertPlanMatchesRadix();
                 planned += result.planned ? 1 : 0;
-                compared += result.itemCount > 0 ? 1 : 0;
+                compared += result.fullItemCount > 0 ? 1 : 0;
                 copied += result.copyRows > 0 ? 1 : 0;
+                rejectedBeforeSort += result.isRejectedBeforeSort ? 1 : 0;
             }
-            LOG.info().$("fuzz coverage [planned=").$(planned).$(", compared=").$(compared).$(", copied=").$(copied).I$();
+            LOG.info().$("fuzz coverage [planned=").$(planned).$(", compared=").$(compared).$(", copied=").$(copied)
+                    .$(", rejectedBeforeSort=").$(rejectedBeforeSort).I$();
             // the generator must keep exercising the plan
             Assert.assertTrue("compared " + compared, compared > 50);
             Assert.assertTrue("planned " + planned, planned > 20);
+            Assert.assertTrue("rejected before sort " + rejectedBeforeSort, rejectedBeforeSort > 0);
         });
     }
 
@@ -186,6 +283,35 @@ public class TableWriterSortPlanFuzzTest {
             Assert.assertTrue(result.planned);
             Assert.assertEquals(block.totalRows - 1000 - 100, result.copyRows);
             Assert.assertEquals(3, result.itemCount);
+        });
+    }
+
+    @Test
+    public void testMixedCopyableAndShortRuns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // 8 copyable transactions followed by 8 short ones, all sorted and not overlapping
+            Block block = new Block();
+            long ts = 1_000_000;
+            for (int t = 0; t < 8; t++, ts += 64) {
+                block.addSortedTxn(t % 3, ts, 64, 1);
+            }
+            for (int t = 0; t < 8; t++, ts += 32) {
+                block.addSortedTxn(t % 3, ts, 32, 1);
+            }
+            PlanResult result = block.assertPlanMatchesRadix();
+            Assert.assertTrue(result.planned);
+            Assert.assertEquals(8 * 64, result.copyRows);
+            Assert.assertEquals(2, result.itemCount);
+
+            // a single copyable transaction among short ones, 64 rows of 352 are not worth copying
+            block = new Block();
+            ts = 1_000_000;
+            block.addSortedTxn(0, ts, 64, 1);
+            ts += 64;
+            for (int t = 0; t < 9; t++, ts += 32) {
+                block.addSortedTxn(t % 3, ts, 32, 1);
+            }
+            assertRejectedBeforeSort(block.assertPlanMatchesRadix());
         });
     }
 
@@ -217,6 +343,48 @@ public class TableWriterSortPlanFuzzTest {
     }
 
     @Test
+    public void testRunMinimaPatternsAroundSortSwitch() throws Exception {
+        // the runs are sorted by their min timestamp, by pdqsort below 600 runs and by radix sort from 600 runs
+        TestUtils.assertMemoryLeak(() -> {
+            for (int runCount = 598; runCount <= 601; runCount++) {
+                for (int pattern = 0; pattern < 4; pattern++) {
+                    for (int rows : new int[]{32, 64}) {
+                        final String message = "runs " + runCount + ", pattern " + pattern + ", rows " + rows;
+                        Block block = new Block();
+                        for (int t = 0; t < runCount; t++) {
+                            final long slot = switch (pattern) {
+                                // all the rows have the same timestamp
+                                case 0 -> 0;
+                                case 1 -> t;
+                                case 2 -> runCount - 1 - t;
+                                // organ pipe interleaving, around timestamp 0 to mix keys with and
+                                // without the sign bit
+                                default -> (t % 2 == 0 ? t / 2 : runCount - 1 - t / 2) - runCount / 2;
+                            };
+                            block.addSortedTxn(t % 4, slot * rows, rows, pattern == 0 ? 0 : 1);
+                        }
+                        PlanResult result = block.assertPlanMatchesRadix();
+                        if (rows < 64) {
+                            Assert.assertFalse(message, result.planned);
+                            Assert.assertTrue(message, result.isRejectedBeforeSort);
+                            Assert.assertEquals(message, 0, result.itemCount);
+                        } else if (pattern == 0) {
+                            // a single cluster, every row is sorted
+                            Assert.assertFalse(message, result.planned);
+                            Assert.assertEquals(message, 0, result.copyRows);
+                            Assert.assertEquals(message, 1, result.itemCount);
+                        } else {
+                            Assert.assertTrue(message, result.planned);
+                            Assert.assertEquals(message, block.totalRows, result.copyRows);
+                            Assert.assertEquals(message, 1, result.itemCount);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testShortTxnsAreNotPlanned() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // many 1-row transactions from interleaving writers, sorting is cheaper than planning
@@ -226,6 +394,46 @@ public class TableWriterSortPlanFuzzTest {
             }
             PlanResult result = block.assertPlanMatchesRadix();
             Assert.assertFalse(result.planned);
+        });
+    }
+
+    @Test
+    public void testSmallCommitsCoalesceIntoCopiedRuns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // 4 writers take turns committing 16 rows, each writer in its own time range. The commits are too
+            // short to copy, but the commits of a writer coalesce into a run of 640 rows.
+            Block block = new Block();
+            for (int t = 0; t < 160; t++) {
+                block.addSortedTxn(t % 4, (t % 4) * 100_000L + (t / 4) * 16L, 16, 1);
+            }
+            PlanResult result = block.assertPlanMatchesRadix();
+            Assert.assertTrue(result.planned);
+            Assert.assertEquals(block.totalRows, result.copyRows);
+            Assert.assertEquals(1, result.itemCount);
+
+            // A writer commits 10 rows at a time and goes back in time every 4 commits. All the commits are
+            // sorted, but they coalesce into runs of 40 rows only, too short to copy.
+            block = new Block();
+            for (int run = 0; run < 10; run++) {
+                for (int t = 0; t < 4; t++) {
+                    block.addSortedTxn(0, (9 - run) * 1_000L + t * 10L, 10, 1);
+                }
+            }
+            assertRejectedBeforeSort(block.assertPlanMatchesRadix());
+
+            // Many empty transactions make the block coalesce, but only 50 of 1_050 rows are in a sorted
+            // transaction. The plan is rejected before the runs are built.
+            block = new Block();
+            for (int t = 0; t < 10; t++) {
+                block.addTxn(0, descending(t * 1_000L, 100));
+                for (int e = 0; e < 4; e++) {
+                    block.addTxn(0, new long[0]);
+                }
+            }
+            block.addSortedTxn(1, 20_000, 50, 1);
+            result = block.assertPlanMatchesRadix();
+            assertRejectedBeforeSort(result);
+            Assert.assertEquals(50, result.copyRowsUpperBound);
         });
     }
 
@@ -243,6 +451,23 @@ public class TableWriterSortPlanFuzzTest {
             block.addTxnWithMeta(2, ts, 3_000_000 - 100, 3_000_000 + 100, true);
             block.assertPlanRejected();
         });
+    }
+
+    // The plan is rejected before the runs are sorted, rather than by the run limit or after sorting the runs,
+    // it has neither plan items nor copied rows
+    private static void assertRejectedBeforeSort(PlanResult result) {
+        Assert.assertFalse(result.planned);
+        Assert.assertTrue("not rejected before sorting the runs", result.isRejectedBeforeSort);
+        Assert.assertEquals(0, result.copyRows);
+        Assert.assertEquals(0, result.itemCount);
+    }
+
+    private static long[] descending(long startTs, int rows) {
+        final long[] ts = new long[rows];
+        for (int i = 0; i < rows; i++) {
+            ts[i] = startTs + rows - 1 - i;
+        }
+        return ts;
     }
 
     private static long readRev(long address, int bytes) {
@@ -295,10 +520,41 @@ public class TableWriterSortPlanFuzzTest {
 
         public PlanResult assertPlanMatchesRadix() {
             try (Sorter sorter = new Sorter(this)) {
+                final TableWriterSegmentCopyInfo copyInfo = sorter.copyInfo;
                 final PlanResult result = new PlanResult();
-                result.planned = sorter.copyInfo.buildSortPlan();
-                result.copyRows = sorter.copyInfo.getSortPlanCopyRows();
-                result.itemCount = sorter.copyInfo.getSortPlanItemCount();
+                result.planned = copyInfo.buildSortPlan();
+                result.copyRows = copyInfo.getSortPlanCopyRows();
+                result.itemCount = copyInfo.getSortPlanItemCount();
+                result.copyRowsUpperBound = copyInfo.getSortPlanCopyRowsUpperBound();
+
+                // The full plan, built without the rejection before the runs are sorted, must reach the same
+                // verdict and copy no more rows than the bound the rejection relies on
+                copyInfo.setSortPlanEarlyRejectEnabled(false);
+                final boolean isFullPlanned = copyInfo.buildSortPlan();
+                copyInfo.setSortPlanEarlyRejectEnabled(true);
+                result.fullItemCount = copyInfo.getSortPlanItemCount();
+                Assert.assertEquals("rejection before sorting the runs changed the verdict", isFullPlanned, result.planned);
+                Assert.assertTrue(
+                        "copy rows above their upper bound",
+                        copyInfo.getSortPlanCopyRows() <= copyInfo.getSortPlanCopyRowsUpperBound()
+                );
+                if (txnCount <= totalRows / 32) {
+                    // without coalescing every transaction is a run, the bound is the rows of the copyable ones
+                    long copyableRows = 0;
+                    for (int s = 0, n = segments.size(); s < n; s++) {
+                        final ObjList<Txn> txns = segments.getQuick(s);
+                        for (int t = 0, m = txns.size(); t < m; t++) {
+                            final Txn txn = txns.getQuick(t);
+                            copyableRows += txn.inOrder && txn.ts.length >= 64 ? txn.ts.length : 0;
+                        }
+                    }
+                    Assert.assertEquals("copy rows upper bound", copyableRows, copyInfo.getSortPlanCopyRowsUpperBound());
+                }
+                if (result.planned) {
+                    Assert.assertEquals(result.copyRows, copyInfo.getSortPlanCopyRows());
+                    Assert.assertEquals(result.itemCount, result.fullItemCount);
+                }
+                result.isRejectedBeforeSort = !result.planned && result.itemCount == 0 && result.fullItemCount > 0;
 
                 if (totalRows == 0) {
                     // a block without rows has nothing to copy or sort, no plan is built for it
@@ -311,7 +567,8 @@ public class TableWriterSortPlanFuzzTest {
                 final long radixFormat = sorter.sortAll();
                 Assert.assertTrue("radix sort failed: " + radixFormat, Vect.isIndexSuccess(radixFormat));
 
-                if (result.itemCount > 0) {
+                // compares the full plan, the plans rejected before or after the runs are sorted included
+                if (result.fullItemCount > 0) {
                     final long planFormat = sorter.sortByPlan();
                     Assert.assertTrue("plan sort failed: " + planFormat, Vect.isIndexSuccess(planFormat));
                     sorter.assertSameIndex(radixFormat, planFormat);
@@ -338,7 +595,8 @@ public class TableWriterSortPlanFuzzTest {
             final long slotWidth = 1 + rnd.nextInt(100_000);
             // probabilities in percent
             final int overlapChance = rnd.nextInt(4) * 10;
-            final int unsortedChance = rnd.nextInt(3) * 5;
+            // mostly unsorted blocks have too few copyable rows, they are rejected before the runs are sorted
+            final int unsortedChance = rnd.nextInt(5) == 0 ? 50 + rnd.nextInt(50) : rnd.nextInt(3) * 5;
             final int emptyChance = rnd.nextInt(2) * 5;
             // small step produces equal timestamps within and across transactions
             final long maxStep = rnd.nextBoolean() ? 1 : Math.max(1, slotWidth / maxRows);
@@ -382,6 +640,11 @@ public class TableWriterSortPlanFuzzTest {
 
     private static class PlanResult {
         long copyRows;
+        // the bound the plan was accepted or rejected with
+        long copyRowsUpperBound;
+        // plan items of the plan built without the rejection before the runs are sorted
+        long fullItemCount;
+        boolean isRejectedBeforeSort;
         long itemCount;
         boolean planned;
     }

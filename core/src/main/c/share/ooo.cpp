@@ -358,6 +358,21 @@ inline void sort(T *index, int64_t size) {
     }
 }
 
+// Sorts {ts, i} pairs by unsigned ts. Small arrays use pdqsort, it stays O(n log n) on equal, ascending and
+// descending keys, where the last-pivot quicksort of sort() goes quadratic. Equal keys are ordered by i, the
+// same order the stable radix sort of large arrays gives when i ascends in the input.
+inline void sort_long_index_asc_in_place(index_t *index, int64_t size) {
+    if (size < 600) {
+        if (size > 1) {
+            pdqsort(index, index + size, [](const index_t &l, const index_t &r) {
+                return l.ts < r.ts || (l.ts == r.ts && l.i < r.i);
+            });
+        }
+    } else {
+        radix_sort_long_index_asc_in_place(index, size);
+    }
+}
+
 typedef struct {
     uint64_t value;
     uint32_t index_index;
@@ -667,7 +682,7 @@ Java_io_questdb_std_Vect_oooMergeCopyBinColumn(JNIEnv *env, jclass cl,
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
     measure_time(4, [=]() {
-        sort<index_t>(reinterpret_cast<index_t *>(pLong), len);
+        sort_long_index_asc_in_place(reinterpret_cast<index_t *>(pLong), len);
     });
 }
 

@@ -30,6 +30,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * This is a helper class that stores information about segments and transactions
@@ -66,14 +67,22 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
     private static final int TXN_META_ORDERED = 2;
     private final IntList seqTxnOrder = new IntList();
     private boolean allDataInOrder;
+    // rows of the sorted transactions of at least SORT_PLAN_MIN_COPY_ROWS rows, each one is a copyable run
+    // when transactions are not coalesced
+    private long copyableTxnRows;
     private boolean hasSegmentGap;
+    private boolean isSortPlanEarlyRejectEnabled = true;
     private long maxTimestamp = Long.MIN_VALUE;
     private long maxTxnRowCount;
     private long minTimestamp = Long.MAX_VALUE;
+    // rows of the sorted transactions, the rows of a sorted run come from sorted transactions only
+    private long orderedTxnRows;
     // Runs of transactions consecutive in the txns list, built by buildSortPlan()
     private DirectLongList runs = new DirectLongList(RUN_LONGS, MemoryTag.NATIVE_TABLE_WRITER);
     private DirectLongList segments = new DirectLongList(4, MemoryTag.NATIVE_TABLE_WRITER);
     private long sortPlanCopyRows;
+    // the most rows the plan can copy, see buildSortPlan()
+    private long sortPlanCopyRowsUpperBound;
     private DirectLongList sortPlanItems = new DirectLongList(SORT_PLAN_ITEM_LONGS, MemoryTag.NATIVE_TABLE_WRITER);
     // (min timestamp with flipped sign bit, run index) pairs, sorted to order the runs by time
     private DirectLongList sortPlanRunOrder = new DirectLongList(2, MemoryTag.NATIVE_TABLE_WRITER);
@@ -117,6 +126,12 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         }
         maxTxnRowCount = Math.max(maxTxnRowCount, committedRowsCount);
         totalRows += committedRowsCount;
+        if (isTxnDataInOrder) {
+            orderedTxnRows += committedRowsCount;
+            if (committedRowsCount >= SORT_PLAN_MIN_COPY_ROWS) {
+                copyableTxnRows += committedRowsCount;
+            }
+        }
         this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
         this.maxTimestamp = Math.max(this.maxTimestamp, maxTimestamp);
     }
@@ -130,7 +145,8 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
      * Every transaction is a run of its own when transactions are big enough. A run of transactions coalesced
      * in a segment spans the time other segments may have written in between, so it is used only when
      * transactions are small, e.g. many small commits of a single writer. There is no plan when runs are
-     * small, sorting all the rows is cheaper then.
+     * small, sorting all the rows is cheaper then. Neither is there a plan when the copyable runs, see
+     * {@link #isRunCopyable(long)}, hold too few rows, it is rejected before the runs are sorted by time.
      *
      * @return true when the plan copies enough rows to be faster than sorting all the rows
      */
@@ -139,12 +155,35 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         sortPlanTxns.clear();
         sortPlanRunOrder.clear();
         sortPlanCopyRows = 0;
+        sortPlanCopyRowsUpperBound = 0;
 
+        // Only a copyable run, see isRunCopyable(), can be copied, and only when it does not overlap other runs,
+        // so the rows of the copyable runs bound the copied rows. The plan is rejected before the runs are
+        // sorted when even copying all of them is not worth it, e.g. when all the commits are small.
+        // Without coalescing every transaction is a run of its own and the bound is known upfront. With
+        // coalescing the rows of a sorted run come from sorted transactions only, so the rows of the sorted
+        // transactions bound the rows of the copyable runs, and the runs give the exact bound once built.
         final long maxRunCount = totalRows / SORT_PLAN_MIN_ROWS_PER_RUN;
-        if (!buildSortPlanRuns(getTxnCount() > maxRunCount, maxRunCount)) {
+        final boolean isCoalescing = getTxnCount() > maxRunCount;
+        sortPlanCopyRowsUpperBound = isCoalescing ? orderedTxnRows : copyableTxnRows;
+        if (isSortPlanEarlyRejectEnabled && !isCopyBenefitSufficient(sortPlanCopyRowsUpperBound)) {
+            return false;
+        }
+        if (!buildSortPlanRuns(isCoalescing, maxRunCount)) {
             return false;
         }
         final long runCount = runs.size() / RUN_LONGS;
+        if (isCoalescing) {
+            sortPlanCopyRowsUpperBound = 0;
+            for (long r = 0; r < runCount; r++) {
+                if (isRunCopyable(r)) {
+                    sortPlanCopyRowsUpperBound += getRunValue(r, RUN_ROWS);
+                }
+            }
+            if (isSortPlanEarlyRejectEnabled && !isCopyBenefitSufficient(sortPlanCopyRowsUpperBound)) {
+                return false;
+            }
+        }
 
         for (long r = 0; r < runCount; r++) {
             if (getRunValue(r, RUN_ROWS) > 0) {
@@ -181,7 +220,7 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         }
         addSortPlanCluster(clusterLo, orderedRunCount, clusterMin, clusterMax);
 
-        return sortPlanCopyRows > 0 && sortPlanCopyRows >= totalRows / 4;
+        return isCopyBenefitSufficient(sortPlanCopyRows);
     }
 
     public void clear() {
@@ -193,6 +232,9 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         sortPlanTxns.clear();
         sortPlanRunOrder.clear();
         sortPlanCopyRows = 0;
+        sortPlanCopyRowsUpperBound = 0;
+        copyableTxnRows = 0;
+        orderedTxnRows = 0;
         seqTxnOrder.clear();
         totalRows = 0;
         maxTxnRowCount = 0;
@@ -258,6 +300,11 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         return sortPlanCopyRows;
     }
 
+    @TestOnly
+    public long getSortPlanCopyRowsUpperBound() {
+        return sortPlanCopyRowsUpperBound;
+    }
+
     public long getSortPlanItemCount() {
         return sortPlanItems.size() / SORT_PLAN_ITEM_LONGS;
     }
@@ -317,11 +364,15 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         hasSegmentGap = value;
     }
 
+    // Lets tests build the full plan of blocks buildSortPlan() rejects before sorting the runs
+    @TestOnly
+    public void setSortPlanEarlyRejectEnabled(boolean isEnabled) {
+        isSortPlanEarlyRejectEnabled = isEnabled;
+    }
+
     private void addSortPlanCluster(long orderLo, long orderHi, long clusterMin, long clusterMax) {
         final long firstRun = sortPlanRunOrder.get(2 * orderLo + 1);
-        final boolean isCopy = orderHi - orderLo == 1
-                && getRunValue(firstRun, RUN_ORDERED) == 1
-                && getRunValue(firstRun, RUN_ROWS) >= SORT_PLAN_MIN_COPY_ROWS;
+        final boolean isCopy = orderHi - orderLo == 1 && isRunCopyable(firstRun);
         final int itemType = isCopy ? SORT_PLAN_ITEM_COPY : SORT_PLAN_ITEM_SORT;
         for (long i = orderLo; i < orderHi; i++) {
             addSortPlanRun(itemType, sortPlanRunOrder.get(2 * i + 1), clusterMin, clusterMax);
@@ -403,5 +454,14 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
 
     private long getRunValue(long run, int offset) {
         return runs.get(run * RUN_LONGS + offset);
+    }
+
+    private boolean isCopyBenefitSufficient(long copyRows) {
+        return copyRows > 0 && copyRows >= totalRows / 4;
+    }
+
+    // A run is copied when it is sorted, big enough and does not overlap other runs
+    private boolean isRunCopyable(long run) {
+        return getRunValue(run, RUN_ORDERED) == 1 && getRunValue(run, RUN_ROWS) >= SORT_PLAN_MIN_COPY_ROWS;
     }
 }
