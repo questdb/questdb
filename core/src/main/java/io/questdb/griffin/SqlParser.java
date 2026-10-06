@@ -642,6 +642,9 @@ public class SqlParser {
 
         final IQueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true);
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
+        // the definition the model is expanded from, whose dependencies the view's authority covers,
+        // see TableUtils.getTableFunctionView()
+        viewExpr.tableFunctionView = new SqlExecutionContext.TableFunctionView(viewDefinition);
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;

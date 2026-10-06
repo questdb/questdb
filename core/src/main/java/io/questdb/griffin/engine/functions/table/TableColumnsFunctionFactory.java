@@ -50,11 +50,17 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isTableNameFunction() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        // Outside a view, an invisible table fails like a missing one.
+        // Outside a view, or when the view's definition does not name the table, an invisible table
+        // fails like a missing one.
         if (token == null || !sqlExecutionContext.isTableFunctionVisibleAtCompile(token, view)) {
             throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName).put(']');
         }

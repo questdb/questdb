@@ -1127,14 +1127,20 @@ public final class TableUtils {
     }
 
     /**
-     * Returns the view, as of its current definition, that the table-name functions of a model
-     * expanded from that view read their arguments through, see
+     * Returns the view that the table-name functions and tables of a model expanded from that view
+     * read through, see
      * {@link SqlExecutionContext#isTableFunctionVisible(TableToken, SqlExecutionContext.TableFunctionView)}.
+     * That is the definition SqlParser expanded the model from, so that the objects the definition
+     * names are those of the model, even when another session changes the view during the compile.
+     * A view name that SqlParser did not stamp resolves to the current definition.
      */
     public static SqlExecutionContext.TableFunctionView getTableFunctionView(
             @NotNull ExpressionNode viewNameExpr,
             @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
+        if (viewNameExpr.tableFunctionView != null) {
+            return viewNameExpr.tableFunctionView;
+        }
         final TableToken viewToken = executionContext.getTableTokenIfExists(viewNameExpr.token);
         if (viewToken == null || !viewToken.isView()) {
             throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);

@@ -351,11 +351,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     /**
      * A table-name function or a SHOW statement in a view reads the object it names through that
-     * view, not as the caller. Recheck the view's identity, definition and SELECT grant when the
-     * cursor opens: a cached cursor may outlive a revoke, a replacement or a drop and recreation
-     * under the same name. A view that changed since the compile makes the plan stale, so it throws
-     * {@link TableReferenceOutOfDateException} for the caller to recompile, rather than run a
-     * function the current definition may not name or report a visible object as missing.
+     * view, not as the caller, when the view's definition names the object, see
+     * {@link TableFunctionView#isDependency(TableToken)}. Any other object, such as one a caller
+     * substitutes through an OVERRIDABLE variable of the view, is read as the caller. Recheck the
+     * view's identity, definition and SELECT grant when the cursor opens: a cached cursor may outlive
+     * a revoke, a replacement or a drop and recreation under the same name. A view that changed since
+     * the compile makes the plan stale, so it throws {@link TableReferenceOutOfDateException} for the
+     * caller to recompile, rather than run a function the current definition may not name or report a
+     * visible object as missing.
      */
     default boolean isTableFunctionVisible(TableToken tableToken, TableFunctionView view) {
         if (view != null) {
@@ -384,7 +387,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * missing, or fail a PostgreSQL Parse, which does not recompile.
      */
     default boolean isTableFunctionVisibleAtCompile(TableToken tableToken, TableFunctionView view) {
-        if (view == null) {
+        if (view == null || !view.isDependency(tableToken)) {
             return getSecurityContext().isTableVisible(tableToken);
         }
         final ViewDefinition viewDefinition = view.definition();
@@ -564,5 +567,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     // the view definition, as of the compile, that a table-name function or SHOW statement reads through
     record TableFunctionView(ViewDefinition definition) {
+
+        /**
+         * Returns whether the view's definition names the object, i.e. whether CREATE VIEW or ALTER
+         * VIEW recorded it among the dependencies of the view, the tables it reads and the arguments of
+         * its table-name functions. The view lends its authority to those objects only: an object a
+         * caller substitutes into the view, e.g. through an OVERRIDABLE variable, is read as the caller.
+         */
+        public boolean isDependency(TableToken tableToken) {
+            return definition.getDependencies().contains(tableToken.getTableName());
+        }
     }
 }

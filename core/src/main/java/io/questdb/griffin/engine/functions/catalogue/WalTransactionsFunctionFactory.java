@@ -85,6 +85,11 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isTableNameFunction() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -95,7 +100,8 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         CharSequence tableName = args.get(0).getStrA(null);
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        // Outside a view, a table the principal may not see fails like a missing one.
+        // Outside a view, or when the view's definition does not name the table, a table the principal
+        // may not see fails like a missing one.
         if (tableToken == null || !isVisibleAtCompile(sqlExecutionContext, tableToken, view)) {
             throw SqlException.$(argPositions.get(0), "table does not exist: ").put(tableName);
         }
@@ -112,15 +118,16 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
     }
 
     // WAL diagnostics show a protected table to the operators allowed to recover it, see
-    // SecurityContext.isWalTableVisible(). Inside a view, the view's authority decides as usual.
+    // SecurityContext.isWalTableVisible(). Inside a view, the view's authority decides as usual, but only
+    // for a table the view's definition names, see SqlExecutionContext.TableFunctionView.isDependency().
     private static boolean isVisible(SqlExecutionContext executionContext, TableToken tableToken, SqlExecutionContext.TableFunctionView view) {
-        return view != null
+        return view != null && view.isDependency(tableToken)
                 ? executionContext.isTableFunctionVisible(tableToken, view)
                 : executionContext.getSecurityContext().isWalTableVisible(tableToken);
     }
 
     private static boolean isVisibleAtCompile(SqlExecutionContext executionContext, TableToken tableToken, SqlExecutionContext.TableFunctionView view) {
-        return view != null
+        return view != null && view.isDependency(tableToken)
                 ? executionContext.isTableFunctionVisibleAtCompile(tableToken, view)
                 : executionContext.getSecurityContext().isWalTableVisible(tableToken);
     }

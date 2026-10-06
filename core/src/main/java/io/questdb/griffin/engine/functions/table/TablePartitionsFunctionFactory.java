@@ -56,6 +56,11 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isTableNameFunction() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
         final TableToken tt;
         final SqlExecutionContext.TableFunctionView view = context.getTableFunctionView();
@@ -63,7 +68,8 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
         try {
             final CharSequence tableName = args.getQuick(0).getStrA(null);
             tt = context.getTableToken(tableName);
-            // Outside a view, an invisible table fails like a missing one, echoing its SQL spelling.
+            // Outside a view, or when the view's definition does not name the table, an invisible
+            // table fails like a missing one, echoing its SQL spelling.
             if (!context.isTableFunctionVisibleAtCompile(tt, view)) {
                 throw CairoException.tableDoesNotExist(tableName);
             }

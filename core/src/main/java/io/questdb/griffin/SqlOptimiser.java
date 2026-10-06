@@ -677,6 +677,18 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    // Whether the model reads the table through the view it was expanded from. The view lends its authority
+    // to the tables its definition names only, see SqlExecutionContext.TableFunctionView.isDependency(): a
+    // table a caller substitutes into the view, e.g. through an OVERRIDABLE variable, is read as the caller.
+    private static boolean isReadThroughView(
+            IQueryModel model,
+            TableToken tableToken,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
+    }
+
     /**
      * Reports whether every bound in a timestamp predicate is known at parse time, so that
      * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
@@ -7285,10 +7297,11 @@ public class SqlOptimiser implements Mutable {
 
         // An object the principal may not see resolves exactly like a missing one, before any of
         // its columns are read, so neither the error nor a column-resolution error that would
-        // follow can disclose it. The tables a view reads are exempt: they are accessed through
-        // the view, whose own visibility SqlParser checked when it expanded the view.
+        // follow can disclose it. The tables a view's definition names are exempt: they are
+        // accessed through the view, whose own visibility SqlParser checked when it expanded the
+        // view. A table a caller substitutes into the view is not, see isReadThroughView().
         if (status == TableUtils.TABLE_EXISTS
-                && model.getViewNameExpr() == null
+                && !isReadThroughView(model, tableToken, executionContext)
                 && !executionContext.getSecurityContext().isTableVisible(tableToken)) {
             status = TableUtils.TABLE_DOES_NOT_EXIST;
         }

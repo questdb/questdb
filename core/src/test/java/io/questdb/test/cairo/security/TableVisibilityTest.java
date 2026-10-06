@@ -503,6 +503,44 @@ public class TableVisibilityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewAuthorityCoversOnlyObjectsItsDefinitionNames() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            // A caller may override an OVERRIDABLE variable of a view, but the view lends its authority only
+            // to the objects its definition names: an object the caller substitutes is read as the caller.
+            execute("CREATE VIEW visible_var_columns AS (DECLARE OVERRIDABLE @t := 'secret_t' SELECT * FROM table_columns(@t))");
+            execute("CREATE VIEW visible_var_parts AS (DECLARE OVERRIDABLE @t := 'secret_t' SELECT * FROM table_partitions(@t))");
+            execute("CREATE VIEW visible_var_txns AS (DECLARE OVERRIDABLE @t := 'secret_t' SELECT * FROM wal_transactions(@t))");
+            execute("CREATE VIEW visible_var_proj AS (DECLARE OVERRIDABLE @t := 'secret_t' SELECT count() c FROM (SELECT table_partitions(@t)))");
+            execute("CREATE VIEW visible_var_show AS (DECLARE OVERRIDABLE @t := secret_t SELECT * FROM (SHOW COLUMNS FROM @t))");
+            execute("CREATE VIEW visible_var_from AS (DECLARE OVERRIDABLE @t := visible_t SELECT * FROM @t)");
+            drainWalAndViewQueues();
+            // CREATE VIEW records the argument the definition writes among the view's dependencies
+            final TableToken columnsView = engine.verifyTableName("visible_var_columns");
+            Assert.assertTrue(engine.getViewGraph().getViewDefinition(columnsView).getDependencies().contains("secret_t"));
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                // the objects the definitions name are read through the views
+                assertQuery("SELECT count() FROM visible_var_columns").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+                assertQuery("SELECT count() FROM visible_var_parts").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                assertQuery("SELECT * FROM visible_var_proj").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+                assertQuery("SELECT count() FROM visible_var_show").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+                final StringSink sink = new StringSink();
+                engine.print("SELECT count() FROM visible_var_txns", sink, hidingContext);
+                Assert.assertFalse(sink.toString(), Chars.equals(sink, "count\n0\n"));
+                // an object the caller substitutes is read as the caller, so an invisible one is missing
+                for (String view : new String[]{"visible_var_columns", "visible_var_parts", "visible_var_txns", "visible_var_proj"}) {
+                    assertMaskedLikeMissing("DECLARE @t := '%s' SELECT * FROM " + view, "secret_nw", hidingContext);
+                }
+                assertMaskedLikeMissing("DECLARE @t := %s SELECT * FROM visible_var_show", "secret_nw", hidingContext);
+                assertMaskedLikeMissing("DECLARE @t := %s SELECT * FROM visible_var_from", "secret_t", hidingContext);
+                // and a visible one is read as usual
+                assertQuery("DECLARE @t := 'visible_nw' SELECT count() FROM visible_var_columns").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+                assertQuery("DECLARE @t := visible_nw SELECT count() FROM visible_var_from").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            }
+        });
+    }
+
+    @Test
     public void testViewSelectDenialIsAnAuthorizationError() throws Exception {
         assertMemoryLeak(() -> {
             createObjects();

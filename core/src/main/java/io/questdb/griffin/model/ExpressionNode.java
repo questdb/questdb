@@ -88,6 +88,8 @@ public class ExpressionNode implements Mutable, Sinkable {
     // Compile-time link (like scalarBoundHolder): set on a sub-query QUERY node written inside a view, so
     // that every compile of the sub-query, the re-compiled residual and per-worker filters included,
     // reads its table-name functions through that view, see SqlExecutionContext.isTableFunctionVisible().
+    // SqlParser also sets it on the view name of a model expanded from a view, to the definition the
+    // model was expanded from, see TableUtils.getTableFunctionView().
     public SqlExecutionContext.TableFunctionView tableFunctionView;
     public CharSequence token;
     public int type;

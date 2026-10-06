@@ -118,6 +118,19 @@ public interface FunctionFactory {
         return false;
     }
 
+    /**
+     * Returns true if the first argument of the function names a table, view, materialized view or
+     * live view, whose metadata the function reads, e.g. table_columns(). In a view, such a function
+     * reads the object through the view only when the view's definition names it, which is why
+     * CREATE VIEW and ALTER VIEW record a constant argument among the dependencies of the view, see
+     * {@link SqlExecutionContext.TableFunctionView#isDependency(io.questdb.cairo.TableToken)}.
+     *
+     * @return true if the first argument of the function names a table
+     */
+    default boolean isTableNameFunction() {
+        return false;
+    }
+
     default boolean isWindow() {
         return false;
     }
