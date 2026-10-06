@@ -1076,7 +1076,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
-        return alterOp.apply(this, contextAllowsAnyStructureChanges);
+        final long rowsAffected = alterOp.apply(this, contextAllowsAnyStructureChanges);
+        // On a WAL table this call bypasses the WAL (a forced ALTER), so no WAL replay can redo the change.
+        if (tableToken.isWal()
+                && getEffectiveCommitMode() == CommitMode.ADAPTIVE
+                && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() != getTxn()) {
+            advanceDurableEpochBestEffort("forced alter");
+        }
+        return rowsAffected;
     }
 
     @Override
@@ -1315,7 +1322,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 freeColumns(true);
                 configureAppendPosition();
             }
-            return AttachDetachStatus.OK;
         } catch (Throwable e) {
             // This is pretty serious; after partition copied, there are no OS operations to fail.
             // Do full rollback to clean up the state
@@ -1324,6 +1330,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rollback();
             throw e;
         }
+        // The attach consumed the .attachable directory, so a WAL replay of it would find nothing to attach.
+        if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+            advanceDurableEpochBestEffort("attach partition");
+        }
+        return AttachDetachStatus.OK;
     }
 
     /**
@@ -16343,6 +16354,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("adaptive durable epoch [table=").$(tableToken)
                 .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();
+    }
+
+    // Recovery rewinds an adaptive table to its last durable epoch and replays the WAL after it. A change the
+    // replay cannot redo must therefore be followed by an epoch. Best effort: on failure the change stays.
+    private void advanceDurableEpochBestEffort(CharSequence operation) {
+        try {
+            advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+        } catch (CairoException | CairoError e) {
+            handleBestEffortDurableEpochFailure(e, operation);
+        }
     }
 
     /**
