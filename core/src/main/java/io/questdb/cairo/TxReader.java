@@ -552,7 +552,9 @@ public class TxReader implements Closeable, Mutable {
         return partitionDeltaCount > 0;
     }
 
-    /** Returns whether any partition is Delta-active or contains Delta data. */
+    /**
+     * Returns whether any partition is Delta-active or contains Delta data.
+     */
     public boolean hasDeltaState() {
         if (hasAnyDelta()) {
             return true;

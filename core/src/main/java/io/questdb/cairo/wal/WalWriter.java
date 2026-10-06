@@ -2106,6 +2106,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void validateIndexCreation(AlterOperation alterOp) {
+        // This soft check reads only this instance's applied state. It cannot guarantee
+        // successful apply after a switch or on replicas. TableWriter.checkIndexCreation
+        // records the accepted trade-off until cold/Delta index creation is supported.
         final MillisecondClock milliClock = configuration.getMillisecondClock();
         final long spinLockTimeout = configuration.getSpinLockTimeout();
         final Path txPath = Path.PATH2.get();
