@@ -60,7 +60,8 @@ manual is `utils/type-probe/README.md`; read its sections 3 to 7 and 9 before th
      refuse the pair in the relation it comes from. A copier conversion needs its arm in all three
      copiers: `RecordToRowCopierUtils.generateSingleMethodCopier`, `generateChunkedCopier`, and
      `LoopingRecordToRowCopier` (a target arm in the source's `copyFrom<Type>` method; as a
-     source, an arm in `copyColumn` and a `copyFrom<Type>` of its own).
+     source, an arm in `copyColumn` and a `copyFrom<Type>` of its own). The kit's
+     `sql.insert_convert` runs each such conversion under all three and lists any difference.
    - `declare-or-admit`: either add the site's label to `refused_sites` (the type is refused there
      on purpose; the kit then checks the refusal) or admit the type with its own arm at the site.
    - `manual`: check the site the entry names; tick it in the manual-done file, as the worklist
@@ -89,18 +90,14 @@ back as a coverage item at the test: answer it there, from the type's relations 
 
 ## Checks the tool does not make
 
-Exit 0 does not cover these yet; check each by hand before reporting done:
+Exit 0 does not cover these; check each by hand before reporting done:
 
-- NULL position. Every existing type that stores NULL sorts it lowest (first in `ORDER BY v`, last
-  in `ORDER BY v DESC`), except FLOAT and DOUBLE, whose NULL is NaN and sorts highest. A compare
-  arm of the type's own that orders the NULL word as a value puts NULL mid-range: an unsigned INT's
-  NULL word sorts as 2147483648. Check `ORDER BY` both ways and through `LIMIT` (the sort-key
-  path) on a table holding NULL, the smallest and the largest value. The kit's order check skips
-  the NULL row.
-- Copier conversions. The copier coverage test checks that an arm exists, not that it runs, and no
-  kit path runs the INSERT conversions. Run `INSERT INTO dst SELECT v FROM src` for each pair the
-  type admits, both ways, under `debug.cairo.copier.type` 1, 2 and 3, with NULL, the smallest and
-  the largest value and an out-of-range one, and compare the stored values.
+- ORDER BY with LIMIT. The kit checks where NULL sorts in `ORDER BY v` and `ORDER BY v DESC`
+  (lowest, as every existing type with a NULL sorts it except FLOAT and DOUBLE, whose NaN sorts
+  highest), but runs no LIMIT. Check `ORDER BY v LIMIT 3` both ways on a table holding NULL, the
+  smallest and the largest value. A sort key orders the stored bits, so a type whose NULL word is
+  not the lowest value of its order (an unsigned INT that keeps INT's NULL) takes no key kind in
+  `SortKeyEncoder.keyKind` and puts NULL first in its compare arm.
 - Rust unit tests. `ColumnTypeTag::VALUES` (`core/rust/qdb-core/src/col_type.rs`) and
   `test_lookup_driver` (`col_driver/mod.rs`) list the tags by hand, so their tests skip a new type
   without failing. Add it to both and run `cargo test --lib` in `core/rust/qdb-core`.

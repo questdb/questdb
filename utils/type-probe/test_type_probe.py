@@ -467,6 +467,19 @@ class WorklistTest(unittest.TestCase):
         # a path a row names maps to that row
         self.assertEqual(('declare-or-admit', 'ILP column kind'), item('ingest.ilp-tcp'))
 
+    def test_order_and_conversion_failures_map_to_their_arms(self):
+        sites = tp.SiteMap.load(REPO / tp.SITES_FILE)
+
+        def item(path):
+            failure = tp.Failure('io.questdb.test.cairo.types.TypeConformanceSqlTest', 'testQueries[UINT32]',
+                                 f'type=UINT32 row=null path={path} mode=single-nojit: NULL sorts mid-range', '')
+            found = tp.failure_items(failure, sites, self.facts)[0]
+            return found.decision, found.site
+        # both orders go to the comparator, whose compare arm decides where NULL sorts
+        self.assertEqual(('add-writer-arm', 'RecordComparatorCompiler.comparatorOpcode family switch'), item('sql.order_asc'))
+        self.assertEqual(item('sql.order_asc'), item('sql.order_desc'))
+        self.assertEqual(('implement-pair', 'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1'), item('sql.insert_convert'))
+
     def test_coverage_failure_naming_two_methods_gives_two_items(self):
         # ProtocolOpcodeCoverageTest lists every opcode function that does not handle the type
         sites = tp.SiteMap.load(REPO / tp.SITES_FILE)

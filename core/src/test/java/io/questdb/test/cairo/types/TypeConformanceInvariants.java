@@ -68,7 +68,8 @@ import java.util.regex.Pattern;
  * sentinel-pattern row reads back as a value; another type's sentinel pattern of the same width
  * reads as a value except under SENTINEL ({@link #assertOtherSentinel});</li>
  * <li>rows compare and sort by the order the type's arithmetic tier implies
- * ({@link #assertOrdered}), for an integer or float tier;</li>
+ * ({@link #assertOrdered}, {@link #compare}), for an integer or float tier, and the rows that read
+ * as NULL sort together where the existing types put NULL: lowest, and highest for a float tier;</li>
  * <li>the mixing cases give the results the resource states: its
  * {@code mix|<name>|<sql>|<expected>} lines ({@link #mixingCases()}), which the SQL class runs;</li>
  * <li>the relation paths follow the type's declared relations: a cast, CASE branch, ALTER COLUMN
@@ -230,11 +231,40 @@ public final class TypeConformanceInvariants {
     }
 
     /**
-     * Invariant 3: rows other than the NULL row come in the order the type's arithmetic tier
-     * implies: signed or unsigned integers, or floats where every NaN is one value above +Infinity
-     * and -0.0 equals 0.0. A WIDE or NONE tier implies no order, so the order is not checked.
+     * Invariant 3: the rows that read as NULL sort together where every existing type with a NULL
+     * puts it: lowest (first ascending, last descending), except that a float tier sorts it
+     * highest, as FLOAT and DOUBLE sort NaN. The other rows come in the order the type's
+     * arithmetic tier implies: signed or unsigned integers, or floats where every NaN is one value
+     * above +Infinity and -0.0 equals 0.0. A WIDE or NONE tier implies no order, so the order of
+     * the other rows is not checked.
+     *
+     * @param nullLabels the rows that read as NULL, from the rows as written and the NULL policy
      */
-    public static void assertOrdered(TypeConformanceTypes.Entry type, String path, String mode, ObjList<String> labels, ObjList<long[]> bits, boolean ascending) {
+    public static void assertOrdered(
+            TypeConformanceTypes.Entry type,
+            String path,
+            String mode,
+            ObjList<String> labels,
+            ObjList<long[]> bits,
+            Set<String> nullLabels,
+            boolean ascending
+    ) {
+        int nulls = 0;
+        for (int i = 0, n = labels.size(); i < n; i++) {
+            if (nullLabels.contains(labels.getQuick(i))) {
+                nulls++;
+            }
+        }
+        final boolean isNullFirst = ascending != type.isFloat();
+        for (int i = 0, n = labels.size(); i < n; i++) {
+            final boolean isNullPlace = isNullFirst ? i < nulls : i >= n - nulls;
+            if (nullLabels.contains(labels.getQuick(i)) != isNullPlace) {
+                Assert.fail(context(type, labels.getQuick(i), path, mode) + ": " + (ascending ? "ascending" : "descending")
+                        + " order must put the rows that read as NULL " + (isNullFirst ? "first" : "last")
+                        + " (NULL sorts lowest, and highest for a float tier, as the existing types sort it), but reads "
+                        + labels + ", NULL rows " + nullLabels);
+            }
+        }
         if (type.laterTier == null) {
             return;
         }
@@ -242,7 +272,7 @@ public final class TypeConformanceInvariants {
         long[] previous = null;
         for (int i = 0, n = labels.size(); i < n; i++) {
             final String label = labels.getQuick(i);
-            if ("null".equals(label)) {
+            if (nullLabels.contains(label)) {
                 continue;
             }
             final long[] current = bits.getQuick(i);
@@ -276,6 +306,41 @@ public final class TypeConformanceInvariants {
             return "N";
         }
         return null;
+    }
+
+    /**
+     * Compares two values of a type with a declared tier by the order the tier implies (invariant
+     * 3): signed or unsigned integers, most significant long first, or floats where every NaN is
+     * one value above +Infinity and -0.0 equals 0.0.
+     */
+    public static int compare(TypeConformanceTypes.Entry type, long[] a, long[] b) {
+        final String tier = type.laterTier;
+        assert tier != null;
+        if (tier.startsWith("F")) {
+            final double x = "F32".equals(tier) ? Float.intBitsToFloat((int) a[0]) : Double.longBitsToDouble(a[0]);
+            final double y = "F32".equals(tier) ? Float.intBitsToFloat((int) b[0]) : Double.longBitsToDouble(b[0]);
+            if (Double.isNaN(x) || Double.isNaN(y)) {
+                return Boolean.compare(Double.isNaN(x), Double.isNaN(y));
+            }
+            return Double.compare(x == 0 ? 0.0 : x, y == 0 ? 0.0 : y);
+        }
+        // integers, most significant long first; the rows hold the value's width only
+        final int bitsWide = Integer.parseInt(tier.substring(1));
+        for (int i = 3; i >= 0; i--) {
+            long x = a[i];
+            long y = b[i];
+            if (i * 64 < bitsWide && bitsWide - i * 64 < 64 && tier.startsWith("I")) {
+                // sign-extend the top long of a signed value narrower than 64 bits in that long
+                final int shift = 64 - (bitsWide - i * 64);
+                x = x << shift >> shift;
+                y = y << shift >> shift;
+            }
+            if (x != y) {
+                final boolean isTopLong = (i + 1) * 64 >= bitsWide;
+                return tier.startsWith("I") && isTopLong ? Long.compare(x, y) : Long.compareUnsigned(x, y);
+            }
+        }
+        return 0;
     }
 
     /**
@@ -500,36 +565,6 @@ public final class TypeConformanceInvariants {
             }
         }
         return false;
-    }
-
-    private static int compare(TypeConformanceTypes.Entry type, long[] a, long[] b) {
-        final String tier = type.laterTier;
-        assert tier != null;
-        if (tier.startsWith("F")) {
-            final double x = "F32".equals(tier) ? Float.intBitsToFloat((int) a[0]) : Double.longBitsToDouble(a[0]);
-            final double y = "F32".equals(tier) ? Float.intBitsToFloat((int) b[0]) : Double.longBitsToDouble(b[0]);
-            if (Double.isNaN(x) || Double.isNaN(y)) {
-                return Boolean.compare(Double.isNaN(x), Double.isNaN(y));
-            }
-            return Double.compare(x == 0 ? 0.0 : x, y == 0 ? 0.0 : y);
-        }
-        // integers, most significant long first; the rows hold the value's width only
-        final int bitsWide = Integer.parseInt(tier.substring(1));
-        for (int i = 3; i >= 0; i--) {
-            long x = a[i];
-            long y = b[i];
-            if (i * 64 < bitsWide && bitsWide - i * 64 < 64 && tier.startsWith("I")) {
-                // sign-extend the top long of a signed value narrower than 64 bits in that long
-                final int shift = 64 - (bitsWide - i * 64);
-                x = x << shift >> shift;
-                y = y << shift >> shift;
-            }
-            if (x != y) {
-                final boolean isTopLong = (i + 1) * 64 >= bitsWide;
-                return tier.startsWith("I") && isTopLong ? Long.compare(x, y) : Long.compareUnsigned(x, y);
-            }
-        }
-        return 0;
     }
 
     private static Map<String, String> readDeclarableSites() {

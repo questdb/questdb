@@ -44,13 +44,8 @@ COVERAGE_TESTS = (
     'RelationCoverageTest', 'ProtocolOpcodeCoverageTest', 'GeneratedAccessorCoverageTest', 'FunctionReachTest',
     'RelationRulesTest', 'TypeDriverTest', 'OverloadSoundnessTest', 'ColumnConversionSoundnessTest',
 )
-# the kit paths that hold an invariant for a type with no recording; the SQL queries that need a
-# literal of the type or introduce NULL (filters by value, joins, lag, GROUP BY) have none yet
-KIT_PATHS = (
-    'storage.*', 'sql.filter_null', 'sql.filter_not_null', 'sql.order_*', 'sql.union_all', 'sql.case_*', 'sql.cast',
-    'sql.fill_*', 'sql.memoized', 'sql.subsample_*', 'sql.where_*', 'sql.latest_by_key', 'sql.copy_bind',
-    'sql.between_timestamp', 'sql.eq_null_double', 'sql.bind_value', 'ingest.*', 'http.*', 'pg.*', 'lv.*',
-)
+# the kit paths that hold an invariant for a type with no recording: every path of the kit
+KIT_PATHS = ('storage.*', 'sql.*', 'ingest.*', 'http.*', 'pg.*', 'lv.*')
 # The site a kit or coverage failure maps to when no row of the site map names its path or test:
 # the layer the path or the test checks, (path or test prefix, site label, decision), first match
 # wins. A label missing from the site map is a defect of the tool.
@@ -61,6 +56,9 @@ LAYER_SITES = (
     ('ingest.csv', 'TypeManager.getTypeAdapter wire-kind switch', 'add-writer-arm'),
     ('ingest.qwp-egress', 'QwpResultBatchBuffer.appendOpcode wire-kind switch', 'add-writer-arm'),
     ('sql.cast', 'TypeDrivers.find tag enum switch', 'implement-pair'),
+    ('sql.insert_convert', 'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1', 'implement-pair'),
+    # the comparator's rows name sql.order_asc; the descending order goes to the same arm
+    ('sql.order_desc', 'RecordComparatorCompiler.comparatorOpcode family switch', 'add-writer-arm'),
     # a coverage test that checks one relation against its implementation, by test method
     ('RelationCoverageTest#testCaseEscalation', 'CASE cast pair switch', 'implement-pair'),
     ('RelationCoverageTest#testCopier', 'RecordToRowCopierUtils.copyOpcode accessorOpcodeOf #1', 'implement-pair'),

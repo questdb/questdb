@@ -78,17 +78,29 @@ refused_sites = []          # guarded sites the type is refused at on purpose (s
 ```
 
 INT runs every kit path because the kit holds a recording of each for it. A new type has no
-recording, so it runs the paths that hold an invariant, and `init` writes those:
+recording, so it runs every path against an invariant instead, and `init` writes the same line.
+The invariants take their expectations from the rows as written and the declared NULL policy,
+and handle NULL as every existing type does:
 
-```toml
-paths = ["storage.*", "sql.filter_null", "sql.filter_not_null", "sql.order_*", "sql.union_all",
-         "sql.case_*", "sql.cast", "sql.fill_*", "sql.memoized", "sql.subsample_*", "sql.where_*",
-         "sql.latest_by_key", "sql.copy_bind", "sql.between_timestamp", "sql.eq_null_double",
-         "sql.bind_value", "ingest.*", "http.*", "pg.*", "lv.*"]
-```
+- `sql.filter_eq`, `_ne`, `_lt`, `_ge` run once per distinct value (a new type has no literal):
+  `=` selects that value's rows, `!=` every other row including the NULL rows, `<` and `>=` split
+  the other values by the tier's order and select no NULL row;
+- `sql.order_asc`, `_desc` sort NULL lowest (first ascending, last descending), and highest for a
+  float tier, as FLOAT and DOUBLE sort NaN;
+- `sql.group_by`, `sql.latest_on`: one group or partition per distinct value, the NULL rows in
+  one; `sql.join_*`: a NULL key joins a NULL key, an outer join's missing side is the type's NULL;
+- `sql.union_null`, `sql.lag`, `sql.sample_by`, `sql.first_last`, `sql.first_not_null`: a NULL
+  branch or a missing value is the type's NULL, `first` and `last` keep NULLs, the `_not_null`
+  forms skip them;
+- `sql.insert_convert`: `INSERT ... SELECT` through every conversion the copiers admit, into and
+  out of the type, one row per statement, under each of the three copiers (single-method, chunked,
+  looping); they must agree, and give what master's implicit casts give an existing pair (NULL to
+  NULL, an integer unchanged within the target's range and refused with "inconvertible value"
+  outside it, a float truncated first, text parsed, a CHAR as a digit).
 
-The SQL queries that need a literal of the type or introduce NULL (a filter by value, a join, lag,
-GROUP BY) have no invariant yet; a type that names them fails with "no invariant for this query".
+Under NONE the NULL row is the value 0; under NOT_NULL it is not written. A result column of a
+wider type, from a function of that type the new type reaches through an implicit cast, holds the
+value widened by the tier.
 
 `init` copies every field from an existing type's driver and leaves `wire_kind` and
 `signature_char` as `CHANGE-ME`, which the run refuses, so the author decides both. The run checks
@@ -855,7 +867,10 @@ function class. A `storage.alter` item names one row of its instrument, and a co
 admits is written at each: `converters.cpp` `fixedToFixed`, with `converters.h`'s
 `is_fixed_convertible` and the `EnumTypeMap` specialisation it asserts, and
 `DecimalColumnTypeConverter.getLoader`. A type given a sort-key kind of its own (`SortKeyEncoder.keyKind`)
-also adds its arms in `encodeFixed8` and `encodeFixedColumn`. The copier test's item covers every
+also adds its arms in `encodeFixed8` and `encodeFixedColumn`. A sort key orders the stored bits,
+so a type whose NULL word is not the lowest value of its order (an unsigned INT that keeps INT's
+NULL) gets no key kind: ORDER BY then takes the comparator, whose compare arm puts NULL first
+(`sql.order_*` checks where NULL sorts). The copier test's item covers every
 copier conversion the type admits, and each pair needs its arm in all three copiers: the
 single-method and the chunked bytecode copiers (`RecordToRowCopierUtils.generateSingleMethodCopier`,
 `generateChunkedCopier`) and the looping copier (`LoopingRecordToRowCopier`: a target arm in the
