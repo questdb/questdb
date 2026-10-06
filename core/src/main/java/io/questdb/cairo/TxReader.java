@@ -100,7 +100,7 @@ public class TxReader implements Closeable, Mutable {
     // untrusted and reads as -1 (quarantines the released-binary file-size poison). A 0 stamp writes the cleared word,
     // so "valid with value 0" is unrepresentable. setPartitionFormat sets it flipping to native, clears it flipping to
     // parquet (a parquet word is valid without it).
-    // has_delta (PARTITION_HAS_DELTA_BIT, bit 61) selects the catalog read path after the first Delta commit.
+    // has_delta (PARTITION_HAS_DELTA_BIT, bit 61) selects the initialized catalog, which may contain no Delta rows.
     // delta-write (PARTITION_DELTA_WRITE_BIT, bit 60) is the replicated mode gate, set before any Delta data exists.
     // Value writes preserve both flags across file-size/seqTxn rewrites.
     // legacy: a cleared slot reads as 0L (written today) or -1L (older binaries), both folded by isPartitionOffset3Cleared().

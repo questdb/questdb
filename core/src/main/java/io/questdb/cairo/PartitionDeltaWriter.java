@@ -58,6 +58,9 @@ public interface PartitionDeltaWriter extends QuietCloseable {
     ) {
     }
 
+    /** Creates or opens the complete catalog before the table commits has_delta. */
+    void initialize(TableWriter writer, int partitionIndex);
+
     /**
      * Moves the Delta files of an attached partition into their placement roots, right after
      * ATTACH renames or copies its directory. Throws after it moves them back.
@@ -78,17 +81,13 @@ public interface PartitionDeltaWriter extends QuietCloseable {
      */
     void readTimestampBounds(TableWriter writer, int partitionIndex, long boundsAddr);
 
-    void rollback(TableWriter writer, int partitionIndex, long seqTxn);
+    /** Finishes pending initialization and rolls back rows. Returns whether a catalog exists. */
+    boolean rollback(TableWriter writer, int partitionIndex, long seqTxn);
 
     void writeCommit(
             TableWriter writer,
-            boolean firstDeltaWrite,
-            int partitionIndexRaw,
             long partitionTimestamp,
             long partitionNameTxn,
-            boolean parquetBase,
-            long parquetFileSize,
-            long baseRowCount,
             ReadOnlyObjList<? extends MemoryCR> o3Columns,
             long sortedTimestampsAddr,
             long srcOooLo,

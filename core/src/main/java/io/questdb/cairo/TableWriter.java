@@ -3775,8 +3775,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0, n = getPartitionCount(); i < n; i++) {
             if (isPartitionDeltaActive(i)) {
                 final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
-                if (deltaWriter != null) {
-                    deltaWriter.rollback(this, i, getSeqTxn());
+                if (deltaWriter != null && deltaWriter.rollback(this, i, getSeqTxn()) && !txWriter.getPartitionHasDelta(i)) {
+                    txWriter.setPartitionHasDelta(i, true);
+                    txWriter.bumpPartitionTableVersion();
                 }
             }
         }
@@ -8560,6 +8561,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void initDeltaPartitions(long minTimestamp, long maxTimestamp) {
+        if (minTimestamp > maxTimestamp) {
+            return;
+        }
+        int i = txWriter.findAttachedPartitionIndexByLoTimestamp(minTimestamp);
+        if (i < 0) {
+            i = Math.max(-i - 2, 0);
+        }
+        boolean hasInitialized = false;
+        for (int n = txWriter.getPartitionCount(); i < n && getPartitionTimestamp(i) <= maxTimestamp; i++) {
+            if (!isPartitionDeltaActive(i) || txWriter.getPartitionHasDelta(i)) {
+                continue;
+            }
+            final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+            if (deltaWriter == null) {
+                return;
+            }
+            deltaWriter.initialize(this, i);
+            txWriter.setPartitionHasDelta(i, true);
+            txWriter.bumpPartitionTableVersion();
+            hasInitialized = true;
+        }
+        if (hasInitialized) {
+            // Publish complete, empty catalogs before applying any rows; keep the WAL seqTxn.
+            commitTxWriter();
+        }
+    }
+
     private void initLastPartition(long timestamp) {
         final long ts = repairDataGaps(timestamp);
         openLastPartitionAndSetAppendPosition(ts);
@@ -9666,8 +9695,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Publishes one WAL transaction's timestamp-ordered O3 slice before its
-     * {@code _txn} commit. That commit exposes the Runs and sets {@code has_delta}
-     * on the first write. Publication follows the configured commit mode.
+     * {@code _txn} commit. Catalog activation already set {@code has_delta};
+     * this commit exposes the Runs. Publication follows the configured commit mode.
      * Without a Delta writer, this path logs and drops the rows as for a read-only
      * partition; the partition switch requires a Delta-capable enterprise build.
      */
@@ -9675,7 +9704,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTimestamp,
             int partitionIndexRaw,
             long partitionNameTxn,
-            long baseRowCount,
             long sortedTimestampsAddr,
             long srcOooLo,
             long srcOooHi
@@ -9689,17 +9717,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$();
             return;
         }
-        final boolean parquetBase = txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
-        final boolean hasDelta = txWriter.getPartitionHasDeltaByRawIndex(partitionIndexRaw);
+        assert txWriter.getPartitionHasDeltaByRawIndex(partitionIndexRaw);
         deltaWriter.writeCommit(
                 this,
-                !hasDelta,
-                partitionIndexRaw,
                 partitionTimestamp,
                 partitionNameTxn,
-                parquetBase,
-                parquetBase ? txWriter.getPartitionParquetFileSizeByRawIndex(partitionIndexRaw) : -1,
-                baseRowCount,
                 o3Columns,
                 sortedTimestampsAddr,
                 srcOooLo,
@@ -9711,12 +9733,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (minTimestamp < txWriter.getMinTimestamp()) {
             // The setter makes _txn persist the minimum even on subsequent Delta-only commits.
             txWriter.setMinTimestamp(minTimestamp);
-        }
-        if (!hasDelta) {
-            txWriter.setPartitionHasDeltaByRawIndex(partitionIndexRaw, true);
-            // Readers with the partition already open must re-resolve it: a bare
-            // base read past this commit would miss the newly published Runs.
-            txWriter.bumpPartitionTableVersion();
         }
     }
 
@@ -10658,7 +10674,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // the frozen base (native or parquet) is never touched. Ahead of the
                         // append/merge dispatch so every strategy is captured, and the delta
                         // seal is durable before this transaction's _txn commit.
-                        o3CommitPartitionDelta(partitionTimestamp, partitionIndexRaw, srcNameTxn, srcDataMax, sortedTimestampsAddr, srcOooLo, srcOooHi);
+                        o3CommitPartitionDelta(partitionTimestamp, partitionIndexRaw, srcNameTxn, sortedTimestampsAddr, srcOooLo, srcOooHi);
                         continue;
                     }
                     if (partitionIsReadOnly) {
@@ -11320,6 +11336,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             return true;
         } else {
+            initDeltaPartitions(
+                    Math.min(txnMinTs, txWriter.getLagMinTimestamp()),
+                    Math.max(txnMaxTs, txWriter.getLagMaxTimestamp())
+            );
             return processWalCommit(
                     walPath,
                     inOrder,
