@@ -124,7 +124,13 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
     public void testReconnectToTighterCapRefreshesServerMaxBatchSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int portA = RestartableQwpServer.pickFreePort();
-            int portB = RestartableQwpServer.pickFreePort();
+            // pickFreePort() closes its probe socket before it returns, so the
+            // kernel can give the next call the same port. serverB cannot bind
+            // a port that serverA holds, so re-pick until portB differs.
+            int portB;
+            do {
+                portB = RestartableQwpServer.pickFreePort();
+            } while (portB == portA);
 
             QwpSidecar serverA = new QwpSidecar(portA, RECV_BUFFER_LARGE_BYTES, recvChunk, sendChunk);
             QwpSidecar serverB = new QwpSidecar(portB, RECV_BUFFER_SMALL_BYTES, recvChunk, sendChunk);
