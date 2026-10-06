@@ -134,14 +134,14 @@ public class UnorderedPageFrameReduceJobTest extends AbstractCairoTest {
                 if (hasTask) {
                     final long cursor = pubSeq.next();
                     Assert.assertEquals(0, cursor);
-                    queue.get(cursor).of(frameSequence, 0);
+                    queue.get(cursor).of(frameSequence);
                     pubSeq.done(cursor);
                 }
                 if (isCancelled && contendedClaimCount == 0) {
                     frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                 }
                 Assert.assertEquals(!hasTask, UnorderedPageFrameReduceJob.consumeQueue(
-                        queue, subSeq, record, circuitBreaker, frameSequence
+                        queue, subSeq, record, circuitBreaker
                 ));
                 Assert.assertEquals(contendedClaimCount + 1, claimCalls.get());
                 Assert.assertEquals(hasTask ? 1 : 0, doneCalls.get());
@@ -153,7 +153,7 @@ public class UnorderedPageFrameReduceJobTest extends AbstractCairoTest {
                         frameSequence.getCancelReason()
                 );
                 Assert.assertTrue(UnorderedPageFrameReduceJob.consumeQueue(
-                        queue, subSeq, record, circuitBreaker, frameSequence
+                        queue, subSeq, record, circuitBreaker
                 ));
                 Assert.assertEquals(hasTask ? 1 : 0, doneCalls.get());
                 Assert.assertEquals(hasTask && !isCancelled ? 1 : 0, reduceCalls.get());

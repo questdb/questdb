@@ -61,6 +61,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private UnorderedPageFrameSequence<?> unorderedFrameSequence;
     private RingQueue<UnorderedPageFrameReduceTask> unorderedQueue;
     private MCSequence unorderedSubSeq;
+    private long unorderedTicketId = -1;
     private int workerId = -1;
 
     PageFrameFiberTask(
@@ -146,13 +147,15 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             RingQueue<UnorderedPageFrameReduceTask> queue,
             MCSequence subSeq,
             int frameIndex,
-            UnorderedPageFrameSequence<?> frameSequence
+            UnorderedPageFrameSequence<?> frameSequence,
+            long ticketId
     ) {
         this.workerId = workerId;
         this.unorderedQueue = queue;
         this.unorderedSubSeq = subSeq;
         this.unorderedFrameIndex = frameIndex;
         this.unorderedFrameSequence = frameSequence;
+        this.unorderedTicketId = ticketId;
     }
 
     @Override
@@ -227,7 +230,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             final RingQueue<UnorderedPageFrameReduceTask> queue = unorderedQueue;
             final MCSequence subSeq = unorderedSubSeq;
             unorderedFrameSequence.enterReducerCancellationScope();
-            reduceUnorderedFrame(unorderedFrameIndex, unorderedFrameSequence);
+            reduceUnorderedFrames(unorderedFrameIndex, unorderedFrameSequence, unorderedTicketId);
             while (!hasNoPendingTasks(subSeq) && batch.shouldContinue()) {
                 final long cursor;
                 while (true) {
@@ -243,23 +246,19 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 }
                 final UnorderedPageFrameReduceTask reduceTask = queue.get(cursor);
                 final UnorderedPageFrameSequence<?> frameSequence = reduceTask.getFrameSequence();
-                final int frameIndex = reduceTask.getFrameIndex();
                 final long frameSequenceId = reduceTask.getFrameSequenceId();
                 reduceTask.clear();
                 subSeq.done(cursor);
                 dispatcher.signalProgress(frameSequence);
-                if (frameSequenceId != frameSequence.getId()) {
-                    LOG.error()
-                            .$("skipping stale task [expected=").$(frameSequence.getId())
-                            .$(", got=").$(frameSequenceId)
-                            .I$();
+                final int frameIndex = frameSequence.claimFrame(frameSequenceId);
+                if (frameIndex < 0) {
                     continue;
                 }
                 unorderedFrameIndex = frameIndex;
                 unorderedFrameSequence = frameSequence;
                 frameSequence.enterReducerCancellationScope();
                 batch.switchTo(frameSequence.getDispatchContext());
-                reduceUnorderedFrame(frameIndex, frameSequence);
+                reduceUnorderedFrames(frameIndex, frameSequence, frameSequenceId);
             }
         }
         return true;
@@ -301,6 +300,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         unorderedFrameSequence = null;
         unorderedQueue = null;
         unorderedSubSeq = null;
+        unorderedTicketId = -1;
         workerId = -1;
     }
 
@@ -377,7 +377,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
-                UnorderedPageFrameReduceJob.reduce(workerId, record, circuitBreaker, frameIndex, frameSequence, null);
+                UnorderedPageFrameReduceJob.reduce(workerId, record, circuitBreaker, frameIndex, frameSequence);
             }
         } catch (Throwable th) {
             if (frameSequence.isReducerFailureReportable(th)) {
@@ -404,6 +404,15 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                     dispatcher.signalProgress(frameSequence);
                 }
             }
+        }
+    }
+
+    private void reduceUnorderedFrames(int frameIndex, UnorderedPageFrameSequence<?> frameSequence, long ticketId) {
+        reduceUnorderedFrame(frameIndex, frameSequence);
+        // A full queue leaves no room to hand the ticket back: keep it and claim the next frame here.
+        while (!frameSequence.handBackTicket(ticketId) && (frameIndex = frameSequence.claimFrame(ticketId)) > -1) {
+            batch.switchTo(frameSequence.getDispatchContext());
+            reduceUnorderedFrame(frameIndex, frameSequence);
         }
     }
 

@@ -42,7 +42,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
@@ -54,14 +53,14 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Dispatches page frames to a shared queue without ordered collection.
- * Workers release queue slots immediately after reading frame index and sequence reference.
+ * Queue entries are tickets: a worker releases the slot, then claims the sequence's next frame.
  * Completion is tracked via an {@link SOUnboundedCountDownLatch}.
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
  */
@@ -70,6 +69,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
     private static final long MAX_TAIL_SPIN_NANOS = 16_000L;
     private static final int TAIL_SPIN_OUTSTANDING_FRAMES = 2;
+    // Frame claims shared by the owner and the workers: the high 32 bits hold the claim limit, the
+    // low 32 bits the next frame to hand out. Queue tickets name the sequence, not a frame, so the
+    // owner can reduce its own frames without consuming other queries' tickets from the shared queue.
+    private final AtomicLong claimState = new AtomicLong();
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AsyncQueryErrorState errorState = new AsyncQueryErrorState("unexpected reduce error");
@@ -77,10 +80,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private final MessageBus messageBus;
     private final MPSequence reducePubSeq;
     private final RingQueue<UnorderedPageFrameReduceTask> reduceQueue;
-    private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
-    private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
     private final long tailSpinTimeoutNanos;
+    // At most one ticket per worker: more could never be held at once, and each extra one is a queue
+    // slot that crowds out other queries once this sequence runs out of unclaimed frames.
+    private final int ticketLimit;
+    // Tickets out for the current dispatch, queued or held by a worker: the high 32 bits hold the
+    // dispatch generation (the low 32 bits of the sequence id), the low 32 bits the count. The
+    // generation keeps a ticket from an earlier dispatch from touching the count.
+    private final AtomicLong ticketState = new AtomicLong();
     private final WorkStealingStrategy workStealingStrategy;
     private T atom;
     private PageFrameAddressCache frameAddressCache;
@@ -97,7 +105,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
-    private int queuedCount;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
@@ -120,12 +127,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                     0,
                     Math.min(configuration.getSqlParallelWorkStealingSpinTimeout(), MAX_TAIL_SPIN_NANOS)
             );
+            this.ticketLimit = Math.max(1, sharedQueryWorkerCount);
             this.workStealingStrategy = configuration.getFactoryProvider()
                     .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
             this.reduceQueue = messageBus.getUnorderedPageFrameReduceQueue();
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
-            this.reduceSubSeq = messageBus.getUnorderedPageFrameReduceSubSeq();
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -133,27 +140,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     public void await() {
-        // Nothing to do if no frames were queued.
-        if (queuedCount == 0) {
-            return;
-        }
-        // Wait for all queued frames to complete.
-        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
-        while (true) {
-            final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
-            if (doneLatch.done(queuedCount)) {
-                break;
-            }
-            if (stealWork()) {
-                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
-            } else if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
-            } else {
-                Os.pause();
-            }
-        }
+        // Stop handing out frames, then wait for the claimed ones: their reducers read this sequence.
+        awaitClaimedFrames(closeClaims(), messageBus.getPageFrameReduceDispatcher(), true);
     }
 
     /**
@@ -187,8 +175,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * Dispatches all frames to the queue and waits for completion.
-     * The owner thread work-steals while waiting.
+     * Dispatches all frames and waits for completion. The owner reduces only its own frames: it
+     * never consumes other queries' tickets from the shared queue, because their frames may be
+     * slow (cold data, a large scan) and running them here would make this query as slow as theirs.
      *
      * @throws CairoException if a worker encountered an error
      */
@@ -198,151 +187,23 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             return;
         }
 
-        // Initialize the circuit breaker for work stealing and local reduces.
+        // Initialize the circuit breaker for local reduces.
         workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+        claimState.set((long) frameCount << 32);
 
-        int queued = 0;
-        int localCount = 0;
+        // Phase 1: reduce own frames until none is left unclaimed, keeping at least one ticket out.
+        // The owner publishes a single ticket; workers fan it out while they are free to help, see
+        // claimFrame(long), so a busy pool sees few tickets and an idle one quickly takes them all.
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        ticketState.set((long) (int) id << 32);
+        do {
+            if ((int) ticketState.get() == 0 && hasUnclaimedFrames()) {
+                publishFirstTicket(dispatcher);
+            }
+        } while (isActive() && reduceOwnFrame());
 
-        // Phase 1: Dispatch all frames.
-        // The try/finally ensures queuedCount is set even if reduceLocally() throws,
-        // so that await() in close() properly drains in-flight tasks.
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
-        boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
-        try {
-            if (!hasPublication) {
-                if (dispatcher.isCurrentFiberOwned()) {
-                    for (int i = 0; i < frameCount && isActive(); i++) {
-                        reduceLocally(i);
-                        localCount++;
-                    }
-                } else {
-                    cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-                }
-            } else {
-                DISPATCH:
-                for (int i = 0; i < frameCount; i++) {
-                    while (true) {
-                        if (!isActive()) {
-                            break DISPATCH;
-                        }
-                        if (dispatcher != null && !hasPublication) {
-                            hasPublication = dispatcher.tryAcquirePublication();
-                            if (!hasPublication) {
-                                if (dispatcher.isCurrentFiberOwned()) {
-                                    reduceLocally(i);
-                                    localCount++;
-                                    break;
-                                }
-                                cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-                                break DISPATCH;
-                            }
-                        }
-                        final long observedProgress = canPark ? getProgressVersion() : 0;
-                        final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
-                        final long cursor;
-                        cursor = reducePubSeq.next();
-                        if (cursor > -1) {
-                            reduceQueue.get(cursor).of(this, i);
-                            reducePubSeq.done(cursor);
-                        }
-                        if (cursor > -1) {
-                            queued++;
-                            break;
-                        } else if (cursor == -1) {
-                            if (dispatcher != null) {
-                                dispatcher.releasePublication();
-                                hasPublication = false;
-                                workStealingStrategy.onBeforeDirectSteal();
-                                if (!stealWork()) {
-                                    if (!isUninterruptible
-                                            && hasCircuitBreakerInterruptionBeenSuperseded(
-                                            workStealCircuitBreaker,
-                                            false
-                                    )) {
-                                        break DISPATCH;
-                                    }
-                                    if (canPark) {
-                                        awaitProgress(
-                                                dispatcher,
-                                                observedProgress,
-                                                observedGlobalProgress,
-                                                false
-                                        );
-                                        continue;
-                                    }
-                                    reduceLocally(i);
-                                    localCount++;
-                                    break;
-                                }
-                                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
-                                continue;
-                            }
-                            if (workStealingStrategy.shouldSteal(localCount)) {
-                                if (stealWork()) {
-                                    workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
-                                }
-                                continue;
-                            }
-                            // Reduce locally as fallback.
-                            reduceLocally(i);
-                            localCount++;
-                            break;
-                        } else {
-                            Os.pause();
-                        }
-                    }
-                }
-            }
-        } finally {
-            this.queuedCount = queued;
-            if (dispatcher != null && hasPublication) {
-                dispatcher.releasePublication();
-            }
-        }
-
-        // Phase 2: Wait for all queued frames to complete.
-        final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-        while (true) {
-            final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
-            if (doneLatch.done(queued)) {
-                break;
-            }
-            if (!isActive()) {
-                break;
-            }
-            if (!isUninterruptible
-                    && hasCircuitBreakerInterruptionBeenSuperseded(circuitBreaker, true)) {
-                break;
-            }
-            workStealingStrategy.onBeforeDirectSteal();
-            if (stealWork()) {
-                workStealCircuitBreaker.init(circuitBreaker);
-            } else if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, false);
-            } else {
-                Os.pause();
-            }
-        }
-
-        // If we exited early due to cancellation, still wait for in-flight tasks
-        // to complete to avoid data races with setError().
-        while (true) {
-            final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
-            if (doneLatch.done(queued)) {
-                break;
-            }
-            if (stealWork()) {
-                workStealCircuitBreaker.init(circuitBreaker);
-            } else if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
-            } else {
-                Os.pause();
-            }
-        }
+        // Phase 2: stop handing out frames and wait for the ones workers claimed.
+        awaitClaimedFrames(closeClaims(), dispatcher, false);
 
         // Phase 3: Check for errors.
         if (errorState.hasError()) {
@@ -387,10 +248,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         return frameAddressCache;
     }
 
-    public AtomicInteger getReduceStartedCounter() {
-        return reduceStartedCounter;
-    }
-
     public UnorderedPageFrameReducer getReducer() {
         return reducer;
     }
@@ -404,15 +261,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * Returns the single work-stealing strategy this sequence uses for every phase. There is one
-     * strategy instance per query: the reduce phase already bound its counter to this same object,
-     * and a post-aggregation caller rebinds its own counter through {@code of()} before calling
-     * {@code shouldSteal}. This getter returns that instance as-is; it does not unwrap anything.
-     * <p>
-     * A latch-gated test strategy (see {@code SlotGatedWorkStealingStrategy}) is a subclass, so it is
-     * returned here too. Such a test must ensure the acquire latch reaches zero during reduce, before
-     * post-aggregation calls {@code shouldSteal} on this same instance; otherwise that phase parks on
-     * a gate nothing will open.
+     * Returns the post-aggregation strategy; callers rebind it to their own counter with {@code of()}.
      */
     public WorkStealingStrategy getWorkStealingStrategy() {
         return workStealingStrategy;
@@ -445,8 +294,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             id = ID_SEQ.incrementAndGet();
             resetCancellation();
             doneLatch.reset();
-            reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter);
+            claimState.set(0);
             errorState.clear();
 
             atom.init(frameCursor, executionContext);
@@ -469,11 +317,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     public void reset() {
-        // reset() must be called only if there are no tasks in progress for this page frame sequence
-        assert queuedCount == 0 || doneLatch.done(queuedCount);
+        // Close the claims before tearing down the frame state, so that a leftover ticket
+        // can't start a frame. reset() must be called only once the claimed frames are done.
+        final int claimedCount = closeClaims();
+        assert doneLatch.done(claimedCount);
 
         frameCount = 0;
-        queuedCount = 0;
         isReadyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
@@ -526,24 +375,135 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
     }
 
+    /**
+     * Hands out the next unclaimed frame of this sequence, or -1 when none is left. Both the owner
+     * and the workers holding this sequence's tickets call it, so each frame is reduced exactly once.
+     * The caller must count down the done latch once it has reduced the claimed frame.
+     */
+    int claimFrame() {
+        while (true) {
+            final long state = claimState.get();
+            final int next = (int) state;
+            if (next >= (int) (state >>> 32)) {
+                return -1;
+            }
+            if (claimState.compareAndSet(state, state + 1)) {
+                return next;
+            }
+        }
+    }
+
+    boolean hasUnclaimedFrames() {
+        final long state = claimState.get();
+        return (int) state < (int) (state >>> 32);
+    }
+
     boolean isDoneAfterTailSpin() {
+        // Called while the owner waits for claimed frames, so the claims are closed already
+        // and the claim limit equals the number of claimed frames.
+        final int claimedCount = (int) (claimState.get() >>> 32);
         if (hasTailSpun
                 || tailSpinTimeoutNanos == 0
                 || !isActive()
                 || isUninterruptible
-                || queuedCount < 1
-                || !doneLatch.done(Math.max(0, queuedCount - TAIL_SPIN_OUTSTANDING_FRAMES))) {
+                || claimedCount < 1
+                || !doneLatch.done(Math.max(0, claimedCount - TAIL_SPIN_OUTSTANDING_FRAMES))) {
             return false;
         }
         hasTailSpun = true;
         final long startNanos = System.nanoTime();
         do {
-            if (doneLatch.done(queuedCount)) {
+            if (doneLatch.done(claimedCount)) {
                 return true;
             }
             Thread.onSpinWait();
         } while (isActive() && System.nanoTime() - startNanos < tailSpinTimeoutNanos);
-        return doneLatch.done(queuedCount);
+        return doneLatch.done(claimedCount);
+    }
+
+    /**
+     * A worker claims a frame with a ticket it took from the queue, or -1 when none is left. On a
+     * claim, it fans out: it publishes up to two more tickets while fewer than one ticket per worker
+     * is out, so the helpers double while workers are free to take tickets, and a busy pool, which
+     * takes few, sees few. A ticket that claims nothing is retired.
+     */
+    int claimFrame(long ticketId) {
+        if (ticketId != id) {
+            // From an earlier dispatch: its count was reset with the generation.
+            return -1;
+        }
+        final int frameIndex = claimFrame();
+        if (frameIndex < 0) {
+            retireTicket(ticketId);
+        } else if (isActive()) {
+            for (int i = 0; i < 2 && addTicket(ticketId); i++) {
+                if (!tryPublishTicket()) {
+                    retireTicket(ticketId);
+                    break;
+                }
+            }
+        }
+        return frameIndex;
+    }
+
+    /**
+     * A worker calls this after reducing a frame. While frames remain unclaimed, it hands the ticket
+     * back to the queue tail, so the query keeps its helper but takes turns with other queries;
+     * otherwise it retires the ticket. Returns false when the queue is full: the worker then keeps
+     * the ticket and claims the next frame itself, so a full queue never takes a helper away.
+     */
+    boolean handBackTicket(long ticketId) {
+        if (!isActive() || !hasUnclaimedFrames()) {
+            retireTicket(ticketId);
+            return true;
+        }
+        return tryPublishTicket();
+    }
+
+    void retireTicket(long ticketId) {
+        while (true) {
+            final long state = ticketState.get();
+            if ((int) (state >>> 32) != (int) ticketId || (int) state == 0) {
+                return;
+            }
+            if (ticketState.compareAndSet(state, state - 1)) {
+                return;
+            }
+        }
+    }
+
+    // Counts a new ticket of the current dispatch, unless one ticket per worker is already out.
+    private boolean addTicket(long ticketId) {
+        while (true) {
+            final long state = ticketState.get();
+            if ((int) (state >>> 32) != (int) ticketId || (int) state >= ticketLimit) {
+                return false;
+            }
+            if (ticketState.compareAndSet(state, state + 1)) {
+                return true;
+            }
+        }
+    }
+
+    private void awaitClaimedFrames(int claimedCount, PageFrameReduceDispatcher dispatcher, boolean isDraining) {
+        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        while (true) {
+            final long observedProgress = canPark ? getProgressVersion() : 0;
+            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            if (doneLatch.done(claimedCount)) {
+                break;
+            }
+            if (canPark) {
+                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining || !isActive());
+            } else {
+                // awaitProgress() watches for cancellation while parked; a thread that cannot park
+                // checks the breaker itself, or a cancellation during the last worker frames is lost.
+                if (!isDraining && !isUninterruptible && isActive()) {
+                    hasCircuitBreakerInterruptionBeenSuperseded(getCircuitBreaker(), true);
+                }
+                Os.pause();
+            }
+        }
     }
 
     private void buildAddressCache() {
@@ -563,6 +523,21 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         frameAddressCache.freezeCoveredReaders();
     }
 
+    /**
+     * Stops handing out frames and returns how many were claimed. Shrinking the limit down to the
+     * next frame keeps the call idempotent: the limit then equals the claimed count.
+     */
+    private int closeClaims() {
+        while (true) {
+            final long state = claimState.get();
+            final int next = (int) state;
+            final long closedState = ((long) next << 32) | next;
+            if (state == closedState || claimState.compareAndSet(state, closedState)) {
+                return next;
+            }
+        }
+    }
+
     private boolean hasCircuitBreakerInterruptionBeenSuperseded(
             SqlExecutionCircuitBreaker circuitBreaker,
             boolean isTimeThrottled
@@ -579,6 +554,31 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                 return true;
             }
             throw e;
+        }
+    }
+
+    /**
+     * Publishes a ticket for the workers to fan out. Holds the publication permit only while
+     * publishing: quiesce waits for it. A full queue publishes nothing; the owner tries again
+     * before its next frame.
+     */
+    private void publishFirstTicket(@Nullable PageFrameReduceDispatcher dispatcher) {
+        if (dispatcher != null && !dispatcher.tryAcquirePublication()) {
+            // The dispatcher is quiescing. An owner on a fiber of the quiescing runtime reduces its
+            // frames itself, unless the quiesce drain cancels it first; any other owner cancels.
+            if (!dispatcher.isCurrentFiberOwned()) {
+                cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+            }
+            return;
+        }
+        try {
+            if (addTicket(id) && !tryPublishTicket()) {
+                retireTicket(id);
+            }
+        } finally {
+            if (dispatcher != null) {
+                dispatcher.releasePublication();
+            }
         }
     }
 
@@ -608,7 +608,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             if (isActive()) {
                 localRecord.of(getSymbolTableSource());
-                reduceStartedCounter.incrementAndGet();
                 reducer.reduce(-1, localRecord, frameIndex, workStealCircuitBreaker, this, this);
             }
         } catch (Throwable th) {
@@ -638,21 +637,37 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
     }
 
-    private boolean stealWork() {
-        // N.B. consumeQueue may process a task from any UnorderedPageFrameSequence,
-        // not just this one, which will re-initialize localRecord and the circuit
-        // breaker wrapper for the foreign sequence. Callers must not assume their
-        // state is preserved across this call and must re-init the wrapper when
-        // this method returns true (a task was consumed).
-        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean isEmpty = UnorderedPageFrameReduceJob.consumeQueue(
-                reduceQueue,
-                reduceSubSeq,
-                localRecord,
-                workStealCircuitBreaker,
-                this,
-                dispatcher
-        );
-        return !isEmpty;
+    private boolean reduceOwnFrame() {
+        // Check for cancellation before every frame: the owner may reduce all frames itself.
+        if (!isUninterruptible
+                && hasCircuitBreakerInterruptionBeenSuperseded(sqlExecutionContext.getCircuitBreaker(), true)) {
+            return false;
+        }
+        workStealingStrategy.onBeforeOwnerReduce();
+        final int frameIndex = claimFrame();
+        if (frameIndex < 0) {
+            return false;
+        }
+        try {
+            reduceLocally(frameIndex);
+        } finally {
+            doneLatch.countDown();
+        }
+        return true;
+    }
+
+    private boolean tryPublishTicket() {
+        while (true) {
+            final long cursor = reducePubSeq.next();
+            if (cursor > -1) {
+                reduceQueue.get(cursor).of(this);
+                reducePubSeq.done(cursor);
+                return true;
+            }
+            if (cursor == -1) {
+                return false;
+            }
+            Os.pause();
+        }
     }
 }

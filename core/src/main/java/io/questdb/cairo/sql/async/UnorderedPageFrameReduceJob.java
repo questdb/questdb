@@ -73,21 +73,9 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             RingQueue<UnorderedPageFrameReduceTask> queue,
             MCSequence subSeq,
             PageFrameMemoryRecord record,
-            SqlExecutionCircuitBreakerWrapper circuitBreaker,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+            SqlExecutionCircuitBreakerWrapper circuitBreaker
     ) {
-        return consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence, null);
-    }
-
-    static boolean consumeQueue(
-            RingQueue<UnorderedPageFrameReduceTask> queue,
-            MCSequence subSeq,
-            PageFrameMemoryRecord record,
-            SqlExecutionCircuitBreakerWrapper circuitBreaker,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence,
-            @Nullable PageFrameReduceDispatcher dispatcher
-    ) {
-        return consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence, dispatcher);
+        return consumeQueue(-1, queue, subSeq, record, circuitBreaker, null);
     }
 
     @Override
@@ -122,7 +110,6 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 messageBus.getUnorderedPageFrameReduceSubSeq(),
                 record,
                 circuitBreaker,
-                null,
                 null
         ));
     }
@@ -133,17 +120,14 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             MCSequence subSeq,
             PageFrameMemoryRecord record,
             SqlExecutionCircuitBreakerWrapper circuitBreaker,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence,
             @Nullable PageFrameReduceDispatcher dispatcher
     ) {
-        boolean hasRetriedOwnerClaim = false;
         do {
             final long cursor = subSeq.next();
             if (cursor > -1) {
                 final UnorderedPageFrameReduceTask task = queue.get(cursor);
                 // Read task fields before releasing the slot.
                 final UnorderedPageFrameSequence<?> frameSequence = task.getFrameSequence();
-                final int frameIndex = task.getFrameIndex();
                 final long taskSequenceId = task.getFrameSequenceId();
                 // Release the queue slot immediately.
                 task.clear();
@@ -152,14 +136,10 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                     dispatcher.signalProgress(frameSequence);
                 }
 
-                if (taskSequenceId != frameSequence.getId()) {
-                    // Stale task from a previous dispatch cycle; discard without
-                    // touching the (already reset) latch or error state.
-                    LOG.error()
-                            .$("skipping stale task [expected=").$(frameSequence.getId())
-                            .$(", got=").$(taskSequenceId)
-                            .I$();
-                } else {
+                // A ticket from a previous dispatch cycle, or one left over after the owner
+                // claimed every frame, claims nothing and must not touch the latch or error state.
+                int frameIndex = frameSequence.claimFrame(taskSequenceId);
+                while (frameIndex > -1) {
                     final boolean isFiberSuspendable = SuspensionScope.isFiberMode() && Fiber.isMounted();
                     final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
                             ? null
@@ -185,14 +165,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                         }
                         if (frameSequence.isActive()) {
                             circuitBreaker.init(frameSequence.getCircuitBreaker());
-                            reduce(
-                                    workerId,
-                                    record,
-                                    circuitBreaker,
-                                    frameIndex,
-                                    frameSequence,
-                                    stealingFrameSequence
-                            );
+                            reduce(workerId, record, circuitBreaker, frameIndex, frameSequence);
                         }
                     } catch (Throwable th) {
                         if (frameSequence.isReducerFailureReportable(th)) {
@@ -232,22 +205,14 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                             }
                         }
                     }
+                    // A full queue leaves no room to hand the ticket back: keep it and claim the next frame.
+                    frameIndex = frameSequence.handBackTicket(taskSequenceId) ? -1 : frameSequence.claimFrame(taskSequenceId);
                 }
                 return false;
             } else if (cursor == -1) {
                 break;
             }
-            if (!hasRetriedOwnerClaim
-                    && workerId == -1
-                    && stealingFrameSequence != null
-                    && stealingFrameSequence.getDispatchContext() != null) {
-                // Another consumer changed the cursor during this claim attempt. Let the managed
-                // query owner retry once before yielding the carrier to the operating system.
-                hasRetriedOwnerClaim = true;
-                Thread.onSpinWait();
-            } else {
-                Os.pause();
-            }
+            Os.pause();
         } while (true);
         return true;
     }
@@ -257,8 +222,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
             PageFrameMemoryRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,
             int frameIndex,
-            UnorderedPageFrameSequence<?> frameSequence,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+            UnorderedPageFrameSequence<?> frameSequence
     ) {
         final int cbState = frameSequence.isUninterruptible()
                 ? SqlExecutionCircuitBreaker.STATE_OK
@@ -268,15 +232,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
         );
         if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
             record.of(frameSequence.getSymbolTableSource());
-            frameSequence.getReduceStartedCounter().incrementAndGet();
-            frameSequence.getReducer().reduce(
-                    workerId,
-                    record,
-                    frameIndex,
-                    circuitBreaker,
-                    frameSequence,
-                    stealingFrameSequence
-            );
+            frameSequence.getReducer().reduce(workerId, record, frameIndex, circuitBreaker, frameSequence, null);
         } else {
             frameSequence.cancel(cbState);
         }

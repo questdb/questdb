@@ -35,11 +35,11 @@ public interface WorkStealingStrategy {
     WorkStealingStrategy of(AtomicInteger startedCounter);
 
     /**
-     * The query owner calls this before direct work-stealing attempts in an active dispatch.
-     * Cleanup drains bypass this callback so that cancellation cannot prevent queued work from
+     * The query owner calls this before it claims one of its own frames in an active dispatch.
+     * Cleanup drains bypass this callback so that cancellation cannot prevent claimed work from
      * completing.
      */
-    default void onBeforeDirectSteal() {
+    default void onBeforeOwnerReduce() {
     }
 
     /**

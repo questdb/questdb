@@ -26,6 +26,7 @@ package io.questdb.test.cairo.sql.async;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.MessageBusImpl;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
@@ -55,6 +56,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
@@ -88,6 +90,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
@@ -490,15 +493,15 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 frameSequenceARef.set(frameSequenceA);
                 long cursor = pubSeq.next();
                 Assert.assertTrue(cursor > -1);
-                queue.get(cursor).of(frameSequenceA, 0);
+                queue.get(cursor).of(frameSequenceA);
                 pubSeq.done(cursor);
                 cursor = pubSeq.next();
                 Assert.assertTrue(cursor > -1);
-                queue.get(cursor).of(frameSequenceB, 0);
+                queue.get(cursor).of(frameSequenceB);
                 pubSeq.done(cursor);
                 cursor = pubSeq.next();
                 Assert.assertTrue(cursor > -1);
-                queue.get(cursor).of(frameSequenceB, 0);
+                queue.get(cursor).of(frameSequenceB);
                 pubSeq.done(cursor);
 
                 Assert.assertFalse(dispatcher.consumeUnordered(-1, queue, subSeq, null));
@@ -594,7 +597,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 for (int i = 0; i < 2; i++) {
                     final long cursor = pubSeq.next();
                     Assert.assertTrue(cursor > -1);
-                    queue.get(cursor).of(frameSequence, i);
+                    queue.get(cursor).of(frameSequence);
                     pubSeq.done(cursor);
                 }
 
@@ -666,7 +669,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 for (int i = 0; i < 2; i++) {
                     final long cursor = pubSeq.next();
                     Assert.assertTrue(cursor > -1);
-                    queue.get(cursor).of(frameSequence, i);
+                    queue.get(cursor).of(frameSequence);
                     pubSeq.done(cursor);
                 }
 
@@ -917,7 +920,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
                 cursor = unorderedPubSeq.next();
                 Assert.assertTrue(cursor > -1);
-                unorderedQueue.get(cursor).of(unorderedFrameSequence, 0);
+                unorderedQueue.get(cursor).of(unorderedFrameSequence);
                 unorderedPubSeq.done(cursor);
                 Assert.assertFalse(dispatcher.consumeUnordered(0, unorderedQueue, unorderedSubSeq, null));
                 Assert.assertEquals(
@@ -2862,7 +2865,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 engine.getMessageBus()
                         .getUnorderedPageFrameReduceQueue()
                         .get(unorderedCursor)
-                        .of(unorderedFrameSequence, 0);
+                        .of(unorderedFrameSequence);
                 engine.getMessageBus().getUnorderedPageFrameReducePubSeq().done(unorderedCursor);
 
                 runtime.beginQuiesce();
@@ -2966,7 +2969,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 final MCSequence subSeq = engine.getMessageBus().getUnorderedPageFrameReduceSubSeq();
                 final long cursor = engine.getMessageBus().getUnorderedPageFrameReducePubSeq().next();
                 Assert.assertTrue(cursor > -1);
-                queue.get(cursor).of(frameSequence, 0);
+                queue.get(cursor).of(frameSequence);
                 engine.getMessageBus().getUnorderedPageFrameReducePubSeq().done(cursor);
 
                 runtime.beginQuiesce();
@@ -3603,7 +3606,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 for (int i = 0; i < capacity; i++) {
                     final long cursor = pubSeq.next();
                     Assert.assertTrue(cursor > -1);
-                    queue.get(cursor).of(foreignSequence, 0);
+                    queue.get(cursor).of(foreignSequence);
                     pubSeq.done(cursor);
                 }
                 for (int i = 0; i < capacity - 1; i++) {
@@ -3796,7 +3799,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             try {
                 final long cursor = pubSeq.next();
                 Assert.assertTrue(cursor > -1);
-                queue.get(cursor).of(frameSequence, 0);
+                queue.get(cursor).of(frameSequence);
                 pubSeq.done(cursor);
 
                 Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask));
@@ -3903,7 +3906,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onBeforeDirectSteal() {
+                public void onBeforeOwnerReduce() {
                     directStealCount.incrementAndGet();
                 }
 
@@ -4077,8 +4080,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                             queue,
                             subSeq,
                             record,
-                            circuitBreaker,
-                            ownerSequence
+                            circuitBreaker
                     ));
                     return true;
                 }
@@ -4086,7 +4088,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             try {
                 final long cursor = pubSeq.next();
                 Assert.assertTrue(cursor > -1);
-                queue.get(cursor).of(foreignSequence, 0);
+                queue.get(cursor).of(foreignSequence);
                 pubSeq.done(cursor);
 
                 Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(ownerTask));
@@ -4111,6 +4113,291 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(foreignSequence);
                 Misc.free(ownerSequence);
                 Misc.free(queue);
+            }
+        });
+    }
+
+    @Test
+    public void testUnorderedOwnerObservesCancellationWhileQueueIsFull() throws Exception {
+        // A leftover ticket keeps a one-slot queue full, so the owner reduces every frame itself on
+        // the queue-full path. Cancelling during the first frame must stop it before the second.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE warm AS (SELECT x FROM long_sequence(1))");
+            execute("""
+                    CREATE TABLE scan AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
+                        FROM long_sequence(16)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final CairoConfiguration queueConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getUnorderedPageFrameReduceQueueCapacity() {
+                    return 1;
+                }
+            };
+            final AtomicInteger reduceCount = new AtomicInteger();
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+            try (
+                    MessageBusImpl bus = new MessageBusImpl(queueConfiguration);
+                    RecordCursorFactory warmFactory = select("SELECT * FROM warm");
+                    RecordCursorFactory scanFactory = select("SELECT * FROM scan");
+                    SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 1)
+            ) {
+                // No worker runs, so the warm query's ticket stays in the queue after it finishes.
+                try (UnorderedPageFrameSequence<StatefulAtom> warm = new UnorderedPageFrameSequence<>(
+                        engine,
+                        queueConfiguration,
+                        bus,
+                        new StatefulAtom() {
+                        },
+                        (_, _, _, _, _, _) -> {
+                        },
+                        1
+                )) {
+                    warm.of(warmFactory, sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                    warm.prepareForDispatch();
+                    warm.dispatchAndAwait();
+                }
+                context.with(breaker);
+                try (UnorderedPageFrameSequence<StatefulAtom> scan = new UnorderedPageFrameSequence<>(
+                        engine,
+                        queueConfiguration,
+                        bus,
+                        new StatefulAtom() {
+                        },
+                        (_, _, _, _, _, _) -> {
+                            if (reduceCount.incrementAndGet() == 1) {
+                                breaker.cancel();
+                            }
+                        },
+                        1
+                )) {
+                    scan.of(scanFactory, context, PartitionFrameCursorFactory.ORDER_ASC);
+                    scan.prepareForDispatch();
+                    Assert.assertEquals(16, scan.getFrameCount());
+                    try {
+                        scan.dispatchAndAwait();
+                        Assert.fail("expected cancellation");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isCancellation());
+                    } finally {
+                        scan.await();
+                    }
+                    Assert.assertEquals(1, reduceCount.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnorderedOwnerObservesCancellationWhileWaitingForWorkers() throws Exception {
+        // A worker claims the only frame, and the query is cancelled while the worker reduces it.
+        // The owner runs on a plain thread, so it cannot park: its wait for the worker's frame must
+        // still notice the cancellation, otherwise the query completes as if it never happened.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tail_tab AS (SELECT x FROM long_sequence(1))");
+            final Thread ownerThread = Thread.currentThread();
+            final CountDownLatch workerFrameStarted = new CountDownLatch(1);
+            final CountDownLatch cancelled = new CountDownLatch(1);
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+            final AtomicReference<Throwable> workerError = new AtomicReference<>();
+            final WorkStealingStrategy strategy = new WorkStealingStrategy() {
+                @Override
+                public void onBeforeOwnerReduce() {
+                    TestUtils.await(workerFrameStarted);
+                    breaker.cancel();
+                    cancelled.countDown();
+                }
+
+                @Override
+                public WorkStealingStrategy of(AtomicInteger startedCounter) {
+                    return this;
+                }
+
+                @Override
+                public boolean shouldSteal(int finishedCount) {
+                    return true;
+                }
+            };
+            final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
+                @Override
+                public @NotNull WorkStealingStrategy getWorkStealingStrategy(
+                        @NotNull CairoConfiguration configuration,
+                        int workerCount,
+                        @NotNull StatefulAtom atom
+                ) {
+                    return strategy;
+                }
+            };
+            final CairoConfiguration sequenceConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FactoryProvider getFactoryProvider() {
+                    return factoryProvider;
+                }
+            };
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM tail_tab");
+                    SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 1);
+                    UnorderedPageFrameReduceJob job = new UnorderedPageFrameReduceJob(engine, engine.getMessageBus());
+                    UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
+                            engine,
+                            sequenceConfiguration,
+                            engine.getMessageBus(),
+                            new StatefulAtom() {
+                            },
+                            (_, _, _, _, sequence, _) -> {
+                                Assert.assertNotSame(ownerThread, Thread.currentThread());
+                                workerFrameStarted.countDown();
+                                TestUtils.await(cancelled);
+                                // Only an owner that observed the cancellation cancels the sequence.
+                                final long deadline = System.nanoTime() + 500_000_000L;
+                                while (sequence.isActive() && System.nanoTime() < deadline) {
+                                    LockSupport.parkNanos(100_000);
+                                }
+                            },
+                            1
+                    )
+            ) {
+                context.with(breaker);
+                frameSequence.of(factory, context, PartitionFrameCursorFactory.ORDER_ASC);
+                frameSequence.prepareForDispatch();
+                Assert.assertEquals(1, frameSequence.getFrameCount());
+                final Thread worker = new Thread(() -> {
+                    try {
+                        final long deadline = System.nanoTime() + 5_000_000_000L;
+                        while (!job.run(Job.RUNNING_STATUS) && System.nanoTime() < deadline) {
+                            Thread.onSpinWait();
+                        }
+                    } catch (Throwable th) {
+                        workerError.set(th);
+                        workerFrameStarted.countDown();
+                    }
+                });
+                worker.start();
+                boolean isCancellationObserved = false;
+                try {
+                    frameSequence.dispatchAndAwait();
+                } catch (CairoException e) {
+                    isCancellationObserved = e.isCancellation();
+                } finally {
+                    cancelled.countDown();
+                    worker.join(5_000);
+                    frameSequence.await();
+                }
+                Assert.assertFalse(worker.isAlive());
+                if (workerError.get() != null) {
+                    throw new AssertionError(workerError.get());
+                }
+                Assert.assertTrue(isCancellationObserved);
+            }
+        });
+    }
+
+    @Test
+    public void testUnorderedOwnerReducesOnlyOwnFrames() throws Exception {
+        // A slow query's owner blocks inside its first frame, leaving its other frames unclaimed
+        // and its tickets queued. A fast query must finish without running any of those frames.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE slow_tab AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
+                        FROM long_sequence(4)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    CREATE TABLE fast_tab AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
+                        FROM long_sequence(2)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final Thread testThread = Thread.currentThread();
+            final CountDownLatch slowFrameStarted = new CountDownLatch(1);
+            final CountDownLatch slowFrameRelease = new CountDownLatch(1);
+            final AtomicInteger slowReduceCount = new AtomicInteger();
+            final AtomicInteger stolenSlowReduceCount = new AtomicInteger();
+            final AtomicInteger fastReduceCount = new AtomicInteger();
+            final AtomicReference<Throwable> slowOwnerError = new AtomicReference<>();
+            try (
+                    RecordCursorFactory slowFactory = select("SELECT * FROM slow_tab");
+                    RecordCursorFactory fastFactory = select("SELECT * FROM fast_tab");
+                    PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+                    SqlExecutionCircuitBreakerWrapper circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
+                            engine,
+                            configuration.getCircuitBreakerConfiguration()
+                    );
+                    UnorderedPageFrameSequence<StatefulAtom> slowSequence = new UnorderedPageFrameSequence<>(
+                            engine,
+                            configuration,
+                            engine.getMessageBus(),
+                            new StatefulAtom() {
+                            },
+                            (_, _, _, _, _, _) -> {
+                                if (Thread.currentThread() == testThread) {
+                                    stolenSlowReduceCount.incrementAndGet();
+                                    return;
+                                }
+                                if (slowReduceCount.getAndIncrement() == 0) {
+                                    slowFrameStarted.countDown();
+                                    TestUtils.await(slowFrameRelease);
+                                }
+                            },
+                            1
+                    );
+                    UnorderedPageFrameSequence<StatefulAtom> fastSequence = new UnorderedPageFrameSequence<>(
+                            engine,
+                            configuration,
+                            engine.getMessageBus(),
+                            new StatefulAtom() {
+                            },
+                            (_, _, _, _, _, _) -> fastReduceCount.incrementAndGet(),
+                            1
+                    )
+            ) {
+                slowSequence.of(slowFactory, TestUtils.createSqlExecutionCtx(engine), PartitionFrameCursorFactory.ORDER_ASC);
+                slowSequence.prepareForDispatch();
+                Assert.assertEquals(4, slowSequence.getFrameCount());
+                final Thread slowOwner = new Thread(() -> {
+                    try {
+                        slowSequence.dispatchAndAwait();
+                    } catch (Throwable th) {
+                        slowOwnerError.set(th);
+                    } finally {
+                        slowFrameStarted.countDown();
+                    }
+                });
+                slowOwner.start();
+                try {
+                    TestUtils.await(slowFrameStarted);
+
+                    fastSequence.of(fastFactory, sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                    fastSequence.prepareForDispatch();
+                    Assert.assertEquals(2, fastSequence.getFrameCount());
+                    fastSequence.dispatchAndAwait();
+
+                    Assert.assertEquals(2, fastReduceCount.get());
+                    Assert.assertEquals(0, stolenSlowReduceCount.get());
+                    Assert.assertEquals(1, slowReduceCount.get());
+                } finally {
+                    slowFrameRelease.countDown();
+                    slowOwner.join();
+                }
+                if (slowOwnerError.get() != null) {
+                    throw new AssertionError(slowOwnerError.get());
+                }
+                Assert.assertEquals(4, slowReduceCount.get());
+
+                // Each owner published one ticket (one worker) and claimed every frame itself, so both
+                // leftover tickets claim nothing.
+                final RingQueue<UnorderedPageFrameReduceTask> queue = engine.getMessageBus().getUnorderedPageFrameReduceQueue();
+                final MCSequence subSeq = engine.getMessageBus().getUnorderedPageFrameReduceSubSeq();
+                int leftoverTicketCount = 0;
+                while (!UnorderedPageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker)) {
+                    leftoverTicketCount++;
+                }
+                Assert.assertEquals(2, leftoverTicketCount);
+                Assert.assertEquals(2, fastReduceCount.get());
+                Assert.assertEquals(4, slowReduceCount.get());
+                Assert.assertEquals(0, stolenSlowReduceCount.get());
             }
         });
     }
@@ -4232,7 +4519,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             try {
                 final long cursor = pubSeq.next();
                 Assert.assertTrue(cursor > -1);
-                queue.get(cursor).of(frameSequence, 0);
+                queue.get(cursor).of(frameSequence);
                 pubSeq.done(cursor);
 
                 Assert.assertFalse(dispatcher.consumeUnordered(0, queue, subSeq, null));
@@ -4249,6 +4536,264 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(dispatcher);
                 Misc.free(frameSequence);
                 Misc.free(queue);
+            }
+        });
+    }
+
+    @Test
+    public void testUnorderedWorkerFansTicketsOutUpToWorkerCount() throws Exception {
+        // The owner publishes one ticket and blocks in frame 0. Each claim fans out up to two more
+        // tickets while fewer than four (the worker count) are out, so a single worker sees 3, then
+        // 4 tickets, and never more: frames 1-7 take 7 claims, and the 3 tickets still out when the
+        // frames run out claim nothing and retire.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE fan_tab AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
+                        FROM long_sequence(8)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final Thread testThread = Thread.currentThread();
+            final CountDownLatch ownerFrameStarted = new CountDownLatch(1);
+            final CountDownLatch ownerFrameRelease = new CountDownLatch(1);
+            final AtomicInteger ownerReduceCount = new AtomicInteger();
+            final AtomicInteger workerReduceCount = new AtomicInteger();
+            final AtomicReference<Throwable> ownerError = new AtomicReference<>();
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM fan_tab");
+                    PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+                    SqlExecutionCircuitBreakerWrapper circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
+                            engine,
+                            configuration.getCircuitBreakerConfiguration()
+                    );
+                    UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
+                            engine,
+                            configuration,
+                            engine.getMessageBus(),
+                            new StatefulAtom() {
+                            },
+                            (_, _, _, _, _, _) -> {
+                                if (Thread.currentThread() == testThread) {
+                                    workerReduceCount.incrementAndGet();
+                                } else if (ownerReduceCount.getAndIncrement() == 0) {
+                                    ownerFrameStarted.countDown();
+                                    TestUtils.await(ownerFrameRelease);
+                                }
+                            },
+                            4
+                    )
+            ) {
+                frameSequence.of(factory, TestUtils.createSqlExecutionCtx(engine), PartitionFrameCursorFactory.ORDER_ASC);
+                frameSequence.prepareForDispatch();
+                Assert.assertEquals(8, frameSequence.getFrameCount());
+                final Thread owner = new Thread(() -> {
+                    try {
+                        frameSequence.dispatchAndAwait();
+                    } catch (Throwable th) {
+                        ownerError.set(th);
+                    } finally {
+                        ownerFrameStarted.countDown();
+                    }
+                });
+                owner.start();
+                final RingQueue<UnorderedPageFrameReduceTask> queue = engine.getMessageBus().getUnorderedPageFrameReduceQueue();
+                final MCSequence subSeq = engine.getMessageBus().getUnorderedPageFrameReduceSubSeq();
+                int consumedTicketCount = 0;
+                try {
+                    TestUtils.await(ownerFrameStarted);
+                    while (!UnorderedPageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker)) {
+                        consumedTicketCount++;
+                    }
+                } finally {
+                    ownerFrameRelease.countDown();
+                    owner.join();
+                }
+                if (ownerError.get() != null) {
+                    throw new AssertionError(ownerError.get());
+                }
+                Assert.assertEquals(7, workerReduceCount.get());
+                Assert.assertEquals(1, ownerReduceCount.get());
+                Assert.assertEquals(10, consumedTicketCount);
+                // The owner found no unclaimed frame after its release, so it published nothing.
+                Assert.assertTrue(UnorderedPageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker));
+            }
+        });
+    }
+
+    @Test
+    public void testUnorderedWorkerHandsTicketBackWhileFramesRemain() throws Exception {
+        // The owner publishes a single ticket (one worker) and blocks in its first frame. A worker
+        // that takes the ticket reduces one frame and puts the ticket back while frames remain, so
+        // the one ticket carries the worker through every remaining frame and then dies.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE rotate_tab AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
+                        FROM long_sequence(4)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final Thread testThread = Thread.currentThread();
+            final CountDownLatch ownerFrameStarted = new CountDownLatch(1);
+            final CountDownLatch ownerFrameRelease = new CountDownLatch(1);
+            final AtomicInteger ownerReduceCount = new AtomicInteger();
+            final AtomicInteger workerReduceCount = new AtomicInteger();
+            final AtomicReference<Throwable> ownerError = new AtomicReference<>();
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM rotate_tab");
+                    PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+                    SqlExecutionCircuitBreakerWrapper circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
+                            engine,
+                            configuration.getCircuitBreakerConfiguration()
+                    );
+                    UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
+                            engine,
+                            configuration,
+                            engine.getMessageBus(),
+                            new StatefulAtom() {
+                            },
+                            (_, _, _, _, _, _) -> {
+                                if (Thread.currentThread() == testThread) {
+                                    workerReduceCount.incrementAndGet();
+                                } else if (ownerReduceCount.getAndIncrement() == 0) {
+                                    ownerFrameStarted.countDown();
+                                    TestUtils.await(ownerFrameRelease);
+                                }
+                            },
+                            1
+                    )
+            ) {
+                frameSequence.of(factory, TestUtils.createSqlExecutionCtx(engine), PartitionFrameCursorFactory.ORDER_ASC);
+                frameSequence.prepareForDispatch();
+                Assert.assertEquals(4, frameSequence.getFrameCount());
+                final Thread owner = new Thread(() -> {
+                    try {
+                        frameSequence.dispatchAndAwait();
+                    } catch (Throwable th) {
+                        ownerError.set(th);
+                    } finally {
+                        ownerFrameStarted.countDown();
+                    }
+                });
+                owner.start();
+                final RingQueue<UnorderedPageFrameReduceTask> queue = engine.getMessageBus().getUnorderedPageFrameReduceQueue();
+                final MCSequence subSeq = engine.getMessageBus().getUnorderedPageFrameReduceSubSeq();
+                int consumedTicketCount = 0;
+                try {
+                    TestUtils.await(ownerFrameStarted);
+                    while (!UnorderedPageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker)) {
+                        consumedTicketCount++;
+                    }
+                } finally {
+                    ownerFrameRelease.countDown();
+                    owner.join();
+                }
+                if (ownerError.get() != null) {
+                    throw new AssertionError(ownerError.get());
+                }
+                Assert.assertEquals(3, consumedTicketCount);
+                Assert.assertEquals(3, workerReduceCount.get());
+                Assert.assertEquals(1, ownerReduceCount.get());
+            }
+        });
+    }
+
+    @Test
+    public void testUnorderedWorkerKeepsTicketWhenQueueIsFull() throws Exception {
+        // The owner publishes its single ticket into a one-slot queue and blocks in its first frame.
+        // While the worker reduces the next frame, a foreign ticket fills the queue, so the worker
+        // cannot hand its ticket back. It must keep the ticket and reduce every remaining frame in
+        // the same call instead of dropping the query's only helper.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE keep_tab AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
+                        FROM long_sequence(4)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final CairoConfiguration queueConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getUnorderedPageFrameReduceQueueCapacity() {
+                    return 1;
+                }
+            };
+            final Thread testThread = Thread.currentThread();
+            final CountDownLatch ownerFrameStarted = new CountDownLatch(1);
+            final CountDownLatch ownerFrameRelease = new CountDownLatch(1);
+            final AtomicInteger ownerReduceCount = new AtomicInteger();
+            final AtomicInteger workerReduceCount = new AtomicInteger();
+            final AtomicReference<Throwable> ownerError = new AtomicReference<>();
+            try (
+                    MessageBusImpl bus = new MessageBusImpl(queueConfiguration);
+                    RecordCursorFactory factory = select("SELECT * FROM keep_tab");
+                    PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+                    SqlExecutionCircuitBreakerWrapper circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
+                            engine,
+                            configuration.getCircuitBreakerConfiguration()
+                    );
+                    UnorderedPageFrameSequence<StatefulAtom> foreignSequence = new UnorderedPageFrameSequence<>(
+                            engine,
+                            queueConfiguration,
+                            bus,
+                            new StatefulAtom() {
+                            },
+                            (_, _, _, _, _, _) -> {
+                            },
+                            1
+                    );
+                    UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
+                            engine,
+                            queueConfiguration,
+                            bus,
+                            new StatefulAtom() {
+                            },
+                            (_, _, _, _, _, _) -> {
+                                if (Thread.currentThread() == testThread) {
+                                    if (workerReduceCount.getAndIncrement() == 0) {
+                                        final long cursor = bus.getUnorderedPageFrameReducePubSeq().next();
+                                        Assert.assertTrue(cursor > -1);
+                                        bus.getUnorderedPageFrameReduceQueue().get(cursor).of(foreignSequence);
+                                        bus.getUnorderedPageFrameReducePubSeq().done(cursor);
+                                    }
+                                } else if (ownerReduceCount.getAndIncrement() == 0) {
+                                    ownerFrameStarted.countDown();
+                                    TestUtils.await(ownerFrameRelease);
+                                }
+                            },
+                            1
+                    )
+            ) {
+                frameSequence.of(factory, TestUtils.createSqlExecutionCtx(engine), PartitionFrameCursorFactory.ORDER_ASC);
+                frameSequence.prepareForDispatch();
+                Assert.assertEquals(4, frameSequence.getFrameCount());
+                final Thread owner = new Thread(() -> {
+                    try {
+                        frameSequence.dispatchAndAwait();
+                    } catch (Throwable th) {
+                        ownerError.set(th);
+                    } finally {
+                        ownerFrameStarted.countDown();
+                    }
+                });
+                owner.start();
+                final RingQueue<UnorderedPageFrameReduceTask> queue = bus.getUnorderedPageFrameReduceQueue();
+                final MCSequence subSeq = bus.getUnorderedPageFrameReduceSubSeq();
+                try {
+                    TestUtils.await(ownerFrameStarted);
+                    // One call takes the owner's ticket and, unable to hand it back, reduces frames 1-3.
+                    Assert.assertFalse(UnorderedPageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker));
+                    Assert.assertEquals(3, workerReduceCount.get());
+                    // Only the foreign ticket is left, and it claims nothing.
+                    Assert.assertFalse(UnorderedPageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker));
+                    Assert.assertTrue(UnorderedPageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker));
+                } finally {
+                    ownerFrameRelease.countDown();
+                    owner.join();
+                }
+                if (ownerError.get() != null) {
+                    throw new AssertionError(ownerError.get());
+                }
+                Assert.assertEquals(3, workerReduceCount.get());
+                Assert.assertEquals(1, ownerReduceCount.get());
             }
         });
     }
@@ -4402,7 +4947,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             if (cursor < 0) {
                 throw new IllegalStateException("test publisher is unexpectedly blocked");
             }
-            queue.get(cursor).of(frameSequence, 0);
+            queue.get(cursor).of(frameSequence);
             pubSeq.done(cursor);
         } finally {
             dispatcher.releasePublication();
@@ -4753,7 +5298,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public void onBeforeDirectSteal() {
+                            public void onBeforeOwnerReduce() {
                                 final int stealCount = directStealCount.incrementAndGet();
                                 final MCSequence subSeq = testEngine.getMessageBus().getUnorderedPageFrameReduceSubSeq();
                                 final long cursor = subSeq.next();
