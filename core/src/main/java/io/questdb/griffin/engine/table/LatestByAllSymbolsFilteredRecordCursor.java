@@ -37,10 +37,8 @@ import io.questdb.std.DirectMultiIntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -65,12 +63,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
         super(configuration, metadata, rows);
         final int keyCount = partitionByColumnIndexes.size();
         final double loadFactor = configuration.getSqlFastMapLoadFactor();
-        // The resize limit applies on top of the key count that fits the small map page.
-        final long pageKeyCapacity = Math.min(
-                configuration.getSqlSmallMapPageSize() / Bytes.align8b((long) keyCount * Integer.BYTES),
-                (long) (Numbers.MAX_SAFE_INT_POW_2 * loadFactor)
-        );
-        final int keyCapacity = (int) Math.max(configuration.getSqlSmallMapKeyCapacity(), pageKeyCapacity);
+        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         if (keyCount == 2) {
             pairKeys = new DirectLongHashSet(keyCapacity, loadFactor, MemoryTag.NATIVE_UNORDERED_MAP, configuration.getSqlMapMaxResizes(), false);
             symbolKeys = null;
@@ -178,11 +171,6 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
                     }
                 }
             }
-        }
-        if (pairKeys != null) {
-            pairKeys.clear();
-        } else {
-            symbolKeys.clear();
         }
     }
 

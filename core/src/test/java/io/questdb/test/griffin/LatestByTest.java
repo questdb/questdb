@@ -1507,10 +1507,10 @@ public class LatestByTest extends AbstractCairoTest {
                     + " 'c'::SYMBOL u, x v, (x * 1_000_000L)::" + timestampType.getTypeName() + " ts"
                     + " FROM long_sequence(10_000)) TIMESTAMP(ts) PARTITION BY DAY");
             for (String keys : new String[]{"s, t", "s, t, u"}) {
-                assertQuery("SELECT count() FROM (SELECT v FROM symbol_groups WHERE v <= 2_000 LATEST ON ts PARTITION BY " + keys + ")")
+                assertQuery("SELECT count() FROM (SELECT v FROM symbol_groups WHERE v <= 80 LATEST ON ts PARTITION BY " + keys + ")")
                         .noRandomAccess()
                         .expectSize()
-                        .returns("count\n2000\n");
+                        .returns("count\n80\n");
                 assertQuery("SELECT v FROM symbol_groups LATEST ON ts PARTITION BY " + keys)
                         .failsWith("limit of 0 resizes exceeded");
             }
@@ -1976,6 +1976,38 @@ public class LatestByTest extends AbstractCairoTest {
             assertRetainedFactoriesFollowTruncate("reset_wal", false, "WAL", "TRUNCATE TABLE reset_wal");
             assertRetainedFactoriesFollowTruncate("reset_covering", true, "BYPASS WAL", "TRUNCATE TABLE reset_covering");
             assertRetainedFactoriesFollowTruncate("reset_covering_wal", true, "WAL", "TRUNCATE TABLE reset_covering_wal");
+        });
+    }
+
+    @Test
+    public void testSampleByFirstLastRetainedFactoryFollowsRebindAndTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fl (g SYMBOL INDEX, v LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO fl VALUES
+                    ('aa', 10, '2024-01-01T00:00:01Z'),
+                    ('aa', 11, '2024-01-01T00:00:02Z'),
+                    ('bb', 20, '2024-01-01T00:00:03Z'),
+                    ('bb', 21, '2024-01-01T00:00:04Z')
+                    """);
+            final String query = "SELECT first(v) f, last(v) l FROM fl WHERE g = :g SAMPLE BY 1h ALIGN TO FIRST OBSERVATION";
+            bindVariableService.setStr("g", "aa");
+            assertQuery(query).noLeakCheck().inferRandomAccess().withPlanContaining("SampleByFirstLast").returns("f\tl\n10\t11\n");
+            try (RecordCursorFactory factory = select(query)) {
+                assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().returns("f\tl\n10\t11\n");
+                bindVariableService.setStr("g", "bb");
+                assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().returns("f\tl\n20\t21\n");
+                execute("TRUNCATE TABLE fl");
+                execute("""
+                        INSERT INTO fl VALUES
+                        ('cc', 30, '2024-01-01T00:00:05Z'),
+                        ('aa', 40, '2024-01-01T00:00:06Z'),
+                        ('bb', 50, '2024-01-01T00:00:07Z')
+                        """);
+                assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().returns("f\tl\n50\t50\n");
+                bindVariableService.setStr("g", "aa");
+                assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().returns("f\tl\n40\t40\n");
+            }
         });
     }
 
