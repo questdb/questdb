@@ -487,6 +487,13 @@ class WorklistTest(unittest.TestCase):
                          item('RelationCoverageTest', 'testCopierHasAnArmForEveryAdmittedPair', 'expected:<BYTE -> CHAR'))
         self.assertEqual(('implement-pair', '`RelationCoverageTest#testCaseEscalationHasAnImplementation`', 'CASE cast pair switch'),
                          item('RelationCoverageTest', 'testCaseEscalationHasAnImplementation', 'expected:<> but was:<NN_INT -> LONG: no cast'))
+        # the soundness tests the kit step runs with the coverage tests: an answer of their switches
+        self.assertEqual(('name-yourself', '`OverloadSoundnessTest#testDeclaredWideningRowsAreImplemented`',
+                          'OverloadSoundnessTest.isExplicitCast test tag switch'),
+                         item('OverloadSoundnessTest', 'testDeclaredWideningRowsAreImplemented', 'no widening row leads to DECIMAL'))
+        self.assertEqual(('implement-pair', '`ColumnConversionSoundnessTest#testEveryAdmittedConversionHasAConverter`',
+                          'ColumnTypeConverter.convertFromFixedSize tag switch #1'),
+                         item('ColumnConversionSoundnessTest', 'testEveryAdmittedConversionHasAConverter', 'UINT32 -> BYTE: x'))
         self.assertEqual(('fill-driver-answer', '`FunctionReachTest#testLaterTypesReachNoOtherTypesFunction`', 'TypeDrivers.find tag enum switch'),
                          item('FunctionReachTest', 'testLaterTypesReachNoOtherTypesFunction', 'expected:<> but was:<nn_int -> !=(BYTE, nn_int)'))
         self.assertEqual(('fill-driver-answer', '`TypeDriverTest#testSizesMatchReferenceTables`', 'TypeDrivers.find tag enum switch'),

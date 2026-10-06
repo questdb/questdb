@@ -842,7 +842,9 @@ not handled`) and sits at that site's method; else it maps to the site its test 
 the test, so each failing test is an item: the copier test of `RelationCoverageTest` to
 `RecordToRowCopierUtils.copyOpcode`, its CASE and UNION tests to their pair switches, its cast test,
 `FunctionReachTest`'s later-type test, `RelationRulesTest` and `TypeDriverTest` to the type's
-registration; else to the first row its instrument names.
+registration, `OverloadSoundnessTest` to its `isExplicitCast` switch (`ownSignatureTag` for its
+own-signature test), `ColumnConversionSoundnessTest` to `ColumnTypeConverter.convertFromFixedSize`;
+else to the first row its instrument names.
 
 Some answers go where no single row names them. An explicit cast the type admits (`sql.cast`,
 `RelationCoverageTest`'s cast test) is a function factory of its own,
@@ -901,8 +903,9 @@ The tool lists where, not what. It does not write how the type prints, parses, c
 the pairs its relations admit, or its function bodies, and it does not rebuild the committed native
 libraries: a CI workflow does, on request. Its native builds check that the code compiles and give
 the kit the tree's native code (section 4). The build lists the tag switches of
-`OverloadSoundnessTest` and `ColumnConversionSoundnessTest`, but the kit step does not run those two
-tests, so their answers compile and are not checked: run them once the worklist is empty.
+`OverloadSoundnessTest` and `ColumnConversionSoundnessTest`; the kit step runs both with the
+coverage tests, so an answer there that a later edit makes stale (an explicit cast the parser
+inserts once a manual decision admits it) comes back as a coverage item at the test.
 
 A type that stores no NULL (NULL policy NONE) is not supported yet. Its column tops, the rows of a
 partition written before the column was added, must read a default value given in SQL when the

@@ -42,7 +42,7 @@ GROUPS = ('build-java', 'build-rust', 'build-c', 'refusal', 'kit', 'coverage', '
 DECISIONS = ('name-yourself', 'implement-pair', 'add-writer-arm', 'fill-driver-answer', 'declare-or-admit', 'manual')
 COVERAGE_TESTS = (
     'RelationCoverageTest', 'ProtocolOpcodeCoverageTest', 'GeneratedAccessorCoverageTest', 'FunctionReachTest',
-    'RelationRulesTest', 'TypeDriverTest',
+    'RelationRulesTest', 'TypeDriverTest', 'OverloadSoundnessTest', 'ColumnConversionSoundnessTest',
 )
 # the kit paths that hold an invariant for a type with no recording; the SQL queries that need a
 # literal of the type or introduce NULL (filters by value, joins, lag, GROUP BY) have none yet
@@ -69,6 +69,10 @@ LAYER_SITES = (
     ('FunctionReachTest#testLaterTypes', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
     ('RelationRulesTest', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
     ('TypeDriverTest', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
+    # the soundness tests pin an answer per tag in their own switches, which the build lists first
+    ('OverloadSoundnessTest#testOwnSignature', 'OverloadSoundnessTest.ownSignatureTag test tag switch', 'name-yourself'),
+    ('OverloadSoundnessTest', 'OverloadSoundnessTest.isExplicitCast test tag switch', 'name-yourself'),
+    ('ColumnConversionSoundnessTest', 'ColumnTypeConverter.convertFromFixedSize tag switch #1', 'implement-pair'),
     # the type's own answers: its NULL, its column function, its relations
     ('storage.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
     ('sql.', 'TypeDrivers.find tag enum switch', 'fill-driver-answer'),
