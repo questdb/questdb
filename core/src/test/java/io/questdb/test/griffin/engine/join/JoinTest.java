@@ -11574,6 +11574,84 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRightJoinOnKeysSharingColumnFiltersAfterLatestOn() throws Exception {
+        // ON pa.x = pb.k AND pa.y = pb.k implies pa.x = pa.y. LATEST ON picks the latest pa row of each s
+        // before the RIGHT JOIN, so the equality filters the rows that LATEST ON picked. As a filter on
+        // the scan of pa it ran before LATEST ON, which then picked rows 1 and 4: older rows of s = 'a'
+        // and s = 'c' that pass the equality, where rows 2 and 5 are the latest ones.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa (id INT, x INT, y INT, z INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO pa VALUES
+                    (1, 1, 1, 1, 'a', '2024-01-01T00:00:00.000000Z'),
+                    (2, 7, 8, 7, 'a', '2024-01-01T01:00:00.000000Z'),
+                    (3, 2, 2, 2, 'b', '2024-01-01T02:00:00.000000Z'),
+                    (4, 5, 5, 5, 'c', '2024-01-01T03:00:00.000000Z'),
+                    (5, null, 6, null, 'c', '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (2, 20), (5, 50), (7, 70), (null, 90)");
+            execute("CREATE TABLE q (qid INT)");
+            execute("INSERT INTO q VALUES (1), (2)");
+
+            final String expected = """
+                    id\tv
+                    null\t10
+                    3\t20
+                    null\t50
+                    null\t70
+                    null\t90
+                    """;
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y
+                                        Filter filter: x=y
+                                            LatestByDeferredListValuesFiltered
+                                                Frame backward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns(expected);
+            // the deprecated LATEST BY syntax puts LATEST ON on pa as well
+            assertQuery("SELECT pa.id, pb.v FROM pa LATEST BY s RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: x=y")
+                    .returns(expected);
+            // equivalent ON clauses and LATEST ON in a sub-query return the same rows
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.y = pb.k AND pa.x = pa.y LATEST ON ts PARTITION BY s ORDER BY pb.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT pa.id, pb.v FROM (SELECT * FROM pa LATEST ON ts PARTITION BY s) pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            // three keys share pb.k, so pa gets two equalities
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND pa.z = pb.k LATEST ON ts PARTITION BY s ORDER BY pb.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            // pa still comes first when a CROSS JOIN follows it
+            assertQuery("SELECT pa.id, q.qid, pb.v FROM pa CROSS JOIN q RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s ORDER BY pb.v, q.qid")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: x=y")
+                    .returns("""
+                            id\tqid\tv
+                            null\tnull\t10
+                            3\t1\t20
+                            3\t2\t20
+                            null\tnull\t50
+                            null\tnull\t70
+                            null\tnull\t90
+                            """);
+        });
+    }
+
+    @Test
     public void testRightJoinOnKeysSharingColumnFiltersMasterTable() throws Exception {
         // ON pa.x = pb.k AND pa.y = pb.k implies pa.x = pa.y. A pa row that fails it matches no pb row,
         // and the RIGHT JOIN drops such rows, so the equality filters the scan of pa when pa joins by

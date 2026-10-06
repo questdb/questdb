@@ -1599,12 +1599,21 @@ public class SqlOptimiser implements Mutable {
             } else if (isRightJoinMasterKey && !isEmittedClause) {
                 // The equality comes from two keys of the RIGHT JOIN's own ON clause, because
                 // addFilterOrEmitJoin never emits a clause onto a barrier join. A master row that fails
-                // the equality matches no slave row, so the RIGHT JOIN drops it anyway. As an inner
-                // predicate the equality filters the table before the RIGHT JOIN, and
-                // moveWhereInsideSubQueries keeps it below the RIGHT JOIN on model 0 too, where it holds
-                // a WHERE conjunct above the RIGHT JOIN.
-                node.innerPredicate = true;
-                parent.addParsedWhereNode(node, true);
+                // the equality matches no slave row, so the RIGHT JOIN drops it anyway.
+                final IQueryModel keyedModel = parent.getJoinModels().getQuick(ai);
+                if (keyedModel.getLatestBy().size() > 0) {
+                    // A filter on the scan of a table that carries LATEST ON runs before LATEST ON picks
+                    // the latest rows, so LATEST ON would pick an older row that passes the equality. As
+                    // the post-join filter of the table, the equality filters the rows that LATEST ON
+                    // picked, still before the RIGHT JOIN.
+                    addPostJoinWhereClause(keyedModel, node);
+                } else {
+                    // As an inner predicate the equality filters the table before the RIGHT JOIN, and
+                    // moveWhereInsideSubQueries keeps it below the RIGHT JOIN on model 0 too, where it
+                    // holds a WHERE conjunct above the RIGHT JOIN.
+                    node.innerPredicate = true;
+                    parent.addParsedWhereNode(node, true);
+                }
             } else {
                 addWhereNode(parent, ai, node);
             }
@@ -5410,6 +5419,22 @@ public class SqlOptimiser implements Mutable {
             nested = m.getUnionModel();
             if (nested != null) {
                 eraseColumnPrefixInWhereClauses(nested);
+            }
+        }
+
+        // generateJoins() applies the post-join filter of the first model in the join order to that
+        // model's own factory, before any join. That factory names its columns without the table
+        // alias, so erase the prefix there as well, as for the "where" clauses above.
+        final IntList ordered = model.getOrderedJoinModels();
+        if (joinModels.size() > 1 && ordered.size() > 0) {
+            final IQueryModel first = joinModels.getQuick(ordered.getQuick(0));
+            final ExpressionNode postJoinWhere = first.getPostJoinWhereClause();
+            if (postJoinWhere != null) {
+                if (postJoinWhere.type == LITERAL) {
+                    first.setPostJoinWhereClause(columnPrefixEraser.rewrite(postJoinWhere));
+                } else {
+                    traversalAlgo.traverse(postJoinWhere, columnPrefixEraser);
+                }
             }
         }
     }
