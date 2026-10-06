@@ -946,14 +946,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Rejects ALTER ... ALTER COLUMN ... TYPE on a table that has a read-only partition, which
-     * includes every partition in cold storage. A type change rewrites the column in every
-     * partition, and conversions such as the one to SYMBOL first have to decode a parquet partition
-     * back to native; neither is possible for a read-only partition, so {@code TableWriter} refuses
-     * the change when it is applied - and on a WAL table that failure suspends the table. Rejecting
-     * the statement at compile time keeps the table healthy and gives the user an immediate error.
+     * Rejects type changes on read-only or delta-active partitions before WAL submission.
+     * {@code TableWriter} cannot rewrite their column data. Rejecting these statements at
+     * compile time prevents WAL apply from suspending the table.
      */
-    private static void rejectChangeColumnTypeOnReadOnlyPartitions(
+    private static void rejectColumnTypeChange(
             SqlExecutionContext executionContext,
             TableToken tableToken,
             int position
@@ -975,6 +972,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             .put(isCold
                                     ? "]; column data of partitions in cold storage cannot be rewritten"
                                     : "]; column data of read-only partitions cannot be rewritten");
+                }
+                if (txFile.isPartitionDeltaActive(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot change column type, table has delta-active partitions [table=")
+                            .put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; column data of delta-active partitions cannot be rewritten");
                 }
             }
         }
@@ -1368,7 +1372,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
-        rejectChangeColumnTypeOnReadOnlyPartitions(executionContext, tableToken, tableNamePosition);
+        rejectColumnTypeChange(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
