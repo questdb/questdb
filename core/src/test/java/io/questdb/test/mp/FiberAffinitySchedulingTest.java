@@ -1792,15 +1792,15 @@ public class FiberAffinitySchedulingTest {
 
     private static void awaitWorkerParked(WorkerPool pool, int workerId) {
         final String threadName = pool.getPoolName() + '_' + workerId;
-        Thread worker = null;
-        for (Thread thread : Thread.getAllStackTraces().keySet()) {
-            if (threadName.equals(thread.getName())) {
-                worker = thread;
-                break;
-            }
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
+        // WorkerPool.start() spawns workers one by one, so a lower-id worker can run its job
+        // before this worker's thread is alive and listed by Thread.getAllStackTraces().
+        Thread worker = findLiveThread(threadName);
+        while (worker == null && System.nanoTime() < deadline) {
+            Os.pause();
+            worker = findLiveThread(threadName);
         }
         Assert.assertNotNull("worker thread not found [name=" + threadName + ']', worker);
-        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
         while (!isParkedReady(pool, workerId, worker) && System.nanoTime() < deadline) {
             Os.pause();
         }
@@ -1929,6 +1929,15 @@ public class FiberAffinitySchedulingTest {
                 return true;
             }
         };
+    }
+
+    private static Thread findLiveThread(String threadName) {
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (threadName.equals(thread.getName())) {
+                return thread;
+            }
+        }
+        return null;
     }
 
     private static boolean areWorkersReady(WorkerPool pool, int expected) {
