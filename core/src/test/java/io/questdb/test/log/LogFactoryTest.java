@@ -27,6 +27,7 @@ package io.questdb.test.log;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.GuaranteedLogger;
+import io.questdb.log.HeapLogRecordUtf8Sink;
 import io.questdb.log.Log;
 import io.questdb.log.LogConsoleWriter;
 import io.questdb.log.LogError;
@@ -52,6 +53,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -87,11 +89,53 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 public class LogFactoryTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+
+    @Test
+    public void testAbandonedChainIsDetectedByAnotherLogger() throws Exception {
+        // All loggers on a carrier share one staged record, so a chain abandoned
+        // through one logger surfaces on the next chain of any logger, and the
+        // abandoned chain never holds a ring slot that could wedge the queue.
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            final AtomicReference<RingQueue<LogRecordUtf8Sink>> consumerRing = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence, consumerRing));
+                factory.bind();
+
+                final Log abandoningLogger = factory.create("a");
+                final Log nextLogger = factory.create("b");
+                abandoningLogger.info().$("abandoned message"); // unterminated-log-ok
+                try {
+                    nextLogger.info(); // unterminated-log-ok
+                    Assert.fail("expected abandoned record detection");
+                } catch (LogError e) {
+                    TestUtils.assertContains(e.getMessage(), "Abandoned log record");
+                }
+                nextLogger.info().$("after abandoned").$();
+
+                final SCSequence sequence = consumerSequence.get();
+                final RingQueue<LogRecordUtf8Sink> ring = consumerRing.get();
+                long cursor = sequence.next();
+                Assert.assertEquals(0, cursor);
+                final String abandoned = ring.get(cursor).toString();
+                TestUtils.assertContains(abandoned, "abandoned message");
+                TestUtils.assertContains(abandoned, "ABANDONED LOG RECORD");
+                sequence.done(cursor);
+
+                cursor = sequence.next();
+                Assert.assertEquals(1, cursor);
+                TestUtils.assertContains(ring.get(cursor).toString(), "after abandoned");
+                sequence.done(cursor);
+                Assert.assertEquals(-1, sequence.next());
+            }
+        });
+    }
 
     @Test
     public void testBadWriter() {
@@ -104,6 +148,97 @@ public class LogFactoryTest {
                 Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
             }
         }
+    }
+
+    @Test
+    public void testCarrierStagingBufferMatchesSlotSize() throws Exception {
+        // A carrier's first chain allocates its staging buffer with the destination
+        // slot size; later chains reuse the same buffer.
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            final AtomicReference<RingQueue<LogRecordUtf8Sink>> consumerRing = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence, consumerRing));
+                factory.bind();
+
+                final Log logger = factory.create("x");
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                // a fresh thread gets a fresh carrier record
+                final Thread thread = new Thread(() -> {
+                    try {
+                        final LogRecord first = logger.info();
+                        final Field sinkField = first.getClass().getDeclaredField("sink");
+                        sinkField.setAccessible(true);
+                        final HeapLogRecordUtf8Sink staging = (HeapLogRecordUtf8Sink) sinkField.get(first);
+                        first.$("first").$();
+                        // capacity() is clamped to the slot size, so it cannot reveal
+                        // an oversized buffer; check the backing array instead
+                        final Field bufferField = HeapLogRecordUtf8Sink.class.getDeclaredField("buffer");
+                        bufferField.setAccessible(true);
+                        final int slotCapacity = consumerRing.get().get(0).capacity();
+                        Assert.assertEquals(slotCapacity, ((byte[]) bufferField.get(staging)).length);
+                        Assert.assertEquals(slotCapacity, staging.capacity());
+
+                        final LogRecord second = logger.info();
+                        second.$("second").$();
+                        Assert.assertSame(first, second);
+                        Assert.assertSame(staging, sinkField.get(second));
+                    } catch (Throwable th) {
+                        failure.set(th);
+                    }
+                });
+                thread.start();
+                thread.join();
+                if (failure.get() != null) {
+                    throw new AssertionError(failure.get());
+                }
+                Assert.assertEquals(factory.getRecordLength(), consumerRing.get().get(0).capacity());
+            }
+        });
+    }
+
+    @Test
+    public void testChainClaimsRingSlotOnlyWhenPublishing() throws Exception {
+        // A chain formats into a staging buffer and claims its ring slot in $().
+        // A chain started while the ring is full still gets published if a slot
+        // frees up before its $(); a non-waiting chain that finds the ring full
+        // in $() drops its message.
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            final AtomicReference<RingQueue<LogRecordUtf8Sink>> consumerRing = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence, consumerRing));
+                factory.bind();
+
+                final Log logger = factory.create("x", false);
+                final int queueDepth = factory.getQueueDepth();
+                for (int i = 0; i < queueDepth; i++) {
+                    logger.info().$("fill ").$(i).$();
+                }
+
+                final LogRecord record = logger.info().$("staged while the ring is full");
+                final SCSequence sequence = consumerSequence.get();
+                long cursor = sequence.next();
+                Assert.assertEquals(0, cursor);
+                sequence.done(cursor);
+                record.$();
+
+                // the ring is full again
+                logger.info().$("dropped").$();
+
+                final RingQueue<LogRecordUtf8Sink> ring = consumerRing.get();
+                String last = null;
+                int count = 1;
+                while ((cursor = sequence.next()) > -1) {
+                    last = ring.get(cursor).toString();
+                    sequence.done(cursor);
+                    count++;
+                }
+                Assert.assertEquals(queueDepth + 1, count);
+                Assert.assertNotNull(last);
+                TestUtils.assertContains(last, "staged while the ring is full");
+            }
+        });
     }
 
     @Test
@@ -532,7 +667,6 @@ public class LogFactoryTest {
                 assertRenderingFailureWithFailingEol(
                         logger.info(),
                         sequence,
-                        0,
                         objectFailure,
                         record -> record.$(new Object() {
                             @Override
@@ -546,7 +680,6 @@ public class LogFactoryTest {
                 assertRenderingFailureWithFailingEol(
                         logger.info(),
                         sequence,
-                        1,
                         sinkableFailure,
                         record -> record.$((Sinkable) sink -> {
                             throw sinkableFailure;
@@ -557,7 +690,6 @@ public class LogFactoryTest {
                 assertRenderingFailureWithFailingEol(
                         logger.info(),
                         sequence,
-                        2,
                         throwableFailure,
                         record -> record.$(new Throwable() {
                             @Override
@@ -567,9 +699,10 @@ public class LogFactoryTest {
                         })
                 );
 
+                // the failed records never claimed a ring slot
                 logger.info().$("after failures").$();
                 final long cursor = sequence.next();
-                Assert.assertEquals(3, cursor);
+                Assert.assertEquals(0, cursor);
                 sequence.done(cursor);
             }
         });
@@ -612,16 +745,15 @@ public class LogFactoryTest {
                 isLogRecordInProgressField.setAccessible(true);
                 Assert.assertFalse(isLogRecordInProgressField.getBoolean(record));
 
+                // the abandoned record, published with the ABANDONED marker
                 final SCSequence sequence = consumerSequence.get();
-                for (int expectedCursor = 0; expectedCursor < 2; expectedCursor++) {
-                    final long cursor = sequence.next();
-                    Assert.assertEquals(expectedCursor, cursor);
-                    sequence.done(cursor);
-                }
+                long cursor = sequence.next();
+                Assert.assertEquals(0, cursor);
+                sequence.done(cursor);
 
                 logger.info().$("after failure").$();
-                final long cursor = sequence.next();
-                Assert.assertEquals(2, cursor);
+                cursor = sequence.next();
+                Assert.assertEquals(1, cursor);
                 sequence.done(cursor);
             }
         });
@@ -674,13 +806,78 @@ public class LogFactoryTest {
                 isLogRecordInProgressField.setAccessible(true);
                 Assert.assertFalse(isLogRecordInProgressField.getBoolean(record));
 
+                // the failed chain never claimed a ring slot
+                logger.info().$("after failure").$();
                 cursor = sequence.next();
                 Assert.assertEquals(1, cursor);
                 sequence.done(cursor);
+            }
+        });
+    }
 
-                logger.info().$("after failure").$();
-                cursor = sequence.next();
-                Assert.assertEquals(2, cursor);
+    @Test
+    public void testLogSequenceIsReleasedWhenAppenderThrows() throws Exception {
+        // An appender that throws mid-chain must still publish the partial message
+        // staged so far, so the consumer sees exactly one record per failed chain.
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence));
+                factory.bind();
+
+                final Log logger = factory.create("x");
+                final SCSequence sequence = consumerSequence.get();
+
+                final RuntimeException failure = new RuntimeException("appender failure");
+                final CharSequence throwingChars = new CharSequence() {
+                    @Override
+                    public char charAt(int index) {
+                        throw failure;
+                    }
+
+                    @Override
+                    public int length() {
+                        throw failure;
+                    }
+
+                    @Override
+                    public @NotNull CharSequence subSequence(int start, int end) {
+                        throw failure;
+                    }
+
+                    @Override
+                    public @NotNull String toString() {
+                        throw failure;
+                    }
+                };
+                final File throwingFile = new File("x") {
+                    @Override
+                    public @NotNull String getAbsolutePath() {
+                        throw failure;
+                    }
+                };
+                final ObjList<Consumer<LogRecord>> appenders = new ObjList<>();
+                appenders.add(record -> record.$(throwingChars));
+                appenders.add(record -> record.$safe(throwingChars));
+                appenders.add(record -> record.$safe(throwingChars, 0, 1));
+                appenders.add(record -> record.$(throwingFile));
+
+                for (int i = 0, n = appenders.size(); i < n; i++) {
+                    final LogRecord record = logger.info().$("before failure");
+                    try {
+                        appenders.getQuick(i).accept(record);
+                        Assert.fail("expected appender " + i + " to throw");
+                    } catch (RuntimeException e) {
+                        Assert.assertSame(failure, e);
+                    }
+                    final long cursor = sequence.next();
+                    Assert.assertEquals("appender " + i + " did not publish its partial message", i, cursor);
+                    sequence.done(cursor);
+                }
+
+                logger.info().$("after failures").$();
+                final long cursor = sequence.next();
+                Assert.assertEquals(appenders.size(), cursor);
                 sequence.done(cursor);
             }
         });
@@ -707,7 +904,8 @@ public class LogFactoryTest {
                 final RuntimeException eolFailure = new RuntimeException("EOL failure");
                 final Field sinkField = recordClass.getDeclaredField("sink");
                 sinkField.setAccessible(true);
-                sinkField.set(record, new LogRecordUtf8Sink(0, 0) {
+                final Object originalSink = sinkField.get(record);
+                sinkField.set(record, new HeapLogRecordUtf8Sink(0) {
                     @Override
                     public Utf8Sink putEOL() {
                         throw eolFailure;
@@ -719,6 +917,8 @@ public class LogFactoryTest {
                     Assert.fail("expected abandoned-record recovery to fail while appending EOL");
                 } catch (RuntimeException e) {
                     Assert.assertSame(eolFailure, e);
+                } finally {
+                    sinkField.set(record, originalSink);
                 }
 
                 Assert.assertTrue(dejaVu.isEmpty());
@@ -726,16 +926,11 @@ public class LogFactoryTest {
                 isLogRecordInProgressField.setAccessible(true);
                 Assert.assertFalse(isLogRecordInProgressField.getBoolean(record));
 
+                // neither the abandoned record nor the failed chain claimed a ring slot
                 final SCSequence sequence = consumerSequence.get();
-                for (int expectedCursor = 0; expectedCursor < 2; expectedCursor++) {
-                    final long cursor = sequence.next();
-                    Assert.assertEquals(expectedCursor, cursor);
-                    sequence.done(cursor);
-                }
-
                 logger.info().$("after recovery").$();
                 final long cursor = sequence.next();
-                Assert.assertEquals(2, cursor);
+                Assert.assertEquals(0, cursor);
                 sequence.done(cursor);
             }
         });
@@ -763,7 +958,8 @@ public class LogFactoryTest {
                 final RuntimeException eolFailure = new RuntimeException("EOL failure");
                 final Field sinkField = recordClass.getDeclaredField("sink");
                 sinkField.setAccessible(true);
-                sinkField.set(record, new LogRecordUtf8Sink(0, 0) {
+                final Object originalSink = sinkField.get(record);
+                sinkField.set(record, new HeapLogRecordUtf8Sink(0) {
                     @Override
                     public Utf8Sink putAscii(CharSequence cs) {
                         throw markerFailure;
@@ -780,7 +976,11 @@ public class LogFactoryTest {
                     Assert.fail("expected abandoned-record marker to fail");
                 } catch (RuntimeException e) {
                     Assert.assertSame(markerFailure, e);
-                    Assert.assertArrayEquals(new Throwable[]{eolFailure}, e.getSuppressed());
+                    // the staged record holds no ring slot, so recovery does not
+                    // attempt to publish it after the marker failed
+                    Assert.assertEquals(0, e.getSuppressed().length);
+                } finally {
+                    sinkField.set(record, originalSink);
                 }
 
                 Assert.assertTrue(dejaVu.isEmpty());
@@ -788,16 +988,11 @@ public class LogFactoryTest {
                 isLogRecordInProgressField.setAccessible(true);
                 Assert.assertFalse(isLogRecordInProgressField.getBoolean(record));
 
+                // neither the abandoned record nor the failed chain claimed a ring slot
                 final SCSequence sequence = consumerSequence.get();
-                for (int expectedCursor = 0; expectedCursor < 2; expectedCursor++) {
-                    final long cursor = sequence.next();
-                    Assert.assertEquals(expectedCursor, cursor);
-                    sequence.done(cursor);
-                }
-
                 logger.info().$("after recovery").$();
                 final long cursor = sequence.next();
-                Assert.assertEquals(2, cursor);
+                Assert.assertEquals(0, cursor);
                 sequence.done(cursor);
             }
         });
@@ -1540,6 +1735,33 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testUnfinishedChainDoesNotBlockOtherProducers() throws Exception {
+        // A chain that never reaches $(), e.g. because its thread died half-way,
+        // must not hold a ring slot: the other producers keep publishing.
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
+            final AtomicReference<RingQueue<LogRecordUtf8Sink>> consumerRing = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(newSequenceCapturingWriterConfig(consumerSequence, consumerRing));
+                factory.bind();
+
+                final Log logger = factory.create("x");
+                final Thread thread = new Thread(() -> logger.info().$("never finished"));
+                thread.start();
+                thread.join();
+
+                logger.info().$("published").$();
+                final SCSequence sequence = consumerSequence.get();
+                final long cursor = sequence.next();
+                Assert.assertEquals(0, cursor);
+                TestUtils.assertContains(consumerRing.get().get(cursor).toString(), "published");
+                sequence.done(cursor);
+                Assert.assertEquals(-1, sequence.next());
+            }
+        });
+    }
+
+    @Test
     public void testUninitializedFactory() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, Files.getResourcePath(getClass().getResource("/test-log.conf")));
 
@@ -1608,7 +1830,6 @@ public class LogFactoryTest {
     private static void assertRenderingFailureWithFailingEol(
             LogRecord record,
             SCSequence sequence,
-            long expectedCursor,
             RuntimeException renderingFailure,
             LogOperation operation
     ) throws Exception {
@@ -1618,11 +1839,11 @@ public class LogFactoryTest {
         final Object originalSink = sinkField.get(record);
         final Field inProgressField = recordClass.getDeclaredField("isLogRecordInProgress");
         inProgressField.setAccessible(true);
-        final RuntimeException eolFailure = new RuntimeException("EOL failure at cursor " + expectedCursor);
+        final RuntimeException eolFailure = new RuntimeException("EOL failure");
         final AtomicInteger eolCallCount = new AtomicInteger();
 
         try {
-            sinkField.set(record, new LogRecordUtf8Sink(0, 0) {
+            sinkField.set(record, new HeapLogRecordUtf8Sink(0) {
                 @Override
                 public Utf8Sink putAscii(CharSequence cs) {
                     return this;
@@ -1648,9 +1869,8 @@ public class LogFactoryTest {
             record.I$();
             Assert.assertEquals(1, eolCallCount.get());
 
-            final long cursor = sequence.next();
-            Assert.assertEquals(expectedCursor, cursor);
-            sequence.done(cursor);
+            // the record failed before claiming a ring slot, so the ring stays empty
+            Assert.assertEquals(-1, sequence.next());
         } finally {
             sinkField.set(record, originalSink);
             if (inProgressField.getBoolean(record)) {
