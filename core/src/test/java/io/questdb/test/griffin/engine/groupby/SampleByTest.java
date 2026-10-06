@@ -7617,6 +7617,32 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromWithOffsetOnCursorPath() throws Exception {
+        assertQuery("""
+                SELECT ts, count() FROM (
+                    SELECT ts FROM test
+                ) SAMPLE BY 1d
+                FROM '2021-10-29'
+                ALIGN TO CALENDAR TIME ZONE '+02:00'
+                WITH OFFSET '01:00'
+                """)
+                .ddl(
+                        "CREATE TABLE test (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO test VALUES " +
+                                "('2021-10-29T00:30:00.000000Z')," +
+                                "('2021-10-29T23:30:00.000000Z')," +
+                                "('2021-10-30T00:30:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tcount
+                        2021-10-28T23:00:00.000000Z\t1
+                        2021-10-29T23:00:00.000000Z\t2
+                        """);
+    }
+
+    @Test
     public void testSampleByNegativeTimestampEdgeCase() throws Exception {
         execute("create table test ( ts TIMESTAMP, value float );");
         execute("""
