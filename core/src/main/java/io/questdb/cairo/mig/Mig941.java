@@ -65,6 +65,7 @@ public final class Mig941 {
     private static final int PARQUET_FORMAT_BIT = 61;
     private static final int PARQUET_GENERATED_BIT = 60;
     private static final long PARQUET_REMOTE_BIT = 1L << 63;
+    private static final long PARTITION_HAS_DELTA_BIT = 1L << 61;
     private static final int PARTITION_MASKED_SIZE_IDX = 1;
     private static final int PARTITION_NAME_TX_IDX = 2;
     private static final int PARTITION_PARQUET_FILE_SIZE_IDX = 3;
@@ -161,6 +162,13 @@ public final class Mig941 {
                 long partitionTs = txMem.getLong(entryOffset);
                 long nameTxn = txMem.getLong(entryOffset + PARTITION_NAME_TX_IDX * Long.BYTES);
                 long rawParquetFileSize = txMem.getLong(entryOffset + PARTITION_PARQUET_FILE_SIZE_IDX * Long.BYTES);
+
+                // Delta catalogs pin an exact _pm prefix. Regenerating an equivalent
+                // footer discards metadata history and invalidates that boundary.
+                // These partitions were created after this migration was introduced.
+                if (rawParquetFileSize != -1L && (rawParquetFileSize & PARTITION_HAS_DELTA_BIT) != 0) {
+                    continue;
+                }
 
                 final boolean parquetGenerated = ((maskedSize >>> PARQUET_GENERATED_BIT) & 1) == 1;
                 final boolean remote = rawParquetFileSize != -1L

@@ -763,13 +763,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveLastFooter() {
+        return resolveLastFooter(true);
+    }
+
+    /** Resolves an explicitly selected metadata prefix, with optional CRC verification. */
+    public boolean resolveLastFooter(boolean isVerifyChecksum) {
         final long addr = this.addr;
         final long currentSize = this.fileSize;
         final long currentFooterLength = Integer.toUnsignedLong(
                 Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
         final long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
         checkFooterOffset(currentOffset, currentFooterLength, currentSize);
-        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
+        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength, isVerifyChecksum);
     }
 
     private static native boolean canSkipRowGroup0(
@@ -846,6 +851,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * Shared by {@link #resolveFooter(long)} and {@link #resolveLastFooter()}.
      */
     private boolean validateAndCommitFooter(long currentSize, long currentOffset, long currentFooterLength) {
+        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength, true);
+    }
+
+    private boolean validateAndCommitFooter(long currentSize, long currentOffset, long currentFooterLength, boolean isVerifyChecksum) {
         final long addr = this.addr;
         final long parquetMetaFileSize = this.fileSize;
 
@@ -857,7 +866,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         // otherwise it verifies and binds to the dead footer at the tail. The
         // parse is retained as the handle (createNativeReader throws on a
         // mismatch or bad file); callers clear this reader before re-resolving.
-        if (!checksumVerified) {
+        if (isVerifyChecksum && !checksumVerified) {
             assert nativeReaderPtr == 0; // of()/clear() reset the handle with the flag
             nativeReaderPtr = createNativeReader(addr, currentSize, true);
             nativeReaderFileSize = currentSize;
