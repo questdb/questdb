@@ -35,7 +35,11 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -50,6 +54,10 @@ import static org.junit.Assert.*;
  * must judge the decoded subset only. Before, every undecoded column counted as a column top, so
  * every async factory skipped its compiled filter on every late-materialized Parquet frame and ran
  * the Java filter instead.
+ * <p>
+ * Because a partial decode is now trusted by the compiled filter, it must never be served to a
+ * caller that needs more: a full-frame navigate, another column subset, or a subset navigate after a
+ * partial row window must each get the columns and rows they read.
  */
 public class PageFrameMemoryLateMaterializationTest extends AbstractCairoTest {
 
@@ -149,6 +157,141 @@ public class PageFrameMemoryLateMaterializationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompiledFilterRunsOnLateMaterializedFrames() throws Exception {
+        // With JIT null checks off, "i < 0" matches INT NULL (Integer.MIN_VALUE) under the compiled
+        // filter but not under the Java filter. So on the Parquet partition the compiled filter's
+        // answer equals the Java answer of "(i < 0 OR i IS NULL)" only if the compiled filter ran on
+        // every frame, late-materialized ones included. Before the fix, late-materialized frames
+        // fell back to the Java filter and dropped the NULL rows.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG, i INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 30_000_000L,
+                        rnd_symbol('A', 'B', 'C'),
+                        rnd_double(),
+                        x,
+                        rnd_int(-5, 100, 3)
+                    FROM long_sequence(3_000)
+                    """);
+            // 3000 rows * 30s = 25h: day 1 is Parquet, a sliver of day 2 stays native
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("CREATE TABLE u (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO u
+                    SELECT '2024-01-01T00:00:00'::TIMESTAMP + x * 30_000_000L, rnd_symbol('A', 'B', 'C'), rnd_double()
+                    FROM long_sequence(6_000)
+                    """);
+            drainWalQueue();
+
+            // {plan factory, query}; $P is the predicate, every query reads the Parquet partition only
+            final String[][] shapes = {
+                    // count-only: always late-materialized on Parquet
+                    {"Async JIT Filter", "SELECT count() FROM t WHERE ts IN '2024-01-01' AND $P AND t.qty < 300"},
+                    {"Async JIT Filter", "SELECT * FROM t WHERE ts IN '2024-01-01' AND $P AND t.qty < 300"},
+                    {"Async JIT Group By", "SELECT sym, count(), sum(qty) FROM t WHERE ts IN '2024-01-01' AND $P AND t.qty < 300 ORDER BY sym"},
+                    {"Async JIT Top K", "SELECT * FROM t WHERE ts IN '2024-01-01' AND $P AND t.qty < 300 ORDER BY price DESC LIMIT 1000"},
+                    {"Async JIT Horizon Join", "SELECT h.offset, count() c FROM t HORIZON JOIN u ON (sym) RANGE FROM 0s TO 60s STEP 30s AS h"
+                            + " WHERE t.ts IN '2024-01-01' AND $P AND t.qty < 300 GROUP BY h.offset ORDER BY h.offset"},
+                    {"Async JIT Horizon Join", "SELECT t.sym, h.offset, count() c FROM t HORIZON JOIN u ON (sym) RANGE FROM 0s TO 60s STEP 30s AS h"
+                            + " WHERE t.ts IN '2024-01-01' AND $P AND t.qty < 300 GROUP BY t.sym, h.offset ORDER BY t.sym, h.offset"},
+            };
+            final StringSink mismatches = new StringSink();
+            for (String[] shape : shapes) {
+                final String jitQuery = shape[1].replace("$P", "t.i < 0");
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                final String javaPlain = runSql(jitQuery, true);
+                final String javaWithNulls = runSql(shape[1].replace("$P", "(t.i < 0 OR t.i IS NULL)"), true);
+                assertNotEquals("the Parquet partition must hold INT NULLs in i: " + jitQuery, javaPlain, javaWithNulls);
+
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    sink.clear();
+                    printSql("EXPLAIN " + jitQuery, sink);
+                    TestUtils.assertContains(sink, shape[0]);
+                    // several runs: the later ones run with the selectivity stats of the earlier ones,
+                    // which switch late materialization on for the filtered (non count-only) shapes
+                    for (int run = 0; run < 3; run++) {
+                        if (!javaWithNulls.equals(runSql(jitQuery, false))) {
+                            mismatches.put(jitQuery).put(" [jit mode ").put(mode).put(", run ").put(run).put("]\n");
+                        }
+                    }
+                }
+            }
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertEquals("the compiled filter dropped INT NULLs (it did not run) on:\n" + mismatches, 0, mismatches.length());
+        });
+    }
+
+    @Test
+    public void testFullNavigateAfterLateMaterializationDecodesEveryColumn() throws Exception {
+        assertLateMaterializedFrame((pool, ref, p, sym, qty, frameRows) -> {
+            final PageFrameMemory partial = pool.navigateTo(p, set(sym));
+            assertEquals("precondition: qty is outside the decoded subset", 0, partial.getPageAddress(qty));
+
+            final PageFrameMemory full = pool.navigateTo(p);
+            assertNotEquals("a full-frame navigate must not serve the partial decode", 0, full.getPageAddress(qty));
+            assertFalse(full.hasColumnTops());
+            assertQtyEquals(ref.navigateTo(p), full, qty, frameRows);
+        });
+    }
+
+    @Test
+    public void testFullNavigateAfterPopulateRemainingColumnsRedecodes() throws Exception {
+        assertLateMaterializedFrame((pool, ref, p, sym, qty, frameRows) -> {
+            final IntHashSet filterColumns = set(sym);
+            final PageFrameMemory memory = pool.navigateTo(p, filterColumns);
+            try (DirectLongList rows = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)) {
+                rows.add(0);
+                rows.add(frameRows / 2);
+                assertTrue(memory.populateRemainingColumns(filterColumns, rows, true));
+            }
+            // every column now has an address: none of them is a column top
+            assertFalse(memory.hasColumnTops());
+
+            // the remaining columns hold only the filtered rows; a full-frame navigate must re-decode
+            final PageFrameMemory full = pool.navigateTo(p);
+            assertQtyEquals(ref.navigateTo(p), full, qty, frameRows);
+        });
+    }
+
+    @Test
+    public void testSubsetNavigateAfterWindowedDecodeCoversFrame() throws Exception {
+        assertLateMaterializedFrame((pool, ref, p, sym, qty, frameRows) -> {
+            final PageFrameMemory windowed = pool.navigateTo(p, 0, 10);
+            assertTrue("precondition: a partial window", windowed.getPageSize(qty) < 8L * frameRows);
+
+            final PageFrameMemory memory = pool.navigateTo(p, set(sym, qty));
+            assertTrue("a subset navigate must not serve a partial window", memory.getPageSize(qty) >= 8L * frameRows);
+            assertQtyEquals(ref.navigateTo(p), memory, qty, frameRows);
+        });
+    }
+
+    @Test
+    public void testSubsetNavigateWithAnotherSubsetDecodesIt() throws Exception {
+        assertLateMaterializedFrame((pool, ref, p, sym, qty, frameRows) -> {
+            final IntHashSet symOnly = set(sym);
+            final long symAddress = pool.navigateTo(p, symOnly).getPageAddress(sym);
+            assertNotEquals(0, symAddress);
+            // the same subset again is served from the bound frame, without a decode
+            assertEquals(symAddress, pool.navigateTo(p, symOnly).getPageAddress(sym));
+
+            final PageFrameMemory memory = pool.navigateTo(p, set(qty));
+            assertNotEquals("a different subset must be decoded", 0, memory.getPageAddress(qty));
+            assertFalse(memory.hasColumnTops());
+            assertQtyEquals(ref.navigateTo(p), memory, qty, frameRows);
+        });
+    }
+
+    @Test
     public void testUndecodedColumnsAreNotColumnTops() throws Exception {
         assertMemoryLeak(() -> {
             createAndConvert();
@@ -182,12 +325,62 @@ public class PageFrameMemoryLateMaterializationTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertQtyEquals(PageFrameMemory expected, PageFrameMemory actual, int qty, int frameRows) {
+        final long expectedAddress = expected.getPageAddress(qty);
+        final long actualAddress = actual.getPageAddress(qty);
+        assertNotEquals(0, expectedAddress);
+        assertNotEquals(0, actualAddress);
+        for (int r = 0; r < frameRows; r++) {
+            assertEquals("qty at frame row " + r, Unsafe.getLong(expectedAddress + 8L * r), Unsafe.getLong(actualAddress + 8L * r));
+        }
+    }
+
+    private static String runSql(String query, boolean jitNullChecks) throws Exception {
+        final StringSink out = new StringSink();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setEnableJitNullChecks(jitNullChecks);
+            try {
+                TestUtils.printSql(compiler, sqlExecutionContext, query, out);
+            } finally {
+                compiler.setEnableJitNullChecks(true);
+            }
+        }
+        return out.toString();
+    }
+
     private static IntHashSet set(int... columns) {
         final IntHashSet set = new IntHashSet();
         for (int c : columns) {
             set.add(c);
         }
         return set;
+    }
+
+    private void assertLateMaterializedFrame(LateMaterializedFrameCheck check) throws Exception {
+        assertMemoryLeak(() -> {
+            createAndConvert();
+            try (RecordCursorFactory factory = select("SELECT * FROM t");
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                 PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
+                 PageFrameMemoryPool ref = new PageFrameMemoryPool(configuration, 0L)) {
+                final int frameCount = fill(factory, cursor, addressCache);
+                final RecordMetadata metadata = factory.getMetadata();
+                final int sym = metadata.getColumnIndex("sym");
+                final int qty = metadata.getColumnIndex("qty");
+                int parquetFrames = 0;
+                for (int p = 0; p < frameCount; p++) {
+                    if (addressCache.getFrameFormat(p) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    parquetFrames++;
+                    pool.of(addressCache);
+                    ref.of(addressCache);
+                    check.run(pool, ref, p, sym, qty, (int) addressCache.getFrameSize(p));
+                }
+                assertTrue("expected a Parquet frame", parquetFrames > 0);
+            }
+        });
     }
 
     private void createAndConvert() throws Exception {
@@ -218,5 +411,10 @@ public class PageFrameMemoryLateMaterializationTest extends AbstractCairoTest {
             addressCache.add(frameCount++, f);
         }
         return frameCount;
+    }
+
+    @FunctionalInterface
+    private interface LateMaterializedFrameCheck {
+        void run(PageFrameMemoryPool pool, PageFrameMemoryPool ref, int frameIndex, int sym, int qty, int frameRows);
     }
 }
