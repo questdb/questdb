@@ -26,13 +26,17 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -51,6 +55,27 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     }
 
     @Override
+    public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+        // aggregate() per finite value, with the state held in locals
+        final double[] values = args.doubles(0);
+        double mean = mapValue.getDouble(valueIndex);
+        double sum = mapValue.getDouble(valueIndex + 1);
+        long count = mapValue.getLong(valueIndex + 2);
+        for (int i = 0; i < rowCount; i++) {
+            final double value = values[i];
+            if (Numbers.isFinite(value)) {
+                count++;
+                final double oldMean = mean;
+                mean += (value - mean) / count;
+                sum += (value - mean) * (value - oldMean);
+            }
+        }
+        mapValue.putDouble(valueIndex, mean);
+        mapValue.putDouble(valueIndex + 1, sum);
+        mapValue.putLong(valueIndex + 2, count);
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         mapValue.putDouble(valueIndex, 0);
@@ -58,6 +83,42 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
         mapValue.putLong(valueIndex + 2, 0);
         if (Numbers.isFinite(d)) {
             aggregate(mapValue, d);
+        }
+    }
+
+    @Override
+    public void computeKeyedBatchKernel(
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            int rowCount,
+            GroupByBatchKernels.Args args
+    ) {
+        final double[] values = args.doubles(0);
+        final long meanOffset = mapValue.getOffset(valueIndex);
+        final long sumOffset = mapValue.getOffset(valueIndex + 1);
+        final long countOffset = mapValue.getOffset(valueIndex + 2);
+        for (int i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
+            final long valueAddr = baseValueAddr + Map.decodeBatchOffset(encoded);
+            final double value = values[i];
+            final boolean isNew = Map.isNewBatchEntry(encoded);
+            if (Numbers.isFinite(value)) {
+                // computeFirst() starts from (0, 0, 0), then aggregate()
+                double mean = isNew ? 0 : Unsafe.getDouble(valueAddr + meanOffset);
+                double sum = isNew ? 0 : Unsafe.getDouble(valueAddr + sumOffset);
+                final long count = (isNew ? 0 : Unsafe.getLong(valueAddr + countOffset)) + 1;
+                final double oldMean = mean;
+                mean += (value - mean) / count;
+                sum += (value - mean) * (value - oldMean);
+                Unsafe.putDouble(valueAddr + meanOffset, mean);
+                Unsafe.putDouble(valueAddr + sumOffset, sum);
+                Unsafe.putLong(valueAddr + countOffset, count);
+            } else if (isNew) {
+                Unsafe.putDouble(valueAddr + meanOffset, 0);
+                Unsafe.putDouble(valueAddr + sumOffset, 0);
+                Unsafe.putLong(valueAddr + countOffset, 0);
+            }
         }
     }
 
@@ -72,6 +133,21 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public Function getBatchKernelArg(int index) {
+        return arg;
+    }
+
+    @Override
+    public int getBatchKernelArgCount() {
+        return 1;
+    }
+
+    @Override
+    public int getBatchKernelArgType(int index) {
+        return ColumnType.DOUBLE;
     }
 
     @Override

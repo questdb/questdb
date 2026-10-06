@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
@@ -78,6 +79,29 @@ public interface GroupByFunction extends Function, Mutable {
      *                   record is {@code startRowId + i}
      */
     default void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Column-wise batch kernel for the non-keyed parallel GROUP BY: aggregates {@code rowCount}
+     * rows whose arguments {@link GroupByBatchKernels} has already evaluated into {@code args}.
+     * <p>
+     * It must leave {@code mapValue} exactly as {@code rowCount} calls of
+     * {@link #computeNext(MapValue, Record, long)} would, in row order: same arithmetic, same
+     * NULL handling, same order of operations, so that the result is bit-identical. The value is
+     * never new when this is called; the caller runs the group's first row through
+     * {@link #computeFirst(MapValue, Record, long)}.
+     * <p>
+     * Implemented together with {@link #computeKeyedBatchKernel} and the {@code getBatchKernelArg*}
+     * methods, in the class that declares {@code computeFirst()} and {@code computeNext()}; see
+     * {@link GroupByBatchKernels#supportsKernel(GroupByFunction)}.
+     *
+     * @param mapValue the group's value, not new
+     * @param rowCount number of rows in the batch
+     * @param args     the evaluated arguments: value {@code i} of argument {@code k} is element
+     *                 {@code i} of the array for {@link #getBatchKernelArgType(int)}
+     */
+    default void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         throw new UnsupportedOperationException();
     }
 
@@ -158,6 +182,31 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Column-wise batch kernel for the keyed parallel GROUP BY: the same contract as
+     * {@link #computeKeyedBatch}, except that the arguments of the batch rows are already
+     * evaluated into {@code args}, so the kernel reads no record. Entry {@code i} of the batch takes
+     * argument values at index {@code i}. A new entry ({@link Map#isNewBatchEntry(long)}) must be
+     * set as {@link #computeFirst(MapValue, Record, long)} would set it, and any other entry
+     * updated as {@link #computeNext(MapValue, Record, long)} would, in batch order, so that the
+     * result is bit-identical to the row path.
+     *
+     * @param mapValue      the packed flyweight, used for the value offsets only
+     * @param baseValueAddr base address of the map values
+     * @param batchAddr     the packed batch entries
+     * @param rowCount      number of entries
+     * @param args          the evaluated arguments
+     */
+    default void computeKeyedBatchKernel(
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            int rowCount,
+            GroupByBatchKernels.Args args
+    ) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Performs a subsequent aggregation within a group.
      * <p>
      * Row id is provided for aggregation functions that consider row order, such as first/last.
@@ -188,6 +237,31 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default boolean earlyExit(MapValue mapValue) {
         return false;
+    }
+
+    /**
+     * Returns argument {@code index} of the column-wise batch kernel.
+     */
+    default Function getBatchKernelArg(int index) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Returns the number of arguments the column-wise batch kernel reads, or 0 when this function
+     * has no kernel (for these arguments) and stays on the row path.
+     */
+    default int getBatchKernelArgCount() {
+        return 0;
+    }
+
+    /**
+     * Returns the type, as a {@link ColumnType} tag, of the getter that
+     * {@link #computeFirst(MapValue, Record, long)} and {@link #computeNext(MapValue, Record, long)}
+     * read argument {@code index} with: the kernel receives the argument's values as that getter
+     * would return them.
+     */
+    default int getBatchKernelArgType(int index) {
+        throw new UnsupportedOperationException();
     }
 
     /**

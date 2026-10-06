@@ -1905,6 +1905,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelGroupByBatchKernelsEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return true;
     }

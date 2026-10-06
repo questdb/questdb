@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -71,6 +72,8 @@ import java.io.Closeable;
 
 public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     private final int batchSize;
+    // Column-wise batch kernels, one per slot, or null when no aggregate has one or they are disabled.
+    private final GroupByBatchKernels ownerBatchKernels;
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
     private final DirectLongList ownerBatchList;
@@ -79,6 +82,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final ObjList<GroupByBatchKernels> perWorkerBatchKernels;
     private final ObjList<DirectLongList> perWorkerBatchLists;
     private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -234,6 +238,28 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
                 perWorkerBatchLists.extendAndSet(i, new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true));
                 perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
             }
+
+            // Each slot compiles its own kernels: they hold the slot's argument buffers, and the
+            // slots may share one list of (thread-safe) aggregates.
+            if (configuration.isSqlParallelGroupByBatchKernelsEnabled()) {
+                ownerBatchKernels = GroupByBatchKernels.newInstance(ownerGroupByFunctions, batchSize);
+            } else {
+                ownerBatchKernels = null;
+            }
+            if (ownerBatchKernels != null) {
+                perWorkerBatchKernels = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerBatchKernels.extendAndSet(
+                            i,
+                            GroupByBatchKernels.newInstance(
+                                    perWorkerGroupByFunctions != null ? perWorkerGroupByFunctions.getQuick(i) : ownerGroupByFunctions,
+                                    batchSize
+                            )
+                    );
+                }
+            } else {
+                perWorkerBatchKernels = null;
+            }
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -307,6 +333,37 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             }
         }
         return cleanupFailure;
+    }
+
+    /**
+     * Sums, over the slots, the batches the aggregates took with their kernels (index 0) and the
+     * batches they took the row path for (index 1).
+     */
+    @TestOnly
+    public long[] getBatchKernelCounts() {
+        final long[] counts = new long[2];
+        if (ownerBatchKernels != null) {
+            counts[0] += ownerBatchKernels.getKernelBatchCount();
+            counts[1] += ownerBatchKernels.getRowPathBatchCount();
+            for (int i = 0, n = perWorkerBatchKernels.size(); i < n; i++) {
+                final GroupByBatchKernels kernels = perWorkerBatchKernels.getQuick(i);
+                if (kernels != null) {
+                    counts[0] += kernels.getKernelBatchCount();
+                    counts[1] += kernels.getRowPathBatchCount();
+                }
+            }
+        }
+        return counts;
+    }
+
+    /**
+     * Returns the slot's column-wise batch kernels, or null when the aggregates have none.
+     */
+    public GroupByBatchKernels getBatchKernels(int slotId) {
+        if (slotId == -1 || perWorkerBatchKernels == null) {
+            return ownerBatchKernels;
+        }
+        return perWorkerBatchKernels.getQuick(slotId);
     }
 
     public DirectLongList getBatchList(int slotId) {

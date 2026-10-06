@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -70,6 +71,23 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 mapValue.putLong(valueIndex + 1, prevCount);
             }
         }
+    }
+
+    @Override
+    public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+        // computeNext() per row, with the state held in locals
+        final double[] values = args.doubles(0);
+        double sum = mapValue.getDouble(valueIndex);
+        long count = mapValue.getLong(valueIndex + 1);
+        for (int i = 0; i < rowCount; i++) {
+            final double d = values[i];
+            if (!Double.isNaN(d)) {
+                sum += d;
+                count++;
+            }
+        }
+        mapValue.putDouble(valueIndex, sum);
+        mapValue.putLong(valueIndex + 1, count);
     }
 
     @Override
@@ -122,6 +140,37 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public void computeKeyedBatchKernel(
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            int rowCount,
+            GroupByBatchKernels.Args args
+    ) {
+        final double[] values = args.doubles(0);
+        final long sumOffset = mapValue.getOffset(valueIndex);
+        final long countOffset = mapValue.getOffset(valueIndex + 1);
+        for (int i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
+            final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+            final double d = values[i];
+            if (Map.isNewBatchEntry(encoded)) {
+                // computeFirst()
+                if (!Double.isNaN(d)) {
+                    Unsafe.putDouble(valueBase + sumOffset, d);
+                    Unsafe.putLong(valueBase + countOffset, 1L);
+                } else {
+                    Unsafe.putDouble(valueBase + sumOffset, 0);
+                    Unsafe.putLong(valueBase + countOffset, 0);
+                }
+            } else if (!Double.isNaN(d)) {
+                Unsafe.putDouble(valueBase + sumOffset, Unsafe.getDouble(valueBase + sumOffset) + d);
+                Unsafe.putLong(valueBase + countOffset, Unsafe.getLong(valueBase + countOffset) + 1L);
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         if (!Double.isNaN(d)) {
@@ -133,6 +182,22 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public Function getBatchKernelArg(int index) {
+        return arg;
+    }
+
+    @Override
+    public int getBatchKernelArgCount() {
+        // a direct DOUBLE column already has the tight loops of computeKeyedBatch() and computeBatch()
+        return argColumnIndex < 0 ? 1 : 0;
+    }
+
+    @Override
+    public int getBatchKernelArgType(int index) {
+        return ColumnType.DOUBLE;
     }
 
     @Override
