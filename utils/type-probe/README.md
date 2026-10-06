@@ -855,7 +855,12 @@ function class. A `storage.alter` item names one row of its instrument, and a co
 admits is written at each: `converters.cpp` `fixedToFixed`, with `converters.h`'s
 `is_fixed_convertible` and the `EnumTypeMap` specialisation it asserts, and
 `DecimalColumnTypeConverter.getLoader`. A type given a sort-key kind of its own (`SortKeyEncoder.keyKind`)
-also adds its arms in `encodeFixed8` and `encodeFixedColumn`.
+also adds its arms in `encodeFixed8` and `encodeFixedColumn`. The copier test's item covers every
+copier conversion the type admits, and each pair needs its arm in all three copiers: the
+single-method and the chunked bytecode copiers (`RecordToRowCopierUtils.generateSingleMethodCopier`,
+`generateChunkedCopier`) and the looping copier (`LoopingRecordToRowCopier`: a target arm in the
+source's `copyFrom<Type>` method; as a source, an arm in `copyColumn` and a `copyFrom<Type>` of its
+own). `debug.cairo.copier.type` (1, 2, 3) forces one of them.
 
 There is one item per location and decision; a compiler error repeated by several builds is one
 item. Of several failures at one kit location (two later types failing the same path), the item
@@ -894,8 +899,40 @@ is worked.
 
 The tool's own acceptance: an author who has not added the type before adds an unsigned INT from
 the worklist alone, on a throwaway branch (a never-null type waits for its column tops, section 9).
-Measured: the decisions made outside the worklist, the sites touched against an earlier hand-made
-addition of the same types, and the time taken. The numbers of that run: not measured yet.
+Measured: the decisions made outside the worklist and the time taken; the sites touched are
+compared with an earlier hand-made addition as context only.
+
+The numbers of that run. A coding agent new to the type, given this README, the facts file and the
+checkout, reached exit 0 in seven runs and 69 minutes: 94, 63, 25, 1, 2, 1 and 0 items, the last
+run 11 minutes because it adds the whole kit (section 7). The diff is 57 files, +2,264 -29 lines:
+
+| part | files | lines |
+|---|---|---|
+| type driver and registration | 5 | +80 -2 |
+| new main classes (function base class, constant, column, CASE and memoizer functions, seven casts, CSV import adapter) | 15 | +1,186 |
+| existing main classes (pair switches, wire-kind writer arms, copier and ALTER COLUMN TYPE conversions, compare arm) | 23 | +459 -10 |
+| Rust and C (Parquet encode and decode, type tables, native fixed-size conversion) | 10 | +99 -9 |
+| tests (421 function reaches listed as meant, the soundness tests' tag switches) | 4 | +440 -8 |
+
+- Decisions outside the worklist: none. 70 edits sit away from the location of the item they
+  answer, 42 of them copier conversion arms answering the copier coverage test's one item
+  (section 7 says where such answers go).
+- Refusals declared: `ILP column kind` and `QWP WAL append`. The last kit run raised them 49 and
+  21 times, and every case of the type passed under the memory-leak checker.
+- Manual items: 56 worked, 47 of them decided without a code change.
+- Edits outside the type driver and registration lines (the cost of section 10): 157 in 51 files,
+  22 of which only add the type's name to a switch arm.
+- Against an earlier hand-made addition of an unsigned and a never-null INT, made before the type
+  drivers took their present shape: 185 sites there, 228 here, 39 in common. Not comparable one to
+  one.
+
+What the run did not list, found by checking its result: an answer in `OverloadSoundnessTest` that
+a later manual decision made stale (the kit step now runs both soundness tests, section 9); NULL
+sorting between 2,147,483,647 and 2,147,483,649, because the kit's order check skipped the NULL
+row; and the copiers' INSERT conversion arms, which no kit path ran (right under all three copier
+implementations when run by hand). The Rust unit tests that round-trip every tag
+(`ColumnTypeTag::VALUES`, `test_lookup_driver`) list the types by hand, so they skip a new type
+without failing; add it to both.
 
 ## 9. Limits
 
