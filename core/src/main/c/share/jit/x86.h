@@ -467,12 +467,33 @@ namespace questdb::x86 {
         return {l, r};
     }
 
+    // Negates a BYTE or SHORT column or bind variable within its own width, as the Java filter does:
+    // NegByteFunctionFactory returns (byte) -b and NegShortFunctionFactory (short) -s, so -(-128) is
+    // -128 and -(-32768) is -32768. read_mem and mem2reg hand an i8 / i16 value over sign-extended
+    // into a 32-bit register, and every consumer reads that register whole - the comparisons,
+    // convert(), the arithmetic helpers and SX_I64 alike - so int32_neg's +128 / +32768 reached them
+    // all. The movsx restores the sign extension and costs one instruction per narrow negation.
+    //
+    // An immediate keeps int32_neg's 32-bit result. It is a literal the serializer typed at the
+    // predicate's width (kConst), and the Java filter negates it as the INT it is: `s < -(-32768)`
+    // compares against 32768. So does narrow arithmetic, which is a Java INT and carries the i32 tag
+    // (see add()).
     jit_value_t neg(Compiler &c, const jit_value_t &lhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = lhs.dkind();
         switch (dt) {
             case data_type_t::i8:
-            case data_type_t::i16:
+            case data_type_t::i16: {
+                Gp r = int32_neg(c, lhs.gp().r32(), null_check);
+                if (dk == data_kind_t::kMemory) {
+                    if (dt == data_type_t::i8) {
+                        c.movsx(r, r.r8());
+                    } else {
+                        c.movsx(r, r.r16());
+                    }
+                }
+                return {r, dt, dk};
+            }
             case data_type_t::i32:
                 return {int32_neg(c, lhs.gp().r32(), null_check), dt, dk};
             case data_type_t::i64:
@@ -722,15 +743,13 @@ namespace questdb::x86 {
         }
     }
 
-    // Narrow int arithmetic always runs at i32 width via int32_*. With
-    // null_check on, the result can carry INT_NULL (e.g. INT operand was
-    // INT_NULL, or division by zero), so it must be tagged i32 -- otherwise
-    // a downstream f32/f64 conversion would skip the null check via
-    // cvt_null_check(i8) / cvt_null_check(i16) and miss the NaN substitution.
-    inline data_type_t narrow_arith_result(data_type_t dt, bool null_check) {
-        return null_check ? data_type_t::i32 : dt;
-    }
-
+    // Narrow int arithmetic always runs at i32 width via int32_*, and its result is a Java INT:
+    // AddIntFunctionFactory and its siblings take BYTE and SHORT operands widened to INT. So the
+    // result is tagged i32 whether or not null checks are on. With null_check on, it can carry
+    // INT_NULL (an INT operand was INT_NULL, or division by zero), and a downstream f32 / f64
+    // conversion substitutes NaN for it only on an i32 operand - cvt_null_check(i8) and
+    // cvt_null_check(i16) skip the check. neg() narrows an i8 / i16 operand to its own width, so
+    // a narrow tag here would make it wrap an INT result.
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
@@ -739,7 +758,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
                 return {int32_add(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                        data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_add(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -759,7 +778,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
                 return {int32_sub(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                        data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_sub(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -779,7 +798,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
                 return {int32_mul(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                        data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_mul(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -799,7 +818,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
                 return {int32_div(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                        data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_div(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:

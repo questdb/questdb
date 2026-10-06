@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -67,6 +68,10 @@ class LateralJoinRewriter implements Mutable {
     private static final int CMP_LT = 2;
     private static final int CMP_NE = 1;
     private static final int CMP_NONE = -1;
+    // typeOfSourceColumn() results that are not a column type: no relation provides the column,
+    // or a relation provides it and its type is out of reach
+    private static final int COLUMN_TYPE_ABSENT = -2;
+    private static final int COLUMN_TYPE_UNKNOWN = -1;
     private static final int CORRELATED_WHERE = 1;
     private static final int CORRELATED_PROJECTION = CORRELATED_WHERE << 1;
     private static final int CORRELATED_ORDER_BY = CORRELATED_PROJECTION << 1;
@@ -111,6 +116,8 @@ class LateralJoinRewriter implements Mutable {
     private final ObjList<ExpressionNode> orderBySave;
     private final ObjList<CharSequence> outerAliasSaveStack;
     private final ObjList<ExpressionNode> outerCols;
+    // sub-queries that the DISTINCT sub-query of a __qdb_outer_ref__ join reads as its data source
+    private final ObjHashSet<QueryModel> outerRefSourceModels = new ObjHashSet<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
@@ -126,6 +133,9 @@ class LateralJoinRewriter implements Mutable {
     private boolean hasCorrelation;
     private boolean hasZeroOnEmptyLeaf;
     private int outerRefId;
+    // number of sub-queries around the model tryEliminateOuterRefs() is visiting for which
+    // isResidualFilterBarrier() holds
+    private int residualFilterBarrierDepth;
     // set by scalarAggregateBodyKind when the body carries a filter that must be lifted
     // into the guard rather than left to run inside the body; read immediately by
     // the caller, which copies it before any nested call can overwrite it
@@ -201,6 +211,8 @@ class LateralJoinRewriter implements Mutable {
         hasCorrelation = false;
         hasZeroOnEmptyLeaf = false;
         outerRefId = 0;
+        outerRefSourceModels.clear();
+        residualFilterBarrierDepth = 0;
         scalarCountFilterLiftable = false;
         scalarCountGuard = null;
         scalarCountGuardBlocker = null;
@@ -243,6 +255,7 @@ class LateralJoinRewriter implements Mutable {
             //         WHERE order_id = order_id  -- tautology, removed later
             //         GROUP BY order_id) sub
             //     ON sub.order_id = o.id
+            residualFilterBarrierDepth = 0;
             tryEliminateOuterRefs(model, null);
         }
     }
@@ -375,6 +388,38 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Returns the DISTINCT sub-query over the outer columns that the sub-query of a
+    // __qdb_outer_ref__ join is or copies. cloneOuterRef() stacks a renaming layer and an empty
+    // layer on the model it copies, which is that sub-query or the renaming layer of another
+    // copy.
+    private static IQueryModel findOuterRefDistinctSubquery(IQueryModel outerRefSubquery) {
+        IQueryModel model = outerRefSubquery;
+        while (model != null && !model.isDistinct()) {
+            final IQueryModel layer = model.getNestedModel();
+            model = layer != null ? layer.getNestedModel() : null;
+        }
+        return model;
+    }
+
+    // Returns the column of the data source layer that the projection above the layer reads
+    // under the name, or null when it reads none. The projection resolves a name as a column
+    // of the layer first and as one of its own aliases otherwise.
+    private static CharSequence findProjectedSourceColumn(
+            CharSequence name,
+            IQueryModel dataSourceLayer,
+            IQueryModel levelAboveDS,
+            int outerRefJmIndex
+    ) {
+        if (typeOfSourceColumn(dataSourceLayer, outerRefJmIndex, name) != COLUMN_TYPE_ABSENT) {
+            return name;
+        }
+        final QueryColumn projected = levelAboveDS.getAliasToColumnMap().get(name);
+        final ExpressionNode projectedAst = projected != null ? projected.getAst() : null;
+        return projectedAst == null || projectedAst.type != ExpressionNode.LITERAL || projectedAst.isWildcard()
+                ? null
+                : projectedAst.token;
+    }
+
     // operand swap: `k < count` becomes `count > k`
     private static int flipComparison(int op) {
         return switch (op) {
@@ -391,6 +436,25 @@ class LateralJoinRewriter implements Mutable {
             ExpressionNode ast = columns.getQuick(i).getAst();
             if (ast != null && ast.isWildcard() && Chars.equals(ast.token, "*")) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    // True when a RIGHT, FULL OUTER or SPLICE join sits anywhere inside the sub-query. The
+    // __qdb_outer_ref__ sub-queries do not count: they rebuild the joins of the outer tables.
+    private static boolean hasMasterNullingJoinInside(IQueryModel subquery) {
+        for (IQueryModel model = subquery; model != null; model = model.getNestedModel()) {
+            final ObjList<IQueryModel> joinModels = model.getJoinModels();
+            if (hasMasterNullingJoin(joinModels) || hasMasterNullingJoinInside(model.getUnionModel())) {
+                return true;
+            }
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if ((joinModel.getAlias() == null || !Chars.startsWith(joinModel.getAlias().token, OUTER_REF_PREFIX))
+                        && hasMasterNullingJoinInside(joinModel.getNestedModel())) {
+                    return true;
+                }
             }
         }
         return false;
@@ -415,16 +479,56 @@ class LateralJoinRewriter implements Mutable {
         return hasZeroOnEmptyAggregate(node.lhs) || hasZeroOnEmptyAggregate(node.rhs);
     }
 
+    // cloneOuterRef() names the columns of a copy after the bare outer column, so two outer
+    // tables with a same-named column (a.z and c2.z) share one column of the copy, and the
+    // criteria of the copy's join no longer tell the two outer columns apart. A copy of such a
+    // copy inherits the shared column. This method returns true for both.
+    private static boolean isAmbiguousOuterRefCopy(IQueryModel outerRefSubquery) {
+        final IQueryModel distinctSubquery = findOuterRefDistinctSubquery(outerRefSubquery);
+        return distinctSubquery == null
+                || distinctSubquery.getBottomUpColumns().size() != outerRefSubquery.getBottomUpColumns().size();
+    }
+
     private static boolean isCountAggregate(ExpressionNode node) {
         return node != null
                 && node.type == ExpressionNode.FUNCTION
                 && Chars.equalsIgnoreCase(node.token, "count");
     }
 
+    // True for the token of an integer constant, such as `42`, `1_000` or `5L`, which QuestDB
+    // types INT or LONG. A fraction or an exponent makes the constant a DOUBLE.
+    private static boolean isIntegerConstant(CharSequence token) {
+        try {
+            Numbers.parseLong(token);
+            return true;
+        } catch (NumericException ignored) {
+            return false;
+        }
+    }
+
     private static boolean isOuterRefToken(ExpressionNode node, CharSequence outerRefAlias) {
         return node != null
                 && node.type == ExpressionNode.LITERAL
                 && matchesOuterRefAlias(node.token, outerRefAlias);
+    }
+
+    // True when the two tokens name one column of the FROM clause of the model, bar the join
+    // model at excludedIndex. Tokens that differ in their table qualifier alone name one
+    // column when a single relation provides the bare name.
+    private static boolean isSameSourceColumn(
+            IQueryModel model,
+            int excludedIndex,
+            CharSequence token1,
+            CharSequence token2
+    ) {
+        if (Chars.equalsIgnoreCase(token1, token2)) {
+            return true;
+        }
+        final CharSequence name = unqualify(token1);
+        return Chars.equalsIgnoreCase(name, unqualify(token2))
+                && typeOfSourceColumn(model, excludedIndex, name) > 0
+                && typeOfSourceColumn(model, excludedIndex, token1) > 0
+                && typeOfSourceColumn(model, excludedIndex, token2) > 0;
     }
 
     private static boolean isSelfCountTemplate(QueryColumn template) {
@@ -439,6 +543,14 @@ class LateralJoinRewriter implements Mutable {
                 && ast.rhs != null
                 && ast.rhs.type == ExpressionNode.CONSTANT
                 && Chars.equals(ast.rhs.token, "0");
+    }
+
+    // True for `col = col`, which QuestDB's NULL-safe equality satisfies for every row.
+    private static boolean isSelfEquality(ExpressionNode node) {
+        return Chars.equals(node.token, "=")
+                && isSimpleColumnRef(node.lhs)
+                && isSimpleColumnRef(node.rhs)
+                && Chars.equalsIgnoreCase(node.lhs.token, node.rhs.token);
     }
 
     private static boolean isSimpleColumnRef(ExpressionNode node) {
@@ -566,6 +678,87 @@ class LateralJoinRewriter implements Mutable {
             case IQueryModel.JOIN_LATERAL_CROSS -> IQueryModel.JOIN_CROSS;
             default -> throw new AssertionError("unexpected lateral join type: " + lateralJoinType);
         };
+    }
+
+    // Returns the type of the table column that an output column of the model reads, following
+    // plain column projections down the model chain. COLUMN_TYPE_ABSENT says that the model
+    // has no such output column. COLUMN_TYPE_UNKNOWN says that the column is computed or that
+    // this method cannot tell, as for a set operation or a wildcard over a join.
+    private static int typeOfOutputColumn(IQueryModel model, CharSequence columnName) {
+        if (model.getUnionModel() != null) {
+            return COLUMN_TYPE_UNKNOWN;
+        }
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        if (columns.size() == 0) {
+            // a model without a projection passes the columns of its FROM clause through
+            return typeOfSourceColumn(model, -1, columnName);
+        }
+        final IQueryModel nested = model.getNestedModel();
+        if (nested == null) {
+            return COLUMN_TYPE_UNKNOWN;
+        }
+        if (isWildcard(columns)) {
+            // SELECT * over a single relation keeps the names of its columns
+            return columns.size() == 1 && Chars.equals(columns.getQuick(0).getAst().token, "*") && nested.getJoinModels().size() == 1
+                    ? typeOfOutputColumn(nested, columnName)
+                    : COLUMN_TYPE_UNKNOWN;
+        }
+        final QueryColumn column = model.getAliasToColumnMap().get(columnName);
+        if (column == null) {
+            return COLUMN_TYPE_ABSENT;
+        }
+        final ExpressionNode ast = column.getAst();
+        if (ast == null || ast.type != ExpressionNode.LITERAL) {
+            return COLUMN_TYPE_UNKNOWN;
+        }
+        // the model has the column, so a source that this method cannot find leaves the type unknown
+        return Math.max(typeOfOutputColumn(nested, ast.token), COLUMN_TYPE_UNKNOWN);
+    }
+
+    // The type of a column of one relation of a FROM clause: a table, whose fields
+    // enumerateTableColumns() recorded with their types, or a sub-query.
+    private static int typeOfRelationColumn(IQueryModel relation, CharSequence columnName) {
+        final IQueryModel nested = relation.getNestedModel();
+        if (nested != null) {
+            return typeOfOutputColumn(nested, columnName);
+        }
+        if (relation.getTableNameExpr() == null) {
+            return COLUMN_TYPE_UNKNOWN;
+        }
+        final QueryColumn field = relation.getAliasToColumnMap().get(columnName);
+        if (field == null) {
+            return COLUMN_TYPE_ABSENT;
+        }
+        return field.getColumnType() > 0 ? field.getColumnType() : COLUMN_TYPE_UNKNOWN;
+    }
+
+    // Returns the type of a column that the FROM clause of the model provides: the model's own
+    // table or sub-query and its join models, bar the join model at excludedIndex. The token
+    // may carry the alias of one relation. COLUMN_TYPE_ABSENT says that no relation has the
+    // column, and COLUMN_TYPE_UNKNOWN that more than one has it or that the type is out of
+    // reach.
+    private static int typeOfSourceColumn(IQueryModel model, int excludedIndex, CharSequence token) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot > 0) {
+            final int index = model.getModelAliasIndex(token, 0, dot);
+            return index < 0 || index >= joinModels.size() || index == excludedIndex
+                    ? COLUMN_TYPE_ABSENT
+                    : typeOfRelationColumn(joinModels.getQuick(index), token.subSequence(dot + 1, token.length()));
+        }
+        int result = COLUMN_TYPE_ABSENT;
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            if (i != excludedIndex) {
+                final int type = typeOfRelationColumn(joinModels.getQuick(i), token);
+                if (type != COLUMN_TYPE_ABSENT) {
+                    if (result != COLUMN_TYPE_ABSENT) {
+                        return COLUMN_TYPE_UNKNOWN;
+                    }
+                    result = type;
+                }
+            }
+        }
+        return result;
     }
 
     private static CharSequence unqualify(CharSequence token) {
@@ -956,6 +1149,111 @@ class LateralJoinRewriter implements Mutable {
                 }
             }
         }
+    }
+
+    // The all-equalities rewrite of tryEliminateOuterRefInBranch() removes a __qdb_outer_ref__
+    // join together with its criteria, and terminateHere() moved every correlated conjunct of
+    // the data source layer into them. The alignment join enforces one equality per outer-ref
+    // column: `x = a.x` lives on as `t.__qdb_outer_ref__0_x = a.x` over the projection
+    // `x __qdb_outer_ref__0_x`. This method returns the other conjuncts as a filter for the
+    // WHERE clause of the data source layer, each with its outer-ref columns replaced by the
+    // columns of that layer that the alignment compares to the outer columns, so
+    // `k = a.x AND x = a.x` yields `k = x`. The filter holds only predicates of the lateral
+    // body, and it rejects only rows that violate one of them for the outer rows they align
+    // with. The method returns null, and the criteria leave the model with the join, when
+    // no conjunct is left to keep or when one conjunct cannot move into the layer:
+    //  - it reads an outer-ref column without such a column, another __qdb_outer_ref__ join
+    //    or a sub-query;
+    //  - it becomes an equality of two columns in a layer that joins relations, and the two
+    //    do not have the same known type: the layer's own join takes such an equality as a
+    //    key and rejects a key of two types;
+    //  - it holds anything but comparisons of plain columns and constants combined with AND,
+    //    OR and NOT, a comparison whose value depends on where QuestDB evaluates it, or one
+    //    that could fail at run time on a row that aligns with no outer row, see
+    //    isFailureFreePredicate();
+    //  - the join reads a copy that cannot tell two outer columns apart;
+    //  - the layer sits inside a sub-query whose rows must stay as they are, see
+    //    isResidualFilterBarrier();
+    //  - an equality above the layer gives an outer-ref column its equivalent and does not
+    //    hold for the rows of the layer as it stands, see isUpperAlignmentExact();
+    //  - an outer-ref column aligns with a FLOAT or DOUBLE column, or with a column of an
+    //    unknown type. The alignment join compares such a key bit by bit, and so does the
+    //    layer's own join when the filter gives it one, while the predicates of the body
+    //    tolerate a difference of 1e-10 and take 0.0 for -0.0. The rows that the layer
+    //    aligns with an outer row are then not the rows that the body reads for it.
+    // A filter that held only some of the conjuncts would change the rows of the body without
+    // making it follow its predicates. The caller invokes the method before it rewrites the
+    // criteria in place.
+    private ExpressionNode buildResidualFilter(
+            ExpressionNode joinCriteria,
+            IQueryModel branchTop,
+            IQueryModel dataSourceLayer,
+            IQueryModel levelAboveDS,
+            int outerRefJmIndex,
+            CharSequence outerRefAlias,
+            IQueryModel outerRefSubquery
+    ) {
+        if (joinCriteria == null
+                || levelAboveDS == null
+                || residualFilterBarrierDepth > 0
+                || dataSourceLayer.getBottomUpColumns().size() > 0
+                || isAmbiguousOuterRefCopy(outerRefSubquery)) {
+            return null;
+        }
+        // tryEliminateOuterRefs() counts the barriers around branchTop; the rest sit on the way
+        // down to the data source layer
+        for (IQueryModel model = branchTop; model != null; model = model.getNestedModel()) {
+            if (isResidualFilterBarrier(model)) {
+                return null;
+            }
+            if (model == dataSourceLayer) {
+                break;
+            }
+        }
+        if (!isUpperAlignmentExact(branchTop, dataSourceLayer, levelAboveDS, outerRefJmIndex, outerRefAlias)) {
+            return null;
+        }
+        // every outer-ref column needs an alignment key that a join compares as the body does
+        final ObjList<QueryColumn> outerRefColumns = outerRefSubquery.getBottomUpColumns();
+        for (int i = 0, n = outerRefColumns.size(); i < n; i++) {
+            final CharSequence column = findAlignmentKeyColumn(
+                    outerRefColumns.getQuick(i).getAlias(), outerRefAlias, dataSourceLayer, levelAboveDS, outerRefJmIndex
+            );
+            if (column == null) {
+                return null;
+            }
+            final int columnTag = ColumnType.tagOf(typeOfSourceColumn(dataSourceLayer, outerRefJmIndex, column));
+            if (columnTag == ColumnType.FLOAT || columnTag == ColumnType.DOUBLE) {
+                return null;
+            }
+        }
+        // the layer itself, the __qdb_outer_ref__ join and at least one more relation
+        final boolean isJoinLayer = dataSourceLayer.getJoinModels().size() > 2;
+        ExpressionNode filter = null;
+        splitAndPredicates(joinCriteria, correlatedPreds);
+        for (int i = 0, n = correlatedPreds.size(); i < n; i++) {
+            if (isAlignmentEquality(correlatedPreds.getQuick(i), outerRefAlias)) {
+                continue;
+            }
+            final ExpressionNode pred = ExpressionNode.deepClone(expressionNodePool, correlatedPreds.getQuick(i));
+            if (!rewriteToDataSourceColumns(pred, outerRefAlias, dataSourceLayer, levelAboveDS, outerRefJmIndex, outerRefSubquery)) {
+                return null;
+            }
+            if (isSelfEquality(pred)) {
+                continue;
+            }
+            if (!isFailureFreePredicate(pred, dataSourceLayer, outerRefJmIndex)) {
+                return null;
+            }
+            if (isJoinLayer && Chars.equals(pred.token, "=") && isSimpleColumnRef(pred.lhs) && isSimpleColumnRef(pred.rhs)) {
+                final int lhsType = typeOfSourceColumn(dataSourceLayer, outerRefJmIndex, pred.lhs.token);
+                if (lhsType <= 0 || lhsType != typeOfSourceColumn(dataSourceLayer, outerRefJmIndex, pred.rhs.token)) {
+                    return null;
+                }
+            }
+            filter = filter == null ? pred : createBinaryOp("and", filter, pred);
+        }
+        return filter;
     }
 
     // In validation mode (isBuilding == false) the traversal is side-effect free apart from
@@ -1934,6 +2232,7 @@ class LateralJoinRewriter implements Mutable {
             QueryModel nestModel = iNestModel instanceof QueryModelWrapper ? ((QueryModelWrapper) iNestModel).getDelegate() : (QueryModel) iNestModel;
             QueryModelWrapper wrapper = queryModelWrapperPool.next();
             nestModel.getSharedRefs().add(wrapper);
+            outerRefSourceModels.add(nestModel);
             wrapper.of(nestModel, nestModel.getSharedRefs().size());
             outerRefBase.setNestedModel(wrapper);
             outerRefBase.setNestedModelIsSubQuery(outerJm.isNestedModelIsSubQuery());
@@ -2331,6 +2630,72 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Returns the column of the data source layer that the alignment of an eliminated
+    // __qdb_outer_ref__ join compares to the outer column behind outerRefToken, or null when
+    // no column of that layer provably holds the outer value in the outer column's type.
+    //  - findAlignmentKeyColumn() gives the column that the alignment reads.
+    //  - The equality behind the equivalent keeps the column equal to the outer column for
+    //    every row of the lateral body: either terminateHere() took it from this layer, where
+    //    it names the column itself, or it stays in the WHERE clause of a layer above, and
+    //    isUpperAlignmentExact() has shown that it names this column there.
+    //  - The alignment join accepts two key types only within SYMBOL / STRING / VARCHAR and
+    //    within TIMESTAMP / TIMESTAMP_NS, where a predicate can change its meaning when the
+    //    column stands in for the outer column. There both types must be known and equal.
+    //    The join rejects any other pair of different types, so a known pair of different
+    //    types yields no column either and the query keeps failing on the join alone.
+    private CharSequence findAlignedDataSourceColumn(
+            CharSequence outerRefToken,
+            CharSequence outerRefAlias,
+            IQueryModel dataSourceLayer,
+            IQueryModel levelAboveDS,
+            int outerRefJmIndex,
+            IQueryModel outerRefSubquery
+    ) {
+        final CharSequence column = findAlignmentKeyColumn(
+                outerRefToken, outerRefAlias, dataSourceLayer, levelAboveDS, outerRefJmIndex
+        );
+        if (column == null) {
+            return null;
+        }
+        final int columnType = typeOfSourceColumn(dataSourceLayer, outerRefJmIndex, column);
+        final int dot = Chars.indexOfLastUnquoted(outerRefToken, '.');
+        final CharSequence outerRefColumn = dot > 0 ? outerRefToken.subSequence(dot + 1, outerRefToken.length()) : outerRefToken;
+        final int outerRefType = typeOfOutputColumn(outerRefSubquery, outerRefColumn);
+        if (outerRefType > 0) {
+            return outerRefType == columnType ? column : null;
+        }
+        return ColumnType.isTimestamp(columnType) || ColumnType.isSymbolOrStringOrVarchar(columnType) ? null : column;
+    }
+
+    // Returns the column of the data source layer that the projection above the layer reads
+    // for the outer-ref column behind outerRefToken, which is the key that the alignment join
+    // compares to the outer column. Returns null when the layer has no such column of a known
+    // type. The projection reads the equivalent that outerToInnerAlias records; an equivalent
+    // that is itself an outer-ref column (`a.y = a.x`) leads to that column's equivalent. The
+    // projection resolves a name as a column of the layer first and as one of its own aliases
+    // otherwise: `SELECT x xx ... WHERE xx = a.x` aligns on x.
+    private CharSequence findAlignmentKeyColumn(
+            CharSequence outerRefToken,
+            CharSequence outerRefAlias,
+            IQueryModel dataSourceLayer,
+            IQueryModel levelAboveDS,
+            int outerRefJmIndex
+    ) {
+        CharSequence column = lookupOuterRefAlias(outerRefToken, outerRefAlias, outerToInnerAlias);
+        // a chain of equivalents that ends visits every outer-ref column at most once
+        for (int hops = outerToInnerAlias.size(); column != null && matchesOuterRefAlias(column, outerRefAlias); hops--) {
+            if (hops == 0) {
+                return null;
+            }
+            column = lookupOuterRefAlias(column, outerRefAlias, outerToInnerAlias);
+        }
+        if (column == null || Chars.startsWith(column, OUTER_REF_PREFIX)) {
+            return null;
+        }
+        column = findProjectedSourceColumn(column, dataSourceLayer, levelAboveDS, outerRefJmIndex);
+        return column != null && typeOfSourceColumn(dataSourceLayer, outerRefJmIndex, column) > 0 ? column : null;
+    }
+
     private CharSequence findCountMarker(int originLayer, CharSequence originAlias) {
         ObjList<QueryColumn> columns = carrierChain.getQuick(originLayer - 1).getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -2579,6 +2944,21 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    // True when the model computes its rows from more than one row of its FROM clause, or
+    // from a part of them: an aggregation, DISTINCT, a window function, LIMIT, LATEST BY,
+    // SAMPLE BY or a set operation. A filter on a column does not commute with such a model.
+    private boolean hasRowSetOperator(IQueryModel model) {
+        return model.getGroupBy().size() > 0
+                || model.getSampleBy() != null
+                || model.isDistinct()
+                || model.getLimitLo() != null
+                || model.getLimitHi() != null
+                || model.getLatestBy().size() > 0
+                || model.getUnionModel() != null
+                || hasAggregateFunctions(model)
+                || hasWindowColumns(model);
+    }
+
     private boolean hasUnmappedOuterRefLiteral(
             ExpressionNode node,
             CharSequence outerRefAlias,
@@ -2614,6 +2994,27 @@ class LateralJoinRewriter implements Mutable {
             if (checkForChildWindowFunctions(sqlNodeStack, col.getAst())) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    // True for the conjunct that gives an outer-ref column its equivalent in outerToInnerAlias,
+    // such as `x = __qdb_outer_ref__0_x` or `__qdb_outer_ref__0_y = __qdb_outer_ref__0_x`.
+    // The projection renames the equivalent to the outer-ref column and the alignment join
+    // compares it to the outer value, so the conjunct stays enforced without the criteria.
+    private boolean isAlignmentEquality(ExpressionNode node, CharSequence outerRefAlias) {
+        if (!Chars.equals(node.token, "=") || !isSimpleColumnRef(node.lhs) || !isSimpleColumnRef(node.rhs)) {
+            return false;
+        }
+        if (matchesOuterRefAlias(node.lhs.token, outerRefAlias)) {
+            final CharSequence equivalent = lookupOuterRefAlias(node.lhs.token, outerRefAlias, outerToInnerAlias);
+            if (equivalent != null && Chars.equalsIgnoreCase(equivalent, node.rhs.token)) {
+                return true;
+            }
+        }
+        if (matchesOuterRefAlias(node.rhs.token, outerRefAlias)) {
+            final CharSequence equivalent = lookupOuterRefAlias(node.rhs.token, outerRefAlias, outerToInnerAlias);
+            return equivalent != null && Chars.equalsIgnoreCase(equivalent, node.lhs.token);
         }
         return false;
     }
@@ -2745,6 +3146,111 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    // True when the conjunct holds nothing but comparisons (`=`, `!=`, `<>`, `<`, `<=`, `>`,
+    // `>=`) of plain columns and constants, combined with AND, OR and NOT, whose value does not
+    // depend on where QuestDB evaluates them and whose evaluation cannot fail, whatever row it
+    // reads:
+    //  - The filter of buildResidualFilter() can compile to the JIT where the query evaluates
+    //    the conjunct in Java, and the JIT computes some arithmetic otherwise than the Java
+    //    functions: it adds the raw values of DATE + DATE and of a DATE plus a negative
+    //    constant, where Java adds them in microseconds, and the vectorised loop of a filter over
+    //    BYTE or SHORT columns alone negates a constant in byte or word lanes, so that
+    //    `s < -(-32768)` selects other rows than in Java. The method therefore rejects every
+    //    arithmetic operator, the unary minus and with it every negative constant, and every
+    //    other node, such as a function call, a cast, IN, BETWEEN or a bind variable, whose
+    //    result type and failure modes the rewriter does not know either.
+    //  - The JIT compares a FLOAT column with a FLOAT, BYTE or SHORT column or with a constant,
+    //    and an INT column with a fractional constant, as two 32-bit floats within a tolerance
+    //    of (float) 1e-10, while Java compares them as doubles within 1e-10: a FLOAT 1e-10 equals
+    //    0 for the JIT and not for Java. The method rejects every FLOAT column and every numeric
+    //    constant other than an integer.
+    //  - The filter runs on every row of the data source layer, while the query evaluates the
+    //    conjunct only for a row of the body paired with an outer row. A comparison of a
+    //    SYMBOL, STRING or VARCHAR value with a number or a timestamp casts the text and throws
+    //    on text it cannot parse: `k = a.k AND st < a.k` would fail as `st < k` on a row with
+    //    st = 'x' that pairs with no outer row, or over an empty outer side. The columns and
+    //    constants of the conjunct must have known types, all of them numbers and timestamps
+    //    (BYTE, SHORT, INT, LONG, DOUBLE, DATE, TIMESTAMP) or all of them text. Its DATE and
+    //    TIMESTAMP columns must share one type: the cast of a TIMESTAMP to a TIMESTAMP_NS throws
+    //    on a value beyond the range of nanoseconds, such as an end-of-time marker.
+    private boolean isFailureFreePredicate(ExpressionNode node, IQueryModel dataSourceLayer, int outerRefJmIndex) {
+        boolean hasNumber = false;
+        boolean hasText = false;
+        int temporalType = ColumnType.UNDEFINED;
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type != ExpressionNode.OPERATION) {
+                return false;
+            }
+            if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
+                if (node.paramCount != 2 || node.lhs == null || node.rhs == null) {
+                    return false;
+                }
+                sqlNodeStack.push(node.rhs);
+                node = node.lhs;
+                continue;
+            }
+            if (SqlKeywords.isNotKeyword(node.token)) {
+                // a unary operator holds its operand in rhs
+                if (node.paramCount != 1 || node.rhs == null) {
+                    return false;
+                }
+                node = node.rhs;
+                continue;
+            }
+            if (comparisonOp(node.token) == CMP_NONE || node.paramCount != 2) {
+                return false;
+            }
+            for (int i = 0; i < 2; i++) {
+                final ExpressionNode operand = i == 0 ? node.lhs : node.rhs;
+                if (operand == null) {
+                    return false;
+                }
+                switch (operand.type) {
+                    case ExpressionNode.LITERAL -> {
+                        final int columnType = typeOfSourceColumn(dataSourceLayer, outerRefJmIndex, operand.token);
+                        if (columnType <= 0) {
+                            return false;
+                        }
+                        if (ColumnType.isSymbolOrStringOrVarchar(columnType)) {
+                            hasText = true;
+                        } else {
+                            switch (ColumnType.tagOf(columnType)) {
+                                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
+                                     ColumnType.DOUBLE -> hasNumber = true;
+                                case ColumnType.DATE, ColumnType.TIMESTAMP -> {
+                                    if (temporalType != ColumnType.UNDEFINED && temporalType != columnType) {
+                                        return false;
+                                    }
+                                    temporalType = columnType;
+                                    hasNumber = true;
+                                }
+                                default -> {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    case ExpressionNode.CONSTANT -> {
+                        final char first = operand.token.charAt(0);
+                        if (first == '\'') {
+                            hasText = true;
+                        } else if (first >= '0' && first <= '9' && isIntegerConstant(operand.token)) {
+                            hasNumber = true;
+                        } else if (!SqlKeywords.isNullKeyword(operand.token)) {
+                            return false;
+                        }
+                    }
+                    default -> {
+                        return false;
+                    }
+                }
+            }
+            node = sqlNodeStack.poll();
+        }
+        return !hasText || !hasNumber;
+    }
+
     private boolean isLocalSelectAlias(CharSequence columnName, IQueryModel jm) {
         ObjList<QueryColumn> cols = jm.getBottomUpColumns();
         for (int i = 0, n = cols.size(); i < n; i++) {
@@ -2809,6 +3315,21 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    // True when the rows of the sub-query must stay as they are, so buildResidualFilter() adds
+    // no filter inside it:
+    //  - The DISTINCT sub-query of another __qdb_outer_ref__ join reads the sub-query as its
+    //    data source, without the join that aligns its rows with their outer rows. A filter
+    //    would change the set of outer values that sub-query finds, such as the NULL of an
+    //    outer row that a LEFT JOIN LATERAL leaves without a match.
+    //  - The sub-query is a lateral body with a RIGHT, FULL OUTER or SPLICE join. Such a join
+    //    emits a row that loses its match with a NULL in place of its correlation value, and
+    //    the alignment join pairs that NULL with the outer rows that hold a NULL. A filter on
+    //    one side of the join would take matches away and add such rows.
+    private boolean isResidualFilterBarrier(IQueryModel subquery) {
+        return outerRefSourceModels.contains(subquery instanceof QueryModelWrapper wrapper ? wrapper.getDelegate() : (QueryModel) subquery)
+                || (subquery.isOuterRefWildcardExcluded() && hasMasterNullingJoinInside(subquery));
+    }
+
     private boolean isScalarCountRef(ExpressionNode node, IQueryModel layer) {
         return node != null
                 && node.type == ExpressionNode.LITERAL
@@ -2823,6 +3344,118 @@ class LateralJoinRewriter implements Mutable {
             return false;
         }
         return hasZeroOnEmptyLeaf || !hasAggregateLeaf;
+    }
+
+    // The all-equalities rewrite takes the equivalent of an outer-ref column from an equality
+    // in the WHERE clause of any layer of the branch and aligns the data source layer on it,
+    // as if the equality stood in that layer. This method returns true when every such
+    // equality above the data source layer holds in that layer as well. Only then does the
+    // layer, with the filter of buildResidualFilter(), read exactly the rows that the body
+    // reads for an outer row:
+    //  - The layer of the equality reads a single relation, every layer between it and the
+    //    data source layer projects the columns of a single relation and nothing else, and
+    //    the data source layer has no LIMIT, LATEST BY, SAMPLE BY or aggregation of its own.
+    //    A LIMIT or a window function in between reads all the rows below it, and the
+    //    equality filters what it returns. The rewrite limits and numbers the rows per value
+    //    of the equivalent instead, so such a body returns the rows of its predicates for
+    //    some data only, and a filter below the LIMIT or the window function changes those
+    //    rows: in `(SELECT x cc, v FROM tb WHERE y < a.x ORDER BY v LIMIT 1) WHERE cc = a.x
+    //    AND v > 5` it lets the next row take the place of a row that `v > 5` rejects.
+    //  - The name that the equality reads stands, through the projections below it, for the
+    //    column that the projection above the data source layer reads under that name. In
+    //    `(SELECT x AS k, y FROM tb WHERE y < a.x) WHERE k = a.x` the equality reads tb.x,
+    //    and that projection reads tb.k, a column the body never compares with a.x.
+    private boolean isUpperAlignmentExact(
+            IQueryModel branchTop,
+            IQueryModel dataSourceLayer,
+            IQueryModel levelAboveDS,
+            int outerRefJmIndex,
+            CharSequence outerRefAlias
+    ) {
+        boolean hasUpperEquality = false;
+        for (IQueryModel model = branchTop; model != null && model != dataSourceLayer; model = model.getNestedModel()) {
+            if (hasUpperEquality && (model.getJoinModels().size() > 1 || hasRowSetOperator(model))) {
+                return false;
+            }
+            // the equalities that scanWhereForOuterRefEqualities() takes
+            ExpressionNode node = model.getWhereClause();
+            sqlNodeStack.clear();
+            while (node != null) {
+                if (SqlKeywords.isAndKeyword(node.token)) {
+                    if (node.rhs != null) {
+                        sqlNodeStack.push(node.rhs);
+                    }
+                    node = node.lhs;
+                    continue;
+                }
+                if (Chars.equals(node.token, "=")) {
+                    ExpressionNode equivalent = null;
+                    if (isOuterRefToken(node.lhs, outerRefAlias) && isSimpleColumnRef(node.rhs)) {
+                        equivalent = node.rhs;
+                    } else if (isOuterRefToken(node.rhs, outerRefAlias) && isSimpleColumnRef(node.lhs)) {
+                        equivalent = node.lhs;
+                    }
+                    if (equivalent != null) {
+                        if (model.getJoinModels().size() > 1) {
+                            // the name can belong to a relation that this layer joins
+                            return false;
+                        }
+                        hasUpperEquality = true;
+                        // an equivalent that is itself an outer-ref column leads to the
+                        // equivalent of that column, which has an equality of its own
+                        if (!matchesOuterRefAlias(equivalent.token, outerRefAlias) && !isUpperEquivalentAligned(
+                                equivalent.token, model, dataSourceLayer, levelAboveDS, outerRefJmIndex
+                        )) {
+                            return false;
+                        }
+                    }
+                }
+                node = sqlNodeStack.poll();
+            }
+        }
+        return !hasUpperEquality || !hasRowSetOperator(dataSourceLayer);
+    }
+
+    // Follows the name that the WHERE clause of the model reads down the projections to the
+    // data source layer. Returns true when it arrives at the column that the projection above
+    // the data source layer reads under that name, which is the column the alignment join
+    // compares with the outer column.
+    private boolean isUpperEquivalentAligned(
+            CharSequence name,
+            IQueryModel model,
+            IQueryModel dataSourceLayer,
+            IQueryModel levelAboveDS,
+            int outerRefJmIndex
+    ) {
+        if (Chars.startsWith(name, OUTER_REF_PREFIX)) {
+            // a column of another __qdb_outer_ref__ join
+            return false;
+        }
+        final CharSequence alignedColumn = findProjectedSourceColumn(
+                name, dataSourceLayer, levelAboveDS, outerRefJmIndex
+        );
+        if (alignedColumn == null) {
+            return false;
+        }
+        for (IQueryModel layer = model.getNestedModel(); layer != null && layer != dataSourceLayer; layer = layer.getNestedModel()) {
+            final ObjList<QueryColumn> columns = layer.getBottomUpColumns();
+            if (columns.size() == 0) {
+                // the layer passes the columns of its FROM clause through
+                continue;
+            }
+            if (isWildcard(columns)) {
+                // a wildcard and an alias next to it can both provide the name
+                return false;
+            }
+            // the table qualifier of the name stands for the relation that this layer is
+            final QueryColumn column = layer.getAliasToColumnMap().get(unqualify(name));
+            final ExpressionNode ast = column != null ? column.getAst() : null;
+            if (ast == null || ast.type != ExpressionNode.LITERAL) {
+                return false;
+            }
+            name = ast.token;
+        }
+        return isSameSourceColumn(dataSourceLayer, outerRefJmIndex, name, alignedColumn);
     }
 
     private boolean joinKeepsSingleRow(IQueryModel layer) {
@@ -4253,6 +4886,47 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    // Replaces every outer-ref column of a criteria conjunct with its aligned column of the
+    // data source layer. Returns false when the layer cannot express the conjunct: an outer-ref
+    // column has no aligned column, or the conjunct reads another __qdb_outer_ref__ join or a
+    // sub-query. The conjunct is a copy, which the caller discards in that case.
+    private boolean rewriteToDataSourceColumns(
+            ExpressionNode node,
+            CharSequence outerRefAlias,
+            IQueryModel dataSourceLayer,
+            IQueryModel levelAboveDS,
+            int outerRefJmIndex,
+            IQueryModel outerRefSubquery
+    ) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == ExpressionNode.LITERAL) {
+                if (matchesOuterRefAlias(node.token, outerRefAlias)) {
+                    final CharSequence column = findAlignedDataSourceColumn(
+                            node.token, outerRefAlias, dataSourceLayer, levelAboveDS, outerRefJmIndex, outerRefSubquery
+                    );
+                    if (column == null) {
+                        return false;
+                    }
+                    node.token = column;
+                } else if (Chars.startsWith(node.token, OUTER_REF_PREFIX)) {
+                    return false;
+                }
+            } else if (node.type == ExpressionNode.QUERY) {
+                return false;
+            } else {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+            }
+            node = node.lhs != null ? node.lhs : sqlNodeStack.poll();
+        }
+        return true;
+    }
+
     private ExpressionNode rowOneConstant() {
         return expressionNodePool.next().of(ExpressionNode.CONSTANT, "1", 0, 0);
     }
@@ -4897,6 +5571,14 @@ class LateralJoinRewriter implements Mutable {
             current = current.getNestedModel();
         }
 
+        // The all-equalities rewrite removes the criteria of the __qdb_outer_ref__ join together
+        // with the join. buildResidualFilter() reads them here, before the rewrite replaces their
+        // outer-ref columns in place. The other rewrite lifts every conjunct into the criteria
+        // of joinModel.
+        final ExpressionNode residualFilter = isAllEqualities
+                ? buildResidualFilter(joinCrit, branchTop, dataSourceLayer, levelAboveDS, outerRefJmIndex, outerRefAlias, outerRefSubquery)
+                : null;
+
         rewriteOuterRefColumns(dataSourceLayer, outerRefAlias, outerToInnerAlias);
         rewriteOuterRefsInModelClauses(dataSourceLayer, outerToInnerAlias);
         if (levelAboveDS != null) {
@@ -4941,6 +5623,11 @@ class LateralJoinRewriter implements Mutable {
             }
         }
 
+        if (residualFilter != null) {
+            final ExpressionNode where = dataSourceLayer.getWhereClause();
+            dataSourceLayer.setWhereClause(where == null ? residualFilter : createBinaryOp("and", where, residualFilter));
+        }
+
         dataSourceLayer.getJoinModels().remove(outerRefJmIndex);
         dataSourceLayer.getModelAliasIndexes().remove(outerRefAlias);
         // Update alias indices for models shifted down by the removal
@@ -4970,6 +5657,10 @@ class LateralJoinRewriter implements Mutable {
             IQueryModel jm = model.getJoinModels().getQuick(i);
             IQueryModel nested = jm.getNestedModel();
             if (nested != null) {
+                final boolean isFilterBarrier = isResidualFilterBarrier(nested);
+                if (isFilterBarrier) {
+                    residualFilterBarrierDepth++;
+                }
                 tryEliminateOuterRefs(nested, i == 0 ? model : null);
                 if (i > 0) {
                     outerCols.clear();
@@ -4980,6 +5671,9 @@ class LateralJoinRewriter implements Mutable {
                                 ? model : parent;
                         tryEliminateOuterRef(selectModel, model, jm, outerRefAlias);
                     }
+                }
+                if (isFilterBarrier) {
+                    residualFilterBarrierDepth--;
                 }
             }
         }

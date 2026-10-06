@@ -6992,6 +6992,171 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnaryMinusNarrowMinValueWrapsLikeJava() throws Exception {
+        // The Java filter negates a BYTE or a SHORT within its own type: NegByteFunctionFactory
+        // returns (byte) -b and NegShortFunctionFactory returns (short) -s, so -(-128) is -128 and
+        // -(-32768) is -32768. The scalar backends negated the sign-extended 32-bit register and
+        // kept the narrow tag, so every consumer read +128 / +32768 instead. The vectorized loop
+        // negates in byte / word lanes and wraps as Java does, but it hands the rows past its last
+        // full vector to scalar_tail, and a filter that also reads a wider column observes mixed
+        // sizes and runs the scalar loop on every row. Rows 1 and 300 sit in the vectorized body;
+        // row 514 sits in the scalar tail of the 515-row frame.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE neg_min AS (
+                        SELECT
+                            x::INT id,
+                            (CASE x WHEN 1 THEN -128 WHEN 2 THEN -1 WHEN 3 THEN 1 WHEN 4 THEN 127
+                                WHEN 300 THEN -128 WHEN 513 THEN -5 WHEN 514 THEN -128 ELSE 0 END)::BYTE b,
+                            (CASE x WHEN 1 THEN -32_768 WHEN 2 THEN -1 WHEN 3 THEN 1 WHEN 4 THEN 32_767
+                                WHEN 300 THEN -32_768 WHEN 513 THEN -5 WHEN 514 THEN -32_768 ELSE 0 END)::SHORT s,
+                            (CASE x WHEN 1 THEN 0 WHEN 300 THEN 0 WHEN 514 THEN 0 ELSE 1 END)::SHORT s2,
+                            1::INT i,
+                            1L l,
+                            1.0 d,
+                            timestamp_sequence(0, 1_000_000) k
+                        FROM long_sequence(515)
+                    ) TIMESTAMP(k)
+                    """);
+
+            final String negativeRows = """
+                    id
+                    2
+                    513
+                    """;
+            final String nonPositiveRows = """
+                    id
+                    1
+                    3
+                    4
+                    300
+                    514
+                    """;
+            final String minRows = """
+                    id
+                    1
+                    300
+                    514
+                    """;
+            final String negativeValueRows = """
+                    id
+                    1
+                    2
+                    300
+                    513
+                    514
+                    """;
+            final String[][] cases = {
+                    {"-s > 0", negativeRows},
+                    {"-s < 0", nonPositiveRows},
+                    {"NOT (-s > 0) AND s <> 0", nonPositiveRows},
+                    {"-s >= s2", negativeRows},
+                    {"-s = s AND s < 0", minRows},
+                    {"-b > 0", negativeRows},
+                    {"-b < 0", nonPositiveRows},
+                    {"-b = b AND b < 0", minRows},
+                    // A narrow arithmetic operand forces the scalar loop; Java adds and multiplies
+                    // the wrapped SHORT at INT width.
+                    {"(-s) + 1 > 1", negativeRows},
+                    {"(-s) * 2 < 0", nonPositiveRows},
+                    {"(-b) + 1 > 1", negativeRows},
+                    // Controls that agree with Java without the narrowing, and must keep agreeing:
+                    // a double negation lands on the original value, and the negation of an INT
+                    // arithmetic result must not wrap at the operand's width.
+                    {"-(-s) > 0", """
+                            id
+                            3
+                            4
+                            """},
+                    {"-(s - 1) > 1", negativeValueRows},
+            };
+            // The empty suffix keeps an all-narrow filter on the byte / word vectorized loop. Each
+            // other suffix adds a wider column, so the filter observes mixed sizes and runs the
+            // scalar loop throughout.
+            final String[] widerColumnSuffixes = {"", " AND i > 0", " AND l > 0", " AND d > 0"};
+            for (String[] c : cases) {
+                for (String suffix : widerColumnSuffixes) {
+                    assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE " + c[0] + suffix, c[1]);
+                }
+            }
+
+            // A negated literal is an INT in the Java filter, whatever width the serializer gives the
+            // immediate: -(-32768) is 32768 and -(-128) is 128, so every SHORT and every BYTE lies
+            // below it. The scalar loop must keep the 32-bit negation of an immediate. Only the
+            // suffixes that put the filter on the scalar loop appear here: the vectorized loop
+            // negates the immediate in word / byte lanes, a separate defect this test does not pin.
+            for (int i = 1; i < widerColumnSuffixes.length; i++) {
+                assertJitScalarAndVectorMatchJava(
+                        "SELECT id FROM neg_min WHERE s < -(-32_768) AND s < 0" + widerColumnSuffixes[i],
+                        negativeValueRows
+                );
+                assertJitScalarAndVectorMatchJava(
+                        "SELECT id FROM neg_min WHERE -(-128) > b AND b < 0" + widerColumnSuffixes[i],
+                        negativeValueRows
+                );
+            }
+
+            // Without null checks the backends take their unchecked arms, which SQL reaches only
+            // through SqlCompiler.setEnableJitNullChecks(). Narrow arithmetic is a Java INT there
+            // too, so the negation of `s - 1` must not wrap at the operand's width: -(-32769) is
+            // 32769, which wraps to -32767 as a SHORT. The table holds no NULL, so the Java rows
+            // stay the oracle.
+            final String[] uncheckedQueries = {
+                    "SELECT id FROM neg_min WHERE -(s - 1) > 1 AND i > 0",
+                    "SELECT id FROM neg_min WHERE -(b - 1) > 1 AND l > 0"
+            };
+            for (String query : uncheckedQueries) {
+                TestUtils.assertEquals(negativeValueRows, runJavaToString(query));
+            }
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setEnableJitNullChecks(false);
+                try {
+                    for (int jitMode : new int[]{SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                        sqlExecutionContext.setJitMode(jitMode);
+                        for (String query : uncheckedQueries) {
+                            final StringSink sink = new StringSink();
+                            try (RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
+                                Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                                }
+                            }
+                            TestUtils.assertEquals("unchecked JIT [mode=" + jitMode + "] for query: " + query, negativeValueRows, sink);
+                        }
+                    }
+                } finally {
+                    compiler.setEnableJitNullChecks(true);
+                    sqlExecutionContext.setJitMode(callerJitMode);
+                }
+            }
+
+            // The count-only function compiles the same IR through its own entry point.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_min WHERE -s > 0", "count\n2\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_min WHERE -s > 0 AND i > 0", "count\n2\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_min WHERE -b < 0 AND l > 0", "count\n5\n");
+
+            // A negated bind variable reaches the backends as a VAR operand rather than a column.
+            bindVariableService.setShort("sv", (short) -32_768);
+            bindVariableService.setByte("bv", (byte) -128);
+            assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE -:sv = s", minRows);
+            assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE -:sv = s AND i > 0", minRows);
+            assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE -:bv = b", minRows);
+            assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE -:bv = b AND l > 0", minRows);
+
+            // Parity cannot see which loop ran. The narrowing lives in the scalar backends only,
+            // so pin that an all-narrow negation stays on the vectorized loop and that a wider
+            // column takes the filter to the scalar one.
+            assertExecHint("neg_min", "-s > 0", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("neg_min", "-b > 0", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("neg_min", "-s >= s2", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("neg_min", "-s > 0 and i > 0", EXEC_HINT_MIXED_SIZE_TYPE);
+            assertExecHint("neg_min", "-b > 0 and l > 0", EXEC_HINT_MIXED_SIZE_TYPE);
+            assertExecHint("neg_min", "-s > 0 and d > 0", EXEC_HINT_MIXED_SIZE_TYPE);
+        });
+    }
+
+    @Test
     public void testUuidConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +

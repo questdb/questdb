@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlOptimiser;
@@ -1166,6 +1167,4520 @@ public class LateralJoinTest extends AbstractCairoTest {
         Assert.assertEquals(1, newModel.getLateralCountTemplates().size());
         Assert.assertSame(template, newModel.getLateralCountTemplates().getQuick(0));
         Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
+    }
+
+    // The testLateralMultiCorrelation* tests cover a lateral body that holds more
+    // correlation predicates than outer columns, e.g. `k = a.x AND x = a.x`. The
+    // outer-ref elimination maps each outer column to one inner column and used to
+    // drop every other correlated conjunct together with the __qdb_outer_ref__ join.
+    // Every expected result comes from evaluating the body once per outer row with
+    // all its predicates applied (QuestDB's `=` is NULL-safe), not from the engine.
+    @Test
+    public void testLateralMultiCorrelationAggregateBodies() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            // keyed GROUP BY that projects both correlated columns
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, max(v) v FROM tb WHERE k = a.x AND x = a.x GROUP BY k, x, y
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t202
+                            102\t207
+                            103\t201
+                            103\t202
+                            104\t206
+                            105\t207
+                            106\t204
+                            """);
+
+            // keyed GROUP BY that projects neither correlated column
+            assertQuery("""
+                    SELECT a.v av, t.y, t.s
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT y, sum(v) s FROM tb WHERE k = a.x AND x = a.x GROUP BY y
+                    ) t
+                    ORDER BY a.v, t.y
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ty\ts
+                            101\t1\t201
+                            101\t2\t202
+                            102\t2\t207
+                            103\t1\t201
+                            103\t2\t202
+                            104\t0\t206
+                            105\t2\t207
+                            106\t0\t204
+                            """);
+
+            // scalar count: one row per outer row
+            assertQuery("""
+                    SELECT a.v av, t.c
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT count() c FROM tb WHERE k = a.x AND x = a.x) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\tc
+                            101\t2
+                            102\t1
+                            103\t2
+                            104\t1
+                            105\t1
+                            106\t1
+                            """);
+
+            // scalar sum under LEFT JOIN LATERAL
+            assertQuery("""
+                    SELECT a.v av, t.s
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT sum(v) s FROM tb WHERE k = a.x AND x = a.x) t ON true
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ts
+                            101\t403
+                            102\t207
+                            103\t403
+                            104\t206
+                            105\t207
+                            106\t204
+                            """);
+
+            // scalar count over three correlations, two of them on a.x
+            assertQuery("""
+                    SELECT a.v av, t.c
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT count() c FROM tb WHERE k = a.x AND x = a.x AND y = a.y) t ON true
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\tc
+                            101\t1
+                            102\t0
+                            103\t0
+                            104\t0
+                            105\t1
+                            106\t1
+                            """);
+
+            // a non-equality predicate on the outer column that keys the aggregate
+            assertQuery("""
+                    SELECT a.v av, t.s
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, sum(v) s FROM tb WHERE k = a.x AND x < a.x GROUP BY k) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ts
+                            101\t209
+                            103\t209
+                            106\t205
+                            """);
+        });
+    }
+
+    // The upper WHERE of the body equates the alias k, which the projection gives to tb.x, and
+    // tb has a column k of its own. The outer-ref elimination aligns the body on tb.k, so a
+    // filter built from `y < a.x` would read tb.k, a column the body never compares with a.x.
+    // Below a LIMIT or a window function such a filter changes the rows the body returns: tb
+    // row 201 (k = 1, y = 9) takes one of the two places of the LIMIT and the first row number
+    // for the outer row 101, and the filter would remove it. Every expected result is the body
+    // evaluated once per outer row; the last two assertions run it for the outer row 101.
+    @Test
+    public void testLateralMultiCorrelationAliasShadowsColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 1, 1, 101),
+                    (2, 7, 1, 102),
+                    (3, null, 1, 103)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (5, 3, 0, 200),
+                    (1, 2, 9, 201),
+                    (1, 1, 0, 202),
+                    (1, 1, 0, 203)
+                    """);
+
+            // rows 200, 202 and 203 have y < 1 and take the row numbers 1 to 3; no row has
+            // x = 7, and y < NULL holds for no row
+            final String expectedWindow = """
+                    av\ttv\trn
+                    101\t202\t2
+                    101\t203\t3
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.rn
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT x AS k, y, v, row_number() OVER (ORDER BY v) rn FROM tb WHERE y < a.x
+                        ) WHERE k = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedWindow);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.rn
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT x AS k, y, v, row_number() OVER (ORDER BY v) rn FROM tb WHERE y < a.x
+                        ) WHERE k = a.x
+                    ) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv\trn
+                            101\t202\t2
+                            101\t203\t3
+                            102\tnull\tnull
+                            103\tnull\tnull
+                            """);
+
+            // the LIMIT keeps rows 200 and 202 for the outer row 101
+            final String expectedLimit = """
+                    av\ttv
+                    101\t202
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT x AS k, y, v FROM tb WHERE y < a.x ORDER BY v LIMIT 2) WHERE k = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLimit);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM (SELECT x AS k, y, v FROM tb WHERE y < a.x ORDER BY v LIMIT 2) WHERE k = a.x
+                    ) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t202
+                            102\tnull
+                            103\tnull
+                            """);
+
+            // the same body with table-qualified names: b.k names the alias above the sub-query
+            // and the column of tb inside it
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT b.x AS k, b.y, b.v FROM tb b WHERE b.y < a.x ORDER BY b.v LIMIT 2
+                        ) b WHERE b.k = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLimit);
+
+            // the alias in another letter case
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT x AS K, y, v FROM tb WHERE y < a.x ORDER BY v LIMIT 2) WHERE K = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLimit);
+
+            // the alias sits in the upper of two projections above tb
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT x AS k, y, v FROM (SELECT k, x, y, v FROM tb WHERE y < a.x) ORDER BY v LIMIT 2
+                        ) WHERE k = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLimit);
+
+            // Without a LIMIT or a window function the body returns the rows of its plain join
+            // on this data, and it takes no filter over tb.k either.
+            final String expectedPlain = """
+                    av\ttv
+                    101\t202
+                    101\t203
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT x AS k, y, v FROM tb WHERE y < a.x) WHERE k = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("y<k")
+                    .returns(expectedPlain);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.x = a.x
+                    WHERE t.y < a.x
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedPlain);
+
+            // the window body for the outer row 101, with a.x replaced by its value
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT x AS k, y, v, row_number() OVER (ORDER BY v) rn FROM tb WHERE y < 1
+                    ) WHERE k = 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\ty\tv\trn
+                            1\t0\t202\t2
+                            1\t0\t203\t3
+                            """);
+
+            // the LIMIT body for the outer row 101
+            assertQuery("SELECT * FROM (SELECT x AS k, y, v FROM tb WHERE y < 1 ORDER BY v LIMIT 2) WHERE k = 1")
+                    .noLeakCheck()
+                    .returns("""
+                            k\ty\tv
+                            1\t0\t202
+                            """);
+        });
+    }
+
+    // The outer tables ta and td both have a column x, and the second join branch of the body
+    // reads both. The copy of the outer-ref join that this branch takes names its columns after
+    // the bare outer column, so it holds a single column for a.x and d.x, and the branch's
+    // criteria `x = a.x AND k = d.x` read as two correlations with that one column. A filter
+    // built from them would compare tc.x with tc.k, two columns that the body compares with
+    // two different outer columns, so the branch keeps its plan without one. Every pair of
+    // outer rows has a.x = d.x here, and no tc row differs in x and k, so the body returns the
+    // rows of its plain join.
+    @Test
+    public void testLateralMultiCorrelationAmbiguousOuterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (k INT, x INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 1, 101),
+                    (2, 2, 102),
+                    (3, null, 103)
+                    """);
+            execute("CREATE TABLE td (k INT, x INT, v INT)");
+            execute("""
+                    INSERT INTO td VALUES
+                    (1, 1, 401),
+                    (2, 2, 402),
+                    (3, null, 403)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (1, 1, 1, 201),
+                    (2, 2, 2, 202),
+                    (1, 1, 7, 203),
+                    (null, null, null, 204)
+                    """);
+            execute("CREATE TABLE tc (k INT, x INT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (1, 1, 301),
+                    (2, 2, 302),
+                    (null, null, 304)
+                    """);
+
+            // tb row 203 has y = 7, which no d.x equals
+            final String expected = """
+                    av\tdv\tpv\tqv
+                    101\t401\t201\t301
+                    102\t402\t202\t302
+                    103\t403\t204\t304
+                    """;
+            assertQuery("""
+                    SELECT a.v av, d.v dv, t.pv, t.qv
+                    FROM ta a
+                    JOIN td d ON d.k = a.k
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, x, y, v FROM tb WHERE x = a.x AND y = d.x) p
+                        JOIN (SELECT k, x, v FROM tc WHERE x = a.x AND k = d.x) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, d.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("filter: x=k")
+                    .expectSize()
+                    .returns(expected);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, d.v dv, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN td d ON d.k = a.k
+                    JOIN tb p ON p.x = a.x AND p.y = d.x
+                    JOIN tc q ON q.k = p.k AND q.x = a.x AND q.k = d.x
+                    ORDER BY a.v, d.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // the same with a non-equality on a.x: the filter would be `x <= k`
+            assertQuery("""
+                    SELECT a.v av, d.v dv, t.pv, t.qv
+                    FROM ta a
+                    JOIN td d ON d.k = a.k
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, x, y, v FROM tb WHERE x = a.x AND y = d.x) p
+                        JOIN (SELECT k, x, v FROM tc WHERE x <= a.x AND k = d.x) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, d.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("filter: k>=x", "filter: x<=k")
+                    .expectSize()
+                    .returns(expected);
+
+            assertQuery("""
+                    SELECT a.v av, d.v dv, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN td d ON d.k = a.k
+                    JOIN tb p ON p.x = a.x AND p.y = d.x
+                    JOIN tc q ON q.k = p.k AND q.x <= a.x AND q.k = d.x
+                    ORDER BY a.v, d.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    // The body aligns with a.d on nd, which a sub-query computes as -d, so its type is out of
+    // the rewriter's reach. It is a DOUBLE: the alignment join compares its bits, while the
+    // body's `nd = a.d` takes -0.0 for 0.0. For the outer row 101 the join misses tb row 201
+    // (nd = -0.0) and takes row 202 (nd = 0.0), which fails `k = a.x`: the body counts one row,
+    // as its predicates do, although it is another row. A filter `k = x` would remove row 202
+    // and leave the count at 0. Every expected result is the body evaluated once per outer row.
+    @Test
+    public void testLateralMultiCorrelationComputedAlignmentKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT, d DOUBLE, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 0.0, 101),
+                    (2, 2.0, 102),
+                    (null, null, 103)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, d DOUBLE, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (1, 1, 0.0, 201),
+                    (2, 1, -0.0, 202),
+                    (2, 2, -2.0, 203)
+                    """);
+
+            // rows 201 and 203 satisfy the body for the outer rows 101 and 102, and no row has
+            // a NULL k
+            assertQuery("""
+                    SELECT a.v av, t.n
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT count(*) n
+                        FROM (SELECT k, x, -d AS nd, v FROM tb)
+                        WHERE k = a.x AND x = a.x AND nd = a.d
+                    ) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("k=x")
+                    .returns("""
+                            av\tn
+                            101\t1
+                            102\t1
+                            103\t0
+                            """);
+
+            // the body for the outer rows 101 and 103, with a.x and a.d replaced by their values
+            assertQuery("SELECT count(*) n FROM (SELECT k, x, -d AS nd, v FROM tb) WHERE k = 1 AND x = 1 AND nd = 0.0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            n
+                            1
+                            """);
+
+            assertQuery("SELECT count(*) n FROM (SELECT k, x, -d AS nd, v FROM tb) WHERE k = NULL AND x = NULL AND nd = NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            n
+                            0
+                            """);
+        });
+    }
+
+    // A dropped conjunct with arithmetic stays out of the filter of the lateral body, because
+    // QuestDB's JIT computes DATE + DATE and a DATE plus a negative constant otherwise than the
+    // Java functions. Java reads `d1 + a.d` as a TIMESTAMP in which d1 counts in microseconds
+    // and a.d adds its milliseconds raw, and `d2 + -1` as d2 in microseconds minus one, so every
+    // tb and td row below satisfies its body's predicate. The JIT adds the raw values: a filter
+    // `d1 + d < d2` on the scan of tb would drop rows 201 and 203, and a filter `d < d2 + -1` on
+    // the scan of td would drop row 401. The bodies keep their plans and return the rows of their
+    // non-LATERAL controls, which evaluate the predicate in Java.
+    @Test
+    public void testLateralMultiCorrelationDateArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (d DATE, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    ((1L)::DATE, 101),
+                    ((2L)::DATE, 102)
+                    """);
+            execute("CREATE TABLE tb (d DATE, d1 DATE, d2 DATE, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    ((1L)::DATE, (0L)::DATE, (1L)::DATE, 201),
+                    ((1L)::DATE, (0L)::DATE, (5L)::DATE, 202),
+                    ((2L)::DATE, (0L)::DATE, (2L)::DATE, 203),
+                    ((2L)::DATE, (1L)::DATE, (9L)::DATE, 204)
+                    """);
+            execute("CREATE TABLE tc (d DATE, v INT)");
+            execute("INSERT INTO tc VALUES ((0L)::DATE, 301)");
+            execute("CREATE TABLE td (d DATE, d2 DATE, v INT)");
+            execute("""
+                    INSERT INTO td VALUES
+                    ((0L)::DATE, (1L)::DATE, 401),
+                    ((0L)::DATE, (5L)::DATE, 402)
+                    """);
+
+            // DATE + DATE
+            final String expected = """
+                    av\ttv
+                    101\t201
+                    101\t202
+                    102\t203
+                    102\t204
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT v FROM tb WHERE d1 + a.d < d2 AND d = a.d) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("d1+d<d2")
+                    .returns(expected);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.d = a.d
+                    WHERE t.d1 + a.d < t.d2
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT v FROM tb WHERE d1 + a.d < d2 AND d = a.d) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("d1+d<d2")
+                    .returns(expected);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN tb t ON t.d = a.d AND t.d1 + a.d < t.d2
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            final String expectedCount = """
+                    av\tn
+                    101\t2
+                    102\t2
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.n
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT count(*) n FROM tb WHERE d1 + a.d < d2 AND d = a.d) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("d1+d<d2")
+                    .returns(expectedCount);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, count(*) n
+                    FROM ta a
+                    JOIN tb t ON t.d = a.d
+                    WHERE t.d1 + a.d < t.d2
+                    GROUP BY a.v
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedCount);
+
+            final String expectedLimit = """
+                    av\ttv
+                    101\t201
+                    102\t203
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT v FROM tb WHERE d1 + a.d < d2 AND d = a.d ORDER BY v LIMIT 1) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("d1+d<d2")
+                    .returns(expectedLimit);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT av, tv
+                    FROM (
+                        SELECT a.v av, t.v tv, row_number() OVER (PARTITION BY a.v ORDER BY t.v) rn
+                        FROM ta a
+                        JOIN tb t ON t.d = a.d
+                        WHERE t.d1 + a.d < t.d2
+                    )
+                    WHERE rn = 1
+                    ORDER BY av
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLimit);
+
+            // a DATE plus a negative constant
+            final String expectedNegative = """
+                    av\ttv
+                    301\t401
+                    301\t402
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM tc a
+                    CROSS JOIN LATERAL (SELECT v FROM td WHERE d2 + -1 > a.d AND d = a.d) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("d2+-1")
+                    .returns(expectedNegative);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM tc a
+                    JOIN td t ON t.d = a.d
+                    WHERE t.d2 + -1 > a.d
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedNegative);
+        });
+    }
+
+    // The equality that aligns the body with a.x sits above a LIMIT or a window function, and
+    // the layer below them holds `y < a.x`. The outer-ref elimination limits and numbers the
+    // rows per value of x, not per outer row, so such a body returns the rows of its predicates
+    // for some data only. Here it does. For the outer row 101, tb row 201 (x = 1, y = 9) fails
+    // `y < a.x`, takes the place of the LIMIT and the first row number, and `k > 0` rejects it
+    // afterwards; in the body itself tb row 200 plays that part. A filter `y < x` below the
+    // LIMIT or the window function would remove row 201 and move row 202 up. Every expected
+    // result is the body evaluated once per outer row.
+    @Test
+    public void testLateralMultiCorrelationEqualityAboveLimitOrWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 101),
+                    (2, 102),
+                    (null, 103)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (5, 2, 0, 200),
+                    (0, 1, 9, 201),
+                    (1, 1, 0, 202)
+                    """);
+
+            // outer row 101: the LIMIT keeps row 200, which has x = 2; outer row 102: it keeps
+            // row 200 as well
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT x AS cc, k, v FROM tb WHERE y < a.x ORDER BY v LIMIT 1
+                        ) WHERE cc = a.x AND k > 0
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            102\t200
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT x AS cc, k, v FROM tb WHERE y < a.x ORDER BY v LIMIT 1
+                        ) WHERE cc = a.x AND k > 0
+                    ) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\tnull
+                            102\t200
+                            103\tnull
+                            """);
+
+            // rows 200 and 202 have y < 1 and y < 2 and take the row numbers 1 and 2
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.rn
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT x AS cc, k, v, row_number() OVER (ORDER BY v) rn FROM tb WHERE y < a.x
+                        ) WHERE cc = a.x AND k > 0
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv\trn
+                            101\t202\t2
+                            102\t200\t1
+                            """);
+
+            // the LIMIT body for the outer rows 101 and 102, with a.x replaced by its value
+            assertQuery("SELECT * FROM (SELECT x AS cc, k, v FROM tb WHERE y < 1 ORDER BY v LIMIT 1) WHERE cc = 1 AND k > 0")
+                    .noLeakCheck()
+                    .returns("cc\tk\tv\n");
+
+            assertQuery("SELECT * FROM (SELECT x AS cc, k, v FROM tb WHERE y < 2 ORDER BY v LIMIT 1) WHERE cc = 2 AND k > 0")
+                    .noLeakCheck()
+                    .returns("""
+                            cc\tk\tv
+                            2\t5\t200
+                            """);
+
+            // the window body for the outer row 101
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT x AS cc, k, v, row_number() OVER (ORDER BY v) rn FROM tb WHERE y < 1
+                    ) WHERE cc = 1 AND k > 0
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cc\tk\tv\trn
+                            1\t1\t202\t2
+                            """);
+        });
+    }
+
+    // A dropped conjunct that compares a FLOAT column, or an INT column with a fractional
+    // constant, stays out of the filter of the lateral body. QuestDB's JIT compares a FLOAT
+    // column with a SHORT column or a constant, and an INT column with a fractional constant, as
+    // two 32-bit floats within a tolerance of (float) 1e-10, which is 1.000000013351432e-10,
+    // while the Java functions compare them as doubles within 1e-10. The FLOAT 1e-10 of tb row
+    // 201 and tc row 301 therefore differs from 0 in Java, and so does the fractional constant
+    // from the INT 0 of tc row 301, and every row below satisfies its body's predicate.
+    // A filter `f != s`, `f != 0 OR k = x` or `i < 1.000000013351432e-10 OR k = x` would compile
+    // to the JIT, take the values for equal and drop tb row 201 or tc row 301. The bodies keep
+    // their plans and return the rows of their non-LATERAL controls, which evaluate the
+    // predicate in Java.
+    @Test
+    public void testLateralMultiCorrelationFloatWidthComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SHORT, x INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (0, 1, 101),
+                    (1, 2, 102)
+                    """);
+            execute("CREATE TABLE tb (s SHORT, f FLOAT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (0, 1e-10::FLOAT, 201),
+                    (0, 0.5::FLOAT, 202),
+                    (1, 1e-10::FLOAT, 203),
+                    (1, 2.0::FLOAT, 204)
+                    """);
+            execute("CREATE TABLE tc (x INT, k INT, f FLOAT, i INT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (1, 5, 1e-10::FLOAT, 0, 301),
+                    (1, 1, 0.0::FLOAT, 7, 302),
+                    (2, 9, 3.0::FLOAT, -1, 303),
+                    (2, 2, 0.0::FLOAT, 0, 304)
+                    """);
+
+            // a FLOAT column against a SHORT column, which stands in for a.s
+            final String expectedShort = """
+                    av\ttv
+                    101\t201
+                    101\t202
+                    102\t203
+                    102\t204
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT v FROM tb WHERE f != a.s AND s = a.s) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("f!=s")
+                    .returns(expectedShort);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT v FROM tb WHERE f != a.s AND s = a.s) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("f!=s")
+                    .returns(expectedShort);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.s = a.s
+                    WHERE t.f != a.s
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedShort);
+
+            // a FLOAT column against a constant
+            final String expectedConstant = """
+                    av\ttv
+                    101\t301
+                    101\t302
+                    102\t303
+                    102\t304
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT v FROM tc WHERE (f != 0 OR k = a.x) AND x = a.x) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("f!=0")
+                    .returns(expectedConstant);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tc t ON t.x = a.x
+                    WHERE t.f != 0 OR t.k = a.x
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedConstant);
+
+            // an INT column against a fractional constant
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT v FROM tc WHERE (i < 1.000000013351432e-10 OR k = a.x) AND x = a.x) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("i<1.000000013351432E-10")
+                    .returns(expectedConstant);
+
+            assertQuery("""
+                    SELECT a.v av, t.n
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT count(*) n FROM tc WHERE (i < 1.000000013351432e-10 OR k = a.x) AND x = a.x
+                    ) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("i<1.000000013351432E-10")
+                    .returns("""
+                            av\tn
+                            101\t2
+                            102\t2
+                            """);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tc t ON t.x = a.x
+                    WHERE t.i < 1.000000013351432e-10 OR t.k = a.x
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedConstant);
+        });
+    }
+
+    // Two DOUBLE (or FLOAT) columns of one table correlate with one outer column. The alignment
+    // join of the outer-ref elimination compares its key bit by bit, while the predicates of
+    // the body take -0.0 for 0.0. For the outer row 101 the join misses tb row 201 (y = -0.0)
+    // and takes row 202 (y = 0.0), which fails `z = a.x`: the body counts one row, as its
+    // predicates do, although it is another row. A filter `z = y` would remove row 202 and
+    // leave the count at 0. Every expected result is the body evaluated once per outer row.
+    @Test
+    public void testLateralMultiCorrelationFloatingPointAlignment() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x DOUBLE, f FLOAT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (0.0, 0.0, 101),
+                    (2.0, 2.0, 102),
+                    (null, null, 103)
+                    """);
+            execute("CREATE TABLE tb (y DOUBLE, z DOUBLE, g FLOAT, h FLOAT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (-0.0, 0.0, -0.0, 0.0, 201),
+                    (0.0, 5.0, 0.0, 5.0, 202),
+                    (2.0, 2.0, 2.0, 2.0, 203),
+                    (null, null, null, null, 204)
+                    """);
+
+            // rows 201, 203 and 204 satisfy the body for the outer rows 101, 102 and 103
+            final String expected = """
+                    av\tn
+                    101\t1
+                    102\t1
+                    103\t1
+                    """;
+
+            // DOUBLE columns
+            assertQuery("""
+                    SELECT a.v av, t.n
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT count(*) n FROM tb WHERE z = a.x AND y = a.x) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("z=y")
+                    .returns(expected);
+
+            assertQuery("""
+                    SELECT a.v av, t.n
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT count(*) n FROM tb WHERE z = a.x AND y = a.x) t ON true
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // FLOAT columns
+            assertQuery("""
+                    SELECT a.v av, t.n
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT count(*) n FROM tb WHERE h = a.f AND g = a.f) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("h=g")
+                    .returns(expected);
+
+            // the two bodies for the outer row 101, with a.x and a.f replaced by their values
+            assertQuery("SELECT count(*) n FROM tb WHERE z = 0.0 AND y = 0.0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            n
+                            1
+                            """);
+
+            assertQuery("SELECT count(*) n FROM tb WHERE h = 0.0::FLOAT AND g = 0.0::FLOAT")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            n
+                            1
+                            """);
+        });
+    }
+
+    // The body joins two tables and correlates a DOUBLE (or FLOAT) column of each with one outer
+    // column. The filter that the body applies per outer row takes 0.30000000000000004 for 0.3
+    // and -0.0 for 0.0. A filter `c.y = b.x` in the WHERE clause of the body would become a
+    // key of the body's own hash join, which compares the bits of the two values, and the rows
+    // of the outer rows 101 and 103 would go. Every expected result is the body evaluated once
+    // per outer row.
+    @Test
+    public void testLateralMultiCorrelationFloatingPointJoinBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x DOUBLE, f FLOAT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (0.3, 0.5, 101),
+                    (2.0, 2.0, 102),
+                    (0.0, 0.0, 103),
+                    (null, null, 104),
+                    (5.5, 5.5, 105)
+                    """);
+            execute("CREATE TABLE tb (k INT, x DOUBLE, f FLOAT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (1, 0.3, 0.5, 201),
+                    (2, 2.0, 2.0, 202),
+                    (3, 0.0, 0.0, 203),
+                    (4, null, null, 204)
+                    """);
+            execute("CREATE TABLE tc (k INT, y DOUBLE, g FLOAT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (1, 0.30000000000000004, 0.5, 301),
+                    (2, 2.0, 2.0, 302),
+                    (3, -0.0, -0.0, 303),
+                    (4, null, null, 304)
+                    """);
+
+            final String expectedCross = """
+                    av\tbv\tcv
+                    101\t201\t301
+                    102\t202\t302
+                    103\t203\t303
+                    104\t204\t304
+                    """;
+            final String expectedLeft = """
+                    av\tbv\tcv
+                    101\t201\t301
+                    102\t202\t302
+                    103\t203\t303
+                    104\t204\t304
+                    105\tnull\tnull
+                    """;
+
+            // DOUBLE columns
+            assertQuery("""
+                    SELECT a.v av, t.bv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.v bv, c.v cv FROM tb b JOIN tc c ON c.k = b.k WHERE c.y = a.x AND b.x = a.x
+                    ) t
+                    ORDER BY a.v, t.bv, t.cv
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("c.y=b.x")
+                    .expectSize()
+                    .returns(expectedCross);
+
+            assertQuery("""
+                    SELECT a.v av, t.bv, t.cv
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT b.v bv, c.v cv FROM tb b JOIN tc c ON c.k = b.k WHERE c.y = a.x AND b.x = a.x
+                    ) t ON true
+                    ORDER BY a.v, t.bv, t.cv
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLeft);
+
+            // FLOAT columns: -0.0 for 0.0
+            assertQuery("""
+                    SELECT a.v av, t.bv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.v bv, c.v cv FROM tb b JOIN tc c ON c.k = b.k WHERE c.g = a.f AND b.f = a.f
+                    ) t
+                    ORDER BY a.v, t.bv, t.cv
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("c.g=b.f")
+                    .expectSize()
+                    .returns(expectedCross);
+
+            assertQuery("""
+                    SELECT a.v av, t.bv, t.cv
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT b.v bv, c.v cv FROM tb b JOIN tc c ON c.k = b.k WHERE c.g = a.f AND b.f = a.f
+                    ) t ON true
+                    ORDER BY a.v, t.bv, t.cv
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLeft);
+
+            // the body for the outer rows 101, 103 and 104, with a.x replaced by its value
+            assertQuery("SELECT b.v bv, c.v cv FROM tb b JOIN tc c ON c.k = b.k WHERE c.y = 0.3 AND b.x = 0.3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            bv\tcv
+                            201\t301
+                            """);
+
+            assertQuery("SELECT b.v bv, c.v cv FROM tb b JOIN tc c ON c.k = b.k WHERE c.y = 0.0 AND b.x = 0.0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            bv\tcv
+                            203\t303
+                            """);
+
+            assertQuery("SELECT b.v bv, c.v cv FROM tb b JOIN tc c ON c.k = b.k WHERE c.y = NULL AND b.x = NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            bv\tcv
+                            204\t304
+                            """);
+        });
+    }
+
+    // Fuzz witness L3 #242 on dataset L3.d1: the reference engine returns no rows.
+    // The body keeps (3, 1, 1, 204) for a.y = 1, and ON t.yy = a.k rejects it.
+    @Test
+    public void testLateralMultiCorrelationFuzzWitnessL3Query242() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (2, 1, null, 101),
+                    (3, 0, null, 102),
+                    (3, 1, 0, 103),
+                    (0, 0, 0, 104),
+                    (2, 2, 1, 105),
+                    (0, 2, 0, 106),
+                    (3, 2, 3, 107)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (3, 0, 3, 201),
+                    (1, 0, 3, 202),
+                    (0, 3, 1, 203),
+                    (3, 1, 1, 204),
+                    (2, 1, 3, 205)
+                    """);
+            execute("CREATE TABLE tc (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (null, null, 0, 301),
+                    (0, null, 2, 302),
+                    (3, 1, 2, 303),
+                    (2, 0, 3, 304),
+                    (2, 1, 2, 305),
+                    (0, 3, 3, 306),
+                    (0, 1, 1, 307)
+                    """);
+            execute("CREATE TABLE td (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO td VALUES
+                    (0, 2, 3, 401),
+                    (3, 3, 1, 402),
+                    (3, 1, 1, 403),
+                    (null, 3, null, 404),
+                    (1, 0, 0, 405),
+                    (1, null, 0, 406),
+                    (1, 0, 2, 407)
+                    """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, c.v cv, d.v dv
+                    FROM ta a
+                    JOIN LATERAL (
+                        SELECT k kk, x xx, y yy, max(v) v FROM tb WHERE y = a.y AND x = a.y GROUP BY k, x, y
+                    ) t ON t.yy = a.k AND t.kk = a.x
+                    LEFT JOIN tc c ON c.k = a.y AND c.k = t.kk
+                    LEFT JOIN td d ON d.x = t.kk AND d.x = c.k AND d.x = c.x
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("av\ttv\tcv\tdv\n");
+        });
+    }
+
+    // Fuzz witness L4 #111 on dataset L4.d0: the reference engine returns no rows.
+    // No tb row has x = y, so the body is empty for every outer row.
+    @Test
+    public void testLateralMultiCorrelationFuzzWitnessL4Query111() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 2, 0, 101),
+                    (1, null, null, 102),
+                    (2, 0, 0, 103),
+                    (2, 3, null, 104),
+                    (3, 3, 0, 105)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (2, 2, 3, 201),
+                    (0, 0, 2, 202),
+                    (1, 2, null, 203),
+                    (null, 3, 0, 204),
+                    (3, 3, 1, 205),
+                    (2, 2, null, 206),
+                    (null, 2, null, 207)
+                    """);
+            execute("CREATE TABLE tc (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (3, null, null, 301),
+                    (3, 3, 0, 302),
+                    (null, 2, 1, 303),
+                    (0, 1, 3, 304),
+                    (1, 2, 3, 305),
+                    (null, 2, 2, 306)
+                    """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, c.v cv
+                    FROM ta a
+                    JOIN LATERAL (
+                        SELECT k kk, x xx, y yy, max(v) v FROM tb WHERE x = a.x AND y = a.x GROUP BY k, x, y
+                    ) t ON t.kk = a.y AND t.kk = a.x
+                    LEFT JOIN tc c ON c.k = a.k AND t.xx = c.k AND a.y = c.k AND c.k = 3
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("av\ttv\tcv\n");
+        });
+    }
+
+    // Fuzz witness L4 #43 on dataset L4.d2: the reference engine returns no rows.
+    // Only (null, null, 0, 203) has k = x, and no outer row has a NULL x.
+    @Test
+    public void testLateralMultiCorrelationFuzzWitnessL4Query43() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (null, 1, 1, 101),
+                    (1, 0, 3, 102),
+                    (2, 1, null, 103),
+                    (0, 1, 1, 104),
+                    (3, 0, 2, 105),
+                    (1, 3, 0, 106)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (0, 1, 1, 201),
+                    (0, 1, 1, 202),
+                    (null, null, 0, 203),
+                    (2, 3, 2, 204),
+                    (0, 2, 3, 205)
+                    """);
+            execute("CREATE TABLE tc (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (2, 0, null, 301),
+                    (3, 2, 3, 302),
+                    (2, 3, null, 303),
+                    (3, 3, 3, 304),
+                    (0, 3, 0, 305)
+                    """);
+            execute("CREATE TABLE td (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO td VALUES
+                    (0, null, null, 401),
+                    (0, 3, 0, 402),
+                    (0, null, 1, 403),
+                    (1, 3, 0, 404),
+                    (null, 1, 1, 405),
+                    (2, 0, 1, 406)
+                    """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, c.v cv, d.v dv
+                    FROM ta a
+                    JOIN LATERAL (
+                        SELECT k kk, x xx, y yy, v FROM tb WHERE k = a.x AND x = a.x
+                    ) t ON t.yy = a.y
+                    LEFT JOIN tc c ON c.k = t.kk AND c.k = t.xx
+                    LEFT JOIN td d ON t.yy = d.y AND t.yy = d.y
+                    WHERE a.x = 1
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("av\ttv\tcv\tdv\n");
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationJoinBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            // the two correlations read columns of different tables of the body's join
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.k, b.x, b.y, b.v, c.v cv
+                        FROM tb b
+                        JOIN tc c ON c.k = b.k
+                        WHERE b.k = a.x AND c.y = a.x
+                    ) t
+                    ORDER BY a.v, t.v, t.cv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            av\ttv\tcv
+                            102\t203\t304
+                            102\t207\t304
+                            105\t203\t304
+                            105\t207\t304
+                            106\t204\t303
+                            106\t205\t303
+                            """);
+
+            // both correlations read the master of a LEFT JOIN in the body
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.v, c.v cv
+                        FROM tb b
+                        LEFT JOIN tc c ON c.k = b.k
+                        WHERE b.k = a.x AND b.x = a.x
+                    ) t
+                    ORDER BY a.v, t.v, t.cv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            av\ttv\tcv
+                            101\t201\t301
+                            101\t202\t301
+                            102\t207\t302
+                            102\t207\t304
+                            103\t201\t301
+                            103\t202\t301
+                            104\t206\t305
+                            105\t207\t302
+                            105\t207\t304
+                            106\t204\t303
+                            """);
+
+            // the body's inner join ON holds a predicate on the outer column alone
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.v, c.v cv
+                        FROM tb b
+                        JOIN tc c ON c.k = b.k AND a.x = 1
+                        WHERE b.k = a.x AND b.x = a.x
+                    ) t
+                    ORDER BY a.v, t.v, t.cv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            av\ttv\tcv
+                            101\t201\t301
+                            101\t202\t301
+                            103\t201\t301
+                            103\t202\t301
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationJoinBranchSubqueries() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // The correlated sub-query q is a join branch of the body, so it reads a copy of the
+            // outer-ref sub-query. Both of its predicates correlate to a.k and the ON clause does
+            // not repeat either of them: tc rows 301, 303, 304 and 305 satisfy k = x.
+            final String expectedBranch = """
+                    av\tpv\tqv
+                    101\t206\t305
+                    102\t201\t301
+                    102\t202\t301
+                    104\t203\t304
+                    104\t207\t304
+                    105\t204\t303
+                    105\t205\t303
+                    106\t201\t301
+                    106\t202\t301
+                    107\t204\t303
+                    107\t205\t303
+                    108\t203\t304
+                    108\t207\t304
+                    109\t201\t301
+                    109\t202\t301
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k) p
+                        JOIN (SELECT k, x, v FROM tc WHERE k = a.k AND x = a.k) q ON q.v > p.v + 95
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedBranch);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN tb p ON p.k = a.k
+                    JOIN tc q ON q.k = a.k AND q.x = a.k AND q.v > p.v + 95
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedBranch);
+
+            // q is the only correlated relation of the body: 4 outer k values pick 305, 301, 304
+            // and 303, and each of them joins the tb rows below its v - 95
+            assertQuery("""
+                    SELECT a.v av, count() c, min(t.pv) lo, max(t.pv) hi, max(t.qv) qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM tb p
+                        JOIN (SELECT k, x, v FROM tc WHERE k = a.k AND x = a.k) q ON q.v > p.v + 95
+                    ) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            av\tc\tlo\thi\tqv
+                            101\t9\t201\t209\t305
+                            102\t5\t201\t205\t301
+                            104\t8\t201\t208\t304
+                            105\t7\t201\t207\t303
+                            106\t5\t201\t205\t301
+                            107\t7\t201\t207\t303
+                            108\t8\t201\t208\t304
+                            109\t5\t201\t205\t301
+                            """);
+
+            // the non-equality stands one layer below the equality, so tc cannot express it without
+            // the outer-ref join: only tc row 301 has y < k, and it serves the outer rows with k = 1
+            final String expectedNested = """
+                    av\tpv\tqv
+                    102\t201\t301
+                    102\t202\t301
+                    102\t209\t301
+                    106\t201\t301
+                    106\t202\t301
+                    106\t209\t301
+                    109\t201\t301
+                    109\t202\t301
+                    109\t209\t301
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM tb p
+                        JOIN (SELECT * FROM (SELECT k, y, v FROM tc WHERE y < a.k) WHERE k = a.k) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedNested);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, p.v pv, q.v qv
+                    FROM ta a
+                    CROSS JOIN tb p
+                    JOIN tc q ON q.k = p.k AND q.k = a.k AND q.y < a.k
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedNested);
+
+            // The lower layer of q holds a predicate that the equality one layer up implies. The
+            // copy of the outer-ref sub-query that q reads cannot stay in the plan once the join
+            // of p goes away, so the predicate leaves with it: 28 rows, one per pair of a tb row
+            // and a tc row that share the outer k.
+            final String expectedImplied = """
+                    av\tc\tpv\tqv
+                    101\t1\t206\t305
+                    102\t3\t612\t903
+                    104\t6\t1242\t1818
+                    105\t3\t619\t909
+                    106\t3\t612\t903
+                    107\t3\t619\t909
+                    108\t6\t1242\t1818
+                    109\t3\t612\t903
+                    """;
+            assertQuery("""
+                    SELECT a.v av, count() c, sum(t.pv) pv, sum(t.qv) qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k) p
+                        JOIN (SELECT * FROM (SELECT k, v FROM tc WHERE (k = a.k OR k = 3)) WHERE k = a.k) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedImplied);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, count() c, sum(p.v) pv, sum(q.v) qv
+                    FROM ta a
+                    JOIN tb p ON p.k = a.k
+                    JOIN tc q ON q.k = p.k AND q.k = a.k
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedImplied);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationJoinForms() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            final String expectedInner = """
+                    av\ttv
+                    101\t201
+                    101\t202
+                    102\t207
+                    103\t201
+                    103\t202
+                    104\t206
+                    105\t207
+                    106\t204
+                    """;
+
+            // the body stays a plain filtered scan: the second correlation becomes k = x
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining(
+                            "condition: t.__qdb_outer_ref__0_x=a.x",
+                            "filter: k=x"
+                    )
+                    .withPlanNotContaining("Cross Join")
+                    .returns(expectedInner);
+
+            // the predicate order decides which inner column stands in for a.x
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND k = a.x) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x) t ON t.y = a.y
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            105\t207
+                            106\t204
+                            """);
+
+            // every outer row has a match, so LEFT adds no NULL-extended row
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationLimitDistinctWindowBodies() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            assertQuery("""
+                    SELECT a.v av, t.k tk, t.x tx
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT DISTINCT k, x FROM tb WHERE k = a.x AND x = a.x) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttk\ttx
+                            101\t1\t1
+                            102\t0\t0
+                            103\t1\t1
+                            104\tnull\tnull
+                            105\t0\t0
+                            106\t3\t3
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT y, v FROM tb WHERE k = a.x AND x = a.x ORDER BY v DESC LIMIT 1
+                    ) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t202
+                            102\t207
+                            103\t202
+                            104\t206
+                            105\t207
+                            106\t204
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.rn
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT v, row_number() OVER (ORDER BY v) rn FROM tb WHERE k = a.x AND x = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv\trn
+                            101\t201\t1
+                            101\t202\t2
+                            102\t207\t1
+                            103\t201\t1
+                            103\t202\t2
+                            104\t206\t1
+                            105\t207\t1
+                            106\t204\t1
+                            """);
+        });
+    }
+
+    // The counterpart of testLateralMultiCorrelationEqualityAboveLimitOrWindow on the same
+    // tables: here the window function or the LIMIT sits above the equality `x = a.x` and
+    // reads the rows that the equality keeps. The layer below takes `y < a.x` as the filter
+    // `y < x`, which removes tb row 201 for the outer row 101.
+    @Test
+    public void testLateralMultiCorrelationLimitOrWindowAboveEquality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 101),
+                    (2, 102),
+                    (null, 103)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (5, 2, 0, 200),
+                    (0, 1, 9, 201),
+                    (1, 1, 0, 202)
+                    """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.rn
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, v, row_number() OVER (ORDER BY v) rn
+                        FROM (SELECT k, x, y, v FROM tb WHERE y < a.x)
+                        WHERE x = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("filter: y<x")
+                    .returns("""
+                            av\ttv\trn
+                            101\t202\t1
+                            102\t200\t1
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, v
+                        FROM (SELECT k, x, y, v FROM tb WHERE y < a.x)
+                        WHERE x = a.x
+                        ORDER BY v
+                        LIMIT 1
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("filter: y<x")
+                    .returns("""
+                            av\ttv
+                            101\t202
+                            102\t200
+                            """);
+
+            // the window body for the outer rows 101 and 102, with a.x replaced by its value
+            assertQuery("""
+                    SELECT k, x, v, row_number() OVER (ORDER BY v) rn
+                    FROM (SELECT k, x, y, v FROM tb WHERE y < 1)
+                    WHERE x = 1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tx\tv\trn
+                            1\t1\t202\t1
+                            """);
+
+            assertQuery("""
+                    SELECT k, x, v, row_number() OVER (ORDER BY v) rn
+                    FROM (SELECT k, x, y, v FROM tb WHERE y < 2)
+                    WHERE x = 2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tx\tv\trn
+                            5\t2\t200\t1
+                            """);
+        });
+    }
+
+    // tb row 202 has y = 2 and x = 5, so it belongs to no outer row, and without it tc row 302
+    // has no partner in the body's FULL or RIGHT JOIN. Such a join emits an unmatched row with a
+    // NULL in place of its correlation value, which would pair row 302 with the NULL x of outer
+    // row 102. The body therefore keeps row 202, whose alignment value 2 matches no outer row.
+    @Test
+    public void testLateralMultiCorrelationMasterNullingJoinBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 101),
+                    (null, 102)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (1, 1, 1, 201),
+                    (2, 5, 2, 202)
+                    """);
+            execute("CREATE TABLE tc (k INT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (1, 301),
+                    (2, 302)
+                    """);
+
+            // outer row 101 joins tb row 201 with tc row 301; no tb or tc row has a NULL key for
+            // outer row 102
+            final String expected = """
+                    av\tpv\tqv
+                    101\t201\t301
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, x, y, v FROM tb WHERE x = a.x AND y = a.x) p
+                        FULL JOIN (SELECT k, v FROM tc WHERE k = a.x) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, x, y, v FROM tb WHERE x = a.x AND y = a.x) p
+                        RIGHT JOIN (SELECT k, v FROM tc WHERE k = a.x) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+
+            // the body for outer row 101, with a.x replaced by its value
+            assertQuery("""
+                    SELECT p.v pv, q.v qv
+                    FROM (SELECT k, x, y, v FROM tb WHERE x = 1 AND y = 1) p
+                    FULL JOIN (SELECT k, v FROM tc WHERE k = 1) q ON q.k = p.k
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            pv\tqv
+                            201\t301
+                            """);
+
+            // the body for outer row 102
+            assertQuery("""
+                    SELECT p.v pv, q.v qv
+                    FROM (SELECT k, x, y, v FROM tb WHERE x = NULL AND y = NULL) p
+                    FULL JOIN (SELECT k, v FROM tc WHERE k = NULL) q ON q.k = p.k
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("pv\tqv\n");
+        });
+    }
+
+    // Bodies whose columns have different types, each correct without the correlation that
+    // the outer-ref elimination drops. QuestDB rejects a join key of two types, and a
+    // TIMESTAMP_NS column that stands in for a TIMESTAMP column changes every expression over
+    // the raw value. So the elimination must not change the key of the alignment join, and it
+    // must not put such a column into a predicate of the body.
+    @Test
+    public void testLateralMultiCorrelationMixedColumnTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createMixedTypeTables();
+
+            // tb rows with k = x: 201 (1), 203 (2), 205 (NULL) and 206 (3)
+            final String expectedByLong = """
+                    av\ttv
+                    101\t201
+                    102\t201
+                    103\t203
+                    104\t205
+                    """;
+            final String expectedByInt = """
+                    av\ttv
+                    101\t201
+                    102\t203
+                    103\t205
+                    104\t206
+                    """;
+
+            // k is INT and x is LONG. The outer WHERE names the LONG column, so the alignment
+            // join compares x with a.x, and the body's own k = x covers the inner predicate.
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, v FROM tb WHERE k = a.x) WHERE x = a.x AND k = x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: t.__qdb_outer_ref__0_x=a.x")
+                    .withPlanNotContaining("Cross Join")
+                    .returns(expectedByLong);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.x = a.x
+                    WHERE t.k = t.x
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByLong);
+
+            // the same with the types swapped: the outer WHERE names the INT column
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, v FROM tb WHERE x = a.k) WHERE k = a.k AND k = x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByInt);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.k = a.k
+                    WHERE t.x = t.k
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByInt);
+
+            // f is FLOAT and d is DOUBLE; tb rows with f = d: 201, 203, 205 and 206
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT f, d, v FROM tb WHERE f = a.d) WHERE d = a.d AND f = d
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByInt);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.d = a.d
+                    WHERE t.f = t.d
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByInt);
+
+            // The correlations read a LONG column of tb and an INT column of tc. An equality
+            // between them in the WHERE clause of the join would be a join key of two types, so
+            // the inner layer keeps no filter and the outer bx = cy alone ties the two. Pairs
+            // of the join with b.x = c.y: (201, 301), (203, 302), (204, 303), (205, 304) and
+            // (206, 305).
+            final String expectedJoinBody = """
+                    av\tbv\tcv
+                    101\t201\t301
+                    101\t204\t303
+                    102\t201\t301
+                    102\t204\t303
+                    103\t203\t302
+                    104\t205\t304
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.bv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT b.v bv, c.v cv, b.x bx, c.y cy
+                            FROM tb b
+                            JOIN tc c ON c.k = b.k
+                            WHERE c.y = a.x AND b.x = a.x
+                        ) WHERE bx = cy
+                    ) t
+                    ORDER BY a.v, t.bv, t.cv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedJoinBody);
+
+            assertQuery("""
+                    SELECT a.v av, t.bv, t.cv
+                    FROM ta a
+                    JOIN (
+                        SELECT * FROM (
+                            SELECT b.v bv, c.v cv, b.x bx, c.y cy
+                            FROM tb b
+                            JOIN tc c ON c.k = b.k
+                        ) WHERE bx = cy
+                    ) t ON t.bx = a.x
+                    ORDER BY a.v, t.bv, t.cv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedJoinBody);
+
+            // ty row 503 holds two different instants in ts and tn; rows 501 and 502 hold one
+            final String expectedByTimestamp = """
+                    av\ttv
+                    401\t501
+                    402\t502
+                    """;
+
+            // The alignment join compares the TIMESTAMP_NS column tn with the TIMESTAMP column
+            // a.ts by instant. The raw value of tn is not the raw value of a.ts, so tn cannot
+            // stand in for a.ts in the inner predicate, and the outer ts = tn covers it.
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM tx a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT ts, tn, v FROM ty WHERE ts::LONG = a.ts::LONG AND tn = a.ts
+                        ) WHERE ts = tn
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByTimestamp);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM tx a
+                    JOIN ty t ON t.tn = a.ts
+                    WHERE t.ts::LONG = a.ts::LONG AND t.ts = t.tn
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByTimestamp);
+
+            // The same alignment under a comparison with a number, without a cast: the number
+            // counts microseconds against a.ts and would count nanoseconds against tn. Both
+            // outer instants lie below 1_704_067_200_000_003 microseconds, while the raw value
+            // of tn exceeds it on every row. So tn cannot stand in for a.ts in that comparison
+            // either: the body keeps the rows of the alignment, all of which satisfy it.
+            final String expectedByNanos = """
+                    av\ttv
+                    401\t501
+                    401\t503
+                    402\t502
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM tx a
+                    CROSS JOIN LATERAL (SELECT v FROM ty WHERE a.ts < 1_704_067_200_000_003 AND tn = a.ts) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByNanos);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM tx a
+                    JOIN ty t ON t.tn = a.ts
+                    WHERE a.ts < 1_704_067_200_000_003
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByNanos);
+        });
+    }
+
+    // The original finding over columns of different types: the dropped correlation becomes a
+    // filter that compares two inner columns, and the alignment join keeps its key.
+    @Test
+    public void testLateralMultiCorrelationMixedColumnTypesFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createMixedTypeTables();
+
+            // tb rows with k = x: 201 (1), 203 (2), 205 (NULL) and 206 (3)
+            final String expectedByLong = """
+                    av\ttv
+                    101\t201
+                    102\t201
+                    103\t203
+                    104\t205
+                    """;
+            final String expectedByInt = """
+                    av\ttv
+                    101\t201
+                    102\t203
+                    103\t205
+                    104\t206
+                    """;
+
+            // both correlations in one layer: the INT column takes a filter against the LONG one
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, v FROM tb WHERE k = a.x AND x = a.x) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: t.__qdb_outer_ref__0_x=a.x", "filter: k=x")
+                    .returns(expectedByLong);
+
+            // the two correlations in two layers, without a predicate of the body that ties them
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, v FROM tb WHERE k = a.x) WHERE x = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByLong);
+
+            // s is SYMBOL and st is STRING; the alignment column and the outer column are both
+            // SYMBOL, so st takes a filter against s
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT s, st, v FROM tb WHERE st = a.s AND s = a.s) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByInt);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.s = a.s
+                    WHERE t.st = t.s
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedByInt);
+        });
+    }
+
+    // QuestDB negates a SHORT -32768 or a BYTE -128 to itself: the Java function wraps around,
+    // as `SELECT -y` shows, and so do the Java filters of the plain joins below. A JIT-compiled
+    // filter over a small table used to widen the value and read 32768 or 128, so the filter
+    // `-y < z` would have dropped td rows 401 and 403, which `-y < a.y` keeps; the JIT now
+    // negates a BYTE or SHORT column within its own width as well. The rewriter moves no
+    // predicate with arithmetic, and so none that negates a BYTE or SHORT column, into the
+    // filter of a lateral body, for the reasons isFailureFreePredicate() gives: in a body over
+    // one table the filter `-y < z` would compile to the JIT; in a body that joins two tables
+    // the filter `-c.y >= b.z` would run in Java above the join, where the body's own
+    // `-c.y >= a.y` can be a JIT-compiled filter of the scan of tc. The bodies keep their plans
+    // and return the rows of their non-LATERAL controls. The join body uses no minimum value,
+    // so that every evaluation agrees there.
+    @Test
+    public void testLateralMultiCorrelationNegatedNarrowColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (y SHORT, b BYTE, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 1, 101),
+                    (0, 0, 102),
+                    (5, 2, 103)
+                    """);
+            execute("CREATE TABLE tb (z SHORT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (1, 201),
+                    (0, 202),
+                    (3, 203)
+                    """);
+            execute("CREATE TABLE tc (y SHORT, z SHORT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (-4, 1, 301),
+                    (-1, 0, 302),
+                    (0, 0, 303),
+                    (7, 3, 304)
+                    """);
+            execute("CREATE TABLE td (y SHORT, z SHORT, g BYTE, h BYTE, v INT)");
+            execute("""
+                    INSERT INTO td VALUES
+                    (-32768, 1, -128, 1, 401),
+                    (0, 1, 0, 1, 402),
+                    (-32768, 0, -128, 0, 403),
+                    (5, 0, 5, 0, 404)
+                    """);
+
+            // SHORT columns of one table: -y is -32768 for rows 401 and 403, and every row
+            // with z = a.y has -y < a.y
+            final String expectedScan = """
+                    av\tdv
+                    101\t401
+                    101\t402
+                    102\t403
+                    102\t404
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v dv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT v FROM td WHERE -y < a.y AND z = a.y) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("-y<z")
+                    .returns(expectedScan);
+
+            assertQuery("""
+                    SELECT a.v av, t.v dv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT v FROM td WHERE -y < a.y AND z = a.y) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\tdv
+                            101\t401
+                            101\t402
+                            102\t403
+                            102\t404
+                            103\tnull
+                            """);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, d.v dv
+                    FROM ta a
+                    JOIN td d ON d.z = a.y
+                    WHERE -d.y < a.y
+                    ORDER BY a.v, d.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedScan);
+
+            // BYTE columns of one table: -g is -128 for rows 401 and 403
+            assertQuery("""
+                    SELECT a.v av, t.v dv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT v FROM td WHERE -g < a.b AND h = a.b) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("-g<h")
+                    .returns(expectedScan);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, d.v dv
+                    FROM ta a
+                    JOIN td d ON d.h = a.b
+                    WHERE -d.g < a.b
+                    ORDER BY a.v, d.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedScan);
+
+            // the negation as the Java function computes it
+            assertQuery("SELECT v, -y ny, -g ng FROM td WHERE v IN (401, 404)")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tny\tng
+                            401\t-32768\t-128
+                            404\t-5\t-5
+                            """);
+
+            // SHORT columns of two tables
+            final String expectedJoin = """
+                    av\tbv\tcv
+                    101\t201\t301
+                    102\t202\t302
+                    102\t202\t303
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.bv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.v bv, c.v cv FROM tb b JOIN tc c ON c.z = b.z WHERE -c.y >= a.y AND b.z = a.y
+                    ) t
+                    ORDER BY a.v, t.bv, t.cv
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("-c.y>=b.z")
+                    .expectSize()
+                    .returns(expectedJoin);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, b.v bv, c.v cv
+                    FROM ta a
+                    JOIN tb b ON b.z = a.y
+                    JOIN tc c ON c.z = b.z
+                    WHERE -c.y >= a.y
+                    ORDER BY a.v, b.v, c.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedJoin);
+        });
+    }
+
+    // The body negates a SHORT or BYTE column in a predicate of its own, or the outer query adds
+    // one, and the restored INT comparison `k = x` joins that predicate in the JIT filter of the
+    // scan of tb. Java negates -32768 to -32768 and -128 to -128, so row 1 never satisfies
+    // `-s > 0` and every count is 31. The filter that reads INT columns beside the SHORT one runs
+    // the JIT's scalar loop, which used to negate the 32-bit register without wrapping and counted
+    // row 1 too. All three JIT modes must return the Java rows. td keeps every column SHORT, so
+    // its filter runs the vectorized loop, and row 34 sits in that loop's scalar tail.
+    @Test
+    public void testLateralMultiCorrelationNegatedNarrowColumnInBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT, v INT)");
+            execute("INSERT INTO ta VALUES (1, 101), (2, 102)");
+            execute("CREATE TABLE tb (k INT, x INT, s SHORT, v INT)");
+            execute("""
+                    INSERT INTO tb
+                    SELECT 1, 1, (CASE WHEN x = 1 THEN -32_768 ELSE -1 END)::SHORT, x::INT
+                    FROM long_sequence(32)
+                    """);
+            execute("CREATE TABLE tc (k INT, x INT, b BYTE, v INT)");
+            execute("""
+                    INSERT INTO tc
+                    SELECT 1, 1, (CASE WHEN x = 1 THEN -128 ELSE -1 END)::BYTE, x::INT
+                    FROM long_sequence(32)
+                    """);
+            execute("CREATE TABLE te (k LONG, x INT, s SHORT, v INT)");
+            execute("""
+                    INSERT INTO te
+                    SELECT 1, 1, (CASE WHEN x = 1 THEN -32_768 ELSE -1 END)::SHORT, x::INT
+                    FROM long_sequence(32)
+                    """);
+            execute("CREATE TABLE tsh (x SHORT, v INT)");
+            execute("INSERT INTO tsh VALUES (1, 101)");
+            execute("CREATE TABLE td (k SHORT, x SHORT, s SHORT, v INT)");
+            execute("""
+                    INSERT INTO td
+                    SELECT 1, 1, (CASE WHEN x IN (1, 34) THEN -32_768 ELSE -1 END)::SHORT, x::INT
+                    FROM long_sequence(35)
+                    """);
+
+            final String expectedInner = """
+                    av\tn
+                    101\t31
+                    """;
+            final String expectedOuter = """
+                    av\tn
+                    101\t31
+                    102\t0
+                    """;
+            final int[] jitModes = {SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_DISABLED};
+            for (int jitMode : jitModes) {
+                sqlExecutionContext.setJitMode(jitMode);
+
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        CROSS JOIN LATERAL (SELECT v FROM tb WHERE -s > 0 AND k = a.x AND x = a.x) t
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                assertQuery("""
+                        SELECT a.v av, count(t.v) n
+                        FROM ta a
+                        LEFT JOIN LATERAL (SELECT v FROM tb WHERE -s > 0 AND k = a.x AND x = a.x) t ON true
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedOuter);
+
+                assertQuery("""
+                        SELECT a.v av, t.n
+                        FROM ta a
+                        CROSS JOIN LATERAL (SELECT count(*) n FROM tb WHERE -s > 0 AND k = a.x AND x = a.x) t
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .returns(expectedOuter);
+
+                assertQuery("""
+                        SELECT a.v av, t.v tv
+                        FROM ta a
+                        CROSS JOIN LATERAL (SELECT v FROM tb WHERE -s > 0 AND k = a.x AND x = a.x) t
+                        WHERE t.v <= 3
+                        ORDER BY a.v, t.v
+                        """)
+                        .noLeakCheck()
+                        .returns("""
+                                av\ttv
+                                101\t2
+                                101\t3
+                                """);
+
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        JOIN LATERAL (SELECT v, x xx FROM tb WHERE -s > 0 AND k = a.x AND x = a.x) t ON t.xx = a.x
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        CROSS JOIN LATERAL (SELECT v FROM tc WHERE -b > 0 AND k = a.x AND x = a.x) t
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        CROSS JOIN LATERAL (SELECT v FROM te WHERE -s > 0 AND k = a.x AND x = a.x) t
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM tsh a
+                        CROSS JOIN LATERAL (SELECT v FROM td WHERE -s > 0 AND k = a.x AND x = a.x) t
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                av\tn
+                                101\t33
+                                """);
+
+                // the negation in the outer WHERE, pushed down into the body
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        CROSS JOIN LATERAL (SELECT v, s FROM tb WHERE k = a.x AND x = a.x) t
+                        WHERE -t.s > 0
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                // the negation in the lateral ON clause
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        JOIN LATERAL (SELECT v, s FROM tb WHERE k = a.x AND x = a.x) t ON -t.s > 0
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                // the negation in a nested sub-query
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        CROSS JOIN LATERAL (SELECT v FROM (SELECT * FROM tb WHERE -s > 0) WHERE k = a.x AND x = a.x) t
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                // the negation in a CTE
+                assertQuery("""
+                        WITH f AS (SELECT * FROM tb WHERE -s > 0)
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        CROSS JOIN LATERAL (SELECT v FROM f WHERE k = a.x AND x = a.x) t
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                // a join body, whose restored filter lands on the scan of tb
+                assertQuery("""
+                        SELECT a.v av, count(*) n
+                        FROM ta a
+                        CROSS JOIN LATERAL (
+                            SELECT b.v FROM tb b JOIN tc c ON c.v = b.v WHERE -b.s > 0 AND b.k = a.x AND b.x = a.x
+                        ) t
+                        GROUP BY a.v
+                        ORDER BY a.v
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedInner);
+
+                // non-LATERAL control
+                assertQuery("SELECT count(*) n FROM tb WHERE -s > 0 AND k = 1 AND x = 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                n
+                                31
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationNestedLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            // each lateral level correlates two inner columns to one outer column
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.v, u.cv
+                        FROM tb b
+                        CROSS JOIN LATERAL (SELECT c.v cv FROM tc c WHERE c.k = b.k AND c.x = b.k) u
+                        WHERE b.k = a.x AND b.x = a.x
+                    ) t
+                    ORDER BY a.v, t.v, t.cv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            av\ttv\tcv
+                            101\t201\t301
+                            101\t202\t301
+                            102\t207\t304
+                            103\t201\t301
+                            103\t202\t301
+                            104\t206\t305
+                            105\t207\t304
+                            106\t204\t303
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationNestedWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            // the two correlations sit in different layers of the body
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, y, v FROM tb WHERE k = a.x) WHERE x = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t202
+                            102\t207
+                            103\t201
+                            103\t202
+                            104\t206
+                            105\t207
+                            106\t204
+                            """);
+
+            // the outer WHERE reads tb.x through an alias that tb itself does not have
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x AS xx, v FROM tb WHERE k = a.x) WHERE xx = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t202
+                            102\t207
+                            103\t201
+                            103\t202
+                            104\t206
+                            105\t207
+                            106\t204
+                            """);
+
+            // only the outer layer equates a.x to an inner column, under an alias of tb.x, and
+            // the inner layer holds a non-equality on a.x, which becomes y < x
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x AS xx, y, v FROM tb WHERE y < a.x) WHERE xx = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: t.__qdb_outer_ref__0_x=a.x", "filter: y<x")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            av\ttv
+                            106\t204
+                            106\t208
+                            """);
+        });
+    }
+
+    // Repro A of the review finding: no tb row has k = x, so the body is empty for
+    // every outer row. The plain join over the same predicates returns no rows either.
+    @Test
+    public void testLateralMultiCorrelationNoMatchingRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (null, 1, 1, 101),
+                    (1, 0, 3, 102),
+                    (2, 1, null, 103),
+                    (0, 1, 1, 104),
+                    (3, 0, 2, 105),
+                    (1, 3, 0, 106)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (0, 1, 1, 201),
+                    (0, 1, 1, 202),
+                    (null, null, 0, 203),
+                    (2, 3, 2, 204),
+                    (0, 2, 3, 205)
+                    """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x) t
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("av\ttv\n");
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x) t ON t.y = a.y
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("av\ttv\n");
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x) t ON true
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("av\ttv\n");
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x) t ON true
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\tnull
+                            102\tnull
+                            103\tnull
+                            104\tnull
+                            105\tnull
+                            106\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.c
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT count() c FROM tb WHERE k = a.x AND x = a.x) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\tc
+                            101\t0
+                            102\t0
+                            103\t0
+                            104\t0
+                            105\t0
+                            106\t0
+                            """);
+
+            // non-LATERAL control
+            assertQuery("SELECT a.v av, t.v tv FROM ta a JOIN tb t ON t.k = a.x AND t.x = a.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("av\ttv\n");
+        });
+    }
+
+    // An outer row that a LEFT or RIGHT JOIN of the outer side NULL-extends, or that an earlier
+    // LEFT JOIN LATERAL leaves without a match, carries a NULL correlation value. QuestDB's `=`
+    // is NULL-safe, so that value matches the tb row with a NULL x (206). Only outer rows 107
+    // and 108 find a tc row with their k and x (303 with y = 3 and 304 with y = 0).
+    @Test
+    public void testLateralMultiCorrelationNullExtendedOuterSource() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            final String expected = """
+                    av\ttv
+                    101\t206
+                    102\t206
+                    103\t206
+                    104\t206
+                    105\t206
+                    106\t206
+                    107\t204
+                    107\t208
+                    107\t210
+                    108\t205
+                    108\t207
+                    108\t209
+                    108\t211
+                    109\t206
+                    """;
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    JOIN tb t ON (t.x = c.y OR t.x = 2) AND t.x = c.y
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // the inner predicate follows from the outer equality, and the body aligns with the
+            // outer rows themselves
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, y, v FROM tb WHERE (x = c.y OR x = 2)) WHERE x = c.y
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: t.__qdb_outer_ref__0_y=c.y")
+                    .withPlanNotContaining("Cross Join")
+                    .returns(expected);
+
+            // every outer row has a match, so LEFT adds no NULL-extended row
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, y, v FROM tb WHERE (x = c.y OR x = 2)) WHERE x = c.y
+                    ) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // t.y = a.y keeps 206 for outer row 106, 210 for 107 and 211 for 108
+            final String expectedOn = """
+                    av\ttv
+                    106\t206
+                    107\t210
+                    108\t211
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, y, v FROM tb WHERE (x = c.y OR x = 2)) WHERE x = c.y
+                    ) t ON t.y = a.y
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedOn);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    JOIN tb t ON (t.x = c.y OR t.x = 2) AND t.x = c.y AND t.y = a.y
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedOn);
+
+            // the correlated outer table sits on the NULL-extended side of a RIGHT JOIN
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM tc c
+                    RIGHT JOIN ta a ON c.k = a.k AND c.x = a.x
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, y, v FROM tb WHERE (x = c.y OR x = 2)) WHERE x = c.y
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM tc c
+                    RIGHT JOIN ta a ON c.k = a.k AND c.x = a.x
+                    JOIN tb t ON (t.x = c.y OR t.x = 2) AND t.x = c.y
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // the second lateral reads the output of a LEFT JOIN LATERAL
+            final String expectedSecondLateral = """
+                    av\ttv\tuv
+                    101\tnull\t206
+                    102\tnull\t206
+                    103\tnull\t206
+                    104\tnull\t206
+                    105\tnull\t206
+                    106\tnull\t206
+                    107\t303\t204
+                    107\t303\t208
+                    107\t303\t210
+                    108\t304\t205
+                    108\t304\t207
+                    108\t304\t209
+                    108\t304\t211
+                    109\tnull\t206
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv, u.v uv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT k, x, y, v FROM tc WHERE k = a.k AND x = a.x) t ON true
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, y, v FROM tb WHERE (x = t.y OR x = 2)) WHERE x = t.y
+                    ) u
+                    ORDER BY a.v, t.v, u.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedSecondLateral);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, u.v uv
+                    FROM ta a
+                    LEFT JOIN tc t ON t.k = a.k AND t.x = a.x
+                    JOIN tb u ON (u.x = t.y OR u.x = 2) AND u.x = t.y
+                    ORDER BY a.v, t.v, u.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedSecondLateral);
+
+            // a GROUP BY above the nested body
+            final String expectedGroupBy = """
+                    av\ttx\tm
+                    101\tnull\t206
+                    102\tnull\t206
+                    103\tnull\t206
+                    104\tnull\t206
+                    105\tnull\t206
+                    106\tnull\t206
+                    107\t3\t210
+                    108\t0\t211
+                    109\tnull\t206
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.x tx, t.m
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    CROSS JOIN LATERAL (
+                        SELECT x, max(v) m
+                        FROM (SELECT k, x, y, v FROM tb WHERE (x = c.y OR x = 2))
+                        WHERE x = c.y
+                        GROUP BY x
+                    ) t
+                    ORDER BY a.v, t.x
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedGroupBy);
+
+            assertQuery("""
+                    SELECT a.v av, t.x tx, max(t.v) m
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    JOIN tb t ON (t.x = c.y OR t.x = 2) AND t.x = c.y
+                    GROUP BY a.v, t.x
+                    ORDER BY a.v, t.x
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedGroupBy);
+
+        });
+    }
+
+    // The original finding over a NULL-extended outer source: the inner predicate does not follow
+    // from the outer equality, and the body keeps aligning with the outer rows themselves.
+    @Test
+    public void testLateralMultiCorrelationNullExtendedOuterSourceFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // c.y is 3 for outer row 107, 0 for 108 and NULL for the others: y != c.y rejects 210
+            // for 107 and 211 for 108, and keeps 206 for a NULL c.y
+            final String expectedInequality = """
+                    av\ttv
+                    101\t206
+                    102\t206
+                    103\t206
+                    104\t206
+                    105\t206
+                    106\t206
+                    107\t204
+                    107\t208
+                    108\t205
+                    108\t207
+                    108\t209
+                    109\t206
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    CROSS JOIN LATERAL (
+                        SELECT * FROM (SELECT k, x, y, v FROM tb WHERE y != c.y) WHERE x = c.y
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("Cross Join")
+                    .returns(expectedInequality);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN tc c ON c.k = a.k AND c.x = a.x
+                    JOIN tb t ON t.y != c.y AND t.x = c.y
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInequality);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationNullOuterValue() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            // QuestDB's `=` is NULL-safe, so the NULL a.y of row 103 matches the
+            // NULL k and NULL x of row 206, exactly as `WHERE k = NULL AND x = NULL` does
+            final String expected = """
+                    av\ttv
+                    101\t201
+                    101\t202
+                    102\t204
+                    103\t206
+                    104\t201
+                    104\t202
+                    106\t207
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.y AND x = a.y) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.k = a.y AND t.x = a.y
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityChains() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // a.k = a.x constrains the outer row alone, next to two inner equalities
+            final String expectedTwoInner = """
+                    av\ttv
+                    107\t210
+                    108\t211
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND y = a.y AND a.k = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedTwoInner);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.x = a.x AND t.y = a.y
+                    WHERE a.k = a.x
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedTwoInner);
+
+            // a.k reaches the inner column x through a.y and a.x
+            final String expectedThreeOuter = """
+                    av\ttv
+                    107\t204
+                    107\t208
+                    107\t210
+                    108\t205
+                    108\t207
+                    108\t209
+                    108\t211
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND a.y = a.x AND a.k = a.y
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedThreeOuter);
+
+            // both a.y and a.k equal a.x directly
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND a.y = a.x AND a.k = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedThreeOuter);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.x = a.x
+                    WHERE a.y = a.x AND a.k = a.y
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedThreeOuter);
+
+            // y = a.y defines no equivalent once a.y = a.x follows it, so it stays a filter (y = x)
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND y = a.y AND a.y = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t203
+                            107\t210
+                            108\t211
+                            """);
+
+            // a second inner equality on the outer column that a.y equals
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND a.y = a.x AND k = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t202
+                            107\t204
+                            107\t210
+                            108\t207
+                            108\t211
+                            109\t206
+                            """);
+
+            // a non-equality on the outer column that reaches x through a.x
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND a.y = a.x AND y < a.y
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            107\t204
+                            107\t208
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityInnerJoinOn() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // the equality between the two outer columns sits in the ON of the body's inner join
+            final String expectedInner = """
+                    av\ttv\tcv
+                    101\t201\t301
+                    101\t202\t301
+                    101\t203\t302
+                    101\t203\t304
+                    107\t204\t303
+                    107\t210\t303
+                    108\t205\t303
+                    108\t207\t302
+                    108\t207\t304
+                    108\t209\t301
+                    108\t211\t302
+                    108\t211\t304
+                    109\t206\t305
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.v, c.v cv
+                        FROM tb b
+                        JOIN tc c ON c.k = b.k AND a.y = a.x
+                        WHERE b.x = a.x
+                    ) t
+                    ORDER BY a.v, t.v, t.cv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedInner);
+
+            // the same equality in the WHERE of the join body
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.cv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT b.v, c.v cv
+                        FROM tb b
+                        JOIN tc c ON c.k = b.k
+                        WHERE b.x = a.x AND a.y = a.x
+                    ) t
+                    ORDER BY a.v, t.v, t.cv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedInner);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, b.v tv, c.v cv
+                    FROM ta a
+                    JOIN tb b ON b.x = a.x
+                    JOIN tc c ON c.k = b.k
+                    WHERE a.y = a.x
+                    ORDER BY a.v, b.v, c.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.cv
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT b.v, c.v cv
+                        FROM tb b
+                        JOIN tc c ON c.k = b.k AND a.y = a.x
+                        WHERE b.x = a.x
+                    ) t ON true
+                    ORDER BY a.v, t.v, t.cv
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv\tcv
+                            101\t201\t301
+                            101\t202\t301
+                            101\t203\t302
+                            101\t203\t304
+                            102\tnull\tnull
+                            103\tnull\tnull
+                            104\tnull\tnull
+                            105\tnull\tnull
+                            106\tnull\tnull
+                            107\t204\t303
+                            107\t210\t303
+                            108\t205\t303
+                            108\t207\t302
+                            108\t207\t304
+                            108\t209\t301
+                            108\t211\t302
+                            108\t211\t304
+                            109\t206\t305
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityJoinBranchNestedSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // The lateral reads a.k and a.y only, and the join branch q equates both: a.k to a.y in
+            // its lower layer, a.y to k one layer up. tb rows 203, 205, 210 and 211 match an outer
+            // row on k and y; the outer rows 107 and 108 have k = y and find tc rows on k.
+            final String expectedInner = """
+                    av\tpv\tqv
+                    107\t205\t303
+                    107\t210\t303
+                    108\t211\t302
+                    108\t211\t304
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND y = a.y) p
+                        JOIN (SELECT * FROM (SELECT k, v FROM tc WHERE a.k = a.y) WHERE k = a.y) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedInner);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN tb p ON p.k = a.k AND p.y = a.y
+                    JOIN tc q ON q.k = p.k AND q.k = a.y AND a.k = a.y
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            // the branch is LEFT-joined: the outer row 104 has k != y and keeps tb row 203
+            final String expectedLeftBranch = """
+                    av\tpv\tqv
+                    104\t203\tnull
+                    107\t205\t303
+                    107\t210\t303
+                    108\t211\t302
+                    108\t211\t304
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND y = a.y) p
+                        LEFT JOIN (SELECT * FROM (SELECT k, v FROM tc WHERE a.k = a.y) WHERE k = a.y) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedLeftBranch);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN tb p ON p.k = a.k AND p.y = a.y
+                    LEFT JOIN tc q ON q.k = p.k AND q.k = a.y AND a.k = a.y
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLeftBranch);
+
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND y = a.y) p
+                        JOIN (SELECT * FROM (SELECT k, v FROM tc WHERE a.k = a.y) WHERE k = a.y) q ON q.k = p.k
+                    ) t ON true
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\tpv\tqv
+                            101\tnull\tnull
+                            102\tnull\tnull
+                            103\tnull\tnull
+                            104\tnull\tnull
+                            105\tnull\tnull
+                            106\tnull\tnull
+                            107\t205\t303
+                            107\t210\t303
+                            108\t211\t302
+                            108\t211\t304
+                            109\tnull\tnull
+                            """);
+
+            // the lateral join's own ON clause: p.k = a.k, so t.k = a.x holds for 107 and 108
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    JOIN LATERAL (
+                        SELECT p.k k, p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND y = a.y) p
+                        JOIN (SELECT * FROM (SELECT k, v FROM tc WHERE a.k = a.y) WHERE k = a.y) q ON q.k = p.k
+                    ) t ON t.k = a.x
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedInner);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityJoinBranchSubqueries() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // The body joins two correlated sub-queries. p equates all three outer columns the
+            // lateral reads: tb rows 210 and 211 match the outer rows 107 and 108. q reads a.k and
+            // a.y only and equates them to each other; both outer rows have k = y, and tc holds
+            // k = 3 once and k = 0 twice.
+            final String expectedInner = """
+                    av\tpv\tqv
+                    107\t210\t303
+                    108\t211\t302
+                    108\t211\t304
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND x = a.x AND y = a.y) p
+                        LEFT JOIN (SELECT k, v FROM tc WHERE k = a.y AND a.k = a.y) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedInner);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN tb p ON p.k = a.k AND p.x = a.x AND p.y = a.y
+                    LEFT JOIN tc q ON q.k = p.k AND q.k = a.y AND a.k = a.y
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            // the two branches are inner-joined
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND x = a.x AND y = a.y) p
+                        JOIN (SELECT k, v FROM tc WHERE k = a.y AND a.k = a.y) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedInner);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN tb p ON p.k = a.k AND p.x = a.x AND p.y = a.y
+                    JOIN tc q ON q.k = p.k AND q.k = a.y
+                    WHERE a.k = a.y
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            // the outer equality stands one layer below the inner equality of q
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND x = a.x AND y = a.y) p
+                        LEFT JOIN (SELECT * FROM (SELECT k, v FROM tc WHERE a.k = a.y) WHERE k = a.y) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedInner);
+
+            final String expectedLeft = """
+                    av\tpv\tqv
+                    101\tnull\tnull
+                    102\tnull\tnull
+                    103\tnull\tnull
+                    104\tnull\tnull
+                    105\tnull\tnull
+                    106\tnull\tnull
+                    107\t210\t303
+                    108\t211\t302
+                    108\t211\t304
+                    109\tnull\tnull
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND x = a.x AND y = a.y) p
+                        LEFT JOIN (SELECT k, v FROM tc WHERE k = a.y AND a.k = a.y) q ON q.k = p.k
+                    ) t ON true
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLeft);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, p.v pv, q.v qv
+                    FROM ta a
+                    LEFT JOIN tb p ON p.k = a.k AND p.x = a.x AND p.y = a.y
+                    LEFT JOIN tc q ON q.k = p.k AND q.k = a.y AND a.k = a.y
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLeft);
+
+            // q equates every outer column the lateral reads and holds a second correlation to
+            // a.k: tc rows 303 and 304 have k = x, and 302 does not
+            final String expectedResidual = """
+                    av\tpv\tqv
+                    107\t205\t303
+                    107\t210\t303
+                    108\t211\t304
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.pv, t.qv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT p.v pv, q.v qv
+                        FROM (SELECT k, v FROM tb WHERE k = a.k AND y = a.y) p
+                        JOIN (SELECT k, x, v FROM tc WHERE k = a.k AND x = a.k AND a.y = a.k) q ON q.v > p.v + 90
+                    ) t
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedResidual);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN tb p ON p.k = a.k AND p.y = a.y
+                    JOIN tc q ON q.k = a.k AND q.x = a.k AND q.v > p.v + 90
+                    WHERE a.y = a.k
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedResidual);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityJoinBranchTwoOuterTables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (k INT, x INT, y INT, z INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 0, 1, 2, 101),
+                    (2, 2, null, 0, 102),
+                    (2, 0, 0, 2, 103),
+                    (2, 2, 2, 1, 104),
+                    (2, 0, 0, 1, 105),
+                    (2, 2, 1, null, 106),
+                    (2, 0, 0, 0, 107),
+                    (1, 0, null, 0, 108),
+                    (0, null, 0, 0, 109),
+                    (1, 1, 1, 1, 110),
+                    (0, 0, null, 2, 111),
+                    (0, 1, 2, 0, 112)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, z INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (null, 1, null, 2, 201),
+                    (null, 2, 1, null, 202),
+                    (1, 1, 1, 1, 203),
+                    (1, 2, 1, 0, 204),
+                    (1, null, 2, 2, 205),
+                    (2, 2, null, 1, 206),
+                    (0, 2, 0, 2, 207),
+                    (0, 1, 0, null, 208),
+                    (2, 2, 0, null, 209),
+                    (null, 2, 1, 1, 210),
+                    (2, 1, 1, 1, 211),
+                    (2, 1, 2, 2, 212),
+                    (0, 1, 0, 0, 213),
+                    (2, null, 1, 2, 214)
+                    """);
+            execute("CREATE TABLE tc (k INT, x INT, y INT, z INT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (0, null, 2, 1, 301),
+                    (1, 0, 1, 0, 302),
+                    (1, 0, 2, 1, 303),
+                    (2, null, 0, 0, 304),
+                    (2, 2, 2, 0, 305),
+                    (2, 2, 0, 2, 306),
+                    (0, 1, null, 2, 307),
+                    (2, 0, 1, 2, 308),
+                    (null, null, 0, 1, 309)
+                    """);
+
+            // p reads both outer tables and q equates a column of each. The outer row 110 joins
+            // c2 rows 302 and 303 and tb row 203, and both tc rows with k = 1 serve it. The outer
+            // row 111 joins c2 rows 301 and 307 and tb row 207, and c2.k = a.z fails for it.
+            final String expectedCross = """
+                    av\tc2v\tk\tpv\tqv
+                    110\t302\t1\t203\t302
+                    110\t302\t1\t203\t303
+                    110\t303\t1\t203\t302
+                    110\t303\t1\t203\t303
+                    111\t301\t0\t207\tnull
+                    111\t307\t0\t207\tnull
+                    """;
+            assertQuery("""
+                    SELECT a.v av, c2.v c2v, t.k, t.pv, t.qv
+                    FROM ta a
+                    JOIN tc c2 ON c2.k = a.k
+                    CROSS JOIN LATERAL (
+                        SELECT p.k k, p.v pv, q.v qv
+                        FROM (SELECT k, x, y, z, v FROM tb WHERE c2.k = k AND z = a.z AND a.x = y) p
+                        LEFT JOIN (SELECT k, x, y, z, v FROM tc WHERE k = a.z AND c2.k = a.z) q ON q.k = p.k
+                    ) t
+                    ORDER BY a.v, c2.v, t.k, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedCross);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, c2.v c2v, p.k, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN tc c2 ON c2.k = a.k
+                    JOIN tb p ON c2.k = p.k AND p.z = a.z AND a.x = p.y
+                    LEFT JOIN tc q ON q.k = p.k AND q.k = a.z AND c2.k = a.z
+                    ORDER BY a.v, c2.v, p.k, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedCross);
+
+            // The body's own WHERE and the lateral join's ON clause correlate as well. Only the
+            // outer rows 107, 108 and 110 have x = z. tb rows 207, 208, 213 and 204 match them on
+            // x = c2.y, k = c2.z, y = a.z and k = a.x, and q contributes the tc rows with k = c2.z.
+            final String expectedOn = """
+                    av\tak\taz\tk\tpv\tqv
+                    107\t2\t0\t0\t207\t301
+                    107\t2\t0\t0\t207\t307
+                    108\t1\t0\t0\t208\t301
+                    108\t1\t0\t0\t208\t307
+                    108\t1\t0\t0\t213\t301
+                    108\t1\t0\t0\t213\t307
+                    110\t1\t1\t1\t204\t302
+                    110\t1\t1\t1\t204\t303
+                    """;
+            assertQuery("""
+                    SELECT a.v av, a.k ak, a.z az, t.k, t.pv, t.qv
+                    FROM ta a
+                    JOIN tc c2 ON c2.k = a.k
+                    JOIN LATERAL (
+                        SELECT p.k k, p.v pv, q.v qv
+                        FROM (SELECT k, x, y, z, v FROM tb WHERE c2.y = x AND c2.z = k) p
+                        JOIN (SELECT k, x, y, z, v FROM tc WHERE a.x = a.z AND c2.z = k) q ON q.k = p.k
+                        WHERE p.y = a.z
+                    ) t ON t.k = a.x
+                    ORDER BY a.v, t.pv, t.qv
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedOn);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, a.k ak, a.z az, p.k, p.v pv, q.v qv
+                    FROM ta a
+                    JOIN tc c2 ON c2.k = a.k
+                    JOIN tb p ON c2.y = p.x AND c2.z = p.k AND p.y = a.z AND p.k = a.x
+                    JOIN tc q ON q.k = p.k AND c2.z = q.k
+                    WHERE a.x = a.z
+                    ORDER BY a.v, p.v, q.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedOn);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityJoinForms() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // 109 has NULL x and y: NULL-safe equality holds, and the NULL x matches row 206
+            final String expectedInner = """
+                    av\ttv
+                    101\t201
+                    101\t202
+                    101\t203
+                    107\t204
+                    107\t208
+                    107\t210
+                    108\t205
+                    108\t207
+                    108\t209
+                    108\t211
+                    109\t206
+                    """;
+
+            // x stands in for a.x and, through a.y = a.x, for a.y: the body stays a plain
+            // scan under a hash join on both alignment keys
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND a.y = a.x) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining(
+                            "Hash Join",
+                            "condition: t.__qdb_outer_ref__0_y=a.y and t.__qdb_outer_ref__0_x=a.x"
+                    )
+                    .withPlanNotContaining("Cross Join")
+                    .returns(expectedInner);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.x = a.x
+                    WHERE a.y = a.x
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND a.y = a.x) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t202
+                            101\t203
+                            102\tnull
+                            103\tnull
+                            104\tnull
+                            105\tnull
+                            106\tnull
+                            107\t204
+                            107\t208
+                            107\t210
+                            108\t205
+                            108\t207
+                            108\t209
+                            108\t211
+                            109\t206
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND a.y = a.x) t ON t.k = a.k
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            107\t204
+                            107\t210
+                            108\t207
+                            108\t211
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityNestedWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            final String expected = """
+                    av\ttv
+                    101\t201
+                    101\t202
+                    101\t203
+                    107\t204
+                    107\t208
+                    107\t210
+                    108\t205
+                    108\t207
+                    108\t209
+                    108\t211
+                    109\t206
+                    """;
+
+            // the inner layer equates the outer columns both ways, and only the layer above
+            // gives one of them an inner equivalent, under an alias the table does not have
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT *
+                        FROM (SELECT k kk, x xx, y yy, v FROM tb WHERE a.x = a.y AND a.y = a.x)
+                        WHERE xx = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // the outer equality below, the inner equality above: the lower layer holds no
+            // predicate beyond the outer equality, which the alignment join enforces, so the
+            // outer-ref join goes away and the plan scans tb once
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT *
+                        FROM (SELECT k, x, y, v FROM tb WHERE a.y = a.x)
+                        WHERE x = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: t.__qdb_outer_ref__0_y=a.y and t.__qdb_outer_ref__0_x=a.x")
+                    .withPlanNotContaining("Cross Join", "keys: [__qdb_outer_ref__")
+                    .returns(expected);
+
+            // the layer above correlates a.y again, through a renamed column
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT *
+                        FROM (SELECT k kk, x xx, y yy, v FROM tb WHERE x = a.x AND a.y = a.x)
+                        WHERE yy = a.y
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t203
+                            107\t210
+                            108\t211
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityTwoOuterTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // c2.x = a.x equates columns of two outer tables; only (107, 303) and (108, 304) satisfy it
+            final String expectedInner = """
+                    av\tc2v\ttv
+                    107\t303\t204
+                    107\t303\t208
+                    107\t303\t210
+                    108\t304\t205
+                    108\t304\t207
+                    108\t304\t209
+                    108\t304\t211
+                    """;
+            assertQuery("""
+                    SELECT a.v av, c2.v c2v, t.v tv
+                    FROM ta a
+                    JOIN tc c2 ON c2.k = a.k
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND c2.x = a.x) t
+                    ORDER BY a.v, c2.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, c2.v c2v, t.v tv
+                    FROM ta a
+                    JOIN tc c2 ON c2.k = a.k
+                    JOIN tb t ON t.x = a.x
+                    WHERE c2.x = a.x
+                    ORDER BY a.v, c2.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            assertQuery("""
+                    SELECT a.v av, c2.v c2v, t.v tv
+                    FROM ta a
+                    JOIN tc c2 ON c2.k = a.k
+                    LEFT JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND c2.x = a.x) t ON true
+                    ORDER BY a.v, c2.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\tc2v\ttv
+                            101\t305\tnull
+                            102\t301\tnull
+                            104\t302\tnull
+                            104\t304\tnull
+                            105\t303\tnull
+                            106\t301\tnull
+                            107\t303\t204
+                            107\t303\t208
+                            107\t303\t210
+                            108\t302\tnull
+                            108\t304\t205
+                            108\t304\t207
+                            108\t304\t209
+                            108\t304\t211
+                            109\t301\tnull
+                            """);
+
+            // a second inner column correlates to the other outer table
+            assertQuery("""
+                    SELECT a.v av, c2.v c2v, t.v tv
+                    FROM ta a
+                    JOIN tc c2 ON c2.k = a.k
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND y = c2.y AND c2.x = a.x
+                    ) t
+                    ORDER BY a.v, c2.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\tc2v\ttv
+                            107\t303\t210
+                            108\t304\t211
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityWindowAndLimitBodies() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // the body numbers the rows of each outer row that satisfies a.y = a.x
+            assertQuery("""
+                    SELECT a.v av, t.v tv, t.rn
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT v, row_number() OVER (ORDER BY v) rn
+                        FROM tb
+                        WHERE x = a.x AND a.y = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv\trn
+                            101\t201\t1
+                            101\t202\t2
+                            101\t203\t3
+                            107\t204\t1
+                            107\t208\t2
+                            107\t210\t3
+                            108\t205\t1
+                            108\t207\t2
+                            108\t209\t3
+                            108\t211\t4
+                            109\t206\t1
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT y, v
+                        FROM tb
+                        WHERE x = a.x AND a.y = a.x
+                        ORDER BY v DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t202
+                            101\t203
+                            107\t208
+                            107\t210
+                            108\t209
+                            108\t211
+                            109\t206
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationOuterEqualityWithUnequatedOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterEqualityTables();
+
+            // a.k takes part in no equality, so the rewriter cannot give every outer column an
+            // inner equivalent. It lifts the three predicates into the lateral join's criteria
+            // instead: the plan joins tb on x, filters ta on y = x and holds no outer-ref join.
+            final String expectedInner = """
+                    av\ttv
+                    107\t204
+                    107\t208
+                    109\t206
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND a.y = a.x AND y < a.k
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: t.x=a.x", "filter: y=x", "filter: t.y<a.k")
+                    .withPlanNotContaining("__qdb_outer_ref__", "Cross Join")
+                    .returns(expectedInner);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    JOIN tb t ON t.x = a.x
+                    WHERE a.y = a.x AND t.y < a.k
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedInner);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (
+                        SELECT k, x, y, v
+                        FROM tb
+                        WHERE x = a.x AND a.y = a.x AND y < a.k
+                    ) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\tnull
+                            102\tnull
+                            103\tnull
+                            104\tnull
+                            105\tnull
+                            106\tnull
+                            107\t204
+                            107\t208
+                            108\tnull
+                            109\t206
+                            """);
+        });
+    }
+
+    // The rewriter moves either every dropped predicate of a body into its filter or none. In
+    // each body below one predicate cannot move: `s != a.s` compares with a SYMBOL outer column
+    // that a STRING column aligns, `abs(y) = a.x` calls a function, and `c.y = a.x` would
+    // become a join key of two types. The body keeps its plan, and it returns the sum of its
+    // predicates on this data: for the outer row 101 one tb row (v = 3) fails `k = a.x` alone,
+    // another (v = -3) fails the predicate that cannot move alone, and the two cancel in the
+    // sum. In the third body they fail `c.y = a.x` and `b.y < a.x`. A filter with the one
+    // predicate that can move would remove only one of the two rows. Every expected result is
+    // the body evaluated once per outer row.
+    @Test
+    public void testLateralMultiCorrelationPartialFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT, s SYMBOL, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 'a', 101),
+                    (null, null, 102)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, s SYMBOL, st STRING, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (1, 1, -1, 'b', 'a', 5),
+                    (2, 1, -1, 'b', 'a', 3),
+                    (1, 1, 5, 'a', 'a', -3),
+                    (null, null, null, 'c', null, 7)
+                    """);
+            execute("CREATE TABLE tc (k INT, y LONG, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (1, 1, 301),
+                    (2, 9, 302)
+                    """);
+
+            // the first row of tb alone satisfies each body for the outer row 101, the last
+            // one the first two bodies for the outer row 102
+            final String expected = """
+                    av\tsv
+                    101\t5
+                    102\t7
+                    """;
+
+            // `s != a.s` has no column to read in place of a.s
+            assertQuery("""
+                    SELECT a.v av, t.sv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT sum(v) sv FROM tb WHERE k = a.x AND x = a.x AND s != a.s AND st = a.s
+                    ) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("k=x")
+                    .returns(expected);
+
+            // `abs(y) = a.x` calls a function
+            assertQuery("""
+                    SELECT a.v av, t.sv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT sum(v) sv FROM tb WHERE k = a.x AND abs(y) = a.x AND x = a.x) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("k=x")
+                    .returns(expected);
+
+            // `c.y = a.x` would compare a LONG column with the INT column b.x in the body's own
+            // join; no tc row has a NULL k, so the body is empty for the outer row 102
+            assertQuery("""
+                    SELECT a.v av, t.sv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT sum(b.v) sv
+                        FROM tb b
+                        JOIN tc c ON c.k = b.k
+                        WHERE c.y = a.x AND b.y < a.x AND b.x = a.x
+                    ) t
+                    ORDER BY a.v
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("b.y<b.x")
+                    .returns("""
+                            av\tsv
+                            101\t5
+                            102\tnull
+                            """);
+
+            // the three bodies for the outer row 101, with a.x and a.s replaced by their values
+            assertQuery("SELECT sum(v) sv FROM tb WHERE k = 1 AND x = 1 AND s != 'a' AND st = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sv
+                            5
+                            """);
+
+            assertQuery("SELECT sum(v) sv FROM tb WHERE k = 1 AND abs(y) = 1 AND x = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sv
+                            5
+                            """);
+
+            assertQuery("SELECT sum(b.v) sv FROM tb b JOIN tc c ON c.k = b.k WHERE c.y = 1 AND b.y < 1 AND b.x = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sv
+                            5
+                            """);
+        });
+    }
+
+    // The second lateral keeps its __qdb_outer_ref__ join, and the DISTINCT sub-query of that
+    // join reads the body of the first lateral as the source of the t.k values. tb row 202
+    // gives it the NULL that outer row 103 carries after the LEFT JOIN LATERAL finds no match.
+    // Row 202 violates x = y, so a filter in the body of the first lateral would take the NULL
+    // away and with it the rows of outer row 103.
+    @Test
+    public void testLateralMultiCorrelationReadByAnotherLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 101),
+                    (2, 102),
+                    (null, 103)
+                    """);
+            execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (1, 1, 1, 201),
+                    (null, 5, 6, 202),
+                    (7, 2, 2, 203)
+                    """);
+            execute("CREATE TABLE tc (k INT, v INT)");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (1, 301),
+                    (7, 302),
+                    (null, 303),
+                    (1, 304)
+                    """);
+
+            // t is row 201 (k = 1) for outer row 101, row 203 (k = 7) for 102 and NULL for 103;
+            // QuestDB's `!=` is NULL-safe, so a NULL t.k keeps the tc rows with a k
+            final String expected = """
+                    av\ttv\tuv
+                    101\t201\t302
+                    101\t201\t303
+                    102\t203\t301
+                    102\t203\t303
+                    102\t203\t304
+                    103\tnull\t301
+                    103\tnull\t302
+                    103\tnull\t304
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv, u.v uv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT k, v FROM tb WHERE x = a.x AND y = a.x) t ON true
+                    CROSS JOIN LATERAL (SELECT DISTINCT v FROM tc WHERE k != t.k) u
+                    ORDER BY a.v, t.v, u.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // non-LATERAL control
+            assertQuery("""
+                    SELECT a.v av, t.v tv, u.v uv
+                    FROM ta a
+                    LEFT JOIN tb t ON t.x = a.x AND t.y = a.x
+                    JOIN tc u ON u.k != t.k
+                    ORDER BY a.v, t.v, u.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // the second lateral loses its __qdb_outer_ref__ join: tc rows 301 and 304 for
+            // outer row 101, 302 for 102 and the NULL row 303 for 103
+            final String expectedEquality = """
+                    av\ttv\tuv
+                    101\t201\t301
+                    101\t201\t304
+                    102\t203\t302
+                    103\tnull\t303
+                    """;
+            assertQuery("""
+                    SELECT a.v av, t.v tv, u.v uv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT k, v FROM tb WHERE x = a.x AND y = a.x) t ON true
+                    CROSS JOIN LATERAL (SELECT v FROM tc WHERE k = t.k) u
+                    ORDER BY a.v, t.v, u.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedEquality);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv, u.v uv
+                    FROM ta a
+                    LEFT JOIN tb t ON t.x = a.x AND t.y = a.x
+                    JOIN tc u ON u.k = t.k
+                    ORDER BY a.v, t.v, u.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedEquality);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationResidualPredicates() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            // non-equality on the outer column that an equality already maps
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x < a.x) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t209
+                            103\t209
+                            106\t205
+                            """);
+
+            // disjunction that reads the outer column
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND (x = a.x OR y = 3)) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t202
+                            102\t207
+                            103\t201
+                            103\t202
+                            104\t206
+                            105\t207
+                            106\t204
+                            106\t205
+                            """);
+
+            // predicate on the outer column alone
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND a.x = 3) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            106\t204
+                            106\t208
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    LEFT JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND a.x = 3) t ON true
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\tnull
+                            102\tnull
+                            103\tnull
+                            104\tnull
+                            105\tnull
+                            106\t204
+                            106\t208
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationSetOperationBody() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (
+                        SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x
+                        UNION ALL
+                        SELECT k, x, y, v FROM tc WHERE k = a.x AND x = a.x
+                    ) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t202
+                            101\t301
+                            102\t207
+                            102\t304
+                            103\t201
+                            103\t202
+                            103\t301
+                            104\t206
+                            104\t305
+                            105\t207
+                            105\t304
+                            106\t204
+                            106\t303
+                            """);
+        });
+    }
+
+    // A comparison of a STRING with an INT casts the text and throws on text that is no number.
+    // tb row 203 holds such text. The predicates of the body never read it: k = a.k rejects the
+    // row before st is compared, and the second query has no outer row at all. A filter
+    // `st <= k` in the body would read st of every tb row and fail both queries.
+    @Test
+    public void testLateralMultiCorrelationTextComparedWithNumber() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (k INT, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    (1, 101),
+                    (2, 102),
+                    (3, 103)
+                    """);
+            execute("CREATE TABLE tb (k INT, st STRING, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    (1, '1', 201),
+                    (2, '2', 202),
+                    (7, 'x', 203)
+                    """);
+
+            // '1' <= 1 for outer row 101, '2' <= 2 for outer row 102, no tb row for outer row 103
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, st, v FROM tb WHERE k = a.k AND st <= a.k) t
+                    ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            102\t202
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM (SELECT * FROM ta WHERE v > 1_000) a
+                    CROSS JOIN LATERAL (SELECT k, st, v FROM tb WHERE k = a.k AND st <= a.k) t
+                    ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("av\ttv\n");
+
+            // the body for outer row 101, with a.k replaced by its value
+            assertQuery("SELECT k, st, v FROM tb WHERE k = 1 AND st <= 1")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tst\tv
+                            1\t1\t201
+                            """);
+
+            // the body for outer row 102
+            assertQuery("SELECT k, st, v FROM tb WHERE k = 2 AND st <= 2")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tst\tv
+                            2\t2\t202
+                            """);
+
+            // the body for outer row 103
+            assertQuery("SELECT k, st, v FROM tb WHERE k = 3 AND st <= 3")
+                    .noLeakCheck()
+                    .returns("k\tst\tv\n");
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationThreePredicates() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE k = a.x AND x = a.x AND y = a.x) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            103\t201
+                            """);
+        });
+    }
+
+    // The cast of a TIMESTAMP to a TIMESTAMP_NS throws on a value beyond the range of
+    // nanoseconds. tb row 202 holds such a value as an end-of-time marker. The predicates of
+    // the body never compare its ts with tn: ts = a.ts rejects the row first, and the second
+    // query has no outer row at all. A filter `tn <= ts` in the body would cast ts of every tb
+    // row and fail both queries.
+    @Test
+    public void testLateralMultiCorrelationTimestampBeyondNanosRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, v INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                    ('2024-01-01T00:00:00.000001Z', 101),
+                    ('2024-01-01T00:00:00.000002Z', 102)
+                    """);
+            execute("CREATE TABLE tb (ts TIMESTAMP, tn TIMESTAMP_NS, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                    ('2024-01-01T00:00:00.000001Z', '2024-01-01T00:00:00.000001000Z', 201),
+                    ('9999-12-31T00:00:00.000000Z', '2024-01-01T00:00:00.000001000Z', 202)
+                    """);
+
+            // tb row 201 has the ts of outer row 101 and a tn of the same instant
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT ts, tn, v FROM tb WHERE ts = a.ts AND tn <= a.ts) t
+                    ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            """);
+
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM (SELECT * FROM ta WHERE v > 1_000) a
+                    CROSS JOIN LATERAL (SELECT ts, tn, v FROM tb WHERE ts = a.ts AND tn <= a.ts) t
+                    ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("av\ttv\n");
+
+            // the body for outer row 101, with a.ts replaced by its value
+            assertQuery("""
+                    SELECT v
+                    FROM tb
+                    WHERE ts = '2024-01-01T00:00:00.000001Z'::TIMESTAMP AND tn <= '2024-01-01T00:00:00.000001Z'::TIMESTAMP
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            v
+                            201
+                            """);
+
+            // the body for outer row 102
+            assertQuery("""
+                    SELECT v
+                    FROM tb
+                    WHERE ts = '2024-01-01T00:00:00.000002Z'::TIMESTAMP AND tn <= '2024-01-01T00:00:00.000002Z'::TIMESTAMP
+                    """)
+                    .noLeakCheck()
+                    .returns("v\n");
+        });
+    }
+
+    @Test
+    public void testLateralMultiCorrelationTwoOuterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createMultiCorrelationTables();
+
+            // one inner column correlated to two outer columns
+            assertQuery("""
+                    SELECT a.v av, t.v tv
+                    FROM ta a
+                    CROSS JOIN LATERAL (SELECT k, x, y, v FROM tb WHERE x = a.x AND x = a.y) t
+                    ORDER BY a.v, t.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            av\ttv
+                            101\t201
+                            101\t202
+                            101\t203
+                            """);
+        });
     }
 
     // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
@@ -16367,6 +20882,91 @@ public class LateralJoinTest extends AbstractCairoTest {
                 .assertBinds(cases);
     }
 
+    // Fixture for testLateralMultiCorrelationMixedColumnTypes. In tb the pairs k / x (INT and
+    // LONG), f / d (FLOAT and DOUBLE) and s / st (SYMBOL and STRING) are equal in rows 201,
+    // 203, 205 and 206 and differ in rows 202 and 204. tx and ty hold the same instants as
+    // TIMESTAMP and TIMESTAMP_NS, except ty row 503.
+    private void createMixedTypeTables() throws Exception {
+        execute("CREATE TABLE ta (k INT, x LONG, f FLOAT, d DOUBLE, s SYMBOL, st STRING, v INT)");
+        execute("""
+                INSERT INTO ta VALUES
+                (1, 1, 0.5, 0.5, 'a', 'a', 101),
+                (2, 1, 0.25, 0.25, 'b', 'b', 102),
+                (null, 2, null, null, null, null, 103),
+                (3, null, 1.5, 1.5, 'c', 'a', 104)
+                """);
+        execute("CREATE TABLE tb (k INT, x LONG, f FLOAT, d DOUBLE, s SYMBOL, st STRING, v INT)");
+        execute("""
+                INSERT INTO tb VALUES
+                (1, 1, 0.5, 0.5, 'a', 'a', 201),
+                (1, 2, 0.5, 0.25, 'a', 'b', 202),
+                (2, 2, 0.25, 0.25, 'b', 'b', 203),
+                (2, 1, 1.5, 0.5, 'b', 'a', 204),
+                (null, null, null, null, null, null, 205),
+                (3, 3, 1.5, 1.5, 'c', 'c', 206)
+                """);
+        execute("CREATE TABLE tc (k INT, y INT, v INT)");
+        execute("""
+                INSERT INTO tc VALUES
+                (1, 1, 301),
+                (2, 2, 302),
+                (2, 1, 303),
+                (null, null, 304),
+                (3, 3, 305)
+                """);
+        execute("CREATE TABLE tx (ts TIMESTAMP, v INT)");
+        execute("""
+                INSERT INTO tx VALUES
+                ('2024-01-01T00:00:00.000001Z', 401),
+                ('2024-01-01T00:00:00.000002Z', 402)
+                """);
+        execute("CREATE TABLE ty (ts TIMESTAMP, tn TIMESTAMP_NS, v INT)");
+        execute("""
+                INSERT INTO ty VALUES
+                ('2024-01-01T00:00:00.000001Z', '2024-01-01T00:00:00.000001000Z', 501),
+                ('2024-01-01T00:00:00.000002Z', '2024-01-01T00:00:00.000002000Z', 502),
+                ('2024-01-01T00:00:00.000002Z', '2024-01-01T00:00:00.000001000Z', 503)
+                """);
+    }
+
+    // Fixture for the testLateralMultiCorrelation* tests. tb mixes rows that satisfy
+    // k = x (201, 202, 204, 206, 207) with rows that satisfy only one side of a
+    // two-predicate correlation, and both ta and tb carry NULL keys.
+    private void createMultiCorrelationTables() throws Exception {
+        execute("CREATE TABLE ta (k INT, x INT, y INT, v INT)");
+        execute("""
+                INSERT INTO ta VALUES
+                (null, 1, 1, 101),
+                (1, 0, 3, 102),
+                (2, 1, null, 103),
+                (0, null, 1, 104),
+                (3, 0, 2, 105),
+                (1, 3, 0, 106)
+                """);
+        execute("CREATE TABLE tb (k INT, x INT, y INT, v INT)");
+        execute("""
+                INSERT INTO tb VALUES
+                (1, 1, 1, 201),
+                (1, 1, 2, 202),
+                (0, 1, 1, 203),
+                (3, 3, 0, 204),
+                (3, 0, 3, 205),
+                (null, null, 0, 206),
+                (0, 0, 2, 207),
+                (2, 3, 2, 208),
+                (1, 0, 1, 209)
+                """);
+        execute("CREATE TABLE tc (k INT, x INT, y INT, v INT)");
+        execute("""
+                INSERT INTO tc VALUES
+                (1, 1, 0, 301),
+                (0, 1, 1, 302),
+                (3, 3, 3, 303),
+                (0, 0, 0, 304),
+                (null, null, 1, 305)
+                """);
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -16384,5 +20984,15 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (4, 3, 40.0, 400.0, '2024-01-01T02:30:00.000000Z'),
                 (5, 3, 50.0, 500.0, '2024-01-01T02:45:00.000000Z')
                 """);
+    }
+
+    // Fixture for the testLateralMultiCorrelationOuterEquality* tests: the tables of
+    // createMultiCorrelationTables() plus outer rows with x = y (107, 108), an outer row
+    // whose x and y are both NULL (109, equal under NULL-safe equality) and inner rows
+    // for them (210, 211).
+    private void createOuterEqualityTables() throws Exception {
+        createMultiCorrelationTables();
+        execute("INSERT INTO ta VALUES (3, 3, 3, 107), (0, 0, 0, 108), (1, null, null, 109)");
+        execute("INSERT INTO tb VALUES (3, 3, 3, 210), (0, 0, 0, 211)");
     }
 }
