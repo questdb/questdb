@@ -161,8 +161,26 @@ public class PartitionCompactionPolicyTest extends AbstractCairoTest {
                 cfg.splitMinSize = 100;
                 Assert.assertEquals(0, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
                 cfg.splitMinSize = 50;
+                // A day AT the cap still splits: the overflow is squashed back once the folders cool.
                 cfg.maxSplits = 4;
+                Assert.assertEquals(8, PartitionCompactionPolicy.getSplitCeiling(cfg));
+                Assert.assertEquals(1, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
+                // Only the ceiling - the cap plus the hot window, at most twice the cap - stops it.
+                cfg.maxSplits = 2;
+                Assert.assertEquals(4, PartitionCompactionPolicy.getSplitCeiling(cfg));
                 Assert.assertEquals(0, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
+                // Without a hot window the commit's own squash folds the overflow at once, so one split over
+                // the cap is all the room a day needs.
+                cfg.hotCommits = 0;
+                cfg.maxSplits = 4;
+                Assert.assertEquals(5, PartitionCompactionPolicy.getSplitCeiling(cfg));
+                Assert.assertTrue(PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE) > 0);
+                cfg.maxSplits = 3;
+                Assert.assertEquals(4, PartitionCompactionPolicy.getSplitCeiling(cfg));
+                Assert.assertEquals(0, PartitionCompactionPolicy.moveTailCut(cfg, tx, geometry, 0, 1, Long.MAX_VALUE));
+                cfg.maxSplits = Integer.MAX_VALUE;
+                cfg.hotCommits = Integer.MAX_VALUE;
+                Assert.assertEquals(Integer.MAX_VALUE, PartitionCompactionPolicy.getSplitCeiling(cfg));
             }
         });
     }

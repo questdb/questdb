@@ -27,6 +27,7 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionCompactionPolicy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -106,7 +107,7 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMoveTailStopsAtSplitCapWithoutCopyingThePrefix() throws Exception {
+    public void testMoveTailOverflowsSplitCapWithoutCopyingThePrefix() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, true);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1_024);
@@ -130,17 +131,21 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
                 prefixRows = reader.getTxFile().getPartitionSize(0);
                 Assert.assertTrue("the move must preserve the large prefix", prefixRows > 9_000);
             }
+            // The cap is a squash target, not a split gate: hot tails may overflow it up to the ceiling.
+            final int ceiling = PartitionCompactionPolicy.getSplitCeiling(configuration);
+            Assert.assertTrue("the ceiling must leave room past the cap", ceiling > 2);
             for (int i = 0; i < 8; i++) {
                 execute("INSERT INTO x SELECT x::INT + 30_000, timestamp_sequence('2024-01-01T02:42:30'::TIMESTAMP + "
                         + (i * 25_000_000L) + ", 1_000_000L) FROM long_sequence(25)");
                 drainWalQueue();
-                Assert.assertTrue("ordinary squash must bound sibling growth", partitionCountOfDay() <= 2);
+                Assert.assertTrue("ordinary squash must bound sibling growth", partitionCountOfDay() <= ceiling);
             }
             final long written = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore;
             Assert.assertTrue("tail moves and squash must not copy the 9,500-row prefix repeatedly: " + written, written < 20_000);
             try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
                 Assert.assertEquals("the accumulator must keep its original directory", -1, reader.getTxFile().getPartitionNameTxn(0));
-                Assert.assertEquals("MOVE-TAIL must not exceed the cap or recopy the prefix", prefixRows, reader.getTxFile().getPartitionSize(0));
+                // A squash may append a cold sibling into the accumulator, but never rewrites it.
+                Assert.assertTrue("MOVE-TAIL must not recopy the prefix", reader.getTxFile().getPartitionSize(0) >= prefixRows);
             }
             engine.releaseAllReaders();
             engine.releaseAllWriters();

@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
     @Test
-    public void testClassicSplitDoesNotExceedCapWhenEveryFolderIsHot() throws Exception {
+    public void testClassicSplitOverflowsCapWhileEveryFolderIsHot() throws Exception {
         assertMemoryLeak(() -> {
             createFiveFolders();
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 5);
@@ -53,7 +53,8 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT x::INT + 100_000, timestamp_sequence('2024-01-01T04:00:00.001', 1_000L) FROM long_sequence(20)");
             drainWalQueue();
             try (TableReader reader = getReader("x")) {
-                Assert.assertEquals("hot folders cannot be squashed to make room for another classic split", 5, reader.getPartitionCount());
+                Assert.assertEquals("the cap is a squash target, not a split gate: the day overflows while its folders are hot",
+                        6, reader.getPartitionCount());
             }
             assertQuery("SELECT count() c, sum(i) s FROM x").noRandomAccess().expectSize().returns("c\ts\n40100\t810021050\n");
         });

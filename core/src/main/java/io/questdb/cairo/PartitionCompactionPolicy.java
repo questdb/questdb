@@ -143,7 +143,25 @@ public class PartitionCompactionPolicy implements Mutable {
         return deadRows > configuration.getPartitionCompactionDeadRowsRatio() * liveRows && deadRows > deadMinRows;
     }
 
-    public static boolean hasMoveTailCapacity(CairoConfiguration configuration, TxReader txReader, int partitionIndex) {
+    /**
+     * The hard ceiling on the folders one logical partition may hold. {@code cairo.o3.partition.max.splits} is the
+     * squash target, not a split gate: a split that pays always happens, and housekeeping squashes the smallest cold
+     * adjacent pairs back down to the cap once the folders cool. The overflow allowance covers the folders the last
+     * {@code hot.commits} commits keep hot - and so out of the squash's reach - but never more than the cap itself,
+     * so a day never holds more than twice the cap.
+     */
+    public static int getSplitCeiling(CairoConfiguration configuration) {
+        final int cap = Math.max(1, configuration.getO3PartitionMaxSplits());
+        final int overflow = Math.min(cap, Math.max(1, configuration.getPartitionCompactionHotCommits()));
+        return (int) Math.min(Integer.MAX_VALUE, (long) cap + overflow);
+    }
+
+    /**
+     * How many more folders the logical partition holding {@code partitionIndex} may take before it reaches
+     * {@link #getSplitCeiling}. Every split path - MOVE-TAIL, its forecast and the O3 prefix split - gates on this one
+     * number, so they agree on when a day is full.
+     */
+    public static int getSplitRoom(CairoConfiguration configuration, TxReader txReader, int partitionIndex) {
         final long logicalTimestamp = txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(partitionIndex));
         int lo = partitionIndex;
         while (lo > 0 && txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(lo - 1)) == logicalTimestamp) {
@@ -154,7 +172,11 @@ public class PartitionCompactionPolicy implements Mutable {
                 && txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(hi)) == logicalTimestamp) {
             hi++;
         }
-        return hi - lo < Math.max(1, configuration.getO3PartitionMaxSplits());
+        return getSplitCeiling(configuration) - (hi - lo);
+    }
+
+    public static boolean hasSplitRoom(CairoConfiguration configuration, TxReader txReader, int partitionIndex) {
+        return getSplitRoom(configuration, txReader, partitionIndex) > 0;
     }
 
     /**
@@ -171,7 +193,7 @@ public class PartitionCompactionPolicy implements Mutable {
     ) {
         final long liveRows = txReader.getPartitionSize(partitionIndex);
         if (liveRows <= configuration.getPartitionO3SplitMinSize() / Math.max(1, avgRecordSize)
-                || !hasMoveTailCapacity(configuration, txReader, partitionIndex)) {
+                || !hasSplitRoom(configuration, txReader, partitionIndex)) {
             return 0;
         }
         final int hotCommits = configuration.getPartitionCompactionHotCommits();

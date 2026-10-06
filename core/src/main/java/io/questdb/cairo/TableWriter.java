@@ -9901,10 +9901,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return writerTxn < 0 || writerTxn <= lastCommitTxn - hotCommits;
         }
         // Plain WAL folders have no geometry header. Their durable data provenance is the native seqTxn.
-        final long seqTxn = nativePartitionSeqTxn(partitionIndex);
-        return tableToken.isWal()
-                ? seqTxn >= 0 && seqTxn <= getCompositePartitionSeqTxn() - hotCommits
-                : txWriter.getPartitionNameTxn(partitionIndex) < lastCommitTxn - hotCommits;
+        if (tableToken.isWal()) {
+            final long seqTxn = nativePartitionSeqTxn(partitionIndex);
+            if (seqTxn >= 0) {
+                return seqTxn <= getCompositePartitionSeqTxn() - hotCommits;
+            }
+        }
+        // Non-WAL folders, and WAL folders published without a seqTxn stamp - an O3 split's suffix, a
+        // MOVE-TAIL tail, a squash of unstamped sources - age by the txn that named their directory.
+        // Treating an unstamped folder as forever hot would pin a day above the split cap for good.
+        return txWriter.getPartitionNameTxn(partitionIndex) < lastCommitTxn - hotCommits;
     }
 
     private boolean isColdSmallSquashTarget(int partitionIndex, long lastCommitTxn, boolean isKnownCold) {
@@ -10548,7 +10554,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long ceil = txWriter.getCurrentPartitionMaxTimestamp(incomingLo);
                 final long hi = O3CompositeMergeStrategy.lastAtOrBelow(sortedTimestampsAddr, lo, rowHi - 1, ceil);
                 final int index = txWriter.getPartitionIndex(incomingLo);
-                if (index >= 0 && txWriter.isPartitionComposite(index) && !txWriter.isPartitionReadOnly(index)) {
+                if (index >= 0 && txWriter.isPartitionComposite(index) && !txWriter.isPartitionReadOnly(index)
+                        && PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, index)) {
                     final PartitionGeometry geometry = getGeometry();
                     if (isMoveTailForecastRequired(geometry, index, incomingLo, hi - lo + 1)
                             && (!isCommitDedupMode() || !O3PartitionJob.hasTouchingPieces(geometry, index))) {
@@ -10618,7 +10625,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long e = geometry.getE(partitionIndex);
         final long deadRows = e - liveRows;
         if ((isRewriteDue ? prefixRows <= tailRows : !O3CompositeMergeStrategy.isMoveTailEconomical(prefixRows, tailRows, 0))
-                || !PartitionCompactionPolicy.hasMoveTailCapacity(configuration, txWriter, partitionIndex)
+                || !PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, partitionIndex)
                 || !geometry.hasGenerationForNextPublish(partitionIndex, cut)) {
             return COMPACTION_NONE;
         }
@@ -18628,6 +18635,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /** A discretionary rewrite must not copy a source the imminent ordinary squash can read directly. */
     boolean isPendingSquashSource(int partitionIndex) {
+        // The caller is about to write this partition, which leaves it hot for the next hot.commits commits.
+        // The commit's squash folds cold pairs only, so with a hot window it cannot consume this partition,
+        // however far the day is over the cap; the squash waits for the folder to cool.
+        if (configuration.getPartitionCompactionHotCommits() > 0) {
+            return false;
+        }
         final long ts = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (minSplitPartitionTimestamp > txWriter.getMaxTimestamp() || txWriter.getLagRowCount() > 0) {
             return false;
@@ -18697,16 +18710,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (index < 0) {
                     return false;
                 }
-                int lo = index;
-                while (lo > 0 && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo - 1)) == logicalTimestamp) {
-                    lo--;
-                }
-                int hi = index + 1;
-                while (hi < txWriter.getPartitionCount()
-                        && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == logicalTimestamp) {
-                    hi++;
-                }
-                remaining = configuration.getO3PartitionMaxSplits() - (hi - lo);
+                remaining = PartitionCompactionPolicy.getSplitRoom(configuration, txWriter, index);
             }
             if (remaining <= 0) {
                 return false;
@@ -18717,7 +18721,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     boolean wouldMoveTailSucceed(int partitionIndex, LongList bounds, O3CompositeMergeStrategy.Plan plan) {
-        return PartitionCompactionPolicy.hasMoveTailCapacity(configuration, txWriter, partitionIndex)
+        return PartitionCompactionPolicy.hasSplitRoom(configuration, txWriter, partitionIndex)
                 && !isCommitReplaceMode() && txWriter.getLagRowCount() == 0
                 && O3CompositeMergeStrategy.moveTailCut(bounds, plan, getMoveTailFutureFloor(), getPartitionO3SplitThreshold()) > 0;
     }
