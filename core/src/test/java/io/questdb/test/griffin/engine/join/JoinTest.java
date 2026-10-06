@@ -3173,6 +3173,164 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullJoinNonEquiChainOverRightJoinSubQuery() throws Exception {
+        // The second FULL JOIN ties a1.x and a0.k to a2.x, but that equality holds only for the rows the
+        // second FULL JOIN matches, so the first FULL JOIN must keep its non-equi ON clause and run as a
+        // nested loop. Its slave is a RIGHT JOIN sub-query with a NULL-extended row (q = (2, 2)).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, x INT)");
+            execute("CREATE TABLE t2 (k INT, x INT)");
+            execute("INSERT INTO t1 VALUES (1, 1)");
+            execute("INSERT INTO t2 VALUES (1, 1), (2, 2)");
+            final String query = """
+                    SELECT a0.k k0, a0.x x0, a1.k k1, a1.x x1, a2.k k2, a2.x x2
+                    FROM t2 a0
+                    FULL JOIN (SELECT p.k k, p.x x FROM t1 p RIGHT JOIN t2 q ON p.k = q.k) a1 ON a0.k = 1
+                    FULL JOIN t2 a2 ON a1.x = a2.x AND a0.k = a2.x
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            k0\tx0\tk1\tx1\tk2\tx2
+                            1\t1\t1\t1\t1\t1
+                            1\t1\tnull\tnull\tnull\tnull
+                            2\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t2\t2
+                            """);
+            assertQuery(query + "WHERE a0.k IS NOT NULL AND a1.k IS NOT NULL AND a2.k IS NOT NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k0\tx0\tk1\tx1\tk2\tx2
+                            1\t1\t1\t1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullJoinNonEquiOverJoinSubQuery() throws Exception {
+        // Both joined rows of the sub-query come from one y row. The non-equi FULL JOIN matches only
+        // (1, 20) and must still return (1, 10) as an unmatched slave row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT)");
+            execute("CREATE TABLE y (a INT)");
+            execute("CREATE TABLE z (b INT, c INT)");
+            execute("INSERT INTO x VALUES (1)");
+            execute("INSERT INTO y VALUES (1)");
+            execute("INSERT INTO z VALUES (1, 10), (1, 20)");
+            final String expected = """
+                    a\tya\tzc
+                    1\t1\t20
+                    null\t1\t10
+                    """;
+            assertQuery("""
+                    SELECT x.a, s.ya, s.zc
+                    FROM x
+                    FULL JOIN (SELECT y.a ya, z.c zc FROM y JOIN z ON y.a = z.b) s ON s.zc > x.a + 15
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns(expected);
+            assertQuery("""
+                    SELECT x.a, s.ya, s.zc
+                    FROM x
+                    FULL JOIN (SELECT y.a ya, z.c zc FROM y CROSS JOIN z) s ON s.zc > x.a + 15
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testFullJoinNonEquiOverOuterJoinSubQuery() throws Exception {
+        // The sub-query NULL-extends rows on its master side: (null, 2) in both queries.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT)");
+            execute("CREATE TABLE y (a INT)");
+            execute("CREATE TABLE z (a INT)");
+            execute("INSERT INTO x VALUES (1), (5)");
+            execute("INSERT INTO y VALUES (1), (3)");
+            execute("INSERT INTO z VALUES (1), (2)");
+            assertQuery("""
+                    SELECT x.a, s.ya, s.za
+                    FROM x
+                    FULL JOIN (SELECT y.a ya, z.a za FROM y RIGHT JOIN z ON y.a = z.a) s ON s.za > x.a
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            a\tya\tza
+                            1\tnull\t2
+                            5\tnull\tnull
+                            null\t1\t1
+                            """);
+            assertQuery("""
+                    SELECT x.a, s.ya, s.za
+                    FROM x
+                    FULL JOIN (SELECT y.a ya, z.a za FROM y FULL JOIN z ON y.a = z.a) s ON s.za > x.a
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            a\tya\tza
+                            1\tnull\t2
+                            5\tnull\tnull
+                            null\t1\t1
+                            null\t3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullJoinNonEquiOverUnionSubQuery() throws Exception {
+        // UNION records have no row id
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT)");
+            execute("CREATE TABLE y (a INT)");
+            execute("CREATE TABLE z (a INT)");
+            execute("INSERT INTO x VALUES (1), (5)");
+            execute("INSERT INTO y VALUES (1)");
+            execute("INSERT INTO z VALUES (1), (2)");
+            assertQuery("""
+                    SELECT x.a, s.v
+                    FROM x
+                    FULL JOIN (SELECT a v FROM y UNION ALL SELECT a v FROM z) s ON s.v > x.a
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            a\tv
+                            1\t2
+                            5\tnull
+                            null\t1
+                            null\t1
+                            """);
+            assertQuery("""
+                    SELECT x.a, s.v
+                    FROM x
+                    FULL JOIN (SELECT a v FROM y UNION SELECT a v FROM z) s ON s.v > x.a
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            a\tv
+                            1\t2
+                            5\tnull
+                            null\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testFullJoinOnNameSharedWithLaterTable() throws Exception {
         // w exists in f1 and in the later f2. The ON clause of the FULL JOIN f1 sees only f0 and f1, so w
         // means f1.w. The optimiser must keep the CROSS JOIN f3 before the FULL JOIN f2: each unmatched f2
