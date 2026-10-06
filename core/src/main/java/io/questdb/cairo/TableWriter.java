@@ -5585,15 +5585,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         masterRef++;
     }
 
-    // Delta state travels only into WAL tables of a Delta build, and never through a soft link.
+    // Delta state requires a Delta-enabled WAL table without deduplication or soft links.
     private boolean checkAttachDelta(long timestamp, long partitionSize, boolean isSoftLink) {
         final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
-        if (deltaWriter == null || !tableToken.isWal() || isSoftLink) {
+        final boolean isDedupEnabled = isDeduplicationEnabled();
+        if (deltaWriter == null || !tableToken.isWal() || isSoftLink || isDedupEnabled) {
             LOG.error().$("cannot attach partition with delta [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp)
                     .$(", deltaWriter=").$(deltaWriter != null)
                     .$(", wal=").$(tableToken.isWal())
                     .$(", softLink=").$(isSoftLink)
+                    .$(", dedup=").$(isDedupEnabled)
                     .I$();
             return false;
         }
