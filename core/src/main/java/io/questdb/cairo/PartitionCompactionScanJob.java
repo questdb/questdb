@@ -44,6 +44,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -63,10 +64,9 @@ import static io.questdb.tasks.TableWriterTask.getCommandName;
  * the main directory plus every MOVE-TAIL split inside it - and dispatches the appropriate compaction entry point.
  * Non-WAL tables are out of scope - see {@code scanTable}.
  * <p>
- * A logical partition whose every folder has been idle for {@code cairo.partition.compaction.squash.idle.timeout} is
- * merged whole: one staging copy of all its live rows replaces its run of {@code _txn} entries with a single entry.
- * Otherwise each COMPOSITE folder idle for {@code cairo.partition.compaction.idle.timeout} is compacted on its own,
- * and plain folders are left alone.
+ * An idle, non-last logical partition folds cold adjacent pairs through ordinary writer-side squash, within the
+ * time budget. A large composite folder gets writer-side MOVE-TAIL before any whole-folder staging copy when a
+ * majority cold prefix can stay behind. Other idle composite folders use the snapshot REWRITE path.
  * <p>
  * A swap this job hands to a busy writer's command queue takes ownership of the staging directory the build filled.
  * An in-flight record suppresses any further work on the WHOLE logical partition while the writer instance that
@@ -106,6 +106,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // every table in one tick, on this job's single thread. Charging probes against a per-sweep budget
     // spreads that cost across sweeps; a partition memoized clean is never probed again until it changes.
     private static final int MAX_PROBE_PER_SWEEP = 10_000;
+    private static final int MAX_SQUASH_RESUMES = 1_024;
     private final long checkInterval;
     private final Clock clock;
     private final CairoConfiguration configuration;
@@ -128,6 +129,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final Path other = new Path();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Path path = new Path();
+    private final ObjList<CompositePartitionSwapCommand> pendingSquashes = new ObjList<>();
     private final Rnd rnd;
     private final Utf8StringSink sidecarName = new Utf8StringSink();
     private final FindVisitor sidecarVisitor = this::copyParquetPartitionSidecar;
@@ -194,6 +196,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         cleanParquetPartitions.clear();
         retiringCleanParquetPartitions.clear();
         inFlightSwaps.clear();
+        pendingSquashes.clear();
         geometry.close();
         other.close();
         parquetIndexBuilder = Misc.free(parquetIndexBuilder);
@@ -505,131 +508,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Builds one directory holding the live rows of a WHOLE logical partition - every folder in {@code [lo, hi)},
-     * in folder order and then piece order - off {@code reader}'s own snapshot, holding no writer. Folders do not
-     * overlap in time and pieces ascend by {@code tsLo}, so that order is timestamp order.
-     *
-     * @param folders  the source folders, {@link #LONGS_PER_SCANNED_FOLDER} longs each, as
-     *                 {@link #collectFolders} filled them
-     * @param liveRows the live rows the copy has to end up holding
-     * @return a command ready to publish
-     */
-    private CompositePartitionSwapCommand buildMergedLogicalPartition(
-            TableToken tableToken,
-            TableReader reader,
-            int lo,
-            int hi,
-            long logicalPartitionTimestamp,
-            LongList folders,
-            long liveRows
-    ) {
-        final TxReader txFile = reader.getTxFile();
-        final PartitionGeometry readerGeometry = reader.getGeometry();
-        final int timestampType = reader.getMetadata().getTimestampType();
-        final int partitionBy = reader.getPartitionedBy();
-        final ColumnVersionReader cvr = reader.getColumnVersionReader();
-        describeSwapFolders(folders, cvr);
-
-        setMergeStagingPath(
-                other,
-                tableToken,
-                timestampType,
-                partitionBy,
-                logicalPartitionTimestamp,
-                folders.getQuick(1),
-                folders.size() / LONGS_PER_SCANNED_FOLDER
-        );
-
-        final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
-        // Strictly before the build: ofMerge() resets the recorder, so arming it after the copy would lose
-        // the tops the build recorded.
-        command.ofMerge(tableToken, tableToken.getTableId(), logicalPartitionTimestamp, swapFolders, reader.getMetadataVersion(), liveRows);
-        final ColumnTopRecorder columnTops = command.getColumnTops();
-        Frame targetFrame = null;
-        boolean built = false;
-        try {
-            if (ff.exists(other.$())) {
-                // A build that never reached its swap.
-                ff.rmdir(other, false);
-            }
-            TableUtils.createDirsOrFail(ff, other, configuration.getMkDirMode());
-            targetFrame = frameFactory.openRW(other, logicalPartitionTimestamp, reader.getMetadata(), cvr, columnTops, 0);
-
-            final int tableRootLen = path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).size();
-            long copiedRows = 0;
-            try {
-                for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
-                    final long folderTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
-                    path.trimTo(tableRootLen);
-                    TableUtils.setPathForNativePartition(
-                            path,
-                            timestampType,
-                            partitionBy,
-                            folderTimestamp,
-                            txFile.getPartitionNameTxn(partitionIndex)
-                    );
-                    if (txFile.isPartitionComposite(partitionIndex)) {
-                        readerGeometry.resolve(partitionIndex);
-                        final int pieceCount = readerGeometry.getPieceCount(partitionIndex);
-                        // A composite folder's live rows stop short of its files, so it is opened at its
-                        // extent and its pieces appended one by one.
-                        try (Frame sourceFrame = frameFactory.openRO(
-                                path,
-                                folderTimestamp,
-                                reader.getMetadata(),
-                                cvr,
-                                readerGeometry.getE(partitionIndex)
-                        )) {
-                            for (int p = 0; p < pieceCount; p++) {
-                                final long rowCount = readerGeometry.getPieceRowCount(partitionIndex, p);
-                                if (rowCount == 0) {
-                                    continue;
-                                }
-                                final long rowOffset = readerGeometry.getPieceRowOffset(partitionIndex, p);
-                                FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, configuration.getCommitMode());
-                                copiedRows += rowCount;
-                            }
-                        }
-                    } else {
-                        final long rowCount = txFile.getPartitionSize(partitionIndex);
-                        if (rowCount == 0) {
-                            continue;
-                        }
-                        try (Frame sourceFrame = frameFactory.openRO(path, folderTimestamp, reader.getMetadata(), cvr, rowCount)) {
-                            FrameAlgebra.append(targetFrame, sourceFrame, 0, rowCount, -1L, configuration.getCommitMode());
-                        }
-                        copiedRows += rowCount;
-                    }
-                }
-            } finally {
-                path.trimTo(tableRootLen);
-            }
-            if (copiedRows != liveRows) {
-                // The row count the swap will publish has to be the one the copy holds. A composite folder
-                // whose pieces do not add up to its _txn size is a bug, not a state to swap in.
-                throw CairoException.critical(0)
-                        .put("merged logical partition holds a different row count than _txn states [table=")
-                        .put(tableToken.getTableName())
-                        .put(", copiedRows=").put(copiedRows)
-                        .put(", liveRows=").put(liveRows)
-                        .put(']');
-            }
-            built = true;
-        } finally {
-            Misc.free(targetFrame);
-            if (!built) {
-                // Best-effort: the swap only cleans up a directory it was actually handed via a command,
-                // so a partial build has to remove its own.
-                if (ff.exists(other.$())) {
-                    ff.rmdir(other, false);
-                }
-            }
-        }
-
-        return command;
-    }
-
-    /**
      * The table's root directory as a {@link String}, the shape {@link PartitionGeometry#of} needs.
      */
     private String buildTableRoot(TableToken tableToken) {
@@ -803,57 +681,52 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         );
     }
 
-    /**
-     * Builds the whole logical partition's merged copy off a {@link TableReader} snapshot
-     * ({@link #buildMergedLogicalPartition}), then publishes the {@link CompositePartitionSwapCommand} that
-     * replaces its run of {@code _txn} entries with one.
-     */
-    private void dispatchMerge(TableToken tableToken, long logicalPartitionTimestamp, long expectedState) {
-        final CompositePartitionSwapCommand command;
+    /** Dispatches writer-owned MOVE-TAIL or budgeted adjacent-pair SQUASH without staging a whole-day copy. */
+    private void dispatchMaintenance(TableToken tableToken, long logicalPartitionTimestamp, long partitionTimestamp, long expectedState, boolean isSquash, boolean isSquashResume) {
+        final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
         final TimestampDriver timestampDriver;
-        final long firstNameTxn;
-        final int folderCount;
+        final long srcNameTxn;
+        final long generation;
         try (TableReader reader = engine.getReader(tableToken)) {
+            if (readerLogicalPartitionState(reader, logicalPartitionTimestamp) != expectedState) {
+                return;
+            }
             final TxReader txFile = reader.getTxFile();
-            final int lo = findLogicalPartitionRunStart(txFile, logicalPartitionTimestamp);
+            final int lo = isSquash ? findLogicalPartitionRunStart(txFile, logicalPartitionTimestamp) : txFile.getPartitionIndex(partitionTimestamp);
             if (lo < 0) {
                 return;
             }
-            final int hi = findLogicalPartitionRunEnd(txFile, lo, logicalPartitionTimestamp);
-            firstNameTxn = txFile.getPartitionNameTxn(lo);
-            folderCount = hi - lo;
+            final int hi = isSquash ? findLogicalPartitionRunEnd(txFile, lo, logicalPartitionTimestamp) : lo + 1;
+            if (isSquash && (hi == txFile.getPartitionCount() || hi - lo <= 1)) {
+                return;
+            }
             collectFolders(txFile, reader.getGeometry(), lo, hi);
-            if (logicalPartitionState(folders) != expectedState) {
-                // The logical partition moved between the scan's _txn snapshot and this reader's.
-                return;
+            srcNameTxn = txFile.getPartitionNameTxn(lo);
+            generation = isSquash ? logicalPartitionState(folders) : folderGeneration(txFile, reader.getGeometry(), lo);
+            describeSwapFolders(folders, reader.getColumnVersionReader());
+            command.ofMaintenance(tableToken, tableToken.getTableId(), partitionTimestamp, swapFolders, reader.getMetadataVersion(), isSquash);
+            // A column-only UPDATE can land between the scan's proof and this reader without changing
+            // the lightweight logical-state hash. Authorize resume only against this exact descriptor.
+            boolean isResumeVerified = false;
+            if (isSquashResume) {
+                for (int i = 0; i < pendingSquashes.size(); i++) {
+                    final CompositePartitionSwapCommand pending = pendingSquashes.getQuick(i);
+                    if (pending.getTableId() == tableToken.getTableId() && pending.getPartitionTimestamp() == logicalPartitionTimestamp
+                            && pending.isMaintenanceCompleted() && pending.getExpectedMetadataVersion() == reader.getMetadataVersion()
+                            && pending.getRemainingFolders().equals(swapFolders)) {
+                        isResumeVerified = true;
+                        break;
+                    }
+                }
             }
-            long liveRows = 0;
-            for (int i = lo; i < hi; i++) {
-                liveRows += txFile.getPartitionSize(i);
-            }
-            if (liveRows == 0) {
-                return;
-            }
+            command.setSquashResume(isResumeVerified);
             timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
-            LOG.info().$("compaction sweep is merging a logical partition [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, logicalPartitionTimestamp)
-                    .$(", folders=").$(hi - lo)
-                    .$(", liveRows=").$(liveRows)
-                    .I$();
-            command = buildMergedLogicalPartition(tableToken, reader, lo, hi, logicalPartitionTimestamp, folders, liveRows);
         }
-        // The staging directory is named after the run's first name txn and its folder count, so those are what
-        // the in-flight record has to outlive - see prunePendingSwaps.
-        publishCommand(
-                tableToken,
-                logicalPartitionTimestamp,
-                IN_FLIGHT_WHOLE_RUN_TARGET,
-                firstNameTxn,
-                folderCount,
-                command,
-                "logical partition MERGE",
-                timestampDriver
-        );
+        if (isSquash) {
+            rememberSquash(command);
+        }
+        publishCommand(tableToken, logicalPartitionTimestamp, isSquash ? IN_FLIGHT_WHOLE_RUN_TARGET : partitionTimestamp,
+                srcNameTxn, generation, command, isSquash ? "logical partition SQUASH" : "composite partition MOVE-TAIL", timestampDriver);
     }
 
     /**
@@ -1113,9 +986,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         if (targetTimestamp == IN_FLIGHT_WHOLE_RUN_TARGET) {
             final long logicalPartitionTimestamp = inFlightSwaps.getQuick(offset + IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET);
             final int lo = findLogicalPartitionRunStart(txReader, logicalPartitionTimestamp);
-            return lo > -1
-                    && txReader.getPartitionNameTxn(lo) == targetNameTxn
-                    && findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp) - lo == targetGeneration;
+            if (lo < 0 || txReader.getPartitionNameTxn(lo) != targetNameTxn) {
+                return false;
+            }
+            openGeometry(tableToken, timestampType, partitionBy);
+            collectFolders(txReader, geometry, lo, findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp));
+            return logicalPartitionState(folders) == targetGeneration;
         }
         final int partitionIndex = txReader.getPartitionIndex(targetTimestamp);
         if (partitionIndex < 0 || txReader.getPartitionNameTxn(partitionIndex) != targetNameTxn) {
@@ -1199,6 +1075,38 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * directory itself is not a liveness signal: a terminal path may leave it behind, while a live command must
      * retain ownership even if the directory temporarily disappears.
      */
+    private boolean isSquashResuming(TableToken tableToken, long logicalPartitionTimestamp) {
+        for (int i = 0; i < pendingSquashes.size(); i++) {
+            final CompositePartitionSwapCommand command = pendingSquashes.getQuick(i);
+            if (command.getTableId() != tableToken.getTableId() || command.getPartitionTimestamp() != logicalPartitionTimestamp) {
+                continue;
+            }
+            if (!command.isMaintenanceCompleted()) {
+                return false;
+            }
+            final LongList remaining = command.getRemainingFolders();
+            boolean isCurrent = remaining.size() >= 2 * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+            if (isCurrent) {
+                try (TableReader reader = engine.getReader(tableToken)) {
+                    final TxReader tx = reader.getTxFile();
+                    final int lo = findLogicalPartitionRunStart(tx, logicalPartitionTimestamp);
+                    isCurrent = lo >= 0 && reader.getMetadataVersion() == command.getExpectedMetadataVersion();
+                    if (isCurrent) {
+                        final int hi = findLogicalPartitionRunEnd(tx, lo, logicalPartitionTimestamp);
+                        collectFolders(tx, reader.getGeometry(), lo, hi);
+                        describeSwapFolders(folders, reader.getColumnVersionReader());
+                        isCurrent = swapFolders.equals(remaining);
+                    }
+                }
+            }
+            if (!isCurrent) {
+                pendingSquashes.remove(i);
+            }
+            return isCurrent;
+        }
+        return false;
+    }
+
     private boolean isSwapPending(TableToken tableToken, long logicalPartitionTimestamp) {
         final int recordIndex = findPendingSwap(tableToken.getTableId(), logicalPartitionTimestamp);
         if (recordIndex < 0) {
@@ -1244,6 +1152,11 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             liveTableIds.add(tableTokenBucket.get(i).getTableId());
         }
+        for (int i = pendingSquashes.size() - 1; i >= 0; i--) {
+            if (!liveTableIds.contains(pendingSquashes.getQuick(i).getTableId())) {
+                pendingSquashes.remove(i);
+            }
+        }
         for (int recordIndex = inFlightSwaps.size() / IN_FLIGHT_STRIDE - 1; recordIndex >= 0; recordIndex--) {
             final int offset = recordIndex * IN_FLIGHT_STRIDE;
             if (!liveTableIds.contains((int) inFlightSwaps.getQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET))) {
@@ -1270,7 +1183,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if (inFlightSwaps.getQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET) != tableToken.getTableId()) {
                 break;
             }
-            if (liveWriterId < 0 || inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) != liveWriterId) {
+            final long logicalTimestamp = inFlightSwaps.getQuick(offset + IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET);
+            boolean hasCompletedSquash = false;
+            for (int i = 0; i < pendingSquashes.size(); i++) {
+                final CompositePartitionSwapCommand command = pendingSquashes.getQuick(i);
+                if (command.getTableId() == tableToken.getTableId() && command.getPartitionTimestamp() == logicalTimestamp
+                        && command.isMaintenanceCompleted()) {
+                    hasCompletedSquash = true;
+                    break;
+                }
+            }
+            if (hasCompletedSquash || liveWriterId < 0 || inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) != liveWriterId) {
                 removePendingSwap(recordIndex);
                 continue;
             }
@@ -1382,6 +1305,20 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         inFlightSwaps.setQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET, writerId);
     }
 
+    private void rememberSquash(CompositePartitionSwapCommand command) {
+        for (int i = 0; i < pendingSquashes.size(); i++) {
+            final CompositePartitionSwapCommand pending = pendingSquashes.getQuick(i);
+            if (pending.getTableId() == command.getTableId() && pending.getPartitionTimestamp() == command.getPartitionTimestamp()) {
+                pendingSquashes.setQuick(i, command);
+                return;
+            }
+        }
+        if (pendingSquashes.size() >= MAX_SQUASH_RESUMES) {
+            pendingSquashes.remove(0);
+        }
+        pendingSquashes.add(command);
+    }
+
     private void removePendingSwap(int recordIndex) {
         inFlightSwaps.removeIndexBlock(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
     }
@@ -1424,6 +1361,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         // Whether the whole logical partition can be merged into one folder. It needs at least two folders -
         // a lone folder has no split to fold in and takes the single-folder path below - and every one of
         // them idle past the squash threshold.
+        final boolean isSquashResume = isSquashResuming(tableToken, logicalPartitionTimestamp);
         boolean isMergeable = hi - lo > 1
                 // Never the ACTIVE logical partition: its files carry the WAL lag rows past the live ones,
                 // which no piece accounts for and a copy built off a reader snapshot would drop. The
@@ -1434,8 +1372,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     && !txReader.isPartitionRemote(partitionIndex)
                     // A parquet folder is not rows this native copy can read; it is compacted on its own.
                     && !txReader.isPartitionParquet(partitionIndex)
-                    && folderLastWriteMicros(tableToken, metadata, timestampType, partitionBy, partitionIndex)
-                    <= nowMicros - squashIdleTimeoutMicros;
+                    && (isSquashResume || folderLastWriteMicros(tableToken, metadata, timestampType, partitionBy, partitionIndex)
+                    <= nowMicros - idleTimeoutMicros);
         }
 
         if (isMergeable) {
@@ -1451,7 +1389,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
             openGeometry(tableToken, timestampType, partitionBy);
             collectFolders(txReader, geometry, lo, hi);
-            dispatchMerge(tableToken, logicalPartitionTimestamp, logicalPartitionState(folders));
+            dispatchMaintenance(tableToken, logicalPartitionTimestamp, logicalPartitionTimestamp, logicalPartitionState(folders), true, isSquashResume);
             return true;
         }
 
@@ -1486,6 +1424,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     continue;
                 }
                 final boolean isMakePlain = PartitionCompactionPolicy.isMakePlainShape(txReader, geometry, partitionIndex);
+                final boolean isMoveTail = !isMakePlain && PartitionCompactionPolicy.moveTailCut(
+                        configuration, txReader, geometry, partitionIndex, TableUtils.estimateAvgRecordSize(metadata), Long.MAX_VALUE) > 0;
                 final long estimatedIoBytes = isMakePlain
                         ? 0
                         : estimateCompactionIoBytes(metadata, txReader.getPartitionSize(partitionIndex));
@@ -1500,6 +1440,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     // to defer the trim - for a reader or a checkpoint - and then stops ingesting, so
                     // its own per-commit retry never comes round again.
                     dispatchMakePlain(tableToken, logicalPartitionTimestamp, partitionTimestamp, state);
+                } else if (isMoveTail) {
+                    dispatchMaintenance(tableToken, logicalPartitionTimestamp, partitionTimestamp, state, false, false);
                 } else {
                     dispatchComposite(tableToken, logicalPartitionTimestamp, partitionTimestamp, state);
                 }
@@ -1607,26 +1549,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 lo = hi;
             }
         }
-    }
-
-    /**
-     * Writes a logical partition merge's staging directory path into {@code sink}: {@code
-     * <logicalPartition>.<firstFolderNameTxn>.merging<folderCount>}. A marker of its own, because the writer's
-     * startup purge tests a merge's staging directory for liveness against the whole run of folders, not against
-     * one folder's generation - see {@code TableWriter.removeMergingPartitionDirIfStale}.
-     */
-    private void setMergeStagingPath(
-            Path sink,
-            TableToken tableToken,
-            int timestampType,
-            int partitionBy,
-            long logicalPartitionTimestamp,
-            long firstFolderNameTxn,
-            int folderCount
-    ) {
-        sink.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-        TableUtils.setPathForNativePartition(sink, timestampType, partitionBy, logicalPartitionTimestamp, firstFolderNameTxn);
-        sink.put(TableUtils.MERGING_DIR_MARKER).put(folderCount);
     }
 
     /**

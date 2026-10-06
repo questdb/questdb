@@ -751,7 +751,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getO3LastPartitionMaxSplits() {
-        return 15;
+        return 20;
+    }
+
+    @Override
+    public int getO3PartitionMergeAppendFrameCacheSize() {
+        return 2;
     }
 
     @Override

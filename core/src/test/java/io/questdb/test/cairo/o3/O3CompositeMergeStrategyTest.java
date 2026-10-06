@@ -46,6 +46,100 @@ public class O3CompositeMergeStrategyTest {
     private static final long NO_APPEND = Long.MAX_VALUE;
 
     @Test
+    public void testForecastCountsAppendBeforeOtherWritesAndCoalescesKeeps() {
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 99, 0, 100, -1, Numbers.LONG_NULL);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 100, 100, -1, Numbers.LONG_NULL);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 300, 399, 200, 100, -1, Numbers.LONG_NULL);
+        final O3CompositeMergeStrategy.Plan plan = new O3CompositeMergeStrategy.Plan();
+        final O3CompositeMergeStrategy.Action keep0 = new O3CompositeMergeStrategy.Action();
+        keep0.setKeep(0);
+        final O3CompositeMergeStrategy.Action keep1 = new O3CompositeMergeStrategy.Action();
+        keep1.setKeep(1);
+        final O3CompositeMergeStrategy.Action gap = new O3CompositeMergeStrategy.Action();
+        gap.setNewPiece(0, 9);
+        final O3CompositeMergeStrategy.Action append = new O3CompositeMergeStrategy.Action();
+        append.setAppend(2, 10, 19);
+        plan.actions.add(keep0);
+        plan.actions.add(keep1);
+        plan.actions.add(gap);
+        plan.actions.add(append);
+        plan.appendActionIndex = 3;
+        O3CompositeMergeStrategy.forecast(bounds, plan, 300);
+        Assert.assertEquals(320, plan.projectedLiveRows);
+        Assert.assertEquals(0, plan.projectedDeadRows);
+        Assert.assertEquals(3, plan.projectedPieceCount);
+    }
+
+    @Test
+    public void testForecastMergeDedupAndNoop() {
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 99, 20, 100, -1, Numbers.LONG_NULL);
+        final O3CompositeMergeStrategy.Plan plan = new O3CompositeMergeStrategy.Plan();
+        final O3CompositeMergeStrategy.Action merge = new O3CompositeMergeStrategy.Action();
+        merge.setMerge(0, 0, 9);
+        plan.actions.add(merge);
+        merge.projectedRows = 103;
+        O3CompositeMergeStrategy.forecast(bounds, plan, 120);
+        Assert.assertEquals(103, plan.projectedLiveRows);
+        Assert.assertEquals(120, plan.projectedDeadRows);
+        merge.isProjectedNoop = true;
+        O3CompositeMergeStrategy.forecast(bounds, plan, 120);
+        Assert.assertEquals(100, plan.projectedLiveRows);
+        Assert.assertEquals(20, plan.projectedDeadRows);
+        Assert.assertEquals(1, plan.projectedPieceCount);
+    }
+
+    @Test
+    public void testMoveTailRequiresDeadSpaceFloorAndStrictFragmentation() {
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_000, 99));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 101, 1, 100));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 101, 1, 101));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_001, 99));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(1_000, 100, 1_001, 100));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(0, 101, 1_001, 100));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE / 10, 1, 0));
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailTriggered(Long.MAX_VALUE, Long.MAX_VALUE / 10 + 1, 1, 0));
+    }
+
+    @Test
+    public void testMoveTailRelativeGuardIncludesIncomingRowsWithoutOverflow() {
+        Assert.assertTrue(O3CompositeMergeStrategy.isMoveTailEconomical(201, 50, 50));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailEconomical(200, 50, 50));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailEconomical(201, 50, 51));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailEconomical(201, 0, 1));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailEconomical(Long.MAX_VALUE, Long.MAX_VALUE, 1));
+        Assert.assertFalse(O3CompositeMergeStrategy.isMoveTailEconomical(Long.MAX_VALUE, 1, Long.MAX_VALUE));
+    }
+
+    @Test
+    public void testMoveTailCutAllowsFragmentedFreshPrefixAndLookahead() {
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 0, 99, 400, 400, 10, 10);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 400, 10, 10);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 200, 299, 900, 100, 10, 10);
+        final O3CompositeMergeStrategy.Plan plan = new O3CompositeMergeStrategy.Plan();
+        for (int p = 0; p < 2; p++) {
+            final O3CompositeMergeStrategy.Action keep = new O3CompositeMergeStrategy.Action();
+            keep.setKeep(p);
+            plan.actions.add(keep);
+        }
+        final O3CompositeMergeStrategy.Action merge = new O3CompositeMergeStrategy.Action();
+        merge.setMerge(2, 0, 9);
+        plan.actions.add(merge);
+        plan.incomingMinTimestamp = 250;
+        O3CompositeMergeStrategy.forecast(bounds, plan, 1_000);
+        Assert.assertEquals(910, plan.projectedLiveRows);
+        Assert.assertEquals(200, plan.projectedDeadRows);
+        Assert.assertEquals(2, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 100));
+        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, 100, 100));
+        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 200));
+        // A tie moves the cut left; the remaining prefix cannot dominate the larger tail.
+        bounds.setQuick(O3CompositeMergeStrategy.LONGS_PER_BOUND + 1, 200);
+        Assert.assertEquals(0, O3CompositeMergeStrategy.moveTailCut(bounds, plan, Long.MAX_VALUE, 100));
+    }
+
+    @Test
     public void testApplyCutDeclinesWhereItWouldSaveNothing() {
         // A cut at or below the floor, above the last row, or on a piece whose data is unbounded, leaves
         // the list untouched - the caller applies cuts blind and reads the answer off the list.

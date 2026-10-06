@@ -600,7 +600,15 @@ public interface CairoConfiguration {
         return 1.5;
     }
 
+    /** @deprecated Use {@link #getO3PartitionMaxSplits()}. */
+    @Deprecated
     int getO3LastPartitionMaxSplits();
+
+    /**
+     * How many partitions a writer keeps merge-append frames open for across commits - see
+     * {@link io.questdb.cairo.frm.file.CompositeFrameCache}. 0 disables the cache.
+     */
+    int getO3PartitionMergeAppendFrameCacheSize();
 
     /**
      * Default commit lag in microseconds for new tables. This value
@@ -612,7 +620,13 @@ public interface CairoConfiguration {
 
     int getO3MemMaxPages();
 
+    /** @deprecated Mid partitions use the same cap as the last logical partition. */
+    @Deprecated
     int getO3MidPartitionMaxSplits();
+
+    default int getO3PartitionMaxSplits() {
+        return getO3LastPartitionMaxSplits();
+    }
 
     long getO3MinLag();
 
@@ -697,6 +711,10 @@ public interface CairoConfiguration {
     int getPartitionCompactionTableDeadThresholdPercent();
 
     long getPartitionCompactionTableDeadTrigger();
+
+    default double getPartitionCompactionTablePressureDeadRatio() {
+        return 0.5;
+    }
 
     long getPartitionCompactionTimeBudgetMs();
 

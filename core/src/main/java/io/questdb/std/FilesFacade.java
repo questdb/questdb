@@ -34,6 +34,15 @@ public interface FilesFacade {
 
     boolean allocate(long fd, long size);
 
+    /**
+     * Grows the file to {@code size} bytes, allocating only from {@code allocatedSize}, a length the caller knows the
+     * file already has - see {@link Files#allocate(long, long, long)}. A facade that does not implement it allocates
+     * the whole file, which is what {@link #allocate(long, long)} promises and more.
+     */
+    default boolean allocate(long fd, long allocatedSize, long size) {
+        return allocate(fd, size);
+    }
+
     boolean allowMixedIO(CharSequence root);
 
     long append(long fd, long buf, long len);

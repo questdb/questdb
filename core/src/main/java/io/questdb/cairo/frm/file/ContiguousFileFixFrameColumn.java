@@ -32,6 +32,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -46,15 +47,25 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     protected final FilesFacade ff;
     private final int fileOpts;
     private final boolean mixedIOFlag;
+    private final ColumnWriteBuffer writeBuffer = new ColumnWriteBuffer();
     // Introduce a flag to avoid double close, which will lead to very serious consequences.
     protected boolean closed;
+    // The least length this column knows its file to have. Every write checks its end against this number instead of
+    // asking the file system, and a reserve() ahead of a plan makes the whole plan's writes pass the check without a
+    // single fallocate or fstat. Learnt from the file once per open, see isAllocatedBytesKnown.
+    private long allocatedBytes;
     private int columnIndex;
     private long columnTop;
     private int columnType;
     private long fd = -1;
+    // False until the first write of this open asked the file for its length; allocatedBytes means nothing before.
+    private boolean isAllocatedBytesKnown;
     private boolean isReadOnly;
     // See setReadWindow: the top getColumnTop() reports is capped here, while columnTop stays the file's own.
     private long logicalRowHi = Long.MAX_VALUE;
+    // One mapping of the file from its byte 0. Read-only columns map the rows they are asked for; writable ones map
+    // everything allocated, and grow the same mapping as the file grows, so the writes of a plan - and of the plans
+    // after it, while the frame is cached - share one mapping rather than mapping and unmapping each its own slice.
     private long mapAddr;
     private long mapRowHi;
     private long mapSize;
@@ -80,6 +91,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             throw new UnsupportedOperationException();
         }
 
+        // The source's mapping is asked for by logical row, top included.
+        final long sourceRowHi = sourceHi;
         // Each side offsets by its OWN column top: a column whose data starts at a top does not hold the rows below it.
         sourceLo -= sourceColumn.getColumnTop();
         sourceHi -= sourceColumn.getColumnTop();
@@ -96,64 +109,42 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         final long size = (sourceHi - sourceLo) << shl;
         final long srcOffset = sourceLo << shl;
         final long dstOffset = appendOffsetRowCount << shl;
-        TableUtils.allocateDiskSpaceToPage(ff, fd, dstOffset + size);
 
-        // Only a file source has an fd to copy from, so only it can take the kernel's fd-to-fd path and
-        // skip both mappings.
-        if (sourceStorageType == COLUMN_CONTIGUOUS_FILE && mixedIOFlag) {
-            final long sourceFd = sourceColumn.getPrimaryFd();
-            if (ff.copyData(sourceFd, fd, srcOffset, dstOffset, size) != size) {
-                throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
-                        .put(", destOffset=").put(dstOffset)
-                        .put(", size=").put(size)
-                        .put(", fileSize=").put(ff.length(fd))
-                        .put(", srcFd=").put(sourceFd)
-                        .put(", srcOffset=").put(srcOffset)
-                        .put(", srcFileSize=").put(ff.length(sourceFd))
-                        .put(", columnIndex=").put(columnIndex)
-                        .put(", dstColumnTop=").put(columnTop)
-                        .put(", srcColumnTop=").put(sourceColumn.getColumnTop())
-                        .put(']');
+        if (mixedIOFlag) {
+            // Positioned writes, which grow the file as they go: no allocation and no mapping of the target. Only a
+            // file source has an fd to copy from, so only it takes the kernel's fd-to-fd path.
+            if (sourceStorageType == COLUMN_CONTIGUOUS_FILE) {
+                copyFromFile(sourceColumn, srcOffset, dstOffset, size);
+            } else if (sourceColumn.isTimestampIndex()) {
+                writeFromTimestampIndex(sourceColumn.getContiguousDataAddr(sourceHi), sourceLo, sourceHi, dstOffset);
+            } else {
+                ColumnWriteBuffer.write(ff, fd, sourceColumn.getContiguousDataAddr(sourceHi) + srcOffset, size, dstOffset);
             }
+            noteWritten(dstOffset + size);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsync(fd);
             }
             return;
         }
 
-        // A file source hands its rows over as a mapping of its own and has it released afterwards; a
-        // memory source is already addressable, so it maps nothing. Past that the copy is the same one.
-        final boolean isSourceMapped = sourceStorageType == COLUMN_CONTIGUOUS_FILE;
-        long srcAddress = 0;
-        long dstAddress = 0;
-        try {
-            if (isSourceMapped) {
-                srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceColumn.getPrimaryFd(), srcOffset, size, false, MEMORY_TAG);
-            }
-            dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, dstOffset, size, true, MEMORY_TAG);
+        // Either source hands its rows over as an address of its row 0: a memory source already is one, and a file
+        // source maps itself - once for the whole extent when its frame keeps it open, so a plan does not map it per
+        // action.
+        final long dstAddress = mapWritable(dstOffset + size) + dstOffset;
+        if (sourceColumn.isTimestampIndex()) {
+            // The designated timestamp of an O3 frame arrives as the 16-bytes-per-row sorted INDEX
+            // rather than as a column, so its rows are de-interleaved out of the index instead of
+            // copied.
+            Vect.copyFromTimestampIndex(sourceColumn.getContiguousDataAddr(sourceHi), sourceLo, sourceHi - 1, dstAddress);
+        } else {
+            final long srcAddress = sourceStorageType == COLUMN_CONTIGUOUS_FILE
+                    ? sourceColumn.getContiguousDataAddr(sourceRowHi)
+                    : sourceColumn.getContiguousDataAddr(sourceHi);
+            Vect.memcpy(dstAddress, srcAddress + srcOffset, size);
+        }
 
-            if (sourceColumn.isTimestampIndex()) {
-                // The designated timestamp of an O3 frame arrives as the 16-bytes-per-row sorted INDEX
-                // rather than as a column, so its rows are de-interleaved out of the index instead of
-                // copied.
-                Vect.copyFromTimestampIndex(sourceColumn.getContiguousDataAddr(sourceHi), sourceLo, sourceHi - 1, dstAddress);
-            } else {
-                if (!isSourceMapped) {
-                    srcAddress = sourceColumn.getContiguousDataAddr(sourceHi) + srcOffset;
-                }
-                Vect.memcpy(dstAddress, srcAddress, size);
-            }
-
-            if (commitMode != CommitMode.NOSYNC) {
-                TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
-            }
-        } finally {
-            if (isSourceMapped && srcAddress != 0) {
-                TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, srcOffset, size, MEMORY_TAG);
-            }
-            if (dstAddress != 0) {
-                TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, dstOffset, size, MEMORY_TAG);
-            }
+        if (commitMode != CommitMode.NOSYNC) {
+            TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
         }
     }
 
@@ -180,7 +171,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
 
         final long size = mergeIndexRows << shl;
-        TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
 
         // The shuffle picks rows by the ABSOLUTE row id the merge index carries, so each source is
         // addressed from ITS row 0 and the index does the rest. The designated timestamp reads neither
@@ -196,10 +186,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                   ? sourceColumn1.getContiguousDataAddr(source1Hi)
                   : rowZeroAddr(sourceColumn1, source1Lo, source1Hi);
         final long src2Address = isTimestamp ? 0 : rowZeroAddr(sourceColumn2, source2Lo, source2Hi);
-        long dstAddress = 0;
+        final long dstAddress = mapWritable((appendOffsetRowCount << shl) + size) + (appendOffsetRowCount << shl);
         long nullValueAddress = 0;
         try {
-            dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
             if (isTimestamp) {
                 Vect.oooCopyIndex(mergeIndexAddr, mergeIndexRows, dstAddress);
             } else if (readsBelowTop) {
@@ -226,9 +215,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         } finally {
             if (nullValueAddress != 0) {
                 Unsafe.free(nullValueAddress, 1L << shl, MemoryTag.NATIVE_O3);
-            }
-            if (dstAddress != 0) {
-                TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
             }
         }
     }
@@ -292,15 +278,10 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         assert sourceColumnTop >= 0;
 
         if (sourceColumnTop > 0) {
-            TableUtils.allocateDiskSpaceToPage(ff, fd, (rowCount + sourceColumnTop) << shl);
-            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, rowCount << shl, sourceColumnTop << shl, true, MEMORY_TAG);
-            try {
-                TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);
-                if (commitMode != CommitMode.NOSYNC) {
-                    TableUtils.msync(ff, mappedAddress, sourceColumnTop << shl, commitMode == CommitMode.ASYNC);
-                }
-            } finally {
-                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, rowCount << shl, sourceColumnTop << shl, MEMORY_TAG);
+            final long mappedAddress = mapWritable((rowCount + sourceColumnTop) << shl) + (rowCount << shl);
+            TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);
+            if (commitMode != CommitMode.NOSYNC) {
+                TableUtils.msync(ff, mappedAddress, sourceColumnTop << shl, commitMode == CommitMode.ASYNC);
             }
         }
     }
@@ -317,6 +298,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                 ff.close(fd);
                 fd = -1;
             }
+            writeBuffer.close();
             closed = true;
 
             if (recycleBin != null && !recycleBin.isClosed()) {
@@ -377,12 +359,13 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
         try {
             of(columnType, columnTop, columnIndex);
+            // Set whether or not there is a file to open: a pooled column must not carry its previous owner's mode.
+            this.isReadOnly = true;
 
             if (!isEmpty) {
                 plen = partitionPath.size();
                 dFile(partitionPath, columnName, columnTxn);
                 this.fd = TableUtils.openRO(ff, partitionPath.$(), LOG);
-                this.isReadOnly = true;
             }
         } catch (Throwable e) {
             close();
@@ -397,6 +380,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     public void ofRW(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
         assert fd == -1;
         int plen = partitionPath.size();
+        allocatedBytes = 0;
+        isAllocatedBytesKnown = false;
 
         try {
             // Negative col top means column does not exist in the partition.
@@ -416,6 +401,19 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
+    public void reserve(long rowLo, long rowHi, long dataBytes, boolean isMerging) {
+        if (mixedIOFlag && !isMerging) {
+            // Every write is a positioned append, which grows the file itself and maps nothing.
+            return;
+        }
+        // Fixed width: the rows alone say how long the file gets, whatever is written into them.
+        final long rows = rowHi - columnTop;
+        if (rows > 0) {
+            mapWritable(rows << shl);
+        }
+    }
+
+    @Override
     public void setReadWindow(long logicalRowHi, long mapRowHi) {
         this.logicalRowHi = logicalRowHi;
         this.mapRowHi = mapRowHi;
@@ -424,6 +422,88 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
+    }
+
+    /**
+     * Writable columns only. Makes the file at least {@code size} bytes long and the column's one mapping cover all
+     * of it, and returns the address of the file's byte 0. A no-op when a previous call - a {@link #reserve} ahead of
+     * the plan, typically - already got that far; otherwise one fallocate and one map or remap, which grows the same
+     * mapping instead of adding another. The mapping can move, so an address taken before a call is stale after it.
+     */
+    protected long mapWritable(long size) {
+        assert !isReadOnly;
+        ensureAllocated(size);
+        if (mapSize < allocatedBytes) {
+            mapAddr = mapAddr == 0
+                    ? TableUtils.mapRWNoAlloc(ff, fd, allocatedBytes, 0, MEMORY_TAG)
+                    : TableUtils.mremap(ff, fd, mapAddr, mapSize, allocatedBytes, Files.MAP_RW, MEMORY_TAG);
+            mapSize = allocatedBytes;
+        }
+        return mapAddr;
+    }
+
+    private void copyFromFile(FrameColumn sourceColumn, long srcOffset, long dstOffset, long size) {
+        final long sourceFd = sourceColumn.getPrimaryFd();
+        if (ff.copyData(sourceFd, fd, srcOffset, dstOffset, size) != size) {
+            throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
+                    .put(", destOffset=").put(dstOffset)
+                    .put(", size=").put(size)
+                    .put(", fileSize=").put(ff.length(fd))
+                    .put(", srcFd=").put(sourceFd)
+                    .put(", srcOffset=").put(srcOffset)
+                    .put(", srcFileSize=").put(ff.length(sourceFd))
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(", dstColumnTop=").put(columnTop)
+                    .put(", srcColumnTop=").put(sourceColumn.getColumnTop())
+                    .put(']');
+        }
+    }
+
+    /**
+     * Makes the file at least {@code size} bytes long. A no-op when a previous call already grew it that far: the file
+     * only ever grows, and only through this column, so the length it reached is the length it still has. The first
+     * call of an open asks the file its length, so a file already long enough is not allocated again, and every call
+     * after allocates only past that length.
+     */
+    private void ensureAllocated(long size) {
+        if (size > allocatedBytes) {
+            if (!isAllocatedBytesKnown) {
+                // Positioned writes may have grown the file past what was asked for so far.
+                allocatedBytes = Math.max(allocatedBytes, ff.length(fd));
+                isAllocatedBytesKnown = true;
+                if (size <= allocatedBytes) {
+                    return;
+                }
+            }
+            size = Files.ceilPageSize(size);
+            // Only the growth: the file already holds allocatedBytes, and allocating from 0 would cost every extent
+            // the file has, not just the new ones.
+            if (!ff.allocate(fd, allocatedBytes, size)) {
+                throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+            }
+            allocatedBytes = size;
+        }
+    }
+
+    /**
+     * A positioned write grows the file to its own end, so the file is at least that long now.
+     */
+    private void noteWritten(long fileOffsetHi) {
+        allocatedBytes = Math.max(allocatedBytes, fileOffsetHi);
+    }
+
+    /**
+     * De-interleaves the timestamps of rows {@code [lo, hi)} out of an O3 sort index into the write buffer and writes
+     * them at {@code dstOffset}, a buffer's worth at a time.
+     */
+    private void writeFromTimestampIndex(long indexAddr, long lo, long hi, long dstOffset) {
+        final long rowsPerChunk = ColumnWriteBuffer.MAX_SIZE >> shl;
+        final long buffer = writeBuffer.reserve((hi - lo) << shl);
+        for (long chunkLo = lo; chunkLo < hi; chunkLo += rowsPerChunk) {
+            final long chunkHi = Math.min(chunkLo + rowsPerChunk, hi);
+            Vect.copyFromTimestampIndex(indexAddr, chunkLo, chunkHi - 1, buffer);
+            ColumnWriteBuffer.write(ff, fd, buffer, (chunkHi - chunkLo) << shl, dstOffset + ((chunkLo - lo) << shl));
+        }
     }
 
     private void mapAllRows(long rowHi) {
@@ -438,15 +518,13 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             return;
         }
 
-        // Grow. A kept-open column serves one piece after another, and a later piece can reach higher than
-        // the first did. The file only grows at its tail and every caller takes the address afresh after this
-        // call, so the old mapping can simply go.
-        if (mapAddr != 0) {
-            ff.munmap(mapAddr, mapSize, MEMORY_TAG);
-            mapAddr = 0;
-        }
+        // Grow. A kept-open column serves one piece after another, and a later piece - or the next commit's plan,
+        // while the frame is cached - can reach higher than the first did. The file only grows at its tail and every
+        // caller takes the address afresh after this call, so the one mapping is remapped bigger.
+        mapAddr = mapAddr == 0
+                ? TableUtils.mapRO(ff, fd, newMemSize, MEMORY_TAG)
+                : TableUtils.mremap(ff, fd, mapAddr, mapSize, newMemSize, Files.MAP_RO, MEMORY_TAG);
         mapSize = newMemSize;
-        mapAddr = TableUtils.mapRO(ff, fd, mapSize, MEMORY_TAG);
     }
 
     private void of(int columnType, long columnTop, int columnIndex) {

@@ -27,6 +27,7 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnTopRecorder;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CompositePartitionSwapCommand;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
@@ -39,6 +40,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
@@ -1507,11 +1509,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     " timestamp_sequence('2024-01-01', 1_000_000L) ts" +
                     " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            for (int i = 0; i < 3; i++) {
-                execute("INSERT INTO x SELECT x::INT + 500_000 i," +
-                        " timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts FROM long_sequence(200)");
-                drainWalQueue();
-            }
+            buildMoveTailWaste();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
 
@@ -1560,9 +1558,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     setCurrentMicros(currentMicros + interval + 1);
                     job.run();
                 }
-                Assert.assertEquals("the day must take exactly one staging copy across three sweeps - the first"
-                                + " sweep's, whose swap is queued on the held writer: " + dayStagingMkdirs,
-                        1, dayStagingMkdirs.size());
+                Assert.assertEquals("ordinary sweep squash must not stage a whole-day copy", 0, dayStagingMkdirs.size());
+                Assert.assertEquals("one queued maintenance command must suppress repeat dispatch", 1, job.getPendingSwapMemoSize());
                 writer.tick(true);
             }
 
@@ -1891,7 +1888,35 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      * A day cut into a prefix and a split by an O3 insert into the middle of it, with merge-append off so both
      * folders come out PLAIN, and a later day so the split day is never the active one.
      */
+    private static CompositePartitionSwapCommand captureSquashCommand(TableToken token) {
+        final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
+        final LongList sourceFolders = new LongList();
+        try (TableReader reader = engine.getReader(token)) {
+            final TxReader tx = reader.getTxFile();
+            Assert.assertEquals(3, tx.getPartitionCount());
+            final long logicalTimestamp = tx.getLogicalPartitionTimestamp(tx.getPartitionTimestampByIndex(0));
+            for (int i = 0; i < 2; i++) {
+                final long ts = tx.getPartitionTimestampByIndex(i);
+                sourceFolders.add(ts, tx.getPartitionNameTxn(i), 0, tx.getPartitionSize(i));
+                sourceFolders.add(reader.getColumnVersionReader().getMaxPartitionVersion(ts));
+            }
+            command.ofMaintenance(token, token.getTableId(), logicalTimestamp, sourceFolders, reader.getMetadataVersion(), true);
+        }
+        return command;
+    }
+
+    private static void buildMoveTailWaste() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+        for (int i = 0; i < 5; i++) {
+            execute("INSERT INTO x SELECT x::INT + 500_000 i," +
+                    " timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+        }
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+    }
+
     private static void createSplitDayTable(String tableName) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
         execute("CREATE TABLE " + tableName + " AS (SELECT x::INT i," +
                 " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
                 " TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2086,112 +2111,25 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      * the files the live {@code _cv} names.
      */
     @Test
-    public void testScanMergePreservesUpdateCommittedDuringBuild() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    public void testQueuedSquashDeclinesAfterSourceUpdate() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
-        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
-
-        final AtomicInteger updateCount = new AtomicInteger();
-        final AtomicInteger mergedColumnWrites = new AtomicInteger();
-        final AtomicInteger mergingRenames = new AtomicInteger();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                // The build writing the merged timestamp column separates "the copy was made and the swap
-                // then declined" from "the build itself failed", which the assertions below cannot tell apart.
-                if (Utf8s.containsAscii(name, TableUtils.MERGING_DIR_MARKER) && Utf8s.endsWithAscii(name, "ts.d")) {
-                    mergedColumnWrites.incrementAndGet();
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                // Landing a merge renames the staging directory over the day's folders. Nothing may rename it
-                // here: the swap has to decline on the column version the UPDATE moved.
-                if (Utf8s.containsAscii(from, TableUtils.MERGING_DIR_MARKER)) {
-                    mergingRenames.incrementAndGet();
-                }
-                return super.rename(from, to);
-            }
-
-            @Override
-            public int mkdirs(Path path, int mode) {
-                final int result = super.mkdirs(path, mode);
-                if (updateCount.get() == 0 && Utf8s.containsAscii(path, TableUtils.MERGING_DIR_MARKER)) {
-                    updateCount.incrementAndGet();
-                    // The merge already holds its reader snapshot; commit UPDATE before it copies those files.
-                    try {
-                        execute("UPDATE cx SET i = -42 WHERE ts IN '2020-01-01'");
-                        drainWalQueue();
-                        // The outer scope checks leaks; do not clear the pool while the merge holds its reader.
-                        assertQuery("SELECT count() c FROM cx WHERE i = -42")
-                                .noLeakCheck()
-                                .noRandomAccess()
-                                .expectSize()
-                                .returns("""
-                                        c
-                                        5960
-                                        """);
-                    } catch (Exception e) {
-                        throw new AssertionError("UPDATE failed during the merge build", e);
-                    }
-                }
-                return result;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
+        assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
             createSplitDayTable("cx");
             final TableToken token = engine.verifyTableName("cx");
-            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final CompositePartitionSwapCommand command = captureSquashCommand(token);
+            execute("UPDATE cx SET i = -42 WHERE ts IN '2020-01-01'");
+            drainWalQueue();
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                command.apply(writer, true);
+            }
             try (TableReader reader = engine.getReader(token)) {
-                final TxReader tx = reader.getTxFile();
-                Assert.assertEquals(3, tx.getPartitionCount());
-                Assert.assertEquals(day, tx.getPartitionTimestampByIndex(0));
-                Assert.assertEquals(day, tx.getLogicalPartitionTimestamp(tx.getPartitionTimestampByIndex(1)));
-                Assert.assertFalse("the prefix must be plain", tx.isPartitionComposite(0));
-                Assert.assertFalse("the split must be plain", tx.isPartitionComposite(1));
+                Assert.assertEquals("the stale request must leave the day's two folders", 3, reader.getPartitionCount());
             }
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "30m");
-            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
-            // Plain folders use filesystem modification times, not the simulated clock.
-            final Clock pastTheSquashTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, pastTheSquashTimeout)) {
-                job.run();
-            }
-            Assert.assertEquals("the merge must reach the UPDATE interleaving", 1, updateCount.get());
-            Assert.assertTrue("the merge must have built its staging copy, not failed before writing it",
-                    mergedColumnWrites.get() > 0);
-            Assert.assertEquals("the staged copy holds pre-UPDATE bytes; the swap must decline instead of"
-                    + " renaming it into place", 0, mergingRenames.get());
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            try (TableReader reader = engine.getReader(token)) {
-                final TxReader tx = reader.getTxFile();
-                Assert.assertEquals("the merge must have been declined, leaving the day's two folders",
-                        3, tx.getPartitionCount());
-                Assert.assertEquals(day, tx.getLogicalPartitionTimestamp(tx.getPartitionTimestampByIndex(1)));
-            }
-            engine.releaseAllReaders();
-            // A declined merge owns its staging copy and has to remove it.
-            Assert.assertEquals("the declined merge left its staging directory behind",
-                    0, countMergeStagingDirs(ff, token));
-
+            Assert.assertEquals(0, countMergeStagingDirs(configuration.getFilesFacade(), token));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
-            assertQuery("SELECT count() c FROM cx WHERE i = -42")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            c
-                            5960
-                            """);
+            assertQuery("SELECT count() c FROM cx WHERE i = -42").noRandomAccess().expectSize().returns("c\n5960\n");
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
         });
     }
@@ -2203,64 +2141,24 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      * {@code _cv} file's own version, say - would stall every merge on an ingesting table instead.
      */
     @Test
-    public void testScanMergeSurvivesUpdateToAnotherPartitionDuringBuild() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+    public void testQueuedSquashSurvivesUpdateToAnotherPartition() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
-        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
-
-        final AtomicInteger updateCount = new AtomicInteger();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public int mkdirs(Path path, int mode) {
-                final int result = super.mkdirs(path, mode);
-                if (updateCount.get() == 0 && Utf8s.containsAscii(path, TableUtils.MERGING_DIR_MARKER)) {
-                    updateCount.incrementAndGet();
-                    // 2020-01-03 is a day of its own, and no folder of it takes part in this merge.
-                    try {
-                        execute("UPDATE cx SET i = -42 WHERE ts IN '2020-01-03'");
-                        drainWalQueue();
-                    } catch (Exception e) {
-                        throw new AssertionError("UPDATE failed during the merge build", e);
-                    }
-                }
-                return result;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
+        assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
             createSplitDayTable("cx");
             final TableToken token = engine.verifyTableName("cx");
-            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
-            final long liveRowsBefore;
+            final CompositePartitionSwapCommand command = captureSquashCommand(token);
+            execute("UPDATE cx SET i = -42 WHERE ts IN '2020-01-03'");
+            drainWalQueue();
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                command.apply(writer, true);
+            }
             try (TableReader reader = engine.getReader(token)) {
-                final TxReader tx = reader.getTxFile();
-                Assert.assertEquals(3, tx.getPartitionCount());
-                Assert.assertEquals(day, tx.getLogicalPartitionTimestamp(tx.getPartitionTimestampByIndex(1)));
-                liveRowsBefore = tx.getPartitionSize(0) + tx.getPartitionSize(1);
+                Assert.assertEquals("another day's column version must not block the squash", 2, reader.getPartitionCount());
+                Assert.assertEquals(5960, reader.getTxFile().getPartitionSize(0));
             }
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "30m");
-            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
-            final Clock pastTheSquashTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, pastTheSquashTimeout)) {
-                job.run();
-            }
-            Assert.assertEquals("the merge must reach the UPDATE interleaving", 1, updateCount.get());
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            try (TableReader reader = engine.getReader(token)) {
-                final TxReader tx = reader.getTxFile();
-                Assert.assertEquals("an UPDATE to another day must not stop the merge", 2, tx.getPartitionCount());
-                Assert.assertEquals(day, tx.getPartitionTimestampByIndex(0));
-                Assert.assertEquals("the merge must not change the row count", liveRowsBefore, tx.getPartitionSize(0));
-            }
-            engine.releaseAllReaders();
-
+            Assert.assertEquals(0, countMergeStagingDirs(configuration.getFilesFacade(), token));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
             assertQuery("SELECT count() c FROM cx WHERE i = -42").noRandomAccess().expectSize().returns("c\n50\n");
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
@@ -2274,6 +2172,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      */
     @Test
     public void testScanMergeRepublishesColumnTops() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
@@ -2354,11 +2253,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     " timestamp_sequence('2024-01-01', 1_000_000L) ts" +
                     " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            for (int i = 0; i < 3; i++) {
-                execute("INSERT INTO x SELECT x::INT + 500_000 i," +
-                        " timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts FROM long_sequence(200)");
-                drainWalQueue();
-            }
+            buildMoveTailWaste();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
 

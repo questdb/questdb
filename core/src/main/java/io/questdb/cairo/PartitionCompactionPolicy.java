@@ -51,7 +51,8 @@ public class PartitionCompactionPolicy implements Mutable {
     private static final int MAX_TRACKED = 256;
     private static final int PRIORITY_TIER_AGE = 1;
     private static final int PRIORITY_TIER_PIECES = 2;
-    private static final int PRIORITY_TIER_WASTE = 3;
+    private static final int PRIORITY_TIER_PRESSURE_WASTE = 3;
+    private static final int PRIORITY_TIER_WASTE = 4;
     private static final int SEVERITY_BITS = 20;
     private static final long SEVERITY_MASK = (1L << SEVERITY_BITS) - 1;
     private static final int SEVERITY_SHIFT = AGE_BITS;
@@ -82,6 +83,7 @@ public class PartitionCompactionPolicy implements Mutable {
     private double lastDeadRowsRatio = Double.NaN;
     private long lastPieceAvgRowsLimit = -1;
     private int lastPieceThreshold = -1;
+    private double lastTablePressureDeadRatio = Double.NaN;
     private int selectedPartitionIndex = -1;
     private int selectedReason = REASON_NONE;
     private boolean tablePressureOn;
@@ -107,6 +109,7 @@ public class PartitionCompactionPolicy implements Mutable {
         lastDeadRowsRatio = Double.NaN;
         lastPieceAvgRowsLimit = -1;
         lastPieceThreshold = -1;
+        lastTablePressureDeadRatio = Double.NaN;
         selectedPartitionIndex = -1;
         selectedReason = REASON_NONE;
         tablePressureOn = false;
@@ -138,6 +141,68 @@ public class PartitionCompactionPolicy implements Mutable {
                 ? configuration.getPartitionCompactionDeadMinSize() / avgRecordSize
                 : configuration.getPartitionCompactionDeadMinSize();
         return deadRows > configuration.getPartitionCompactionDeadRowsRatio() * liveRows && deadRows > deadMinRows;
+    }
+
+    public static boolean hasMoveTailCapacity(CairoConfiguration configuration, TxReader txReader, int partitionIndex) {
+        final long logicalTimestamp = txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(partitionIndex));
+        int lo = partitionIndex;
+        while (lo > 0 && txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(lo - 1)) == logicalTimestamp) {
+            lo--;
+        }
+        int hi = partitionIndex + 1;
+        while (hi < txReader.getPartitionCount()
+                && txReader.getLogicalPartitionTimestamp(txReader.getPartitionTimestampByIndex(hi)) == logicalTimestamp) {
+            hi++;
+        }
+        return hi - lo < Math.max(1, configuration.getO3PartitionMaxSplits());
+    }
+
+    /**
+     * Once a folder needs compaction, preserve a majority cold prefix without the ingestion forecast's waste gate.
+     * The cut respects timestamp ties and loaded backfill, but the prefix may contain holes or reordered files.
+     */
+    public static int moveTailCut(
+            CairoConfiguration configuration,
+            TxReader txReader,
+            PartitionGeometry geometry,
+            int partitionIndex,
+            long avgRecordSize,
+            long futureFloor
+    ) {
+        final long liveRows = txReader.getPartitionSize(partitionIndex);
+        if (liveRows <= configuration.getPartitionO3SplitMinSize() / Math.max(1, avgRecordSize)
+                || !hasMoveTailCapacity(configuration, txReader, partitionIndex)) {
+            return 0;
+        }
+        final int hotCommits = configuration.getPartitionCompactionHotCommits();
+        final long currentTxn = txReader.getTxn();
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        long prefixRows = 0;
+        long tiledTo = 0;
+        boolean isTiled = true;
+        int cut = 0;
+        int plainCut = 0;
+        for (int p = 0; p < pieceCount - 1; p++) {
+            final long writerTxn = geometry.getPieceWriterTxn(partitionIndex, p);
+            final long tsHi = geometry.getPieceTimestampHi(partitionIndex, p);
+            if ((writerTxn >= 0 && currentTxn - writerTxn < hotCommits)
+                    || tsHi == Long.MIN_VALUE || tsHi >= futureFloor
+                    || tsHi >= geometry.getPieceTimestampLo(partitionIndex, p + 1)) {
+                break;
+            }
+            isTiled &= geometry.getPieceRowOffset(partitionIndex, p) == tiledTo;
+            prefixRows += geometry.getPieceRowCount(partitionIndex, p);
+            tiledTo = prefixRows;
+            if (prefixRows > liveRows - prefixRows) {
+                cut = p + 1;
+                if (isTiled) {
+                    plainCut = cut;
+                }
+            }
+        }
+        // Prefer a majority prefix that MAKE-PLAIN can trim for free over leaving holes behind to save
+        // a few more tail rows. Fragmented prefixes remain eligible when no such contiguous front exists.
+        return plainCut > 0 ? plainCut : cut;
     }
 
     public int getSelectedPartitionIndex() {
@@ -196,7 +261,7 @@ public class PartitionCompactionPolicy implements Mutable {
      * the initial scan; {@link #selectPartition} seeds the complete state on its first call.
      */
     public void onPartitionUpdated(
-            TxWriter txWriter,
+            TxReader txWriter,
             PartitionGeometry geometry,
             long partitionTimestamp,
             long avgRecordSize
@@ -214,12 +279,11 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * Picks the highest-priority partition. Waste-ratio candidates outrank piece-count candidates; piece-count
-     * candidates outrank age/table-pressure candidates. Within those tiers the heap orders by waste percentage,
-     * piece count and age respectively.
+     * Picks by waste ratio, pressure waste, piece count, then age. Pressure waste participates only while the
+     * table-pressure latch is on, and pressure never falls through to the age tier.
      */
     public int selectPartition(
-            TxWriter txWriter,
+            TxReader txWriter,
             PartitionGeometry geometry,
             long avgRecordSize,
             long nowMicros,
@@ -236,7 +300,10 @@ public class PartitionCompactionPolicy implements Mutable {
             return -1;
         }
         ensureInitialized(txWriter, geometry, avgRecordSize, nowMicros, fromIndex);
-        updateTablePressure(txWriter, avgRecordSize);
+        if (updateTablePressure(txWriter, avgRecordSize)) {
+            // The pressure band changes heap priorities only at latch transitions, not on every commit.
+            rebuild(txWriter, geometry, avgRecordSize, nowMicros, fromIndex);
+        }
 
         deferredHeapEntries.clear();
         try {
@@ -290,19 +357,23 @@ public class PartitionCompactionPolicy implements Mutable {
                 final int reason;
                 if (tier == PRIORITY_TIER_WASTE) {
                     reason = REASON_WASTE_RATIO;
+                } else if (tier == PRIORITY_TIER_PRESSURE_WASTE) {
+                    reason = REASON_TABLE_PRESSURE;
                 } else if (tier == PRIORITY_TIER_PIECES) {
                     reason = REASON_PIECE_COUNT;
                 } else {
-                    final long lastWrite = geometry.getLastWriteMicros(partitionIndex);
                     if (tablePressureOn) {
-                        reason = REASON_TABLE_PRESSURE;
-                    } else if (lastWrite > 0
+                        // Keep the latch, but do not rewrite clean folders merely because they are old.
+                        return -1;
+                    }
+                    final long lastWrite = geometry.getLastWriteMicros(partitionIndex);
+                    if (lastWrite > 0
                             && nowMicros - lastWrite > configuration.getPartitionCompactionIdleTimeout()
                             && (partitionStates.getQuick(stateIndex + STATE_DEAD_ROWS_OFFSET) > 0
                             || geometry.getPieceCount(partitionIndex) > 1)) {
                         reason = REASON_AGE;
                     } else if (lastWrite <= 0) {
-                        // Unknown provenance sorts as oldest for table pressure but cannot satisfy the age rule.
+                        // Unknown provenance sorts as oldest but cannot satisfy the age rule.
                         // Skip it temporarily because an older known record below it may satisfy that rule.
                         deferHeapHead();
                         continue;
@@ -332,7 +403,7 @@ public class PartitionCompactionPolicy implements Mutable {
     /**
      * The index of the next eligible partition at or after {@code fromIndex} that holds more than one piece, or -1.
      */
-    public int selectFoldablePartition(TxWriter txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
+    public int selectFoldablePartition(TxReader txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
         if (txWriter.getLagRowCount() > 0) {
             return -1;
         }
@@ -384,7 +455,7 @@ public class PartitionCompactionPolicy implements Mutable {
     /**
      * The index of the next MAKE-PLAIN candidate at or after {@code fromIndex} - see {@link #isMakePlainShape} - or -1.
      */
-    public int selectMakePlainCandidate(TxWriter txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
+    public int selectMakePlainCandidate(TxReader txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
         int selected = -1;
         for (int stateIndex = 0, n = partitionStates.size(); stateIndex < n; stateIndex += STATE_LONGS) {
             final long partitionTimestamp = partitionStates.getQuick(stateIndex);
@@ -433,6 +504,11 @@ public class PartitionCompactionPolicy implements Mutable {
         final long severity;
         if (deadRows > configuration.getPartitionCompactionDeadRowsRatio() * liveRows && deadRows > deadMinRows) {
             tier = PRIORITY_TIER_WASTE;
+            severity = wastePercent(deadRows, liveRows);
+        } else if (tablePressureOn
+                && deadRows > configuration.getPartitionCompactionTablePressureDeadRatio() * liveRows
+                && deadRows > deadMinRows) {
+            tier = PRIORITY_TIER_PRESSURE_WASTE;
             severity = wastePercent(deadRows, liveRows);
         } else if (pieceCount > effectiveMaxPieces(configuration, liveRows)) {
             tier = PRIORITY_TIER_PIECES;
@@ -499,7 +575,7 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     private void ensureInitialized(
-            TxWriter txWriter,
+            TxReader txWriter,
             PartitionGeometry geometry,
             long avgRecordSize,
             long nowMicros,
@@ -519,10 +595,11 @@ public class PartitionCompactionPolicy implements Mutable {
                 || lastDeadMinSize != configuration.getPartitionCompactionDeadMinSize()
                 || Double.compare(lastDeadRowsRatio, configuration.getPartitionCompactionDeadRowsRatio()) != 0
                 || lastPieceAvgRowsLimit != configuration.getPartitionCompactionAvgRowsPieceLim()
-                || lastPieceThreshold != configuration.getPartitionCompactionPieceThreshold();
+                || lastPieceThreshold != configuration.getPartitionCompactionPieceThreshold()
+                || Double.compare(lastTablePressureDeadRatio, configuration.getPartitionCompactionTablePressureDeadRatio()) != 0;
     }
 
-    private boolean isStateCurrent(TxWriter txWriter, int stateIndex, long partitionTimestamp) {
+    private boolean isStateCurrent(TxReader txWriter, int stateIndex, long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         return partitionIndex >= 0
                 && txWriter.isPartitionComposite(partitionIndex)
@@ -543,7 +620,7 @@ public class PartitionCompactionPolicy implements Mutable {
         return false;
     }
 
-    private void putState(TxWriter txWriter, PartitionGeometry geometry, int partitionIndex, long avgRecordSize) {
+    private void putState(TxReader txWriter, PartitionGeometry geometry, int partitionIndex, long avgRecordSize) {
         final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         final long liveRows = txWriter.getPartitionSize(partitionIndex);
         final long deadRows = geometry.getE(partitionIndex) - liveRows;
@@ -576,7 +653,7 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     private void rebuild(
-            TxWriter txWriter,
+            TxReader txWriter,
             PartitionGeometry geometry,
             long avgRecordSize,
             long nowMicros,
@@ -596,6 +673,7 @@ public class PartitionCompactionPolicy implements Mutable {
         lastDeadRowsRatio = configuration.getPartitionCompactionDeadRowsRatio();
         lastPieceAvgRowsLimit = configuration.getPartitionCompactionAvgRowsPieceLim();
         lastPieceThreshold = configuration.getPartitionCompactionPieceThreshold();
+        lastTablePressureDeadRatio = configuration.getPartitionCompactionTablePressureDeadRatio();
         isInitialized = true;
 
         for (int i = Math.max(0, fromIndex), n = txWriter.getPartitionCount(); i < n; i++) {
@@ -649,7 +727,8 @@ public class PartitionCompactionPolicy implements Mutable {
         deferredHeapEntries.clear();
     }
 
-    private void updateTablePressure(TxWriter txWriter, long avgRecordSize) {
+    private boolean updateTablePressure(TxReader txWriter, long avgRecordSize) {
+        final boolean wasPressureOn = tablePressureOn;
         // Express dead rows as a percentage of the table's live, user-visible rows, not of the
         // physical live-plus-dead extent. For example, 100 live rows and 50 dead rows means 50% dead,
         // even though the column files physically hold 150 rows.
@@ -667,5 +746,6 @@ public class PartitionCompactionPolicy implements Mutable {
                     && totalDeadRows * 100 >= tableRowCount * configuration.getPartitionCompactionTableDeadThresholdPercent())
                     || deadBytes > configuration.getPartitionCompactionTableDeadTrigger();
         }
+        return wasPressureOn != tablePressureOn;
     }
 }

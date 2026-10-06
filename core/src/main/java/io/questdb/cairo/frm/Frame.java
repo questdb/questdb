@@ -24,6 +24,9 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.std.LongList;
+import org.jetbrains.annotations.Nullable;
+
 import java.io.Closeable;
 
 /**
@@ -111,6 +114,21 @@ public interface Frame extends Closeable {
      * The counterpart of {@link #openColumn}: closes {@code column} unless this frame keeps its columns open.
      */
     void releaseColumn(FrameColumn column);
+
+    /**
+     * Grows every column file of this frame, in one allocation per file, to hold the rows a plan of appends and
+     * merges is about to write - see {@link FrameColumn#reserve}. Called once ahead of the plan's first action, so
+     * no action has to allocate as it writes. Var-size columns are sized off the source rows the plan reads: each
+     * {@code (lo, hi)} pair in a ranges list names rows {@code [lo, hi)} of the source it belongs to.
+     *
+     * @param rowHi         the extent {@code E} the plan reaches at most, exclusive
+     * @param source1       the frame the plan appends and merges from - the batch
+     * @param source1Ranges the rows of {@code source1} the plan writes, as {@code lo, hi} pairs
+     * @param source2       the other side of the plan's merges, or null when it has none
+     * @param source2Ranges the rows of {@code source2} the plan rewrites, as {@code lo, hi} pairs; ignored when
+     *                      {@code source2} is null
+     */
+    void reserve(long rowHi, Frame source1, LongList source1Ranges, @Nullable Frame source2, @Nullable LongList source2Ranges);
 
     void saveChanges(FrameColumn column);
 

@@ -49,7 +49,14 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     @Override
     public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         super.append(appendOffsetRowCount, sourceColumn, sourceLo, sourceHi, commitMode);
-        indexWrittenRows(appendOffsetRowCount, sourceHi - sourceLo);
+        if (sourceHi > sourceLo) {
+            // The keys just written are the source's, read where the source holds them: the target is written with
+            // positioned writes under mixed I/O and has no mapping to read them back through.
+            final long sourceTop = sourceColumn.getColumnTop();
+            final long keysAddr = sourceColumn.getContiguousDataAddr(sourceHi)
+                    + ((sourceLo - sourceTop) << ColumnType.pow2SizeOf(getColumnType()));
+            indexWrittenRows(appendOffsetRowCount, sourceHi - sourceLo, keysAddr);
+        }
     }
 
     @Override
@@ -99,8 +106,13 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
                 mergeIndexRows,
                 commitMode
         );
-        // A merged row keeps its key but lands at a new row, so the index has to be told where it went.
-        indexWrittenRows(appendOffsetRowCount, mergeIndexRows);
+        // A merged row keeps its key but lands at a new row, so the index has to be told where it went. A merge
+        // writes through the column's mapping, so its keys are read back from there.
+        if (mergeIndexRows > 0) {
+            final int shl = ColumnType.pow2SizeOf(getColumnType());
+            final long offset = (appendOffsetRowCount - getColumnTop()) << shl;
+            indexWrittenRows(appendOffsetRowCount, mergeIndexRows, mapWritable(offset + (mergeIndexRows << shl)) + offset);
+        }
     }
 
     public void ofRW(
@@ -167,34 +179,22 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
 
     /**
      * Publishes index entries for {@code rowCount} rows this column has just written at
-     * {@code appendOffsetRowCount}, reading their keys back out of the column file.
+     * {@code appendOffsetRowCount}, whose keys are at {@code mappedAddress}.
      */
-    private void indexWrittenRows(long appendOffsetRowCount, long rowCount) {
-        assert rowCount >= 0;
-        if (rowCount == 0) {
-            return;
-        }
-
-        final long fd = super.getPrimaryFd();
+    private void indexWrittenRows(long appendOffsetRowCount, long rowCount, long mappedAddress) {
+        assert rowCount > 0;
         final int shl = ColumnType.pow2SizeOf(getColumnType());
-        final long offset = (appendOffsetRowCount - getColumnTop()) << shl;
-        final long size = rowCount << shl;
-        final long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset, size, false, MEMORY_TAG);
-        try {
-            // Must come BEFORE rollbackConditionally: that call publishes when the index still holds rowids at or above
-            // the append offset (an O3 split shrank the partition without resealing the parent), and ofRW's of() has.
-            if (upcomingTableTxn >= 0) {
-                indexWriter.setNextTxnAtSeal(upcomingTableTxn);
-            }
-            indexWriter.rollbackConditionally(appendOffsetRowCount);
-            for (long i = 0; i < rowCount; i++) {
-                indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
-            }
-            indexWriter.setMaxValue(appendOffsetRowCount + rowCount - 1);
-            indexWriter.commit();
-        } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset, size, MEMORY_TAG);
+        // Must come BEFORE rollbackConditionally: that call publishes when the index still holds rowids at or above
+        // the append offset (an O3 split shrank the partition without resealing the parent), and ofRW's of() has.
+        if (upcomingTableTxn >= 0) {
+            indexWriter.setNextTxnAtSeal(upcomingTableTxn);
         }
+        indexWriter.rollbackConditionally(appendOffsetRowCount);
+        for (long i = 0; i < rowCount; i++) {
+            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
+        }
+        indexWriter.setMaxValue(appendOffsetRowCount + rowCount - 1);
+        indexWriter.commit();
     }
 
     // Useful for debugging

@@ -510,6 +510,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyParallelSqlEnabled());
 
         Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
+        Assert.assertEquals(20, configuration.getCairoConfiguration().getO3PartitionMaxSplits());
+        Assert.assertEquals(0.5, configuration.getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
 
@@ -1936,6 +1938,55 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), Integer.toString((1 << 24) + 1));
         assertInvalidConfiguration(properties, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS);
+    }
+
+    @Test
+    public void testO3UnifiedSplitCapAndLegacyAliases() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            properties.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS.getPropertyPath(), "7");
+            properties.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS.getPropertyPath(), "not-a-limit");
+            Assert.assertEquals(7, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
+            properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS.getPropertyPath(), "3");
+            Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
+            Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getO3MidPartitionMaxSplits());
+            properties.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS.getPropertyPath(), "1000");
+            Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getO3PartitionMaxSplits());
+        });
+    }
+
+    @Test
+    public void testPartitionCompactionPressureRatio() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "0.2");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath(), "0.1");
+            Assert.assertEquals(0.1, newPropServerConfiguration(properties).getCairoConfiguration().getPartitionCompactionTablePressureDeadRatio(), 0.0);
+        });
+    }
+
+    @Test
+    public void testPartitionCompactionPressureRatioRejectsInvalidValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Properties properties = new Properties();
+            for (String value : new String[]{"0", "-0.1", "NaN", "Infinity", "1", "1.1"}) {
+                properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath(), value);
+                try {
+                    newPropServerConfiguration(properties);
+                    Assert.fail("accepted invalid pressure ratio: " + value);
+                } catch (ServerConfigurationException e) {
+                    TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath());
+                }
+            }
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath(), "0.5");
+            properties.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO.getPropertyPath(), "NaN");
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("a pressure ratio cannot be below NaN");
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO.getPropertyPath());
+            }
+        });
     }
 
     @Test

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexType;
@@ -300,13 +301,8 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
             execute("CREATE TABLE x AS (SELECT x::INT i, timestamp_sequence('2024-01-01', 1_000_000L) ts" +
                     " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            for (int k = 0; k < 3; k++) {
-                execute("INSERT INTO x SELECT x::INT + 500_000 i, timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts" +
-                        " FROM long_sequence(200)");
-                drainWalQueue();
-            }
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+            buildMoveTailWaste();
+            armMoveTail();
             for (int k = 0; k < 6; k++) {
                 execute("INSERT INTO x SELECT x::INT + 800_000 i, timestamp_sequence('2024-03-0" + (k + 1) + "', 60_000_000L) ts" +
                         " FROM long_sequence(2)");
@@ -361,6 +357,12 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
      * aux) and BITMAP index files are at least as long as committed state says. A truncation shows up here as
      * an assertion instead of a SIGBUS in a later query.
      */
+    private static void armMoveTail() {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+    }
+
     private static void assertColumnFilesCoverPhysicalRows(String table, String state) {
         final TableToken tt = engine.verifyTableName(table);
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -437,6 +439,15 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
 
     private static void assertNotSuspended(String table) {
         Assert.assertFalse("table " + table + " is suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(table)));
+    }
+
+    private static void buildMoveTailWaste() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+        for (int k = 0; k < 5; k++) {
+            execute("INSERT INTO x SELECT x::INT + 500_000 i, timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts" +
+                    " FROM long_sequence(200)");
+            drainWalQueue();
+        }
     }
 
     private static String columnTopState(String table, String day, String column) throws Exception {
@@ -555,21 +566,54 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
 
     /**
      * @param failOnWrite 1 fails the commit's first write to v.d by failing the file's open. 2 lets the first action
-     *                    write and fails the second one's: a composite plan opens v.d once for all its actions, so
-     *                    that failure is the second writable mapping of the one open file.
+     *                    write and fails the second one's: a composite plan opens and maps v.d once for all its
+     *                    actions, so under a SYNC commit that failure is the second sync of v.d - an msync of the
+     *                    one mapping for a merge, an fsync of the file for an append written with mixed I/O.
      */
     private void checkFailedMergeAppendThenWriterClose(int failOnWrite, boolean twoActions) throws Exception {
         final AtomicBoolean armed = new AtomicBoolean();
         final AtomicInteger opens = new AtomicInteger();
         final AtomicInteger writeMaps = new AtomicInteger();
         final AtomicLong vFd = new AtomicLong(-1);
+        // The writable mapping of v.d, [vMapLo, vMapHi): every write of the plan goes through it.
+        final AtomicLong vMapLo = new AtomicLong();
+        final AtomicLong vMapHi = new AtomicLong();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (armed.get() && fd == vFd.get() && flags == Files.MAP_RW && writeMaps.incrementAndGet() >= failOnWrite) {
-                    return FilesFacade.MAP_FAILED;
+                final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                trackWritableMapping(fd, flags, addr, len);
+                return addr;
+            }
+
+            @Override
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+                trackWritableMapping(fd, mode, newAddr, newSize);
+                return newAddr;
+            }
+
+            @Override
+            public void fsync(long fd) {
+                if (armed.get() && fd == vFd.get() && writeMaps.incrementAndGet() >= failOnWrite) {
+                    throw CairoException.critical(0).put("injected fsync failure [writes=").put(writeMaps.get()).put(']');
                 }
-                return super.mmap(fd, len, offset, flags, memoryTag);
+                super.fsync(fd);
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (armed.get() && addr >= vMapLo.get() && addr < vMapHi.get() && writeMaps.incrementAndGet() >= failOnWrite) {
+                    throw CairoException.critical(0).put("injected msync failure [writes=").put(writeMaps.get()).put(']');
+                }
+                super.msync(addr, len, async);
+            }
+
+            private void trackWritableMapping(long fd, int flags, long addr, long len) {
+                if (armed.get() && fd == vFd.get() && flags == Files.MAP_RW && addr != FilesFacade.MAP_FAILED) {
+                    vMapLo.set(addr);
+                    vMapHi.set(addr + len);
+                }
             }
 
             @Override
@@ -590,6 +634,10 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
             // Pooled frame columns capture the FilesFacade they were built with; start from a fresh pool.
             engine.resetFrameFactory();
             enableMergeAppend();
+            if (failOnWrite > 1) {
+                // Every action syncs what it wrote, which is the one per-action call left on v.d to fail.
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+            }
             execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // 2024-01-01 full, 2024-01-02 up to 11:59 when twoActions, so a batch after that founds a NEW piece.
             final int baseRows = twoActions ? 2160 : 2880;
@@ -645,11 +693,7 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         execute("CREATE TABLE x AS (SELECT x::INT i, timestamp_sequence('2024-01-01', 1_000_000L) ts" +
                 " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
         drainWalQueue();
-        for (int k = 0; k < 3; k++) {
-            execute("INSERT INTO x SELECT x::INT + 500_000 i, timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts" +
-                    " FROM long_sequence(200)");
-            drainWalQueue();
-        }
+        buildMoveTailWaste();
         Assert.assertTrue("fixture: the day must be composite", isComposite("x", "2024-01-01"));
         // Added while the LAST partition is composite: top = E, above what MOVE-TAIL will leave live.
         execute("ALTER TABLE x ADD COLUMN c LONG");
@@ -669,8 +713,7 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         Assert.assertEquals(columnHasRowsAtWarmUp ? "100/5050" : "0/0", fingerprintOfColumnC("2024-01-01"));
         final String topAfterAdd = columnTopState("x", "2024-01-01", "c");
 
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+        armMoveTail();
         for (int k = 0; k < 6; k++) {
             execute("INSERT INTO x (i, ts) SELECT x::INT + 800_000 i, timestamp_sequence('2024-03-0" + (k + 1) + "', 60_000_000L) ts" +
                     " FROM long_sequence(2)");
@@ -753,13 +796,8 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         final long d1 = MicrosTimestampDriver.floor("2024-01-01T00:00:00.000000Z");
 
         // Make the day composite, then let MOVE-TAIL give it a split sibling while later days are created.
-        for (int k = 0; k < 3; k++) {
-            execute("INSERT INTO x SELECT x::INT + 500_000 i, timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts" +
-                    " FROM long_sequence(200)");
-            drainWalQueue();
-        }
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+        buildMoveTailWaste();
+        armMoveTail();
         for (int k = 0; k < 6; k++) {
             execute("INSERT INTO x SELECT x::INT + 800_000 i, timestamp_sequence('2024-03-0" + (k + 1) + "', 60_000_000L) ts" +
                     " FROM long_sequence(2)");
@@ -794,6 +832,6 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         assertQuery("SELECT count() c FROM x WHERE ts IN '2024-01-01'")
                 .noRandomAccess()
                 .expectSize()
-                .returns("c\n40600\n");
+                .returns("c\n41000\n");
     }
 }

@@ -32,6 +32,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
+import io.questdb.cairo.frm.file.CompositeFrameCache;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
@@ -66,6 +67,7 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.WalTxnClusterer;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
@@ -107,6 +109,7 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -209,6 +212,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // COMPACTION_NONE because it must NOT earn the decline backoff: the partition stays eligible so its
     // next commit can reach JOIN or MOVE-TAIL the moment their shape appears.
     private static final int COMPACTION_SKIPPED_HOT = 5;
+    private static final int COMPACTION_SQUASHED = 6;
     private static final long IGNORE = -1L;
     // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
     @SuppressWarnings("FieldMayBeFinal")
@@ -246,9 +250,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
+    private final LongList compactionForecastBounds = new LongList();
+    private final WalTxnClusterer compactionForecastClusterer = new WalTxnClusterer();
+    private final LongList compactionForecastCuts = new LongList();
+    private final O3CompositeMergeStrategy.Plan compactionForecastPlan = new O3CompositeMergeStrategy.Plan();
     // Scratch for foldContiguousPieces: 4 longs per piece (tsLo, tsHi, rowOffset, rowCount), snapshotted
     // once per fold so the plan and the rebuild below it cannot observe each other's half-finished state.
     private final LongList compactionPieceScratch = new LongList();
+    // Scratch for compactPartition0: the (lo, hi) file rows of every piece a REWRITE copies, sized off once up front.
+    private final LongList compactionRewriteRanges = new LongList();
+    // The merge-append frames of the partitions inserts keep landing on, kept open across commits; null when
+    // the cache is sized 0. Emptied by every operation that is not a plain insert - see evictCompositeFrames.
+    private final CompositeFrameCache compositeFrameCache;
     private final CairoConfiguration configuration;
     private final ParquetCoveredColumnAccumulator coveredColumnAccumulator = new ParquetCoveredColumnAccumulator();
     private final LongList coveringAddrs = new LongList();
@@ -302,6 +315,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     // Flat [minTs, maxTs] pairs, one per transaction in the block being applied.
     private final LongList o3ClusterTxnRanges = new LongList();
+    private final LongIntHashMap o3BlockSplitCapacity = new LongIntHashMap();
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final int o3ColumnMemorySize;
     private final ObjList<MemoryCR> o3ColumnOverrides;
@@ -547,6 +561,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.engine = cairoEngine;
+        final int frameCacheSize = configuration.getO3PartitionMergeAppendFrameCacheSize();
+        this.compositeFrameCache = frameCacheSize > 0 ? new CompositeFrameCache(frameCacheSize) : null;
         this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         this.isInCtorRecovery = true;
         try {
@@ -1776,6 +1792,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setLagOrdered(true);
 
             commit00();
+            if (compositeFrameCache != null) {
+                // Before housekeeping, which commits on its own and so leaves whatever it touches uncertified. An
+                // indexed column's files have writers other than the plans in this very txn - the posting seal, the
+                // writer's own indexers - so a table with any index keeps nothing.
+                compositeFrameCache.certify(txWriter, txWriter.getTxn(), !hasIndexedColumn());
+            }
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
             shrinkO3Mem();
@@ -2734,6 +2756,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return ff;
     }
 
+    /**
+     * The merge-append frames this writer keeps open across commits, or null when that cache is off.
+     */
+    public CompositeFrameCache getCompositeFrameCache() {
+        return compositeFrameCache;
+    }
+
     public FrameFactory getFrameFactory() {
         return engine.getFrameFactory();
     }
@@ -3159,6 +3188,80 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
         final int newPartitionDirLen = other.size();
         linkPartitionIndexFiles(partitionTimestamp, oldPartitionNameTxn, partitionDirLen, newPartitionDirLen);
+    }
+
+    /**
+     * Rechecks a sweep snapshot before running cheap compaction steps or budgeted, ordinary pair squashes.
+     * A queued request owns no staging copy. It must not commit an open data transaction or drop lag rows.
+     */
+    public void maintainPartitionFromSweep(long partitionTimestamp, LongList folders, long expectedMetadataVersion, boolean isSquash, boolean isSquashResume, LongList remainingFolders) {
+        if (inTransaction() || txWriter.getLagRowCount() > 0 || getMetadataVersion() != expectedMetadataVersion) {
+            return;
+        }
+        final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+        if (folderCount == 0) {
+            return;
+        }
+        final int lo = txWriter.getPartitionIndex(folders.getQuick(0));
+        final int hi = lo + folderCount;
+        if (lo < 0 || hi > txWriter.getPartitionCount() || (isSquash && hi == txWriter.getPartitionCount())) {
+            return;
+        }
+        final long lastCommitTxn = txWriter.getTxn();
+        for (int p = 0; p < folderCount; p++) {
+            final int offset = p * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+            final int index = lo + p;
+            if (txWriter.getPartitionTimestampByIndex(index) != folders.getQuick(offset)
+                    || txWriter.getPartitionNameTxn(index) != folders.getQuick(offset + 1)
+                    || compositePartitionGeneration(index) != folders.getQuick(offset + 2)
+                    || txWriter.getPartitionSize(index) != folders.getQuick(offset + 3)
+                    || columnVersionWriter.getMaxPartitionVersion(folders.getQuick(offset)) != folders.getQuick(offset + 4)
+                    || txWriter.isPartitionReadOnly(index) || txWriter.isPartitionRemote(index) || txWriter.isPartitionParquet(index)
+                    || (isSquash && !isSquashResume && !isColdSquashPartition(index, lastCommitTxn))) {
+                return;
+            }
+        }
+        if (isSquash && (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo)) != partitionTimestamp
+                || (lo > 0 && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo - 1)) == partitionTimestamp)
+                || txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == partitionTimestamp)) {
+            return;
+        }
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
+        for (int p = 0; p < folderCount; p++) {
+            final int index = txWriter.getPartitionIndex(folders.getQuick(p * CompositePartitionSwapCommand.LONGS_PER_FOLDER));
+            int result = COMPACTION_NONE;
+            if (txWriter.isPartitionComposite(index)) {
+                do {
+                    result = compactPhysicalPartition(index, true, !isSquash, Long.MAX_VALUE, deadline, PartitionCompactionPolicy.REASON_NONE);
+                } while (result == COMPACTION_JOINED && configuration.getMicrosecondClock().getTicks() < deadline);
+                if (result == COMPACTION_MOVED_TAIL) {
+                    finishMovedTailPrefix(index, true, PartitionCompactionPolicy.REASON_AGE, deadline);
+                    if (index == txWriter.getPartitionCount() - 2) {
+                        closeActivePartition(false);
+                        openLastPartition();
+                    }
+                    processPartitionRemoveCandidates();
+                    return;
+                }
+                if (result == COMPACTION_REWRITTEN && index == txWriter.getPartitionCount() - 1) {
+                    closeActivePartition(false);
+                    openLastPartition();
+                }
+            }
+            if (result != COMPACTION_NONE && result != COMPACTION_SKIPPED_HOT
+                    && configuration.getMicrosecondClock().getTicks() >= deadline) {
+                if (isSquash) {
+                    captureRemainingSquashFolders(partitionTimestamp, remainingFolders);
+                }
+                processPartitionRemoveCandidates();
+                return;
+            }
+        }
+        if (isSquash) {
+            squashPartitionRange(1, lo, hi, lastCommitTxn, deadline, true, true);
+            captureRemainingSquashFolders(partitionTimestamp, remainingFolders);
+        }
+        processPartitionRemoveCandidates();
     }
 
     /**
@@ -3880,6 +3983,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
+            // Only a rollback that rolls something back: the pool calls this on every return, with nothing in
+            // flight, and the cache is meant to live across exactly those returns.
+            evictCompositeFrames();
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
@@ -5201,13 +5307,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", maxTimestamp=").$ts(timestampDriver, segmentCopyInfo.getMaxTimestamp())
                 .I$();
 
-        // Split any partition this block is about to write to whose dead space has grown past what a
-        // MOVE-TAIL would cost, BEFORE the block lands on it. Doing it here rather than in housekeep gives
-        // the decision the one thing housekeep does not have - the timestamps of every loaded commit, so a
-        // piece can be called settled because nothing queued reaches back to it - and it keeps the
-        // partition the block merges into small, which is what the merge cost scales with.
-        compactAheadOfBlock(startSeqTxn, segmentCopyInfo.getMinTimestamp());
-
         walRowsProcessed = segmentCopyInfo.getTotalRows();
         if (PostingIndexWriter.COVERING_COUNTERS_ENABLED) {
             PostingIndexWriter.COVERING_MAX_SEGCOUNT_OBSERVED.accumulateAndGet(segmentCopyInfo.getSegmentCount(), Math::max);
@@ -5950,6 +6049,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         masterRef++;
     }
 
+    private void captureRemainingSquashFolders(long logicalTimestamp, LongList sink) {
+        sink.clear();
+        final int lo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalTimestamp);
+        int hi = lo;
+        while (hi < txWriter.getPartitionCount()
+                && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == logicalTimestamp) {
+            hi++;
+        }
+        if (hi - lo <= 1 || hi == txWriter.getPartitionCount()) {
+            return;
+        }
+        for (int i = lo; i < hi; i++) {
+            final long ts = txWriter.getPartitionTimestampByIndex(i);
+            sink.add(ts, txWriter.getPartitionNameTxn(i), compositePartitionGeneration(i), txWriter.getPartitionSize(i));
+            sink.add(columnVersionWriter.getMaxPartitionVersion(ts));
+        }
+    }
+
     private void checkColumnName(CharSequence name) {
         if (!isValidColumnName(name, configuration.getMaxFileNameLength())) {
             throw CairoException.nonCritical().put("invalid column name [table=").put(tableToken.getTableName()).put(", column=").putAsPrintable(name).put(']');
@@ -6613,12 +6730,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // With no external ColumnTopSink the frame tracks its own tops and publishes them below, so
             // the source's lookups keep seeing the old directory's untouched state until then.
             targetFrame = frameFactory.openRW(other, partitionTs, metadata, columnVersionWriter, 0);
+            // Every piece below appends to the same column files: open each once for the whole REWRITE rather than
+            // once per piece, so what a column learnt about its file - its length, its mapping - carries over.
+            targetFrame.setKeepColumnsOpen(true);
 
             path.trimTo(pathSize);
             setPathForNativePartition(path, timestampType, partitionBy, partitionTs, srcNameTxn);
             // One source frame for the whole directory, reaching E: FrameAlgebra.append takes each
             // piece's row range as explicit bounds.
             try (Frame sourceFrame = frameFactory.openRO(path, partitionTs, metadata, columnVersionWriter, e)) {
+                // ...and each source column is mapped once, over the whole extent, for every piece to read from.
+                sourceFrame.setKeepColumnsOpen(true);
+                // The final size is known before anything is copied: the live rows, from exactly these pieces. Grow
+                // every target file to it once, up front, in the parallel column tasks, instead of once per piece per
+                // column - see Frame#reserve. With mixed I/O the copies grow the files themselves and this reserves
+                // nothing.
+                compactionRewriteRanges.clear();
+                for (int p = 0; p < pieceCount; p++) {
+                    final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
+                    if (rowCount > 0) {
+                        final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
+                        compactionRewriteRanges.add(rowOffset, rowOffset + rowCount);
+                    }
+                }
+                targetFrame.reserve(liveRows, sourceFrame, compactionRewriteRanges, null, null);
                 for (int p = 0; p < pieceCount; p++) {
                     final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
                     if (rowCount == 0) {
@@ -6658,8 +6793,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Forces a composite partition into its ordinary, single-piece-at-row-0 shape before an operation that cannot
-     * tolerate dead space or a piece above file row 0: CONVERT PARTITION TO PARQUET and {@link
-     * #squashSplitPartitions(int, int, int, boolean)} both read each column file as one flat {@code [0, liveRows)}
+     * tolerate dead space or a piece above file row 0, such as CONVERT PARTITION TO PARQUET. Ordinary
+     * squash reads composite sources' live ranges directly. Forced squash requires a plain target;
+     * ordinary squash can retain a composite target.
      *
      * @param reason short label folded into the exception message if compaction cannot make progress
      */
@@ -6667,7 +6803,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The _txn flag, not the geometry's shape: MAKE-PLAIN's halfway state is one piece at row 0 with E at the
         // live rows, which the geometry reads as plain while _txn still names its record.
         while (txWriter.isPartitionComposite(partitionIndex)) {
-            if (compactPhysicalPartition(partitionIndex, false, true, Long.MIN_VALUE, Long.MAX_VALUE) != COMPACTION_NONE) {
+            if (compactPhysicalPartition(partitionIndex, false, true, Long.MIN_VALUE, Long.MAX_VALUE, PartitionCompactionPolicy.REASON_NONE) != COMPACTION_NONE) {
                 continue;
             }
             // MAKE-PLAIN can decline on a reader still resolving the geometry record; REWRITE copies into
@@ -6690,7 +6826,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL}, {@link
      * #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
      */
-    private int compactPhysicalPartition(int partitionIndex, boolean allowMoveTail, boolean allowRewrite, long futureFloor, long deadlineMicros) {
+    private int compactPhysicalPartition(int partitionIndex, boolean allowMoveTail, boolean allowRewrite, long futureFloor, long deadlineMicros, int reason) {
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
             return COMPACTION_NONE;
         }
@@ -6716,6 +6852,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // MAKE-PLAIN reaches REWRITE's result for free on this shape, so it is always its call - even
             // when it is still waiting on a reader, which the caller's decline/backoff handles.
             return makePartitionPlain(partitionIndex) ? COMPACTION_MADE_PLAIN : COMPACTION_NONE;
+        }
+        if ((reason == PartitionCompactionPolicy.REASON_AGE || reason == PartitionCompactionPolicy.REASON_TABLE_PRESSURE)
+                && squashColdLogicalPartition(partitionIndex, deadlineMicros)) {
+            return COMPACTION_SQUASHED;
         }
         if (!allowRewrite) {
             return COMPACTION_SKIPPED_HOT;
@@ -8046,10 +8186,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastErrno = 0;
         int queuedCount = 0;
 
+        // The last column runs here rather than through the queue: this thread would otherwise only wait for it.
+        int inlineColumnIndex = columnCount - 1;
+        while (inlineColumnIndex > -1 && metadata.getColumnType(inlineColumnIndex) <= 0) {
+            inlineColumnIndex--;
+        }
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) {
-                long cursor = pubSeq.next();
+                long cursor = columnIndex == inlineColumnIndex ? -1 : pubSeq.next();
 
                 // Pass column index as -1 when it's a designated timestamp column to o3 move method
                 if (cursor > -1) {
@@ -8132,6 +8277,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
+        Misc.free(compositeFrameCache);
         partitionGeometry = Misc.free(partitionGeometry);
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
@@ -8454,6 +8600,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // over rows the applied base no longer holds.
             hasTtlEvictedPartitionsSinceLastCommit = true;
             commitRemovePartitionOperation();
+        }
+    }
+
+    /**
+     * Closes every merge-append frame the writer kept open across commits. Commits need no call - a frame is reused
+     * only by the commit right after the one that certified it, see CompositeFrameCache - so this is for what can
+     * write a partition's files before the txn moves: a failed commit, a rollback, compaction and squash.
+     */
+    private void evictCompositeFrames() {
+        if (compositeFrameCache != null) {
+            compositeFrameCache.evictAll();
         }
     }
 
@@ -8793,6 +8950,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
     }
 
+    private void finishMovedTailPrefix(int partitionIndex, boolean allowRewrite, int reason, long deadlineMicros) {
+        if (!txWriter.isPartitionComposite(partitionIndex)) {
+            return;
+        }
+        if (isMakePlainEligible(partitionIndex)) {
+            makePartitionPlain(partitionIndex);
+            return;
+        }
+        final PartitionGeometry geometry = getGeometry();
+        final long liveRows = txWriter.getPartitionSize(partitionIndex);
+        final long deadRows = geometry.getE(partitionIndex) - liveRows;
+        final long recordSize = Math.max(1, avgRecordSize());
+        final boolean isWasteful = PartitionCompactionPolicy.exceedsThresholds(
+                configuration, liveRows, deadRows, geometry.getPieceCount(partitionIndex), recordSize)
+                || (reason == PartitionCompactionPolicy.REASON_TABLE_PRESSURE
+                && deadRows > configuration.getPartitionCompactionTablePressureDeadRatio() * liveRows
+                && deadRows > configuration.getPartitionCompactionDeadMinSize() / recordSize);
+        if (allowRewrite && isWasteful && configuration.getMicrosecondClock().getTicks() < deadlineMicros) {
+            compactPartition(partitionIndex);
+        }
+    }
+
     private void foldFoldableFolders(long wallClockMicros) {
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final PartitionGeometry geometry = getGeometry();
@@ -8952,6 +9131,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return rowCount;
         }
         return Math.max(rowCount, getGeometry().getE(lastPartitionIndex));
+    }
+
+    private long getMoveTailFutureFloor() {
+        long floor = Long.MAX_VALUE;
+        if (walApplySeqTxn >= 0 && walTxnDetails != null) {
+            for (long t = walApplySeqTxn + 1, last = walTxnDetails.getLastSeqTxn(); t <= last; t++) {
+                final long minTs = walTxnDetails.getMinTimestamp(t);
+                if (minTs > Numbers.LONG_NULL) {
+                    floor = Math.min(floor, minTs);
+                }
+            }
+        }
+        return floor;
     }
 
     private long getO3RowCount0() {
@@ -9220,6 +9412,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    private boolean hasIndexedColumn() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasPostingIndex() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
@@ -9283,7 +9484,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void housekeep(long wallClockMicros) {
         try {
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
+            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3PartitionMaxSplits());
             runCompaction(wallClockMicros);
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
@@ -9686,6 +9887,47 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean isColdSquashPartition(int partitionIndex, long lastCommitTxn) {
+        if (txWriter.isPartitionReadOnly(partitionIndex) || txWriter.isPartitionRemote(partitionIndex)
+                || txWriter.isPartitionParquet(partitionIndex)) {
+            return false;
+        }
+        final int hotCommits = configuration.getPartitionCompactionHotCommits();
+        if (hotCommits <= 0) {
+            return true;
+        }
+        if (txWriter.isPartitionComposite(partitionIndex)) {
+            final long writerTxn = getGeometry().getWriterTxn(partitionIndex);
+            return writerTxn < 0 || writerTxn <= lastCommitTxn - hotCommits;
+        }
+        // Plain WAL folders have no geometry header. Their durable data provenance is the native seqTxn.
+        final long seqTxn = nativePartitionSeqTxn(partitionIndex);
+        return tableToken.isWal()
+                ? seqTxn >= 0 && seqTxn <= getCompositePartitionSeqTxn() - hotCommits
+                : txWriter.getPartitionNameTxn(partitionIndex) < lastCommitTxn - hotCommits;
+    }
+
+    private boolean isColdSmallSquashTarget(int partitionIndex, long lastCommitTxn, boolean isKnownCold) {
+        if (!txWriter.isPartitionComposite(partitionIndex) || txWriter.isPartitionReadOnly(partitionIndex)) {
+            return false;
+        }
+        final long writerTxn = getGeometry().getWriterTxn(partitionIndex);
+        final long splitMinSize = configuration.getPartitionO3SplitMinSize();
+        if (writerTxn < 0 || (!isKnownCold && writerTxn >= lastCommitTxn) || splitMinSize <= 0) {
+            return false;
+        }
+        final long sizeLimit = splitMinSize > Long.MAX_VALUE / 4 ? Long.MAX_VALUE : splitMinSize * 4;
+        // Count the actual directory, including variable columns, indexes and dead ranges, not live-row estimates.
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy,
+                    txWriter.getPartitionTimestampByIndex(partitionIndex), txWriter.getPartitionNameTxn(partitionIndex));
+            final long diskSize = ff.getDirSize(other);
+            return diskSize > 0 && diskSize < sizeLimit;
+        } finally {
+            other.trimTo(pathSize);
+        }
+    }
+
     private boolean isEmptyTable() {
         return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
     }
@@ -9752,6 +9994,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private boolean isMakePlainEligible(int partitionIndex) {
         return PartitionCompactionPolicy.isMakePlainShape(txWriter, getGeometry(), partitionIndex);
+    }
+
+    private boolean isMoveTailForecastRequired(PartitionGeometry geometry, int index, long incomingLo, long incomingRows) {
+        final long extent = geometry.getE(index);
+        final long threshold = getPartitionO3SplitThreshold();
+        // A normal plan cannot retire more than the entire existing extent. Avoid mapping even the
+        // timestamp column for folders which cannot reach the dead-space minimum.
+        if (extent <= threshold) {
+            return false;
+        }
+        final int pieceCount = geometry.getPieceCount(index);
+        final int last = pieceCount - 1;
+        final boolean isTailOwner = last >= 0
+                && geometry.getPieceRowOffset(index, last) + geometry.getPieceRowCount(index, last) == extent;
+        final long lastHi = last >= 0 ? geometry.getPieceTimestampHi(index, last) : Numbers.LONG_NULL;
+        if (!isCommitDedupMode() && lastHi != Numbers.LONG_NULL
+                && (incomingLo > lastHi || (incomingLo == lastHi
+                && (isTailOwner || geometry.getPieceTimestampLo(index, last) < lastHi)))) {
+            // APPEND or a NEW_PIECE above the last piece retires no rows. Coalescing can only lower
+            // this piece-count upper bound.
+            final long liveRows = txWriter.getPartitionSize(index);
+            return O3CompositeMergeStrategy.isMoveTailTriggered(liveRows + incomingRows,
+                    extent - liveRows, pieceCount + (isTailOwner ? 0 : 1), threshold);
+        }
+        return true;
     }
 
     /**
@@ -9975,6 +10242,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isCheckpointInProgress()) {
             return false;
         }
+        // MAKE-PLAIN clamps column tops and TRIM-FILES shortens the files: no merge-append frame stays open across it.
+        evictCompositeFrames();
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
         final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long liveRows = txWriter.getPartitionSize(partitionIndex);
@@ -10042,6 +10311,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return false if a file could not be shortened, for example because Windows still has it mapped
      */
     private boolean trimPartitionFiles(long partitionTs, long partitionNameTxn, long liveRows) {
+        // A cached frame knows its files' lengths; these are about to shrink.
+        evictCompositeFrames();
         path.trimTo(pathSize);
         setPathForNativePartition(path, timestampType, partitionBy, partitionTs, partitionNameTxn);
         final int plen = path.size();
@@ -10260,99 +10531,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * MOVE-TAIL, if it pays, on every partition the block starting at {@code startSeqTxn} will write to. Runs
-     * before the block is applied, on the writer's own thread, and commits its own transactions.
-     */
-    private void compactAheadOfBlock(long startSeqTxn, long blockMinTimestamp) {
-        if (!PartitionBy.isPartitioned(partitionBy) || compositePartitionCount == 0 || txWriter.getLagRowCount() > 0) {
+    /** Forecasts and moves tails on the writer before any partition task starts. */
+    private void compactAheadOfO3(long sortedTimestampsAddr, long rowLo, long rowHi) {
+        if (!isMergeAppendTable() || !PartitionBy.isPartitioned(partitionBy)
+                || compositePartitionCount == 0 || txWriter.getLagRowCount() > 0 || isCommitReplaceMode()) {
             return;
         }
-        // The lowest timestamp any LOADED commit carries, this block's included. Nothing below it will be
-        // written again by work already queued, which is what lets a piece under it count as settled.
-        long futureFloor = blockMinTimestamp;
-        for (long t = startSeqTxn, last = walTxnDetails.getLastSeqTxn(); t <= last; t++) {
-            final long minTs = walTxnDetails.getMinTimestamp(t);
-            if (minTs > Numbers.LONG_NULL && minTs < futureFloor) {
-                futureFloor = minTs;
-            }
-        }
-        // The block cannot touch a partition below the one holding its lowest timestamp.
-        int from = txWriter.getPartitionIndex(blockMinTimestamp);
-        if (from < 0) {
-            from = 0;
-        }
-        final long deadline = configuration.getMicrosecondClock().getTicks()
-                + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
-        // Stamping partitions with this block's seqTxn before the block is applied would claim rows the
-        // partition does not hold; -1 makes the stamp fall back to the committed seqTxn, which is right.
+        final long futureFloor = getMoveTailFutureFloor();
         final long savedWalApplySeqTxn = walApplySeqTxn;
+        final long dedupSink = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
         walApplySeqTxn = -1;
         try {
-            for (int i = from; i < txWriter.getPartitionCount(); i++) {
-                if (configuration.getMicrosecondClock().getTicks() > deadline) {
-                    break;
-                }
-                // REWRITE is withheld: it copies every live row of a partition this block is about to
-                // dirty again. JOIN, MOVE-TAIL and MAKE-PLAIN are the steps worth taking here.
-                final int result = compactPhysicalPartition(i, true, false, futureFloor, deadline);
-                if (result == COMPACTION_MOVED_TAIL) {
-                    if (isMakePlainEligible(i)) {
-                        makePartitionPlain(i);
+            long lo = rowLo;
+            while (lo < rowHi) {
+                final long incomingLo = getTimestampIndexValue(sortedTimestampsAddr, lo);
+                final long ceil = txWriter.getCurrentPartitionMaxTimestamp(incomingLo);
+                final long hi = O3CompositeMergeStrategy.lastAtOrBelow(sortedTimestampsAddr, lo, rowHi - 1, ceil);
+                final int index = txWriter.getPartitionIndex(incomingLo);
+                if (index >= 0 && txWriter.isPartitionComposite(index) && !txWriter.isPartitionReadOnly(index)) {
+                    final PartitionGeometry geometry = getGeometry();
+                    if (isMoveTailForecastRequired(geometry, index, incomingLo, hi - lo + 1)
+                            && (!isCommitDedupMode() || !O3PartitionJob.hasTouchingPieces(geometry, index))) {
+                        final O3CompositeMergeStrategy.Plan plan = O3PartitionJob.processCompositePartition(
+                                path.trimTo(pathSize), index, lo, hi, sortedTimestampsAddr, this, geometry,
+                                compactionForecastClusterer, compactionForecastBounds, compactionForecastCuts,
+                                compactionForecastPlan, Long.MIN_VALUE, Long.MAX_VALUE);
+                        O3PartitionJob.forecastCompositePlan(path.trimTo(pathSize), index, geometry,
+                                compactionForecastBounds, plan, sortedTimestampsAddr, o3Columns, this, dedupSink);
+                        final int cut = O3CompositeMergeStrategy.moveTailCut(compactionForecastBounds, plan,
+                                Math.min(incomingLo, futureFloor), getPartitionO3SplitThreshold());
+                        if (cut > 0 && moveTailToFreshPartition(index, compactionForecastBounds, cut, false) == COMPACTION_MOVED_TAIL) {
+                            if (isMakePlainEligible(index)) {
+                                makePartitionPlain(index);
+                            }
+                            closeActivePartition(false);
+                            openLastPartition();
+                            lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                        }
                     }
-                    // MOVE-TAIL inserted a partition after i, and the writer's mapping of the last one is
-                    // now stale. Reopen and rescan from the front it left behind.
-                    closeActivePartition(false);
-                    openLastPartition();
                 }
+                lo = hi + 1;
             }
         } finally {
             walApplySeqTxn = savedWalApplySeqTxn;
         }
-    }
-
-    /**
-     * How many pieces from the front of {@code partitionIndex} are settled AND tile {@code [0, n)} with no
-     * hole, so they can be published as the single piece MOVE-TAIL leaves behind. A piece is settled when no
-     * loaded commit reaches back to it ({@code futureFloor}) and neither the last
-     * {@link CairoConfiguration#getPartitionCompactionHotCommits()} commits nor the last
-     * {@link CairoConfiguration#getPartitionCompactionHotTime()} moved its bytes.
-     */
-    private int coldPrefixPieceCount(PartitionGeometry geometry, int partitionIndex, long futureFloor) {
-        final int hotCommits = configuration.getPartitionCompactionHotCommits();
-        final long hotTime = configuration.getPartitionCompactionHotTime();
-        final long nowMicros = configuration.getMicrosecondClock().getTicks();
-        final long currentTxn = txWriter.getTxn();
-        final int pieceCount = geometry.getPieceCount(partitionIndex);
-        long tiledTo = 0;
-        int cut = 0;
-        for (int p = 0; p < pieceCount; p++) {
-            if (geometry.getPieceRowOffset(partitionIndex, p) != tiledTo) {
-                break; // a hole: the front can no longer be one piece
-            }
-            if (geometry.getPieceTimestampHi(partitionIndex, p) >= futureFloor) {
-                break; // a loaded commit reaches into it
-            }
-            // Unknown provenance means settled, not hot: the only piece that carries it is one KEPT from
-            // before the partition was composite, and nothing has moved its bytes since.
-            final long writerTxn = geometry.getPieceWriterTxn(partitionIndex, p);
-            if (writerTxn >= 0 && currentTxn - writerTxn < hotCommits) {
-                break;
-            }
-            final long lastWrite = geometry.getPieceLastWriteMicros(partitionIndex, p);
-            if (lastWrite != Numbers.LONG_NULL && nowMicros - lastWrite < hotTime) {
-                break;
-            }
-            // The cut becomes a partition boundary, and two partitions cannot hold the same timestamp. A
-            // piece can only end the cold prefix if the next one starts strictly above it.
-            if (p + 1 < pieceCount
-                    && geometry.getPieceTimestampHi(partitionIndex, p) >= geometry.getPieceTimestampLo(partitionIndex, p + 1)) {
-                break;
-            }
-            tiledTo += geometry.getPieceRowCount(partitionIndex, p);
-            cut = p + 1;
-        }
-        return cut;
     }
 
     /**
@@ -10364,25 +10586,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int moveTailToFreshPartition(int partitionIndex, long futureFloor) {
         final PartitionGeometry geometry = getGeometry();
         final int pieceCount = geometry.getPieceCount(partitionIndex);
-        if (pieceCount < 2 || geometry.getPieceRowOffset(partitionIndex, 0) != 0) {
-            return COMPACTION_NONE;
-        }
-        // The cut is the highest boundary with only settled pieces below it, and the front has to tile
-        // [0, prefixRows) so it can be published as one piece. Dead reclaimed is E - liveRows whatever
-        // the cut, while the copy is the tail, so the highest cut is also the cheapest one.
-        // At least one piece has to stay behind as the tail, so a partition whose every piece has settled
-        // still cuts - at its highest boundary, which is the smallest tail and so the best gain.
-        final int cut = Math.min(coldPrefixPieceCount(geometry, partitionIndex, futureFloor), pieceCount - 1);
+        final int cut = PartitionCompactionPolicy.moveTailCut(configuration, txWriter, geometry, partitionIndex, avgRecordSize(), futureFloor);
         if (cut < 1) {
             return COMPACTION_NONE;
         }
+        compactionForecastBounds.clear();
+        for (int p = 0; p < pieceCount; p++) {
+            O3CompositeMergeStrategy.addPieceBounds(compactionForecastBounds,
+                    geometry.getPieceTimestampLo(partitionIndex, p), geometry.getPieceTimestampHi(partitionIndex, p),
+                    geometry.getPieceRowOffset(partitionIndex, p), geometry.getPieceRowCount(partitionIndex, p),
+                    geometry.getPieceWriterTxn(partitionIndex, p), geometry.getPieceLastWriteMicros(partitionIndex, p));
+        }
+        return moveTailToFreshPartition(partitionIndex, compactionForecastBounds, cut, true);
+    }
+
+    private int moveTailToFreshPartition(int partitionIndex, LongList bounds, int cut, boolean isRewriteDue) {
+        final PartitionGeometry geometry = getGeometry();
+        final int pieceCount = bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
         long prefixRows = 0;
         for (int p = 0; p < cut; p++) {
-            prefixRows += geometry.getPieceRowCount(partitionIndex, p);
+            prefixRows += O3CompositeMergeStrategy.getRowCount(bounds, p);
         }
         long tailRows = 0;
         for (int p = cut; p < pieceCount; p++) {
-            tailRows += geometry.getPieceRowCount(partitionIndex, p);
+            tailRows += O3CompositeMergeStrategy.getRowCount(bounds, p);
         }
         if (tailRows == 0 || prefixRows == 0) {
             return COMPACTION_NONE;
@@ -10390,28 +10617,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long liveRows = prefixRows + tailRows;
         final long e = geometry.getE(partitionIndex);
         final long deadRows = e - liveRows;
-        // What the move is worth is not the disk it frees but the extent it leaves behind: the partition
-        // the next commits keep merging into goes from E rows to just the tail's, and every one of them
-        // maps and plans against that extent. The price is one copy of the tail, so require the shrink to
-        // be worth some multiple of it.
-        if (e - tailRows < tailRows * (long) configuration.getPartitionCompactionMoveTailMinGain()) {
+        if ((isRewriteDue ? prefixRows <= tailRows : !O3CompositeMergeStrategy.isMoveTailEconomical(prefixRows, tailRows, 0))
+                || !PartitionCompactionPolicy.hasMoveTailCapacity(configuration, txWriter, partitionIndex)
+                || !geometry.hasGenerationForNextPublish(partitionIndex, cut)) {
             return COMPACTION_NONE;
         }
-        long frontWriterTxn = -1;
-        long frontLastWriteMicros = Numbers.LONG_NULL;
-        for (int p = 0; p < cut; p++) {
-            frontWriterTxn = Math.max(frontWriterTxn, geometry.getPieceWriterTxn(partitionIndex, p));
-            frontLastWriteMicros = Math.max(frontLastWriteMicros, geometry.getPieceLastWriteMicros(partitionIndex, p));
-        }
+        // From here on no merge-append frame stays open across the tail's move.
+        evictCompositeFrames();
 
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
         final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         // The tail's floor timestamp: the first tail piece's tsLo.
-        final long tailPartitionTs = geometry.getPieceTimestampLo(partitionIndex, cut);
+        final long tailPartitionTs = O3CompositeMergeStrategy.getTsLo(bounds, cut);
         assert tailPartitionTs > partitionTs;
 
+        final var partitionDir = formatPartitionForTimestamp(partitionTs, srcNameTxn);
         LOG.info().$("moving compaction tail to a fresh partition [table=").$(tableToken)
-                .$(", dir=").$(formatPartitionForTimestamp(partitionTs, srcNameTxn))
+                .$(", dir=").$(partitionDir)
                 .$(", tailRows=").$(tailRows)
                 .$(", prefixRows=").$(prefixRows)
                 .$(", deadRows=").$(deadRows)
@@ -10432,11 +10654,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(path, timestampType, partitionBy, partitionTs, srcNameTxn);
             try (Frame sourceFrame = frameFactory.openRO(path, partitionTs, metadata, columnVersionWriter, e)) {
                 for (int p = cut; p < pieceCount; p++) {
-                    final long rowCount = geometry.getPieceRowCount(partitionIndex, p);
+                    final long rowCount = O3CompositeMergeStrategy.getRowCount(bounds, p);
                     if (rowCount == 0) {
                         continue;
                     }
-                    final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
+                    final long rowOffset = O3CompositeMergeStrategy.getRowOffset(bounds, p);
                     FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(rowCount);
                     compactionWrittenRows += rowCount;
@@ -10452,19 +10674,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
         }
 
-        // Front keeps its own nameTxn and E unchanged; only its live-row total and geometry (piece 0
-        // only, unmoved) change.
+        // Front keeps its nameTxn, E and actual file ranges, including holes and nonzero offsets.
+        compactionPieceScratch.clear();
+        for (int p = 0; p < cut; p++) {
+            O3CompositeMergeStrategy.addPieceBounds(compactionPieceScratch,
+                    O3CompositeMergeStrategy.getTsLo(bounds, p), O3CompositeMergeStrategy.getTsHi(bounds, p),
+                    O3CompositeMergeStrategy.getRowOffset(bounds, p), O3CompositeMergeStrategy.getRowCount(bounds, p),
+                    O3CompositeMergeStrategy.getWriterTxn(bounds, p), O3CompositeMergeStrategy.getLastWriteMicros(bounds, p));
+        }
+        O3PartitionJob.foldAdjacentPieces(compactionPieceScratch);
         txWriter.updatePartitionSizeByTimestamp(partitionTs, prefixRows);
         geometry.beginUpdate(partitionIndex);
-        geometry.addPiece(
-                geometry.getPieceTimestampLo(partitionIndex, 0),
-                geometry.getPieceTimestampHi(partitionIndex, cut - 1),
-                0,
-                prefixRows,
-                // The front's bytes do not move, so it keeps the freshest pair of the pieces it folds.
-                frontWriterTxn,
-                frontLastWriteMicros
-        );
+        for (int p = 0, n = compactionPieceScratch.size() / PIECE_SCRATCH_STRIDE; p < n; p++) {
+            addScratchPiece(geometry, compactionPieceScratch, p);
+        }
         geometry.commitUpdate(partitionIndex, e);
         // E must not move: assert what commitUpdate's own max() already enforces, defensively.
         assert geometry.getE(partitionIndex) == e;
@@ -10482,7 +10705,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.insertPartition(partitionIndex + 1, tailPartitionTs, written, newNameTxn);
         // The sibling this leaves behind is a split like any other, and squashSplitPartitions scans from
         // minSplitPartitionTimestamp - so without this it never sees a MOVE-TAIL's output at all and the
-        // split population grows past o3.last.partition.max.splits unchecked. Measured on a 100M-row
+        // split population grows past o3.partition.max.splits unchecked. Measured on a 100M-row
         // ingest: 42 partitions in one logical day against a limit of 20, and not one squash.
         minSplitPartitionTimestamp = Math.min(minSplitPartitionTimestamp, tailPartitionTs);
         if (wasActivePartition) {
@@ -10738,11 +10961,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long dedupColSinkAddr,
             boolean isParquet,
             long o3TimestampLo,
-            long o3TimestampHi
+            long o3TimestampHi,
+            boolean isRunInline
     ) {
         // _pm seqTxn for an in-place parquet rewrite: the apply seqTxn (high-water off the data-apply path).
         long partitionSeqTxn = walApplySeqTxn > 0 ? walApplySeqTxn : getSeqTxn();
-        long cursor = messageBus.getO3PartitionPubSeq().next();
+        // The last partition of a commit runs here rather than through the queue: this thread would otherwise only
+        // wait for it. Running a task here is what a full queue makes it do anyway.
+        long cursor = isRunInline ? -1 : messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
             O3PartitionTask task = messageBus.getO3PartitionQueue().get(cursor);
             task.of(
@@ -12057,6 +12283,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastErrno = 0;
         partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
+        o3BlockSplitCapacity.clear();
         o3BasketPool.clear();
         commitRowCount = srcOooMax;
         deferredCoveringSinkAddr = 0;
@@ -12064,6 +12291,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             releaseCoveringSidecarWriteMappings();
         }
         releaseBitmapIndexWritersOfClosedActivePartition();
+
+        if (o3LagRowCount == 0 && isMergeAppendTable()) {
+            if (flattenTimestamp && o3RowCount > 0) {
+                Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
+                flattenTimestamp = false;
+            }
+            compactAheadOfO3(sortedTimestampsAddr, rowLo, srcOooMax);
+        }
 
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
@@ -12429,7 +12664,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 dedupColSinkAddr,
                                 isParquet,
                                 o3TimestampLo,
-                                o3TimestampHi
+                                o3TimestampHi,
+                                // No partition is dispatched after this one: the batch ends in it. A replace commit
+                                // can still visit partitions past its last row, so it always goes through the queue.
+                                srcOooHi >= srcOooMax - 1 && !isCommitReplaceMode()
                         );
                     }
                 } catch (CairoException | CairoError e) {
@@ -12490,6 +12728,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3DoneLatch.await(latchCount);
 
             o3InError = !success || o3ErrorCount.get() > 0;
+            if (o3InError) {
+                // A plan that failed part-way leaves its frames in a state nothing describes; the retry opens anew.
+                evictCompositeFrames();
+            }
             if (success && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
                 throw CairoException.critical(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
@@ -13360,6 +13602,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int queuedCount = 0;
 
         long totalSegmentAddressesBytes = totalSegmentAddresses * Long.BYTES;
+        // The last column this pass handles runs here rather than through the queue: this thread would otherwise only
+        // wait for it.
+        int inlineColumnIndex = columnCount - 1;
+        while (inlineColumnIndex > -1) {
+            final int columnType = metadata.getColumnType(inlineColumnIndex);
+            if (inlineColumnIndex != timestampColumnIndex && columnType > 0
+                    && (!symbolColumnsOnly || ColumnType.isSymbol(columnType))
+                    && (!dedupColumnOnly || metadata.isDedupKey(inlineColumnIndex))) {
+                break;
+            }
+            inlineColumnIndex--;
+        }
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = metadata.getColumnType(columnIndex);
             if (columnIndex != timestampColumnIndex && columnType > 0) {
@@ -13377,7 +13631,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if ((!symbolColumnsOnly || ColumnType.isSymbol(columnType)) && (!dedupColumnOnly || metadata.isDedupKey(columnIndex))) {
-                    long cursor = pubSeq.next();
+                    long cursor = columnIndex == inlineColumnIndex ? -1 : pubSeq.next();
 
                     if (cursor > -1) {
                         try {
@@ -16215,9 +16469,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int partitionIndex = partitionCompactionPolicy.getSelectedPartitionIndex();
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
         final int reason = partitionCompactionPolicy.getSelectedReason();
-        // An idle partition will not be written to again, so there is no future write to spare a clean
-        // front for - MOVE-TAIL's whole point.
-        final boolean allowMoveTail = reason != PartitionCompactionPolicy.REASON_AGE;
+        // Selection decides whether to act. Even age or a low-waste piece-count trigger must spare a
+        // majority cold prefix when moving its tail is cheaper than rewriting the whole folder.
+        final boolean allowMoveTail = true;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
         // A partition the last few commits wrote gets every step but REWRITE: copying all of its live rows
@@ -16226,16 +16480,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean allowRewrite = !partitionCompactionPolicy.isSelectedPartitionHot();
         // housekeep runs after the commit, so nothing is loaded to look ahead at: only the piece's own
         // txn and wall-clock age can call it settled.
-        final int result = compactPhysicalPartition(partitionIndex, allowMoveTail, allowRewrite, Long.MAX_VALUE, deadline);
+        final int result = compactPhysicalPartition(partitionIndex, allowMoveTail, allowRewrite, Long.MAX_VALUE, deadline, reason);
         switch (result) {
-            case COMPACTION_REWRITTEN -> partitionCompactionPolicy.onCompacted(partitionTs);
+            case COMPACTION_REWRITTEN, COMPACTION_SQUASHED -> partitionCompactionPolicy.onCompacted(partitionTs);
             case COMPACTION_MOVED_TAIL -> {
-                // The front MOVE-TAIL left behind is exactly MAKE-PLAIN's shape, so try it immediately in
-                // its own transaction. A decline gets the ordinary backoff and makePlainFoldableFolders
-                // retries it later.
-                if (!isMakePlainEligible(partitionIndex) || !makePartitionPlain(partitionIndex)) {
-                    partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
-                }
+                finishMovedTailPrefix(partitionIndex, allowRewrite, reason, deadline);
+                partitionCompactionPolicy.onCompacted(partitionTs);
             }
             case COMPACTION_NONE -> partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
             // COMPACTION_SKIPPED_HOT takes no backoff on purpose - see the constant.
@@ -16783,6 +17033,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashPartitionForce(int partitionIndex) {
+        evictCompositeFrames();
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
@@ -16815,17 +17066,68 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void squashPartitionRange(int maxLastSubPartitionCount, int partitionIndexLo, int partitionIndexHi) {
-        if (partitionIndexHi > partitionIndexLo) {
-            int subpartitions = partitionIndexHi - partitionIndexLo;
-            int optimalPartitionCount = partitionIndexHi == txWriter.getPartitionCount() ? maxLastSubPartitionCount : configuration.getO3MidPartitionMaxSplits();
-            if (subpartitions > Math.max(1, optimalPartitionCount)) {
-                squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount, false);
-            } else if (subpartitions == 1) {
-                if (partitionIndexLo >= 0 &&
-                        partitionIndexLo < txWriter.getPartitionCount() && minSplitPartitionTimestamp == txWriter.getPartitionTimestampByIndex(partitionIndexLo)) {
-                    minSplitPartitionTimestamp = getPartitionTimestampOrMax(partitionIndexLo + 1);
+    private boolean squashColdLogicalPartition(int partitionIndex, long deadlineMicros) {
+        final long logicalTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex));
+        int lo = partitionIndex;
+        while (lo > 0 && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo - 1)) == logicalTimestamp) {
+            lo--;
+        }
+        int hi = partitionIndex + 1;
+        while (hi < txWriter.getPartitionCount()
+                && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == logicalTimestamp) {
+            hi++;
+        }
+        if (hi == txWriter.getPartitionCount() || hi - lo <= 1) {
+            return false;
+        }
+        final long lastCommitTxn = txWriter.getTxn();
+        for (int i = lo; i < hi; i++) {
+            if (!isColdSquashPartition(i, lastCommitTxn)) {
+                return false;
+            }
+        }
+        final int before = txWriter.getPartitionCount();
+        squashPartitionRange(1, lo, hi, lastCommitTxn, deadlineMicros, true);
+        return txWriter.getPartitionCount() < before;
+    }
+
+    private void squashPartitionRange(int cap, int partitionIndexLo, int partitionIndexHi, long lastCommitTxn, long deadlineMicros, boolean isAllCold) {
+        squashPartitionRange(cap, partitionIndexLo, partitionIndexHi, lastCommitTxn, deadlineMicros, isAllCold, false);
+    }
+
+    private void squashPartitionRange(int cap, int partitionIndexLo, int partitionIndexHi, long lastCommitTxn, long deadlineMicros, boolean isAllCold, boolean isKnownCold) {
+        while (partitionIndexHi - partitionIndexLo > Math.max(1, cap)) {
+            if (isCheckpointInProgress()) {
+                return;
+            }
+            int selected = -1;
+            long smallestRows = Long.MAX_VALUE;
+            for (int i = partitionIndexLo; i < partitionIndexHi - 1; i++) {
+                if ((!isAllCold && (!isColdSquashPartition(i, lastCommitTxn) || !isColdSquashPartition(i + 1, lastCommitTxn)))
+                        || !canSquashOverwritePartitionTail(i)
+                        || (i + 2 == txWriter.getPartitionCount() && txWriter.isPartitionComposite(i + 1))) {
+                    continue;
                 }
+                final long rows = txWriter.getPartitionSize(i);
+                final long nextRows = txWriter.getPartitionSize(i + 1);
+                final long pairRows = rows > Long.MAX_VALUE - nextRows ? Long.MAX_VALUE : rows + nextRows;
+                if (selected < 0 || pairRows < smallestRows) {
+                    selected = i;
+                    smallestRows = pairRows;
+                }
+            }
+            if (selected < 0) {
+                return;
+            }
+            final int before = txWriter.getPartitionCount();
+            squashSplitPartitions(selected, selected + 2, 1, false, lastCommitTxn, isKnownCold);
+            final int removed = before - txWriter.getPartitionCount();
+            if (removed == 0) {
+                return;
+            }
+            partitionIndexHi -= removed;
+            if (configuration.getMicrosecondClock().getTicks() >= deadlineMicros) {
+                return;
             }
         }
     }
@@ -16838,6 +17140,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Take control of the split partition population here.
         // When the number of split partitions is too big, start merging them together.
         // This is to avoid having too many partitions / files in the system which penalizes the reading performance.
+        // Keep the data commit's txn fixed: flattening or squashing one day must not make another hot target cold.
+        final long lastCommitTxn = txWriter.getTxn();
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(timestampMin);
         int partitionIndexLo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalPartitionTimestamp);
 
@@ -16855,9 +17160,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int splitCount = partitionIndex - partitionIndexLo;
                     if (splitCount > 1) {
                         int partitionCount = txWriter.getPartitionCount();
-                        squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+                        squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex, lastCommitTxn, deadline, false);
                         int partitionReduction = partitionCount - txWriter.getPartitionCount();
-                        splitsKept = partitionReduction < splitCount - 1;
+                        splitsKept |= partitionReduction < splitCount - 1;
 
                         logicalPartitionTimestamp = nextPartitionTimestamp;
 
@@ -16877,16 +17182,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (partitionIndex - partitionIndexLo > 1) {
-                squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+                squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex, lastCommitTxn, deadline, false);
             }
         }
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
+        squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount, force, txWriter.getTxn());
+    }
+
+    private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force, long lastCommitTxn) {
+        squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount, force, lastCommitTxn, false);
+    }
+
+    private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force, long lastCommitTxn, boolean isKnownCold) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
             return;
         }
+        evictCompositeFrames();
 
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
 
@@ -16929,10 +17243,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        // A forced squash - ALTER TABLE SQUASH PARTITIONS, detach, parquet conversion - owes its caller one
-        // ordinary partition, so the target is flattened first and the composite path below never applies.
-        if (force) {
+        // Do not flatten a target when its only source is the composite active partition we cannot consume.
+        if (!force && targetPartitionIndex + 2 == txWriter.getPartitionCount()
+                && txWriter.isPartitionComposite(targetPartitionIndex + 1)) {
+            return;
+        }
+        // Forced squash always requires a plain target. Ordinary squash cleans a cold, small target once,
+        // then appends sources' live ranges directly; a hot or large accumulator keeps the append-only path.
+        if (force || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn, isKnownCold)) {
+            final long targetSeqTxn = nativePartitionSeqTxn(targetPartitionIndex);
             compactPartitionToPlain(targetPartitionIndex, "squash");
+            // Maintenance must not make an old accumulator look like it took the last data commit.
+            if (!force) {
+                txWriter.setPartitionSeqTxn(targetPartitionIndex, targetSeqTxn);
+            }
         }
         // A composite target's rows stop short of its files: the appends have to start past the dead space,
         // at E, or they would land on top of rows a piece still points at. Its live count and its geometry
@@ -17053,10 +17377,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     squashedPieceTsHi = Math.max(squashedPieceTsHi, srcTsHi);
                 }
 
+                final String targetDir = formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn).toString();
+                final Utf8Sequence sourceDir = formatPartitionForTimestamp(sourcePartition, sourceNameTxn);
                 LOG.info().$("squashing partitions [table=").$(tableToken)
-                        .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn))
+                        .$(", target=").$(targetDir)
                         .$(", targetSize=").$(targetFrame.getRowCount())
-                        .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn))
+                        .$(", source=").$(sourceDir)
                         .$(", sourceSize=").$(partitionRowCount)
                         .I$();
 
@@ -18300,45 +18626,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /** A discretionary rewrite must not copy a source the imminent ordinary squash can read directly. */
+    boolean isPendingSquashSource(int partitionIndex) {
+        final long ts = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        if (minSplitPartitionTimestamp > txWriter.getMaxTimestamp() || txWriter.getLagRowCount() > 0) {
+            return false;
+        }
+        final long logicalTs = txWriter.getLogicalPartitionTimestamp(ts);
+        if (logicalTs < txWriter.getLogicalPartitionTimestamp(minSplitPartitionTimestamp)) {
+            return false;
+        }
+        int lo = partitionIndex;
+        while (lo > 0 && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo - 1)) == logicalTs) {
+            lo--;
+        }
+        int hi = partitionIndex + 1;
+        while (hi < txWriter.getPartitionCount()
+                && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == logicalTs) {
+            hi++;
+        }
+        final int optimalCount = Math.max(1, configuration.getO3PartitionMaxSplits());
+        if (hi - lo <= optimalCount) {
+            return false;
+        }
+        int target = lo;
+        while (target < hi - 1 && !canSquashOverwritePartitionTail(target)) {
+            target++;
+        }
+        final int squashCount = Math.min(hi - target - 1, hi - lo - optimalCount);
+        return partitionIndex > target && partitionIndex <= target + squashCount;
+    }
+
     /**
      * True if the plan {@code O3PartitionJob.processCompositePartition} is about to execute would leave this partition
      * past {@link PartitionCompactionPolicy}'s waste-ratio or piece-count thresholds, so the commit can assemble the
      * folded version directly instead of writing a piece {@code runCompaction} would rewrite again later.
      */
-    boolean wouldBreachCompactionThresholds(
-            int partitionIndex,
-            PartitionGeometry geometry,
-            LongList bounds,
-            ObjList<O3CompositeMergeStrategy.Action> actions,
-            int actionCount
-    ) {
-        long liveRows = 0;
-        long deadRows = geometry.getE(partitionIndex) - txWriter.getPartitionSize(partitionIndex);
-        int pieceCount = 0;
-        for (int i = 0; i < actionCount; i++) {
-            final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
-            switch (action.type) {
-                case KEEP -> {
-                    pieceCount++;
-                    liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
-                }
-                case NEW_PIECE -> {
-                    pieceCount++;
-                    liveRows += action.getO3RowCount();
-                }
-                case APPEND -> {
-                    pieceCount++;
-                    liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex) + action.getO3RowCount();
-                }
-                case MERGE -> {
-                    pieceCount++;
-                    final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
-                    deadRows += pieceRows;
-                    liveRows += pieceRows + action.getO3RowCount();
-                }
-                case DROP -> deadRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
-            }
-        }
+    boolean wouldBreachCompactionThresholds(int partitionIndex, O3CompositeMergeStrategy.Plan plan) {
+        final long liveRows = plan.projectedLiveRows;
+        final long deadRows = plan.projectedDeadRows;
+        final int pieceCount = plan.projectedPieceCount;
         final boolean breaches = PartitionCompactionPolicy.exceedsThresholds(configuration, liveRows, deadRows, pieceCount, avgRecordSize());
         if (breaches) {
             LOG.info().$("compaction thresholds would be breached [table=")
@@ -18355,40 +18682,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return breaches;
     }
 
-    /**
-     * True when this commit's plan would leave piece 0 untouched and big enough a share of the anticipated live rows to
-     * clear {@link CairoConfiguration#getPartitionCompactionPrefixMinPercent()} - the shape {@link
-     * #moveTailToFreshPartition} needs of the committed geometry.
-     */
-    boolean wouldMoveTailSucceed(LongList bounds, ObjList<O3CompositeMergeStrategy.Action> actions, int actionCount) {
-        int piece0Action = -1;
-        for (int i = 0; i < actionCount; i++) {
-            if (actions.getQuick(i).pieceIndex == 0) {
-                piece0Action = i;
-                break;
-            }
-        }
-        if (piece0Action == -1
-                || actions.getQuick(piece0Action).type != O3CompositeMergeStrategy.ActionType.KEEP
-                || O3CompositeMergeStrategy.getRowOffset(bounds, 0) != 0) {
-            return false;
-        }
-        long liveRows = 0;
-        for (int i = 0; i < actionCount; i++) {
-            final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
-            switch (action.type) {
-                case KEEP -> liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
-                case NEW_PIECE -> liveRows += action.getO3RowCount();
-                case MERGE ->
-                        liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex) + action.getO3RowCount();
-                case APPEND ->
-                        liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex) + action.getO3RowCount();
-                default -> {
+    /** Uses the same incoming-range, fragmentation and size tests as the writer-side mover. */
+    boolean tryAcquirePartitionSplit(long partitionTimestamp) {
+        final long logicalTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        // Several partition jobs for one logical day can split concurrently. Reserve their slots against
+        // the post-forecast native directory once per block, before any worker publishes a new folder.
+        synchronized (o3BlockSplitCapacity) {
+            final int keyIndex = o3BlockSplitCapacity.keyIndex(logicalTimestamp);
+            int remaining;
+            if (keyIndex < 0) {
+                remaining = o3BlockSplitCapacity.valueAt(keyIndex);
+            } else {
+                final int index = txWriter.getPartitionIndex(partitionTimestamp);
+                if (index < 0) {
+                    return false;
                 }
+                int lo = index;
+                while (lo > 0 && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo - 1)) == logicalTimestamp) {
+                    lo--;
+                }
+                int hi = index + 1;
+                while (hi < txWriter.getPartitionCount()
+                        && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == logicalTimestamp) {
+                    hi++;
+                }
+                remaining = configuration.getO3PartitionMaxSplits() - (hi - lo);
             }
+            if (remaining <= 0) {
+                return false;
+            }
+            o3BlockSplitCapacity.putAt(keyIndex, logicalTimestamp, remaining - 1);
+            return true;
         }
-        final long prefixRows = O3CompositeMergeStrategy.getRowCount(bounds, 0);
-        return prefixRows * 100 >= liveRows * (long) configuration.getPartitionCompactionPrefixMinPercent();
+    }
+
+    boolean wouldMoveTailSucceed(int partitionIndex, LongList bounds, O3CompositeMergeStrategy.Plan plan) {
+        return PartitionCompactionPolicy.hasMoveTailCapacity(configuration, txWriter, partitionIndex)
+                && !isCommitReplaceMode() && txWriter.getLagRowCount() == 0
+                && O3CompositeMergeStrategy.moveTailCut(bounds, plan, getMoveTailFutureFloor(), getPartitionO3SplitThreshold()) > 0;
     }
 
     @FunctionalInterface

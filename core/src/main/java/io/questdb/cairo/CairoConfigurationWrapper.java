@@ -740,6 +740,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionMergeAppendFrameCacheSize() {
+        return getDelegate().getO3PartitionMergeAppendFrameCacheSize();
+    }
+
+    @Override
     public long getO3MaxLag() {
         return getDelegate().getO3MaxLag();
     }
@@ -752,6 +757,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3MidPartitionMaxSplits() {
         return getDelegate().getO3MidPartitionMaxSplits();
+    }
+
+    @Override
+    public int getO3PartitionMaxSplits() {
+        return getDelegate().getO3PartitionMaxSplits();
     }
 
     @Override
@@ -932,6 +942,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getPartitionCompactionTableDeadTrigger() {
         return getDelegate().getPartitionCompactionTableDeadTrigger();
+    }
+
+    @Override
+    public double getPartitionCompactionTablePressureDeadRatio() {
+        return getDelegate().getPartitionCompactionTablePressureDeadRatio();
     }
 
     @Override

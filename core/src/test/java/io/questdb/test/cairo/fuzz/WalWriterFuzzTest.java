@@ -844,12 +844,17 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     private static void setRndPartitionCompactionProperties(Rnd rnd) {
         final int pieceThreshold = (int) Math.round(Math.pow(10, rnd.nextDouble() * 4));
         final long avgRowsPieceLim = Math.round(Math.pow(10, rnd.nextDouble() * 7));
-        final int deadRowsRatio = (int) Math.round(Math.pow(10, rnd.nextDouble() * 3)) - 1;
+        final int deadRowsRatio = Math.max(1, (int) Math.round(Math.pow(10, rnd.nextDouble() * 3)) - 1);
         final long deadMinSize = Math.round(Math.pow(10, 5 + rnd.nextDouble() * 7));
         final int prefixMinPercent = rnd.nextInt(10) == 0 ? 1 + rnd.nextInt(40) : 50;
         final long tableDeadThreshold = rnd.nextInt(5) == 0
                 ? Math.round(Math.pow(10, rnd.nextDouble() * Math.log10(50 * Numbers.SIZE_1MB)))
                 : 0;
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, switch (rnd.nextInt(3)) {
+            case 0 -> 2;
+            case 1 -> 3;
+            default -> 20;
+        });
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, pieceThreshold);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, avgRowsPieceLim);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, deadRowsRatio);
