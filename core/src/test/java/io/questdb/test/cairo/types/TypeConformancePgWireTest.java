@@ -44,7 +44,6 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -100,11 +99,7 @@ public class TypeConformancePgWireTest extends BasePGTest {
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        final Collection<Object[]> data = new ArrayList<>();
-        for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
-            data.add(new Object[]{TypeConformanceTypes.ALL.getQuick(i).label});
-        }
-        return data;
+        return TypeConformanceTypes.parameters();
     }
 
     @Test

@@ -35,6 +35,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.Set;
@@ -64,6 +66,8 @@ import java.util.Set;
 public final class TypeConformanceTypes {
     public static final ObjList<Entry> ALL = new ObjList<>();
     public static final String LATER_TYPES_RESOURCE = "/io/questdb/test/cairo/types/later-types.txt";
+    // comma-separated kit labels; when set, the kit classes run those types only
+    public static final String TYPES_PROPERTY = "questdb.test.kit.types";
     // tags that resolve overloads or mark parser state; none of their values is stored or computed
     static final Set<ColumnTypeTag> PSEUDO_TAGS = EnumSet.of(
             ColumnTypeTag.UNDEFINED, ColumnTypeTag.CURSOR, ColumnTypeTag.VAR_ARG, ColumnTypeTag.RECORD,
@@ -98,6 +102,34 @@ public final class TypeConformanceTypes {
      */
     public static boolean isLaterTag(int tag) {
         return ColumnType.findTypeDriver(tag) != null && !EXISTING_TAGS.contains(ColumnTypeTag.of(tag));
+    }
+
+    /**
+     * The JUnit parameters of every kit class: the label of each type of {@link #ALL}, in its order,
+     * or of the types {@link #TYPES_PROPERTY} names when it is set. A type's author checks the new
+     * type alone in about a minute before running the whole kit.
+     */
+    public static Collection<Object[]> parameters() {
+        final String names = System.getProperty(TYPES_PROPERTY, "").trim();
+        final Collection<Object[]> data = new ArrayList<>();
+        if (names.isEmpty()) {
+            for (int i = 0, n = ALL.size(); i < n; i++) {
+                data.add(new Object[]{ALL.getQuick(i).label});
+            }
+            return data;
+        }
+        for (String name : names.split(",")) {
+            final int size = data.size();
+            for (int i = 0, n = ALL.size(); i < n; i++) {
+                if (ALL.getQuick(i).label.equalsIgnoreCase(name.trim())) {
+                    data.add(new Object[]{ALL.getQuick(i).label});
+                }
+            }
+            if (data.size() == size) {
+                throw new IllegalArgumentException(TYPES_PROPERTY + " names no conformance kit type: " + name);
+            }
+        }
+        return data;
     }
 
     /**

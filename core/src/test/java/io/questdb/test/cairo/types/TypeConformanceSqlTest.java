@@ -64,11 +64,12 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -164,11 +165,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        final Collection<Object[]> data = new ArrayList<>();
-        for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
-            data.add(new Object[]{TypeConformanceTypes.ALL.getQuick(i).label});
-        }
-        return data;
+        return TypeConformanceTypes.parameters();
     }
 
     @Test
@@ -317,9 +314,20 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 final String error = copyBind(highText, exportRoot, section);
                 if (type.isLater()) {
                     if (!TypeConformanceInvariants.assertDeclaredRefusal(type, "-", path, mode, error, "COPY bind snapshot")) {
-                        if (error != null || !section.toString().contains("\n" + high.label + "\n")) {
+                        // table t keeps its own labels: the export holds the rows of t whose value prints as the bound one
+                        final Set<String> expected = new HashSet<>();
+                        for (Map.Entry<String, String> row : readTexts(engine, sqlExecutionContext, "SELECT k, v FROM t").entrySet()) {
+                            if (row.getValue().equals(highText)) {
+                                expected.add(row.getKey());
+                            }
+                        }
+                        final Set<String> exported = new HashSet<>();
+                        final String[] lines = printQuietly("SELECT k FROM read_parquet('" + exportRoot + Files.SEPARATOR + "copy_bind.parquet')").split("\n");
+                        exported.addAll(Arrays.asList(lines).subList(1, lines.length));
+                        if (error != null || expected.isEmpty() || !expected.equals(exported)) {
                             throw new AssertionError(TypeConformanceInvariants.context(type, high.label, path, mode)
-                                    + ": the export of the row bound by its value must hold that row: " + (error != null ? error : section));
+                                    + ": the export of the rows bound by their value " + highText + " must hold the rows " + expected
+                                    + ": " + (error != null ? error : section));
                         }
                     }
                     return;
@@ -459,6 +467,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 // every value row is written; under NOT_NULL the NULL rows are refused
                 TypeConformanceInvariants.nullRowWriteError(type, "sql.setup", mode, steps);
             }
+            // every path runs, so a failing path hides none after it; the mode reports them together
+            final ObjList<AssertionError> failures = new ObjList<>();
             for (String[] query : queries()) {
                 final String path = "sql." + query[0];
                 if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
@@ -480,6 +490,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                         section += "plan memoizes: " + observe(eng, ctx, "EXPLAIN " + query[1]).output.contains("memoize(") + '\n';
                     }
                     assertSection(query[0], mode, section);
+                } catch (AssertionError e) {
+                    failures.add(e);
                 } finally {
                     SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
                 }
@@ -489,13 +501,18 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
                     continue;
                 }
-                if (type.isLater()) {
-                    checkLaterRowQuery(eng, ctx, query[0], query[1], query[2], mode);
-                    continue;
+                try {
+                    if (type.isLater()) {
+                        checkLaterRowQuery(eng, ctx, query[0], query[1], query[2], mode);
+                    } else {
+                        assertSection(query[0], mode, rowSection(eng, ctx, path, mode, query[1], query[2]));
+                    }
+                } catch (AssertionError e) {
+                    failures.add(e);
                 }
-                assertSection(query[0], mode, rowSection(eng, ctx, path, mode, query[1], query[2]));
             }
             dropTables(eng, ctx);
+            throwFailures(failures);
         }));
     }
 
@@ -606,6 +623,19 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         }
     }
 
+    // one failure as it is; several as one error with a line per path, each opening with its context
+    private static void throwFailures(ObjList<AssertionError> failures) {
+        if (failures.size() == 1) {
+            throw failures.getQuick(0);
+        }
+        if (failures.size() > 1) {
+            final StringSink message = new StringSink();
+            for (int i = 0, n = failures.size(); i < n; i++) {
+                message.put(i > 0 ? "\n" : "").put(failures.getQuick(i).getMessage());
+            }
+            throw new AssertionError(message.toString());
+        }
+    }
 
     // the value a widening of the type gives for each row, by its declared tier (invariant 5)
     private void addWideningGaps(String pair, TypeConformanceTypes.Entry target, Map<String, long[]> actual, ObjList<String> gaps) {
@@ -1037,6 +1067,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         final TypeConformanceValues.Row high = gRows.getQuick(2);
         final ObjList<long[]> bits = new ObjList<>();
         final ObjList<String> texts = new ObjList<>();
+        long[] lowBits = low.bits;
+        long[] highBits = high.bits;
         String error = null;
         try (
                 SqlCompiler compiler = eng.getSqlCompiler();
@@ -1044,14 +1076,30 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 RecordCursor cursor = factory.getCursor(ctx)
         ) {
             final RecordMetadata metadata = factory.getMetadata();
+            final int resultType = metadata.getColumnType(1);
+            // a type without a last() of its own reaches a wider type's (a reach stated as meant);
+            // the column then holds the type's values widened by its tier
+            final boolean isWidened = ColumnType.tagOf(resultType) != ColumnType.tagOf(type.columnType);
+            final int resultWidth = TypeConformanceInvariants.widthOf(resultType);
+            if (isWidened) {
+                final RelationKind resultKind = TypeConformanceInvariants.kindOf(resultType);
+                lowBits = TypeConformanceInvariants.widened(type, low.bits, resultKind, resultWidth);
+                highBits = TypeConformanceInvariants.widened(type, high.bits, resultKind, resultWidth);
+                if (lowBits == null || highBits == null) {
+                    throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": last(v) returns "
+                            + ColumnType.nameOf(resultType) + ", which is no widening of the type by its tier; give the type a last() of its own");
+                }
+            }
             final Record record = cursor.getRecord();
             final StringSink sink = new StringSink();
             while (cursor.hasNext()) {
-                bits.add(TypeConformanceValues.readValue(record, 1, type));
+                bits.add(isWidened ? TypeConformanceValues.readBits(record, 1, resultWidth) : TypeConformanceValues.readValue(record, 1, type));
                 sink.clear();
                 CursorPrinter.printColumn(record, metadata, 1, sink);
                 texts.add(sink.toString());
             }
+        } catch (AssertionError e) {
+            throw e;
         } catch (Throwable e) {
             error = String.valueOf(e.getMessage());
         }
@@ -1073,8 +1121,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         if (bits.size() < 3) {
             throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + bits.size() + " sampled rows, expected 3 or 5");
         }
-        TypeConformanceInvariants.assertReadsBackAsWritten(type, low.label, path, mode, low.bits, bits.getQuick(0));
-        TypeConformanceInvariants.assertReadsBackAsWritten(type, high.label, path, mode, high.bits, bits.getQuick(2));
+        TypeConformanceInvariants.assertReadsBackAsWritten(type, low.label, path, mode, lowBits, bits.getQuick(0));
+        TypeConformanceInvariants.assertReadsBackAsWritten(type, high.label, path, mode, highBits, bits.getQuick(2));
         final boolean hasNullRow = bits.size() > 4;
         switch (name) {
             case "fill_null" -> {
@@ -1086,19 +1134,19 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 }
             }
             case "fill_prev" -> {
-                TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap1", path, mode, low.bits, bits.getQuick(1));
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap1", path, mode, lowBits, bits.getQuick(1));
                 if (hasNullRow) {
-                    TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, high.bits, bits.getQuick(3));
+                    TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, highBits, bits.getQuick(3));
                 }
             }
             case "fill_value" -> {
-                TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap1", path, mode, high.bits, bits.getQuick(1));
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap1", path, mode, highBits, bits.getQuick(1));
                 if (hasNullRow) {
-                    TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, high.bits, bits.getQuick(3));
+                    TypeConformanceInvariants.assertReadsBackAsWritten(type, "gap3", path, mode, highBits, bits.getQuick(3));
                 }
             }
             default -> {
-                TypeConformanceInvariants.assertBetween(type, "gap1", path, mode, low.bits, bits.getQuick(1), high.bits);
+                TypeConformanceInvariants.assertBetween(type, "gap1", path, mode, lowBits, bits.getQuick(1), highBits);
                 if (hasNullRow && TypeConformanceInvariants.POLICY_SENTINEL.equals(TypeConformanceInvariants.policyOf(type))
                         && !texts.getQuick(4).equals(texts.getQuick(3))) {
                     throw new AssertionError(TypeConformanceInvariants.context(type, "gap3", path, mode)

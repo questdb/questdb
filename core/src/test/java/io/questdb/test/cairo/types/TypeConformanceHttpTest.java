@@ -52,7 +52,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -115,11 +114,7 @@ public class TypeConformanceHttpTest extends AbstractTest {
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        final Collection<Object[]> data = new ArrayList<>();
-        for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
-            data.add(new Object[]{TypeConformanceTypes.ALL.getQuick(i).label});
-        }
-        return data;
+        return TypeConformanceTypes.parameters();
     }
 
     @Test

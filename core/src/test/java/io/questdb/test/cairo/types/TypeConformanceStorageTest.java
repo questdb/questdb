@@ -59,7 +59,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -113,11 +112,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        final Collection<Object[]> data = new ArrayList<>();
-        for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
-            data.add(new Object[]{TypeConformanceTypes.ALL.getQuick(i).label});
-        }
-        return data;
+        return TypeConformanceTypes.parameters();
     }
 
     @Test
@@ -150,7 +145,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     // day 0 is a column top of v, day 1 holds every value row
                     createTable(table, mode, "k VARCHAR", steps);
                     insertRows(table, mode, "d0:", 0, false, steps);
-                    step("add column", "ALTER TABLE " + table + " ADD COLUMN v " + type.ddl, mode, steps);
+                    step(table, "add column", "ALTER TABLE " + table + " ADD COLUMN v " + type.ddl, mode, steps);
                     insertRows(table, mode, "d1:", DAY, true, steps);
                     if (steps.length() > 0) {
                         // the source column cannot be set up: no target can run
@@ -160,7 +155,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     }
                     section.put(target.label).put('\t');
                     final StringSink alter = new StringSink();
-                    step("alter", "ALTER TABLE " + table + " ALTER COLUMN v TYPE " + target.ddl, mode, alter);
+                    step(table, "alter", "ALTER TABLE " + table + " ALTER COLUMN v TYPE " + target.ddl, mode, alter);
                     if (alter.length() > 0) {
                         section.put(abbreviate(oneLine(alter), target)).put('\n');
                     } else {
@@ -240,7 +235,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
             }
             final String table = "dedup_t";
             final StringSink steps = new StringSink();
-            step("create", "CREATE TABLE " + table + " (k VARCHAR, v " + type.ddl + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, v)", mode, steps);
+            step(table, "create", "CREATE TABLE " + table + " (k VARCHAR, v " + type.ddl + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, v)", mode, steps);
             if (steps.length() == 0) {
                 insertRows(table, mode, "", 0, true, steps);
                 // the same keys again: upserts replace k
@@ -260,7 +255,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     values.put("('shift:").put(literalRows.getQuick(i).label).put("', ")
                             .put(literalRows.getQuick((i + 1) % n).literal).put(", ").put(i * SECOND).put("::TIMESTAMP)");
                 }
-                step("insert shift:", "INSERT INTO " + table + " (k, v, ts) VALUES " + values, mode, steps);
+                step(table, "insert shift:", "INSERT INTO " + table + " (k, v, ts) VALUES " + values, mode, steps);
             }
             assertSection("dedup", mode, steps + query("SELECT k, v FROM " + table));
             assertSection("dedup-frames", mode, frames("SELECT k, v FROM " + table));
@@ -374,7 +369,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     insertRows(table, mode, "d1:", DAY, true, steps);
                 }
                 // the last partition is active and stays native
-                step("to parquet", "ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'", mode, steps);
+                step(table, "to parquet", "ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'", mode, steps);
                 if (type.isLater()) {
                     checkLaterRows(table, "d0:", "storage.parquet", mode, steps);
                 } else {
@@ -382,7 +377,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     assertSection("parquet-frames", mode, frames("SELECT k, v FROM " + table));
                 }
                 final StringSink back = new StringSink();
-                step("to native", "ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE WHERE ts < '1970-01-02'", mode, back);
+                step(table, "to native", "ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE WHERE ts < '1970-01-02'", mode, back);
                 if (type.isLater()) {
                     // a NOT NULL type refused its NULL row with the writes above, not in this step
                     final StringSink nativeSteps = new StringSink();
@@ -454,14 +449,14 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     values.put(", ").put(i * SECOND).put("::TIMESTAMP)");
                 }
                 // a row on the next day keeps the partition of the value rows inactive
-                step("insert", "INSERT INTO " + table + " (k, v, ts) VALUES " + values + ", ('active', NULL, " + DAY + "::TIMESTAMP)", mode, steps);
-                step("to parquet", "ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'", mode, steps);
-                step("alter", "ALTER TABLE " + table + " ALTER COLUMN v TYPE " + type.ddl, mode, steps);
+                step(table, "insert", "INSERT INTO " + table + " (k, v, ts) VALUES " + values + ", ('active', NULL, " + DAY + "::TIMESTAMP)", mode, steps);
+                step(table, "to parquet", "ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'", mode, steps);
+                step(table, "alter", "ALTER TABLE " + table + " ALTER COLUMN v TYPE " + type.ddl, mode, steps);
                 final String read = "SELECT k, v FROM " + table + " WHERE ts < '1970-01-02'";
                 // read through the Parquet partition, which converts the column on the fly
                 final String parquetRead = type.isLater() ? null : query(read);
                 final StringSink conversion = new StringSink();
-                step("to native", "ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE WHERE ts < '1970-01-02'", mode, conversion);
+                step(table, "to native", "ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE WHERE ts < '1970-01-02'", mode, conversion);
                 if (type.isLater()) {
                     if (TypeConformanceInvariants.assertDeclaredRefusal(type, "-", path, mode, conversion.length() > 0 ? conversion : null, PARQUET_SITE)) {
                         continue;
@@ -763,7 +758,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
             // day 0 is a column top of v, day 1 holds every value row
             createTable(table, mode, "k VARCHAR", steps);
             insertRows(table, mode, "d0:", 0, false, steps);
-            step("add column", "ALTER TABLE " + table + " ADD COLUMN v " + type.ddl, mode, steps);
+            step(table, "add column", "ALTER TABLE " + table + " ADD COLUMN v " + type.ddl, mode, steps);
             insertRows(table, mode, "d1:", DAY, true, steps);
             try {
                 TypeConformanceInvariants.nullRowWriteError(type, path, mode, steps);
@@ -774,7 +769,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
             final boolean isAdmitted = contains(RelationRules.alter(ColumnType.tagOf(type.columnType)), targetTag);
             final String pair = type.label + " -> " + target.label + (isAdmitted ? " (rule A)" : " (not in rule A)");
             final StringSink alter = new StringSink();
-            step("alter", "ALTER TABLE " + table + " ALTER COLUMN v TYPE " + target.ddl, mode, alter);
+            step(table, "alter", "ALTER TABLE " + table + " ALTER COLUMN v TYPE " + target.ddl, mode, alter);
             try {
                 if (!isAdmitted) {
                     if (alter.length() == 0) {
@@ -830,7 +825,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         final String path = "storage.dedup";
         final String table = "dedup_t";
         final StringSink steps = new StringSink();
-        step("create", "CREATE TABLE " + table + " (k VARCHAR, v " + type.ddl + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, v)", mode, steps);
+        step(table, "create", "CREATE TABLE " + table + " (k VARCHAR, v " + type.ddl + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, v)", mode, steps);
         if (steps.length() > 0) {
             throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
                     + ": a persisted type that is no array is a dedup key, but CREATE refused it: " + oneLine(steps));
@@ -1235,10 +1230,18 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
      * Runs one DDL or DML step; for a WAL table in {@code mode} it also applies the WAL. An
      * error is appended to {@code steps} as a line of the recording.
      */
-    private void step(String name, String sql, String mode, StringSink steps) {
+    // a later type's step also records a WAL apply that suspended the table, so a refusal raised
+    // during apply reads as the step's error; existing types' recordings show the apply by the rows
+    private void step(String table, String name, String sql, String mode, StringSink steps) throws Exception {
         stepNoDrain(name, sql, steps);
         if (isWal(mode)) {
             drainWalQueue();
+            if (type.isLater()) {
+                final Map<String, String> status = texts("SELECT coalesce(errorMessage, '') k, 'x' v FROM wal_tables() WHERE name = '" + table + "' AND suspended");
+                for (String error : status.keySet()) {
+                    steps.put("error: ").put(name).put(": the WAL apply suspended the table: ").put(error).put('\n');
+                }
+            }
         }
     }
 
