@@ -136,8 +136,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         // anything not convertible to LONG (e.g. a bind variable already bound to a non-numeric type).
         coerceRuntimeConstantType(strideArg, ColumnType.LONG, sqlExecutionContext, "stride must be an integer", stridePosition);
         final short strideTypeTag = ColumnType.tagOf(strideArg.getType());
-        if (strideTypeTag != ColumnType.INT && strideTypeTag != ColumnType.LONG
-                && strideTypeTag != ColumnType.SHORT && strideTypeTag != ColumnType.BYTE) {
+        if (!ColumnType.isIntegral(strideTypeTag)) {
             throw SqlException.$(stridePosition, "integer expected for stride");
         }
 
@@ -169,8 +168,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
                         seedPosition
                 );
                 final short seedTypeTag = ColumnType.tagOf(seedArg.getType());
-                if (seedTypeTag != ColumnType.INT && seedTypeTag != ColumnType.LONG
-                        && seedTypeTag != ColumnType.SHORT && seedTypeTag != ColumnType.BYTE) {
+                if (!ColumnType.isIntegral(seedTypeTag)) {
                     throw SqlException.$(seedPosition, "integer or NULL expected for seed");
                 }
                 seedFunc = seedArg;
