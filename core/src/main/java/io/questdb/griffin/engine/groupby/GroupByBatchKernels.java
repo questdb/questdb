@@ -122,9 +122,7 @@ public final class GroupByBatchKernels {
     // Plain counters: one slot's thread updates them.
     private long kernelBatchCount;
     private int rowCount;
-    private long[] rowIndexes;
     private long rowPathBatchCount;
-    private long rowIndexesEpoch = -1;
     private long rowsAddr;
 
     private GroupByBatchKernels(ObjList<Args> args, int kernelCount, int capacity) {
@@ -263,10 +261,24 @@ public final class GroupByBatchKernels {
         if (clazz == IntColumn.class || clazz == LongColumn.class || clazz == FloatColumn.class
                 || clazz == DoubleColumn.class || clazz == ShortColumn.class || clazz == ByteColumn.class) {
             final int columnIndex = ((ColumnFunction) f).getColumnIndex();
+            if (getterType != nativeType
+                    && convertSupported(nativeType, getterType)
+                    && getterType != ColumnType.SHORT
+                    && declaredBy(clazz, getterName(getterType), baseClassOf(nativeType))) {
+                // the load converts as the base class's getter does: no separate pass
+                key = "c" + nativeType + '>' + getterType + ':' + columnIndex;
+                node = interned.get(key);
+                if (node == null) {
+                    node = new Node(KIND_COLUMN, getterType, nativeType, columnIndex, null, null, null);
+                    node.key = key;
+                    interned.put(key, node);
+                }
+                return node;
+            }
             key = "c" + nativeType + ':' + columnIndex;
             node = interned.get(key);
             if (node == null) {
-                node = new Node(KIND_COLUMN, nativeType, 0, columnIndex, null, null, null);
+                node = new Node(KIND_COLUMN, nativeType, nativeType, columnIndex, null, null, null);
                 interned.put(key, node);
             }
         } else if (f instanceof ColumnwiseFunction cf
@@ -708,96 +720,138 @@ public final class GroupByBatchKernels {
             // typed getters, so the aggregate takes the row path for this batch.
             return false;
         }
+        // The load and, when the parent reads the column with another type's getter, the base
+        // class's conversion, in one pass. Row i of the batch is rowIndex(...) in every mode.
         final int n = rowCount;
-        if (mode == MODE_RANGE) {
-            final long lo = this.lo;
-            switch (node.type) {
-                case ColumnType.INT: {
-                    final int[] out = node.ints;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Unsafe.getInt(addr + ((lo + i) << 2));
-                    }
-                    break;
-                }
-                case ColumnType.LONG: {
-                    final long[] out = node.longs;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Unsafe.getLong(addr + ((lo + i) << 3));
-                    }
-                    break;
-                }
-                case ColumnType.FLOAT: {
-                    final float[] out = node.floats;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Unsafe.getFloat(addr + ((lo + i) << 2));
-                    }
-                    break;
-                }
-                case ColumnType.DOUBLE: {
-                    final double[] out = node.doubles;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Unsafe.getDouble(addr + ((lo + i) << 3));
-                    }
-                    break;
-                }
-                case ColumnType.SHORT: {
-                    final int[] out = node.ints;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Unsafe.getShort(addr + ((lo + i) << 1));
-                    }
-                    break;
-                }
-                default: {
-                    final int[] out = node.ints;
-                    for (int i = 0; i < n; i++) {
-                        out[i] = Unsafe.getByte(addr + lo + i);
-                    }
-                    break;
-                }
-            }
-            return true;
-        }
-        final long[] idx = rowIndexes();
+        final int mode = this.mode;
+        final long lo = this.lo;
+        final long rowsAddr = this.rowsAddr;
         switch (node.type) {
-            case ColumnType.INT: {
-                final int[] out = node.ints;
-                for (int i = 0; i < n; i++) {
-                    out[i] = Unsafe.getInt(addr + (idx[i] << 2));
-                }
-                break;
-            }
-            case ColumnType.LONG: {
-                final long[] out = node.longs;
-                for (int i = 0; i < n; i++) {
-                    out[i] = Unsafe.getLong(addr + (idx[i] << 3));
+            case ColumnType.DOUBLE: {
+                final double[] out = node.doubles;
+                switch (node.op) {
+                    case ColumnType.DOUBLE:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getDouble(addr + (rowIndex(mode, lo, rowsAddr, i) << 3));
+                        }
+                        break;
+                    case ColumnType.FLOAT:
+                        // FloatFunction.getDouble()
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getFloat(addr + (rowIndex(mode, lo, rowsAddr, i) << 2));
+                        }
+                        break;
+                    case ColumnType.INT:
+                        // IntFunction.getDouble()
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Numbers.intToDouble(Unsafe.getInt(addr + (rowIndex(mode, lo, rowsAddr, i) << 2)));
+                        }
+                        break;
+                    case ColumnType.LONG:
+                        // LongFunction.getDouble()
+                        for (int i = 0; i < n; i++) {
+                            final long value = Unsafe.getLong(addr + (rowIndex(mode, lo, rowsAddr, i) << 3));
+                            out[i] = value != Numbers.LONG_NULL ? value : Double.NaN;
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getShort(addr + (rowIndex(mode, lo, rowsAddr, i) << 1));
+                        }
+                        break;
+                    default:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getByte(addr + rowIndex(mode, lo, rowsAddr, i));
+                        }
+                        break;
                 }
                 break;
             }
             case ColumnType.FLOAT: {
                 final float[] out = node.floats;
-                for (int i = 0; i < n; i++) {
-                    out[i] = Unsafe.getFloat(addr + (idx[i] << 2));
+                switch (node.op) {
+                    case ColumnType.FLOAT:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getFloat(addr + (rowIndex(mode, lo, rowsAddr, i) << 2));
+                        }
+                        break;
+                    case ColumnType.INT:
+                        // IntFunction.getFloat()
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Numbers.intToFloat(Unsafe.getInt(addr + (rowIndex(mode, lo, rowsAddr, i) << 2)));
+                        }
+                        break;
+                    case ColumnType.LONG:
+                        // LongFunction.getFloat()
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Numbers.longToFloat(Unsafe.getLong(addr + (rowIndex(mode, lo, rowsAddr, i) << 3)));
+                        }
+                        break;
+                    case ColumnType.DOUBLE:
+                        // DoubleFunction.getFloat()
+                        for (int i = 0; i < n; i++) {
+                            out[i] = (float) Unsafe.getDouble(addr + (rowIndex(mode, lo, rowsAddr, i) << 3));
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getShort(addr + (rowIndex(mode, lo, rowsAddr, i) << 1));
+                        }
+                        break;
+                    default:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getByte(addr + rowIndex(mode, lo, rowsAddr, i));
+                        }
+                        break;
                 }
                 break;
             }
-            case ColumnType.DOUBLE: {
-                final double[] out = node.doubles;
-                for (int i = 0; i < n; i++) {
-                    out[i] = Unsafe.getDouble(addr + (idx[i] << 3));
-                }
-                break;
-            }
-            case ColumnType.SHORT: {
-                final int[] out = node.ints;
-                for (int i = 0; i < n; i++) {
-                    out[i] = Unsafe.getShort(addr + (idx[i] << 1));
+            case ColumnType.LONG: {
+                final long[] out = node.longs;
+                switch (node.op) {
+                    case ColumnType.LONG:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getLong(addr + (rowIndex(mode, lo, rowsAddr, i) << 3));
+                        }
+                        break;
+                    case ColumnType.INT:
+                        // IntFunction.getLong()
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Numbers.intToLong(Unsafe.getInt(addr + (rowIndex(mode, lo, rowsAddr, i) << 2)));
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getShort(addr + (rowIndex(mode, lo, rowsAddr, i) << 1));
+                        }
+                        break;
+                    default:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getByte(addr + rowIndex(mode, lo, rowsAddr, i));
+                        }
+                        break;
                 }
                 break;
             }
             default: {
+                // INT, SHORT and BYTE values, held widened to int
                 final int[] out = node.ints;
-                for (int i = 0; i < n; i++) {
-                    out[i] = Unsafe.getByte(addr + idx[i]);
+                switch (node.op) {
+                    case ColumnType.INT:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getInt(addr + (rowIndex(mode, lo, rowsAddr, i) << 2));
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getShort(addr + (rowIndex(mode, lo, rowsAddr, i) << 1));
+                        }
+                        break;
+                    default:
+                        for (int i = 0; i < n; i++) {
+                            out[i] = Unsafe.getByte(addr + rowIndex(mode, lo, rowsAddr, i));
+                        }
+                        break;
                 }
                 break;
             }
@@ -979,26 +1033,13 @@ public final class GroupByBatchKernels {
         return true;
     }
 
-    private long[] rowIndexes() {
-        if (rowIndexesEpoch != epoch) {
-            rowIndexesEpoch = epoch;
-            if (rowIndexes == null) {
-                rowIndexes = new long[capacity];
-            }
-            final long[] idx = rowIndexes;
-            final long rowsAddr = this.rowsAddr;
-            final int n = rowCount;
-            if (mode == MODE_PACKED) {
-                for (int i = 0; i < n; i++) {
-                    idx[i] = Map.decodeBatchRowIndex(Unsafe.getLong(rowsAddr + ((long) i << 3)));
-                }
-            } else {
-                for (int i = 0; i < n; i++) {
-                    idx[i] = Unsafe.getLong(rowsAddr + ((long) i << 3));
-                }
-            }
+    // Frame row index of batch row i: contiguous rows, packed keyed-batch entries, or row indexes.
+    private static long rowIndex(int mode, long lo, long rowsAddr, int i) {
+        if (mode == MODE_RANGE) {
+            return lo + i;
         }
-        return rowIndexes;
+        final long value = Unsafe.getLong(rowsAddr + ((long) i << 3));
+        return mode == MODE_PACKED ? Map.decodeBatchRowIndex(value) : value;
     }
 
     /**
