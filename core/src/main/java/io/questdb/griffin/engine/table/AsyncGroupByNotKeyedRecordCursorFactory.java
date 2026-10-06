@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.groupby.MaxTimestampGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
@@ -62,6 +63,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -303,6 +305,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         sink.meta("workers").val(workerCount);
         sink.attr("vectorized").val(vectorized);
         sink.optAttr("values", groupByFunctions, true);
+        if (frameSequence.getAtom().getBatchKernels(-1) != null) {
+            sink.attr("batchKernels").val(true);
+        }
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
@@ -344,13 +349,18 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
             record.setRowIndex(0);
             long rowId = record.getRowId();
-            for (long r = 0; r < frameRowCount; r++) {
-                record.setRowIndex(r);
-                if (value.isNew()) {
-                    functionUpdater.updateNew(value, record, rowId++);
-                    value.setNew(false);
-                } else {
-                    functionUpdater.updateExisting(value, record, rowId++);
+            final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+            if (kernels != null) {
+                aggregateWithKernels(record, 0, frameRowCount, rowId, value, atom, slotId, kernels);
+            } else {
+                for (long r = 0; r < frameRowCount; r++) {
+                    record.setRowIndex(r);
+                    if (value.isNew()) {
+                        functionUpdater.updateNew(value, record, rowId++);
+                        value.setNew(false);
+                    } else {
+                        functionUpdater.updateExisting(value, record, rowId++);
+                    }
                 }
             }
         } finally {
@@ -408,6 +418,10 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Fall back to row-by-row for the entire frame.
+                final GroupByBatchKernels frameKernels = atom.getBatchKernels(slotId);
+                if (frameKernels != null) {
+                    frameKernels.countRowPathFrame();
+                }
                 record.init(frameMemory);
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
                 record.setRowIndex(0);
@@ -441,13 +455,47 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     }
                 }
 
+                // Phase 1b: functions with a column-wise batch kernel. The group's first row goes
+                // through computeFirst(); value.isNew() stays as it is for phase 2.
+                final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+                boolean hasRowFunctions = atom.hasNonBatchFunctions();
+                if (kernels != null) {
+                    hasRowFunctions = false;
+                    long lo = 0;
+                    if (value.isNew()) {
+                        record.setRowIndex(0);
+                        for (int i = 0; i < functionCount; i++) {
+                            if (batchColumnIndexes[i] == AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE && kernels.isKernel(i)) {
+                                functions.getQuick(i).computeFirst(value, record, startRowId);
+                            }
+                        }
+                        lo = 1;
+                    }
+                    for (int i = 0; i < functionCount; i++) {
+                        if (batchColumnIndexes[i] == AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE && !kernels.isKernel(i)) {
+                            hasRowFunctions = true;
+                            break;
+                        }
+                    }
+                    final int capacity = kernels.getCapacity();
+                    for (; lo < frameRowCount; lo += capacity) {
+                        final int n = (int) Math.min(capacity, frameRowCount - lo);
+                        kernels.of(record, GroupByBatchKernels.MODE_RANGE, 0, lo, n);
+                        for (int i = 0; i < functionCount; i++) {
+                            if (batchColumnIndexes[i] == AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE && kernels.isKernel(i)) {
+                                updateKernel(functions.getQuick(i), kernels.prepare(i), record, value, 0, lo, n, startRowId);
+                            }
+                        }
+                    }
+                }
+
                 // Phase 2: non-batch functions (row-by-row).
-                if (atom.hasNonBatchFunctions()) {
+                if (hasRowFunctions) {
                     long rowId = startRowId;
                     for (long r = 0; r < frameRowCount; r++) {
                         record.setRowIndex(r);
                         for (int i = 0; i < functionCount; i++) {
-                            if (batchColumnIndexes[i] != AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE) {
+                            if (batchColumnIndexes[i] != AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE || (kernels != null && kernels.isKernel(i))) {
                                 continue;
                             }
                             final GroupByFunction func = functions.getQuick(i);
@@ -474,6 +522,59 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 frameMemoryPool.releaseParquetBuffers();
             } finally {
                 atom.release(slotId);
+            }
+        }
+    }
+
+    /**
+     * Aggregates frame rows with the column-wise batch kernels: rows {@code [0, rowCount)} of the
+     * frame when {@code rowsAddr} is 0, otherwise the frame row indexes stored as longs at
+     * {@code rowsAddr}. The group's first row takes the row path, so the kernels only ever
+     * continue a group, as computeNext() does. The aggregates without a kernel are updated per
+     * row. Each aggregate's state is its own, so updating them one after another per batch gives
+     * the same values as updating all of them row by row.
+     */
+    private static void aggregateWithKernels(
+            PageFrameMemoryRecord record,
+            long rowsAddr,
+            long rowCount,
+            long baseRowId,
+            SimpleMapValue value,
+            AsyncGroupByNotKeyedAtom atom,
+            int slotId,
+            GroupByBatchKernels kernels
+    ) {
+        if (rowCount == 0) {
+            return;
+        }
+        long p = 0;
+        if (value.isNew()) {
+            final long r = rowsAddr == 0 ? 0 : Unsafe.getLong(rowsAddr);
+            record.setRowIndex(r);
+            atom.getFunctionUpdater(slotId).updateNew(value, record, baseRowId + r);
+            value.setNew(false);
+            p = 1;
+        }
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final GroupByFunctionsUpdater rowFunctionUpdater = atom.getRowFunctionUpdater(slotId);
+        final int functionCount = functions.size();
+        final int capacity = kernels.getCapacity();
+        final int mode = rowsAddr == 0 ? GroupByBatchKernels.MODE_RANGE : GroupByBatchKernels.MODE_ROWS;
+        for (; p < rowCount; p += capacity) {
+            final int n = (int) Math.min(capacity, rowCount - p);
+            final long batchRowsAddr = rowsAddr == 0 ? 0 : rowsAddr + (p << 3);
+            kernels.of(record, mode, batchRowsAddr, p, n);
+            for (int i = 0; i < functionCount; i++) {
+                if (kernels.isKernel(i)) {
+                    updateKernel(functions.getQuick(i), kernels.prepare(i), record, value, batchRowsAddr, p, n, baseRowId);
+                }
+            }
+            if (rowFunctionUpdater != null) {
+                for (long q = 0; q < n; q++) {
+                    final long r = batchRowsAddr == 0 ? p + q : Unsafe.getLong(batchRowsAddr + (q << 3));
+                    record.setRowIndex(r);
+                    rowFunctionUpdater.updateExisting(value, record, baseRowId + r);
+                }
             }
         }
     }
@@ -560,13 +661,25 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
 
+            boolean lateMaterialized = false;
             if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);
                 filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
+                lateMaterialized = true;
             }
             long baseRowId = Rows.toRowID(frameIndex, 0);
-            aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
+            final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+            // A late-materialized record reads the remaining columns compacted, by the filtered
+            // row's position, which the column-wise loads do not model: it keeps the row path.
+            if (kernels != null && !lateMaterialized) {
+                aggregateWithKernels(record, rows.getAddress(), rows.size(), baseRowId, value, atom, slotId, kernels);
+            } else {
+                if (kernels != null) {
+                    kernels.countRowPathFrame();
+                }
+                aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
+            }
         } finally {
             try {
                 frameMemoryPool.releaseParquetBuffers();
@@ -586,6 +699,29 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             return true;
         }
         return false;
+    }
+
+    // Runs one aggregate's kernel over a batch, or its computeNext() per row when the kernel's
+    // arguments could not be evaluated column-wise for this frame.
+    private static void updateKernel(
+            GroupByFunction function,
+            @Nullable GroupByBatchKernels.Args args,
+            PageFrameMemoryRecord record,
+            SimpleMapValue value,
+            long batchRowsAddr,
+            long lo,
+            int n,
+            long baseRowId
+    ) {
+        if (args != null) {
+            function.computeBatchKernel(value, n, args);
+        } else {
+            for (long q = 0; q < n; q++) {
+                final long r = batchRowsAddr == 0 ? lo + q : Unsafe.getLong(batchRowsAddr + (q << 3));
+                record.setRowIndex(r);
+                function.computeNext(value, record, baseRowId + r);
+            }
+        }
     }
 
     /**

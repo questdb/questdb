@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -66,6 +67,20 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
                 mapValue.putFloat(valueIndex, max);
             }
         }
+    }
+
+    @Override
+    public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+        // computeNext() per row, with the value held in a local
+        final long valuesAddr = args.address(0);
+        float max = mapValue.getFloat(valueIndex);
+        for (int i = 0; i < rowCount; i++) {
+            final float next = Unsafe.getFloat(valuesAddr + ((long) i << 2));
+            if (next > max || Numbers.isNull(max)) {
+                max = next;
+            }
+        }
+        mapValue.putFloat(valueIndex, max);
     }
 
     @Override
@@ -114,6 +129,31 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public void computeKeyedBatchKernel(
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            int rowCount,
+            GroupByBatchKernels.Args args
+    ) {
+        final long valuesAddr = args.address(0);
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        for (int i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
+            final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+            final float value = Unsafe.getFloat(valuesAddr + ((long) i << 2));
+            if (Map.isNewBatchEntry(encoded)) {
+                Unsafe.putFloat(addr, value);
+            } else {
+                final float max = Unsafe.getFloat(addr);
+                if (value > max || Numbers.isNull(max)) {
+                    Unsafe.putFloat(addr, value);
+                }
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         float max = mapValue.getFloat(valueIndex);
         float next = arg.getFloat(record);
@@ -125,6 +165,22 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public Function getBatchKernelArg(int index) {
+        return arg;
+    }
+
+    @Override
+    public int getBatchKernelArgCount() {
+        // a direct FLOAT column already has the tight loops of computeKeyedBatch() and computeBatch()
+        return argColumnIndex < 0 ? 1 : 0;
+    }
+
+    @Override
+    public int getBatchKernelArgType(int index) {
+        return ColumnType.FLOAT;
     }
 
     @Override

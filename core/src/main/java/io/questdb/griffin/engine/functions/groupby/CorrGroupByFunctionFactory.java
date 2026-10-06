@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -35,9 +36,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class CorrGroupByFunctionFactory implements FunctionFactory {
@@ -74,6 +78,39 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+            // aggregate() per row with finite y and x, with the state held in locals
+            final long ysAddr = args.address(0);
+            final long xsAddr = args.address(1);
+            double meanY = mapValue.getDouble(valueIndex);
+            double sumY = mapValue.getDouble(valueIndex + 1);
+            double meanX = mapValue.getDouble(valueIndex + 2);
+            double sumX = mapValue.getDouble(valueIndex + 3);
+            double sumXY = mapValue.getDouble(valueIndex + 4);
+            long count = mapValue.getLong(valueIndex + 5);
+            for (int i = 0; i < rowCount; i++) {
+                final double y = Unsafe.getDouble(ysAddr + ((long) i << 3));
+                final double x = Unsafe.getDouble(xsAddr + ((long) i << 3));
+                if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
+                    count++;
+                    final double oldMeanY = meanY;
+                    meanY += (y - meanY) / count;
+                    sumY += (y - meanY) * (y - oldMeanY);
+                    final double oldMeanX = meanX;
+                    meanX += (x - meanX) / count;
+                    sumX += (x - meanX) * (x - oldMeanX);
+                    sumXY += (y - oldMeanY) * (x - meanX);
+                }
+            }
+            mapValue.putDouble(valueIndex, meanY);
+            mapValue.putDouble(valueIndex + 1, sumY);
+            mapValue.putDouble(valueIndex + 2, meanX);
+            mapValue.putDouble(valueIndex + 3, sumX);
+            mapValue.putDouble(valueIndex + 4, sumXY);
+            mapValue.putLong(valueIndex + 5, count);
+        }
+
+        @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final double y = yFunc.getDouble(record);
             final double x = xFunc.getDouble(record);
@@ -90,12 +127,81 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void computeKeyedBatchKernel(
+                FlyweightPackedMapValue mapValue,
+                long baseValueAddr,
+                long batchAddr,
+                int rowCount,
+                GroupByBatchKernels.Args args
+        ) {
+            final long ysAddr = args.address(0);
+            final long xsAddr = args.address(1);
+            final long meanYOffset = mapValue.getOffset(valueIndex);
+            final long sumYOffset = mapValue.getOffset(valueIndex + 1);
+            final long meanXOffset = mapValue.getOffset(valueIndex + 2);
+            final long sumXOffset = mapValue.getOffset(valueIndex + 3);
+            final long sumXYOffset = mapValue.getOffset(valueIndex + 4);
+            final long countOffset = mapValue.getOffset(valueIndex + 5);
+            for (int i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
+                final long valueAddr = baseValueAddr + Map.decodeBatchOffset(encoded);
+                final double y = Unsafe.getDouble(ysAddr + ((long) i << 3));
+                final double x = Unsafe.getDouble(xsAddr + ((long) i << 3));
+                final boolean isNew = Map.isNewBatchEntry(encoded);
+                if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
+                    // computeFirst() starts from zeros, then aggregate()
+                    double meanY = isNew ? 0 : Unsafe.getDouble(valueAddr + meanYOffset);
+                    double sumY = isNew ? 0 : Unsafe.getDouble(valueAddr + sumYOffset);
+                    double meanX = isNew ? 0 : Unsafe.getDouble(valueAddr + meanXOffset);
+                    double sumX = isNew ? 0 : Unsafe.getDouble(valueAddr + sumXOffset);
+                    double sumXY = isNew ? 0 : Unsafe.getDouble(valueAddr + sumXYOffset);
+                    final long count = (isNew ? 0 : Unsafe.getLong(valueAddr + countOffset)) + 1;
+                    final double oldMeanY = meanY;
+                    meanY += (y - meanY) / count;
+                    sumY += (y - meanY) * (y - oldMeanY);
+                    final double oldMeanX = meanX;
+                    meanX += (x - meanX) / count;
+                    sumX += (x - meanX) * (x - oldMeanX);
+                    sumXY += (y - oldMeanY) * (x - meanX);
+                    Unsafe.putDouble(valueAddr + meanYOffset, meanY);
+                    Unsafe.putDouble(valueAddr + sumYOffset, sumY);
+                    Unsafe.putDouble(valueAddr + meanXOffset, meanX);
+                    Unsafe.putDouble(valueAddr + sumXOffset, sumX);
+                    Unsafe.putDouble(valueAddr + sumXYOffset, sumXY);
+                    Unsafe.putLong(valueAddr + countOffset, count);
+                } else if (isNew) {
+                    Unsafe.putDouble(valueAddr + meanYOffset, 0);
+                    Unsafe.putDouble(valueAddr + sumYOffset, 0);
+                    Unsafe.putDouble(valueAddr + meanXOffset, 0);
+                    Unsafe.putDouble(valueAddr + sumXOffset, 0);
+                    Unsafe.putDouble(valueAddr + sumXYOffset, 0);
+                    Unsafe.putLong(valueAddr + countOffset, 0);
+                }
+            }
+        }
+
+        @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final double y = yFunc.getDouble(record);
             final double x = xFunc.getDouble(record);
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                 aggregate(mapValue, y, x);
             }
+        }
+
+        @Override
+        public Function getBatchKernelArg(int index) {
+            return index == 0 ? yFunc : xFunc;
+        }
+
+        @Override
+        public int getBatchKernelArgCount() {
+            return 2;
+        }
+
+        @Override
+        public int getBatchKernelArgType(int index) {
+            return ColumnType.DOUBLE;
         }
 
         @Override

@@ -1463,6 +1463,15 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelFilterEnabled();
 
+    /**
+     * Whether the parallel GROUP BY evaluates the arguments of the aggregates that have a batch
+     * kernel (weighted_avg, corr, covar_*, stddev/var, and sum/avg/min/max over an expression)
+     * column-wise per batch of rows, and updates the groups with the kernel instead of a
+     * computeNext() call per row. Read when the query is compiled; EXPLAIN shows it as
+     * {@code batchKernels}.
+     */
+    boolean isSqlParallelGroupByBatchKernelsEnabled();
+
     boolean isSqlParallelGroupByEnabled();
 
     boolean isSqlParallelHashJoinGroupByEnabled();

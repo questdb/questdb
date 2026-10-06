@@ -3621,6 +3621,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Async Group By workers: 1
                           vectorized: true
                           values: [min(d),max(d*d)]
+                          batchKernels: true
                           filter: null
                             PageFrame
                                 Row forward scan
@@ -3636,6 +3637,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Async Group By workers: 1
                           vectorized: false
                           values: [max(d+1)]
+                          batchKernels: true
                           filter: null
                             PageFrame
                                 Row forward scan
@@ -7267,6 +7269,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(x),sum(x+10)]
+                              batchKernels: true
                               filter: null
                                 PageFrame
                                     Row forward scan
@@ -7279,6 +7282,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(x),sum(10+x)]
+                              batchKernels: true
                               filter: null
                                 PageFrame
                                     Row forward scan
@@ -7564,6 +7568,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(x),sum(x*10)]
+                              batchKernels: true
                               filter: null
                                 PageFrame
                                     Row forward scan
@@ -7576,6 +7581,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(x),sum(10*x)]
+                              batchKernels: true
                               filter: null
                                 PageFrame
                                     Row forward scan
@@ -7595,6 +7601,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(x),sum(x*10.0)]
+                              batchKernels: true
                               filter: null
                                 PageFrame
                                     Row forward scan
@@ -7607,6 +7614,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(x),sum(10.0*x)]
+                              batchKernels: true
                               filter: null
                                 PageFrame
                                     Row forward scan
@@ -7787,6 +7795,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(x),sum(x-10)]
+                              batchKernels: true
                               filter: null
                                 PageFrame
                                     Row forward scan
@@ -7799,6 +7808,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Async Group By workers: 1
                               vectorized: true
                               values: [sum(x),sum(10-x)]
+                              batchKernels: true
                               filter: null
                                 PageFrame
                                     Row forward scan

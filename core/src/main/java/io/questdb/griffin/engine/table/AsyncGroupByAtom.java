@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -71,6 +72,8 @@ import java.io.Closeable;
 
 public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     private final int batchSize;
+    // Column-wise batch kernels, one per slot, or null when no aggregate has one or they are disabled.
+    private final GroupByBatchKernels ownerBatchKernels;
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
     private final DirectLongList ownerBatchList;
@@ -79,6 +82,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final GroupByBatchKernels.PerWorker perWorkerBatchKernels;
     private final ObjList<DirectLongList> perWorkerBatchLists;
     private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -234,6 +238,19 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
                 perWorkerBatchLists.extendAndSet(i, new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true));
                 perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
             }
+
+            // The kernels compile once; each slot gets its own evaluator of the program, which
+            // holds the slot's argument buffers and its own constant functions.
+            final GroupByBatchKernels.Program kernelProgram = configuration.isSqlParallelGroupByBatchKernelsEnabled()
+                    ? GroupByBatchKernels.compile(ownerGroupByFunctions, batchSize, workerCount + 1)
+                    : null;
+            ownerBatchKernels = kernelProgram != null ? kernelProgram.newInstance(ownerGroupByFunctions) : null;
+            if (ownerBatchKernels != null) {
+                // the workers' evaluators are made on each slot's first use
+                perWorkerBatchKernels = new GroupByBatchKernels.PerWorker(kernelProgram, ownerGroupByFunctions, perWorkerGroupByFunctions, workerCount);
+            } else {
+                perWorkerBatchKernels = null;
+            }
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -255,6 +272,9 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         Misc.clearObjList(perWorkerLongTopKLists);
         Misc.free(ownerBatchList);
         Misc.freeObjListAndKeepObjects(perWorkerBatchLists);
+        // the kernels' argument buffers are freed with the cursor, not kept while the factory is cached
+        Misc.clear(ownerBatchKernels);
+        Misc.clear(perWorkerBatchKernels);
         filterCtx.clear();
         memoryTracker = null;
     }
@@ -286,6 +306,8 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         cleanupFailure = closePerWorkerFunctions(cleanupFailure, perWorkerGroupByFunctions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerBatchList);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerBatchLists);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerBatchKernels);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, perWorkerBatchKernels);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -307,6 +329,33 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             }
         }
         return cleanupFailure;
+    }
+
+    /**
+     * Sums the kernel counters over the slots, see {@link GroupByBatchKernels#getCounts}.
+     */
+    @TestOnly
+    public long[] getBatchKernelCounts() {
+        return GroupByBatchKernels.getCounts(ownerBatchKernels, perWorkerBatchKernels);
+    }
+
+    /**
+     * Returns the slot's column-wise batch kernels, or null when the aggregates have none. A
+     * worker slot's are made on its first use, so only the slot's holder may call this.
+     */
+    public GroupByBatchKernels getBatchKernels(int slotId) {
+        if (slotId == -1 || perWorkerBatchKernels == null) {
+            return ownerBatchKernels;
+        }
+        return perWorkerBatchKernels.get(slotId);
+    }
+
+    /**
+     * Returns the workers' kernel evaluators, or null when the aggregates have no kernels.
+     */
+    @TestOnly
+    public GroupByBatchKernels.PerWorker getPerWorkerBatchKernels() {
+        return perWorkerBatchKernels;
     }
 
     public DirectLongList getBatchList(int slotId) {
@@ -473,6 +522,11 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
                 allocator.setMemoryTracker(memoryTracker);
                 allocator.reopen();
             }
+        }
+        // the kernels allocate their argument buffers lazily, on a slot's first batch
+        if (ownerBatchKernels != null) {
+            ownerBatchKernels.setMemoryTracker(memoryTracker);
+            perWorkerBatchKernels.setMemoryTracker(memoryTracker);
         }
     }
 

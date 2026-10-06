@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -60,6 +61,20 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 mapValue.putDouble(valueIndex, batchMin);
             }
         }
+    }
+
+    @Override
+    public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+        // computeNext() per row, with the value held in a local
+        final long valuesAddr = args.address(0);
+        double min = mapValue.getDouble(valueIndex);
+        for (int i = 0; i < rowCount; i++) {
+            final double next = Unsafe.getDouble(valuesAddr + ((long) i << 3));
+            if (next < min || Numbers.isNull(min)) {
+                min = next;
+            }
+        }
+        mapValue.putDouble(valueIndex, min);
     }
 
     @Override
@@ -109,6 +124,31 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public void computeKeyedBatchKernel(
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            int rowCount,
+            GroupByBatchKernels.Args args
+    ) {
+        final long valuesAddr = args.address(0);
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        for (int i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
+            final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
+            if (Map.isNewBatchEntry(encoded)) {
+                Unsafe.putDouble(addr, value);
+            } else {
+                final double min = Unsafe.getDouble(addr);
+                if (value < min || Numbers.isNull(min)) {
+                    Unsafe.putDouble(addr, value);
+                }
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double min = mapValue.getDouble(valueIndex);
         double next = arg.getDouble(record);
@@ -120,6 +160,22 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public Function getBatchKernelArg(int index) {
+        return arg;
+    }
+
+    @Override
+    public int getBatchKernelArgCount() {
+        // a direct DOUBLE column already has the tight loops of computeKeyedBatch() and computeBatch()
+        return argColumnIndex < 0 ? 1 : 0;
+    }
+
+    @Override
+    public int getBatchKernelArgType(int index) {
+        return ColumnType.DOUBLE;
     }
 
     @Override

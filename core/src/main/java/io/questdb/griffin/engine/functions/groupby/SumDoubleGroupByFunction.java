@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -63,6 +64,20 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 }
             }
         }
+    }
+
+    @Override
+    public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+        // computeNext() per row, with the value held in a local
+        final long valuesAddr = args.address(0);
+        double sum = mapValue.getDouble(valueIndex);
+        for (int i = 0; i < rowCount; i++) {
+            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
+            if (!Double.isNaN(value)) {
+                sum = !Double.isNaN(sum) ? sum + value : value;
+            }
+        }
+        mapValue.putDouble(valueIndex, sum);
     }
 
     @Override
@@ -110,6 +125,30 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public void computeKeyedBatchKernel(
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            int rowCount,
+            GroupByBatchKernels.Args args
+    ) {
+        final long valuesAddr = args.address(0);
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        for (int i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
+            final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
+            if (Map.isNewBatchEntry(encoded)) {
+                // as computeKeyedBatch(): a NULL first value leaves the empty value, the canonical NaN
+                Unsafe.putDouble(addr, !Double.isNaN(value) ? value : Double.NaN);
+            } else if (!Double.isNaN(value)) {
+                final double sum = Unsafe.getDouble(addr);
+                Unsafe.putDouble(addr, !Double.isNaN(sum) ? sum + value : value);
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (!Double.isNaN(value)) {
@@ -125,6 +164,22 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public Function getBatchKernelArg(int index) {
+        return arg;
+    }
+
+    @Override
+    public int getBatchKernelArgCount() {
+        // a direct DOUBLE column already has the tight loops of computeKeyedBatch() and computeBatch()
+        return argColumnIndex < 0 ? 1 : 0;
+    }
+
+    @Override
+    public int getBatchKernelArgType(int index) {
+        return ColumnType.DOUBLE;
     }
 
     @Override

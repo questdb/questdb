@@ -55,6 +55,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
@@ -231,6 +232,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("keyFunctions", frameSequence.getAtom().getOwnerKeyFunctions(), true);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
+        if (frameSequence.getAtom().getBatchKernels(-1) != null) {
+            sink.attr("batchKernels").val(true);
+        }
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
@@ -333,6 +337,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
         final int functionCount = functions.size();
         final int batchSize = atom.getBatchSize();
         final long rowCount = rows.size();
@@ -359,16 +364,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     batchAddr
             );
 
-            for (int i = 0; i < functionCount; i++) {
-                functions.getQuick(i).computeKeyedBatch(
-                        record,
-                        mapValue,
-                        baseValueAddress,
-                        batchAddr,
-                        batchRows,
-                        baseRowId
-                );
-            }
+            updateBatch(record, functions, functionCount, kernels, mapValue, baseValueAddress, batchAddr, batchRows, baseRowId);
         }
     }
 
@@ -422,6 +418,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
         final int functionCount = functions.size();
         final int batchSize = atom.getBatchSize();
 
@@ -444,16 +441,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             // Update phase — one call per function per sub-batch. The encoded rowIndex in each
             // batch entry is already the frame-relative row id, so computeKeyedBatch computes
             // the global row id as baseRowId + rowIndex.
-            for (int i = 0; i < functionCount; i++) {
-                functions.getQuick(i).computeKeyedBatch(
-                        record,
-                        mapValue,
-                        baseValueAddress,
-                        batchAddr,
-                        batchRows,
-                        baseRowId
-                );
-            }
+            updateBatch(record, functions, functionCount, kernels, mapValue, baseValueAddress, batchAddr, batchRows, baseRowId);
         }
     }
 
@@ -565,6 +553,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
                 lateMaterialized = true;
+                final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+                if (kernels != null) {
+                    kernels.countRowPathFrame();
+                }
             }
 
             if (atom.isSharded()) {
@@ -589,6 +581,45 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 frameMemoryPool.releaseParquetBuffers();
             } finally {
                 atom.release(slotId);
+            }
+        }
+    }
+
+    private static void updateBatch(
+            PageFrameMemoryRecord record,
+            ObjList<GroupByFunction> functions,
+            int functionCount,
+            @Nullable GroupByBatchKernels kernels,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddress,
+            long batchAddr,
+            long batchRows,
+            long baseRowId
+    ) {
+        if (kernels != null) {
+            // The aggregates with a batch kernel get their arguments evaluated column-wise for the
+            // whole sub-batch; the others, and a kernel whose column has no readable buffer in
+            // this frame, take computeKeyedBatch().
+            kernels.of(record, GroupByBatchKernels.MODE_PACKED, batchAddr, 0, (int) batchRows);
+            for (int i = 0; i < functionCount; i++) {
+                final GroupByFunction function = functions.getQuick(i);
+                final GroupByBatchKernels.Args args = kernels.prepare(i);
+                if (args != null) {
+                    function.computeKeyedBatchKernel(mapValue, baseValueAddress, batchAddr, (int) batchRows, args);
+                } else {
+                    function.computeKeyedBatch(record, mapValue, baseValueAddress, batchAddr, batchRows, baseRowId);
+                }
+            }
+        } else {
+            for (int i = 0; i < functionCount; i++) {
+                functions.getQuick(i).computeKeyedBatch(
+                        record,
+                        mapValue,
+                        baseValueAddress,
+                        batchAddr,
+                        batchRows,
+                        baseRowId
+                );
             }
         }
     }

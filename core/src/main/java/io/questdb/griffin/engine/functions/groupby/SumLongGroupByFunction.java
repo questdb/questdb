@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -64,6 +65,20 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
                 }
             }
         }
+    }
+
+    @Override
+    public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+        // computeNext() per row, with the value held in a local
+        final long valuesAddr = args.address(0);
+        long sum = mapValue.getLong(valueIndex);
+        for (int i = 0; i < rowCount; i++) {
+            final long value = Unsafe.getLong(valuesAddr + ((long) i << 3));
+            if (value != Numbers.LONG_NULL) {
+                sum = sum != Numbers.LONG_NULL ? sum + value : value;
+            }
+        }
+        mapValue.putLong(valueIndex, sum);
     }
 
     @Override
@@ -111,6 +126,29 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public void computeKeyedBatchKernel(
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            int rowCount,
+            GroupByBatchKernels.Args args
+    ) {
+        final long valuesAddr = args.address(0);
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        for (int i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
+            final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+            final long value = Unsafe.getLong(valuesAddr + ((long) i << 3));
+            if (Map.isNewBatchEntry(encoded)) {
+                Unsafe.putLong(addr, value);
+            } else if (value != Numbers.LONG_NULL) {
+                final long sum = Unsafe.getLong(addr);
+                Unsafe.putLong(addr, sum != Numbers.LONG_NULL ? sum + value : value);
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
         if (value != Numbers.LONG_NULL) {
@@ -126,6 +164,22 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public Function getBatchKernelArg(int index) {
+        return arg;
+    }
+
+    @Override
+    public int getBatchKernelArgCount() {
+        // a direct LONG column already has the tight loops of computeKeyedBatch() and computeBatch()
+        return argColumnIndex < 0 ? 1 : 0;
+    }
+
+    @Override
+    public int getBatchKernelArgType(int index) {
+        return ColumnType.LONG;
     }
 
     @Override
