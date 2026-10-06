@@ -6310,6 +6310,42 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinKeyMovedOntoFirstTableReadsKeyColumns() throws Exception {
+        // reorderTables moves d.k = a.k from d onto a, the first table, and joins a last on that key.
+        // propagateTopDownColumns0 skipped the join keys of the first table, so the scans of a and d lacked
+        // the key columns: count(*) failed with a message-less InvalidColumnException, and a query that
+        // selects a.k failed with "Invalid column: d.k". Master fails the same way.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, j INT)");
+            execute("INSERT INTO a VALUES (1, 0), (2, 0), (3, 0)");
+            execute("CREATE TABLE b (k INT, j INT)");
+            execute("INSERT INTO b VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE c (k INT, j INT)");
+            execute("INSERT INTO c VALUES (1, 5), (2, 6)");
+            execute("CREATE TABLE d (k INT, j INT)");
+            execute("INSERT INTO d VALUES (1, 5), (2, 6), (3, 7), (1, 6)");
+            final String joins = "FROM a CROSS JOIN b JOIN c ON c.k = b.k JOIN d ON d.j = c.j AND d.k = a.k";
+            assertQuery("SELECT count(*) " + joins)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("condition: a.k=d.k")
+                    .returns("""
+                            count
+                            3
+                            """);
+            assertQuery("SELECT a.k ak, b.k bk, d.j dj " + joins + " ORDER BY ak, bk")
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tbk\tdj
+                            1\t1\t5
+                            1\t2\t6
+                            2\t2\t6
+                            """);
+        });
+    }
+
+    @Test
     public void testJoinMultiLevelViewWithDifferentColumnNames() throws Exception {
         // reproducer for: InvalidColumnException when joining a table with a
         // multi-level view where the ON clause uses different column names on

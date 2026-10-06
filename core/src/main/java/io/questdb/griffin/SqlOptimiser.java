@@ -9262,6 +9262,19 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        // swapJoinOrder0 can move join keys onto model 0, which starts without a join context. The loop above
+        // starts at model 1, so emit these keys here too, or the scans of both key tables lack the key columns.
+        // A model without join models of its own is a join model of the outer level, whose loop emits its keys.
+        if (joinModels.size() > 1) {
+            final JoinContext modelJoinContext = model.getJoinContext();
+            if (modelJoinContext != null) {
+                for (int k = 0, z = modelJoinContext.aIndexes.size(); k < z; k++) {
+                    emitLiteralsTopDown(modelJoinContext.aNodes.getQuick(k), model);
+                    emitLiteralsTopDown(modelJoinContext.bNodes.getQuick(k), model);
+                }
+            }
+        }
+
         final ExpressionNode postJoinWhere = model.getPostJoinWhereClause();
         if (postJoinWhere != null) {
             emitLiteralsTopDown(postJoinWhere, model);
